@@ -111,6 +111,7 @@ def build_requirement_elicitation_questionnaire() -> list[ElicitationQuestion]:
 def build_requirement_elicitation_review_payload(
     *,
     workflow_id: str,
+    source_graph_node_id: str,
     occurred_at: datetime,
     weak_signals: list[str],
     board_brief_artifact_ref: str,
@@ -135,6 +136,8 @@ def build_requirement_elicitation_review_payload(
                 "title": "Clarify initialization inputs",
                 "subtitle": "Capture the missing board answers before scope kickoff starts.",
                 "blocking_scope": "WORKFLOW",
+                "source_graph_node_id": source_graph_node_id,
+                "source_node_id": source_graph_node_id,
             },
             "trigger": {
                 "trigger_event_id": f"evt_requirement_elicitation:{workflow_id}",

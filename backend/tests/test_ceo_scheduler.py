@@ -1360,7 +1360,7 @@ def test_autopilot_closeout_batch_ignores_stale_closeout_node_projection_without
     assert payload["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
 
 
-def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(client):
+def test_project_init_records_board_directive_shadow_and_hires_architect_when_missing(client):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO kickoff deterministic fallback blocked")
     repository = client.app.state.repository
@@ -1378,13 +1378,16 @@ def test_project_init_records_board_directive_shadow_and_stable_scope_ticket(cli
         if incident["workflow_id"] == workflow_id
     ]
 
+    assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
+    assert runs[0]["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert runs[0]["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert scope_ticket is None
     assert created_spec is None
-    assert len(open_incidents) == 1
-    assert open_incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
-    assert open_incidents[0]["payload"]["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED
-    assert runs[0]["effective_mode"] == "SHADOW_ERROR"
-    assert "deterministic fallback" in str(runs[0]["fallback_reason"] or "").lower()
+    assert open_incidents == []
+    hired_employee = repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
 
 
 def test_ceo_autopilot_project_init_kicks_off_architecture_brief_before_scope_consensus(client):
@@ -1413,13 +1416,17 @@ def test_ceo_autopilot_project_init_kicks_off_architecture_brief_before_scope_co
         for incident in client.app.state.repository.list_open_incidents()
         if incident["workflow_id"] == workflow_id
     ]
+    runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert created_events == []
-    assert len(incidents) == 1
-    assert incidents[0]["incident_type"] == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
-    assert incidents[0]["payload"]["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED
+    assert incidents == []
+    assert runs[0]["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert runs[0]["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    hired_employee = client.app.state.repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
 
 
 def test_ceo_shadow_snapshot_includes_normalized_profiles_and_summary(client):
@@ -2225,7 +2232,7 @@ def test_ceo_validator_accepts_new_role_hires_on_current_ceo_path(
     assert result["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
 
 
-def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monkeypatch):
+def test_project_init_can_use_live_provider_to_hire_architect_before_kickoff(client, monkeypatch):
     _set_live_provider(client)
     monkeypatch.setattr("app.core.command_handlers._auto_advance_project_init_to_first_review", lambda *args, **kwargs: None)
 
@@ -2237,26 +2244,16 @@ def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monke
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
-                    "summary": "Create the kickoff scope consensus ticket first.",
+                    "summary": "Hire one architect before governance kickoff starts.",
                     "actions": [
                         {
-                            "action_type": "CREATE_TICKET",
+                            "action_type": "HIRE_EMPLOYEE",
                             "payload": {
                                 "workflow_id": workflow_id,
-                                "node_id": PROJECT_INIT_SCOPE_NODE_ID,
-                                "role_profile_ref": "ui_designer_primary",
-                                "output_schema_ref": "consensus_document",
-                                "execution_contract": {
-                                    "execution_target_ref": "execution_target:scope_consensus",
-                                    "required_capability_tags": ["structured_output", "planning"],
-                                    "runtime_contract_version": "execution_contract_v1",
-                                },
-                                "dispatch_intent": {
-                                    "assignee_employee_id": "emp_frontend_2",
-                                    "selection_reason": "Use the active frontend delivery owner for the kickoff scope consensus ticket.",
-                                },
-                                "summary": "Prepare the kickoff consensus report and the first batch of follow-up ticket outlines.",
-                                "parent_ticket_id": None,
+                                "role_type": "governance_architect",
+                                "role_profile_refs": ["architect_primary"],
+                                "request_summary": "Hire one architect before governance kickoff starts.",
+                                "employee_id_hint": "emp_architect_governance",
                             },
                         }
                     ],
@@ -2276,11 +2273,11 @@ def test_project_init_can_use_live_provider_for_first_scope_ticket(client, monke
     with repository.connection() as connection:
         created_spec = repository.get_latest_ticket_created_payload(connection, scope_ticket_id)
 
-    assert created_spec is not None
-    assert created_spec["ticket_id"] == scope_ticket_id
-    assert created_spec["node_id"] == PROJECT_INIT_SCOPE_NODE_ID
-    assert created_spec["execution_contract"]["execution_target_ref"] == "execution_target:scope_consensus"
-    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_frontend_2"
+    assert created_spec is None
+    hired_employee = repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
     assert board_directive_run["provider_response_id"] == "resp_ceo_project_init_1"
 
 
@@ -3279,6 +3276,56 @@ def test_ceo_shadow_run_raises_when_deterministic_project_init_kickoff_has_no_re
     assert runs[0]["deterministic_fallback_used"] is False
     assert runs[0]["accepted_actions"] == []
     assert runs[0]["executed_actions"] == []
+
+
+def test_ceo_shadow_run_hires_architect_before_project_init_governance_kickoff(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_project_init_architect_hire", "Project init architect hire")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["Keep governance explicit."],
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+        trigger_ref=f"project-init:{workflow_id}",
+    )
+
+    assert run["snapshot"]["controller_state"]["recommended_action"] == "HIRE_EMPLOYEE"
+    assert run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["payload"]["role_profile_refs"] == ["architect_primary"]
+
+    hired_employee = client.app.state.repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["state"] == "ACTIVE"
+    assert hired_employee["board_approved"] is True
+
+    followup_run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:post-project-init-hire",
+    )
+
+    assert followup_run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert followup_run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert followup_run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert followup_run["executed_actions"][0]["execution_status"] == "EXECUTED"
+
+    created_ticket_id = followup_run["executed_actions"][0]["payload"]["ticket_id"]
+    with client.app.state.repository.connection() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(connection, created_ticket_id)
+
+    assert created_spec["node_id"] == "node_ceo_architecture_brief"
+    assert created_spec["role_profile_ref"] == "architect_primary"
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert created_spec["dispatch_intent"]["assignee_employee_id"] == "emp_architect_governance"
 
 
 def test_ceo_shadow_run_raises_when_deterministic_required_governance_plan_is_incomplete(
@@ -5330,7 +5377,7 @@ def test_provider_action_batch_rejects_legacy_or_incomplete_create_ticket_payloa
     assert exc_info.value.reason_code == reason_code
 
 
-def test_ceo_shadow_live_provider_requests_strict_ceo_action_batch_schema(client, monkeypatch):
+def test_ceo_shadow_live_provider_requests_non_strict_ceo_action_batch_schema(client, monkeypatch):
     _set_live_provider(client)
     workflow_id = _project_init(client, "CEO strict schema request")
 
@@ -5338,7 +5385,7 @@ def test_ceo_shadow_live_provider_requests_strict_ceo_action_batch_schema(client
 
     def _fake_invoke(config, _rendered_payload):
         assert config.schema_name == "ceo_action_batch"
-        assert config.strict is True
+        assert config.strict is False
         assert isinstance(config.schema_body, dict)
         assert config.schema_body["type"] == "object"
         return OpenAICompatProviderResult(

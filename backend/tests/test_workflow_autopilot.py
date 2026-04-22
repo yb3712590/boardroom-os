@@ -131,6 +131,11 @@ def test_autopilot_project_init_auto_resolves_requirement_elicitation_and_restar
             """,
             (workflow_id, "%requirements-elicitation%"),
         ).fetchall()
+        approval_projection = (
+            repository.get_approval_by_id(connection, approval_row["approval_id"])
+            if approval_row is not None
+            else None
+        )
 
     assert response.status_code == 200
     assert scope_ticket is None
@@ -140,6 +145,8 @@ def test_autopilot_project_init_auto_resolves_requirement_elicitation_and_restar
     assert approval_row is not None
     assert approval_row["status"] == APPROVAL_STATUS_APPROVED
     assert approval_row["resolved_by"] == "ceo_delegate"
+    assert approval_projection is not None
+    assert approval_projection["payload"]["review_pack"]["subject"]["source_graph_node_id"] == "node_ceo_architecture_brief"
     assert all(item["approval_type"] != "REQUIREMENT_ELICITATION" for item in open_approvals)
     assert artifact_rows
 
@@ -168,6 +175,14 @@ def test_standard_workflow_still_waits_at_requirement_elicitation_review(client)
         and item["status"] == APPROVAL_STATUS_OPEN
         for item in open_approvals
     )
+    requirement_review = next(
+        item
+        for item in open_approvals
+        if item["workflow_id"] == workflow_id
+        and item["approval_type"] == "REQUIREMENT_ELICITATION"
+        and item["status"] == APPROVAL_STATUS_OPEN
+    )
+    assert requirement_review["payload"]["review_pack"]["subject"]["source_graph_node_id"] == "node_ceo_architecture_brief"
 
 
 def test_autopilot_auto_advance_resolves_generic_open_approval_via_ceo_delegate(client):

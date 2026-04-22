@@ -970,12 +970,13 @@ def run_configured_stage(
         workflow_id=seed.workflow_id,
     )
     runtime_paths = _build_runtime_paths(config, scenario_root)
-    seed_workflow_id = validate_seed_for_stage(
-        config,
+    seed_manifest = _validate_seed_file_requirements(
         stage,
-        seed,
         runtime_paths,
+        requires_prepared_state=seed.requires_prepared_state,
+        workflow_id=seed.workflow_id,
     )
+    seed_workflow_id = _resolve_seed_workflow_id(seed_manifest, seed.workflow_id)
 
     driver_builder = driver_factory or (lambda _runtime: AppScenarioDriver(_runtime, config))
     driver = driver_builder(runtime_paths)

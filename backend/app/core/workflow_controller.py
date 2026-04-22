@@ -474,13 +474,6 @@ def _build_governance_progression_ticket_plan(
         workflow_id=workflow_id,
         connection=connection,
     )
-    has_project_init_governance_node = PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID in known_node_ids
-    if (
-        not completed_ticket_ids_by_schema
-        and not has_project_init_governance_node
-        and not workflow_uses_ceo_board_delegate(workflow)
-    ):
-        return None
     next_schema_ref = resolve_next_governance_schema(completed_ticket_ids_by_schema)
     if next_schema_ref is None:
         return None
@@ -508,7 +501,7 @@ def _build_governance_progression_ticket_plan(
     if not completed_ticket_ids_by_schema and next_schema_ref == ARCHITECTURE_BRIEF_SCHEMA_REF:
         kickoff_spec = build_project_init_kickoff_spec(workflow)
         summary = str(kickoff_spec["summary"])
-        selection_reason = "Keep the first governance document on the current live frontend owner."
+        selection_reason = "Assign the first governance document to the active architect owner."
     return {
         "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
         "ticket_payload": _build_ceo_create_ticket_payload(
@@ -522,6 +515,32 @@ def _build_governance_progression_ticket_plan(
             summary=summary,
             parent_ticket_id=parent_ticket_id,
         ),
+    }
+
+
+def _required_governance_ticket_missing_assignee(ticket_plan: dict[str, Any] | None) -> bool:
+    ticket_payload = (ticket_plan or {}).get("ticket_payload") or {}
+    dispatch_intent = ticket_payload.get("dispatch_intent") or {}
+    return (
+        isinstance(ticket_payload, dict)
+        and not str(dispatch_intent.get("assignee_employee_id") or "").strip()
+    )
+
+
+def _recommended_hire_for_role_profile(role_profile_ref: str) -> dict[str, Any] | None:
+    normalized_role_profile_ref = str(role_profile_ref or "").strip()
+    role_type = _ROLE_TYPE_BY_ROLE_PROFILE.get(normalized_role_profile_ref)
+    if role_type is None:
+        return None
+    request_summary = (
+        "Hire an architect before governance kickoff continues."
+        if normalized_role_profile_ref == "architect_primary"
+        else f"Hire {normalized_role_profile_ref} before governance kickoff continues."
+    )
+    return {
+        "role_type": role_type,
+        "role_profile_refs": [normalized_role_profile_ref],
+        "request_summary": request_summary,
     }
 
 
@@ -966,22 +985,40 @@ def build_workflow_controller_view(
             "blocking_reason": "Ready tickets already exist on the current mainline.",
         }
     elif required_governance_ticket_plan is not None:
-        controller_state = {
-            "state": "GOVERNANCE_REQUIRED",
-            "recommended_action": (
-                "CREATE_TICKET"
-                if required_governance_ticket_plan.get("existing_ticket_id") is None
-                else "NO_ACTION"
-            ),
-            "blocking_reason": (
-                "The governance-first progression requires "
-                f"{required_governance_ticket_plan['ticket_payload']['output_schema_ref']} before implementation fanout."
-                if required_governance_ticket_plan.get("existing_ticket_id") is None
-                else (
-                    "The next governance ticket already exists and must finish or be recovered before the progression continues."
-                )
-            ),
-        }
+        missing_assignee = _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
+        required_role_profile_ref = str(
+            ((required_governance_ticket_plan.get("ticket_payload") or {}).get("role_profile_ref") or "")
+        ).strip()
+        if missing_assignee:
+            controller_state = {
+                "state": (
+                    "ARCHITECT_REQUIRED"
+                    if required_role_profile_ref == "architect_primary"
+                    else "STAFFING_REQUIRED"
+                ),
+                "recommended_action": "HIRE_EMPLOYEE",
+                "blocking_reason": (
+                    f"The governance-first progression requires {required_role_profile_ref} before "
+                    "the next governance ticket can be assigned."
+                ),
+            }
+        else:
+            controller_state = {
+                "state": "GOVERNANCE_REQUIRED",
+                "recommended_action": (
+                    "CREATE_TICKET"
+                    if required_governance_ticket_plan.get("existing_ticket_id") is None
+                    else "NO_ACTION"
+                ),
+                "blocking_reason": (
+                    "The governance-first progression requires "
+                    f"{required_governance_ticket_plan['ticket_payload']['output_schema_ref']} before implementation fanout."
+                    if required_governance_ticket_plan.get("existing_ticket_id") is None
+                    else (
+                        "The next governance ticket already exists and must finish or be recovered before the progression continues."
+                    )
+                ),
+            }
     elif followup_ticket_plans:
         active_architects = _active_board_approved_employees(employees, role_profile_ref="architect_primary")
         if requires_architect and not active_architects:
@@ -1105,7 +1142,18 @@ def build_workflow_controller_view(
             )
         )
     if controller_state["recommended_action"] == "HIRE_EMPLOYEE":
-        if controller_state["state"] == "ARCHITECT_REQUIRED":
+        if (
+            required_governance_ticket_plan is not None
+            and _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
+        ):
+            recommended_hire = _recommended_hire_for_role_profile(
+                str(
+                    ((required_governance_ticket_plan.get("ticket_payload") or {}).get("role_profile_ref") or "")
+                )
+            )
+            if recommended_hire is not None:
+                capability_plan["recommended_hire"] = recommended_hire
+        elif controller_state["state"] == "ARCHITECT_REQUIRED":
             capability_plan["recommended_hire"] = {
                 "role_type": "governance_architect",
                 "role_profile_refs": ["architect_primary"],

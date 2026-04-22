@@ -2443,6 +2443,7 @@ def handle_modify_constraints(
             )
             reopened_payload = build_requirement_elicitation_review_payload(
                 workflow_id=approval["workflow_id"],
+                source_graph_node_id=source_node_id,
                 occurred_at=received_at,
                 weak_signals=weak_signals,
                 board_brief_artifact_ref=f"art://project-init/{approval['workflow_id']}/board-brief.md",

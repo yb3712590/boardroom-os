@@ -25,31 +25,20 @@ AUTOPILOT_GOVERNANCE_CHAIN = "AUTOPILOT_GOVERNANCE_CHAIN"
 
 _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA: dict[str, tuple[str, ...]] = {
     ARCHITECTURE_BRIEF_SCHEMA_REF: (
-        "frontend_engineer_primary",
         "architect_primary",
-        "cto_primary",
-        "ui_designer_primary",
     ),
     TECHNOLOGY_DECISION_SCHEMA_REF: (
-        "frontend_engineer_primary",
         "architect_primary",
         "cto_primary",
-        "ui_designer_primary",
     ),
     MILESTONE_PLAN_SCHEMA_REF: (
-        "frontend_engineer_primary",
         "cto_primary",
-        "ui_designer_primary",
     ),
     DETAILED_DESIGN_SCHEMA_REF: (
-        "frontend_engineer_primary",
         "architect_primary",
-        "ui_designer_primary",
     ),
     BACKLOG_RECOMMENDATION_SCHEMA_REF: (
-        "frontend_engineer_primary",
         "cto_primary",
-        "ui_designer_primary",
     ),
 }
 
@@ -67,7 +56,7 @@ def build_project_init_kickoff_spec(workflow: dict[str, Any] | None) -> dict[str
     return {
         "adapter_id": adapter_id,
         "node_id": PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
-        "role_profile_ref": "frontend_engineer_primary",
+        "role_profile_ref": "architect_primary",
         "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
         "summary": build_autopilot_architecture_brief_summary(north_star_goal),
     }
@@ -116,25 +105,33 @@ def select_governance_role_and_assignee(
     *,
     output_schema_ref: str,
 ) -> tuple[str | None, str | None]:
-    for role_profile_ref in _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA.get(output_schema_ref, ()):
-        if not supports_ceo_create_ticket_preset(
-            role_profile_ref=role_profile_ref,
-            output_schema_ref=output_schema_ref,
+    role_priority = _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA.get(output_schema_ref, ())
+    if not role_priority:
+        return None, None
+
+    role_profile_ref = role_priority[0]
+    if not supports_ceo_create_ticket_preset(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    ):
+        return None, None
+
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    if execution_contract is None:
+        return None, None
+
+    for employee in sorted(employees, key=lambda item: str(item.get("employee_id") or "")):
+        if str(employee.get("state") or "") != "ACTIVE":
+            continue
+        if role_profile_ref not in set(employee.get("role_profile_refs") or []):
+            continue
+        if not employee_supports_execution_contract(
+            employee=employee,
+            execution_contract=execution_contract,
         ):
             continue
-        execution_contract = infer_execution_contract_payload(
-            role_profile_ref=role_profile_ref,
-            output_schema_ref=output_schema_ref,
-        )
-        if execution_contract is None:
-            continue
-        for employee in sorted(employees, key=lambda item: str(item.get("employee_id") or "")):
-            if str(employee.get("state") or "") != "ACTIVE":
-                continue
-            if not employee_supports_execution_contract(
-                employee=employee,
-                execution_contract=execution_contract,
-            ):
-                continue
-            return role_profile_ref, str(employee["employee_id"])
-    return None, None
+        return role_profile_ref, str(employee["employee_id"])
+    return role_profile_ref, None

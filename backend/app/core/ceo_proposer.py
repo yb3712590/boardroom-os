@@ -172,10 +172,12 @@ def _maybe_raise_mainline_deterministic_fallback_blocked(
 ) -> None:
     if not _is_mainline_deterministic_trigger(snapshot):
         return
+    trigger = snapshot.get("trigger") or {}
+    if str(trigger.get("trigger_type") or "").strip() == EVENT_BOARD_DIRECTIVE_RECEIVED:
+        return
     blocked_action_types = _mainline_deterministic_mutating_actions(action_batch)
     if not blocked_action_types:
         return
-    trigger = snapshot.get("trigger") or {}
     _raise_proposal_contract_error(
         source_component="mainline_deterministic_fallback",
         reason_code="mutating_fallback_blocked",
@@ -222,6 +224,8 @@ def _select_default_assignee(
     )
     for employee in employees:
         if str(employee.get("state") or "") != "ACTIVE":
+            continue
+        if role_profile_ref not in set(employee.get("role_profile_refs") or []):
             continue
         if not employee_supports_execution_contract(
             employee=employee,
@@ -1115,7 +1119,7 @@ def propose_ceo_action_batch(
                     reasoning_effort=current_selection.effective_reasoning_effort,
                     schema_name=CEO_ACTION_BATCH_SCHEMA_REF,
                     schema_body=schema_entry["body"](),
-                    strict=True,
+                    strict=False,
                 ),
                 rendered_payload,
             )

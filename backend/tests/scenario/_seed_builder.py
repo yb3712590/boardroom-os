@@ -12,9 +12,11 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.core.project_workspaces import (
     finalize_workspace_ticket_git_status,
+    resolve_project_checkout_path,
     merge_ticket_branch_into_main,
     update_git_closeout_status,
 )
+from app.core.ticket_context_archive import write_ticket_context_markdown
 from tests.scenario._config import ScenarioTestConfig, load_scenario_test_config
 from tests.scenario._runner import (
     AppScenarioDriver,
@@ -192,7 +194,7 @@ def _workspace_source_create_payload(
     parent_ticket_id: str | None,
     summary: str,
 ) -> dict[str, Any]:
-    return api_test_helpers._ticket_create_payload(
+    payload = api_test_helpers._ticket_create_payload(
         workflow_id=workflow_id,
         ticket_id=ticket_id,
         node_id=node_id,
@@ -210,6 +212,8 @@ def _workspace_source_create_payload(
         input_artifact_refs=["art://inputs/brief.md"],
         acceptance_criteria=[summary],
     )
+    payload["retry_budget"] = 0
+    return payload
 
 
 def _workspace_source_result_payload(
@@ -312,6 +316,93 @@ def _workspace_source_result_payload(
     }
 
 
+def _write_stage06_ticket_context_archive(
+    *,
+    archive_root: Path,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    summary: str,
+) -> None:
+    checkout_path = resolve_project_checkout_path(workflow_id, ticket_id)
+    write_ticket_context_markdown(
+        archive_root,
+        {
+            "meta": {
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "compile_request_id": f"stage06-build:{ticket_id}",
+                "version_ref": f"pkg://stage06/{ticket_id}",
+                "source_projection_version": "stage06-seed",
+                "governance_profile_ref": "stage06_parallel_git_fanout_merge",
+            },
+            "compiled_role": {
+                "role_profile_ref": "frontend_engineer_primary",
+            },
+            "execution": {
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": "source_code_delivery",
+                "allowed_write_set": [
+                    "10-project/src/*",
+                    "10-project/docs/*",
+                    "20-evidence/tests/*",
+                    "20-evidence/git/*",
+                ],
+                "project_checkout_path": str(checkout_path),
+                "git_branch_ref": f"codex/{ticket_id}",
+                "delivery_stage": "BUILD",
+            },
+            "governance_mode_slice": {
+                "governance_profile_ref": "stage06_parallel_git_fanout_merge",
+                "approval_mode": "AUTO_CEO",
+                "audit_mode": "MINIMAL",
+                "auto_approval_scope": ["scope:mainline_internal"],
+                "expert_review_targets": ["checker", "board"],
+            },
+            "task_frame": {
+                "task_category": "implementation",
+                "goal": summary,
+                "completion_definition": [summary],
+            },
+            "required_doc_surfaces": ["10-project/docs/tracking/active-tasks.md"],
+            "context_layer_summary": {},
+            "skill_binding": {
+                "binding_id": f"stage06-{ticket_id}",
+                "task_category": "implementation",
+                "resolved_skill_ids": ["workspace_source_delivery"],
+                "binding_reason": "Synthetic stage06 seed ticket context archive.",
+            },
+            "org_context": {
+                "responsibility_boundary": {
+                    "delivery_stage": "BUILD",
+                    "output_schema_ref": "source_code_delivery",
+                }
+            },
+            "atomic_context_bundle": {
+                "context_blocks": [],
+            },
+        },
+        compile_manifest={
+            "budget_plan": {"total_budget_tokens": 0},
+            "budget_actual": {"final_bundle_tokens": 0, "truncated_tokens": 0},
+            "degradation": {"warnings": [], "is_degraded": False},
+            "cache_report": {"cache_hit": False},
+            "source_log": [],
+        },
+        terminal_state={
+            "status": "FAILED",
+            "result_status": "failed",
+            "artifact_paths": [
+                f"10-project/src/{ticket_id}.ts",
+                f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json",
+                f"20-evidence/git/{ticket_id}/attempt-1/git-closeout.json",
+            ],
+            "stale_against_latest": False,
+        },
+    )
+
+
 def _handle_freeze_run(args: argparse.Namespace) -> int:
     config = load_scenario_test_config(args.config_path)
     _freeze_seed(
@@ -372,6 +463,15 @@ def _handle_build_stage06(args: argparse.Namespace) -> int:
             os.environ[key] = value
         try:
             with TestClient(create_app()) as client:
+                provider_response = client.post(
+                    "/api/v1/commands/runtime-provider-upsert",
+                    json=config.build_runtime_provider_payload(),
+                )
+                if provider_response.status_code != 200 or provider_response.json().get("status") != "ACCEPTED":
+                    raise RuntimeError(
+                        "runtime-provider-upsert failed while building stage06 seed: "
+                        f"{provider_response.text}"
+                    )
                 init_response = client.post(
                     "/api/v1/commands/project-init",
                     json=config.build_project_init_payload(),
@@ -400,7 +500,7 @@ def _handle_build_stage06(args: argparse.Namespace) -> int:
                     )
                     if create_response.status_code != 200 or create_response.json().get("status") != "ACCEPTED":
                         raise RuntimeError(f"ticket-create failed for {ticket_id}: {create_response.text}")
-                    client.post(
+                    lease_response = client.post(
                         "/api/v1/commands/ticket-lease",
                         json=api_test_helpers._ticket_lease_payload(
                             workflow_id=workflow_id,
@@ -409,7 +509,9 @@ def _handle_build_stage06(args: argparse.Namespace) -> int:
                             leased_by="emp_frontend_2",
                         ),
                     )
-                    client.post(
+                    if lease_response.status_code != 200 or lease_response.json().get("status") != "ACCEPTED":
+                        raise RuntimeError(f"ticket-lease failed for {ticket_id}: {lease_response.text}")
+                    start_response = client.post(
                         "/api/v1/commands/ticket-start",
                         json=api_test_helpers._ticket_start_payload(
                             workflow_id=workflow_id,
@@ -418,6 +520,8 @@ def _handle_build_stage06(args: argparse.Namespace) -> int:
                             started_by="emp_frontend_2",
                         ),
                     )
+                    if start_response.status_code != 200 or start_response.json().get("status") != "ACCEPTED":
+                        raise RuntimeError(f"ticket-start failed for {ticket_id}: {start_response.text}")
                     submit_response = client.post(
                         "/api/v1/commands/ticket-result-submit",
                         json=_workspace_source_result_payload(
@@ -450,6 +554,13 @@ def _handle_build_stage06(args: argparse.Namespace) -> int:
                             git_branch_ref=str(created_spec.get("git_branch_ref") or f"codex/{ticket_id}"),
                             merge_status="MERGED",
                         )
+                    _write_stage06_ticket_context_archive(
+                        archive_root=runtime_paths.ticket_context_archive_root,
+                        workflow_id=workflow_id,
+                        ticket_id=ticket_id,
+                        node_id=node_id,
+                        summary=summary,
+                    )
 
                 with repository.transaction() as connection:
                     connection.execute(

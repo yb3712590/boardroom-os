@@ -60,10 +60,10 @@ MAINLINE_WORKFLOW_STAGE_TRUTH: tuple[MainlineWorkflowStageTruth, ...] = (
         stage_id="project_init_to_governance_kickoff",
         label="Project init -> governance kickoff",
         truth_status="REAL",
-        actual_owner_roles=("frontend_engineer",),
-        actual_role_profiles=("frontend_engineer_primary",),
+        actual_owner_roles=("governance_architect",),
+        actual_role_profiles=("architect_primary",),
         output_schema_refs=(ARCHITECTURE_BRIEF_SCHEMA_REF,),
-        notes="project-init 现在会稳定创建 architecture_brief kickoff，并把 STANDARD 与 AUTOPILOT 一起推进到 governance-first 主线。",
+        notes="project-init 现在先按 architect_primary 的治理 kickoff 选人；缺人时先由 CEO 直雇注册，再进入治理文档主线。",
     ),
     MainlineWorkflowStageTruth(
         stage_id="build_internal_maker_checker",

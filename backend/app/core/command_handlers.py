@@ -231,6 +231,7 @@ def handle_project_init(
     if require_elicitation:
         approval_payload = build_requirement_elicitation_review_payload(
             workflow_id=workflow_id,
+            source_graph_node_id=kickoff_node_id,
             occurred_at=received_at,
             weak_signals=weak_signals,
             board_brief_artifact_ref=board_brief_artifact_ref,

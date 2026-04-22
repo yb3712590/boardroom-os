@@ -457,12 +457,7 @@ def test_validate_seed_for_stage_uses_manifest_workflow_id_for_stage06_snapshot_
     config_path = _write_runner_config(tmp_path, checkpoint_kind="parallel_git_fanout_merge")
     config = load_scenario_test_config(config_path)
     seed = replace(config.seeds["parallel_git_fanout_merge"], requires_prepared_state=True)
-    stage = config.stages["parallel_git_fanout_merge"].with_updates(
-        expected_stage="review",
-        required_node_ids=("books_query", "books_commands", "terminal_shell"),
-        required_schema_refs=(),
-        required_role_types=(),
-    )
+    stage = config.stages["parallel_git_fanout_merge"]
     seed_root = seed.path
     (seed_root / "runtime").mkdir(parents=True, exist_ok=True)
     (seed_root / "runtime" / "state.db").write_text("db", encoding="utf-8")
@@ -564,6 +559,192 @@ def test_validate_seed_for_stage_uses_manifest_workflow_id_for_stage06_snapshot_
     )
 
     assert workflow_id == "wf_stage06_seed"
+
+
+def test_run_configured_stage_defers_prepared_seed_snapshot_validation_until_driver_ready(
+    tmp_path: Path,
+) -> None:
+    from tests.scenario._config import load_scenario_test_config
+    from tests.scenario._runner import (
+        ScenarioCheckpointTicket,
+        ScenarioGraphNodeRecord,
+        ScenarioStageRunResult,
+        ScenarioWorkflowSnapshot,
+        run_configured_stage,
+    )
+
+    config_path = _write_runner_config(tmp_path, checkpoint_kind="parallel_git_fanout_merge")
+    config = load_scenario_test_config(config_path)
+    seed_root = config.seeds["parallel_git_fanout_merge"].path
+    stage = config.stages["parallel_git_fanout_merge"].with_updates(
+        expected_stage="review",
+        required_node_ids=("books_query", "books_commands", "terminal_shell"),
+        required_schema_refs=(),
+        required_role_types=(),
+    )
+    body = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        body.replace("requires_prepared_state = false", "requires_prepared_state = true", 1),
+        encoding="utf-8",
+    )
+    body = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        body.replace('expected_stage = "plan"', 'expected_stage = "closeout"', 1),
+        encoding="utf-8",
+    )
+    body = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        body.replace('required_schema_refs = ["architecture_brief"]', 'required_schema_refs = []', 1),
+        encoding="utf-8",
+    )
+    body = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        body.replace('required_role_types = ["governance_architect"]', "required_role_types = []", 1),
+        encoding="utf-8",
+    )
+    body = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        body.rstrip()
+        + '\nrequired_node_ids = ["books_query", "books_commands", "terminal_shell"]\n',
+        encoding="utf-8",
+    )
+    (seed_root / "runtime").mkdir(parents=True, exist_ok=True)
+    (seed_root / "runtime" / "state.db").write_text("db", encoding="utf-8")
+    (seed_root / "seed-manifest.json").write_text(
+        json.dumps(
+            {
+                "seed_id": "parallel_git_fanout_merge",
+                "workflow_id": "wf_stage06_seed",
+                "workflow_status": "EXECUTING",
+                "current_stage": "review",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (
+        seed_root
+        / "workspace"
+        / "wf_stage06_seed"
+        / "00-boardroom"
+        / "workflow"
+        / "workspace-manifest.json"
+    ).parent.mkdir(parents=True, exist_ok=True)
+    (
+        seed_root
+        / "workspace"
+        / "wf_stage06_seed"
+        / "00-boardroom"
+        / "workflow"
+        / "workspace-manifest.json"
+    ).write_text("{}", encoding="utf-8")
+    context_root = seed_root / "audit" / "records" / "nodes" / "ticket-context-archives"
+    for ticket_id in ("tkt_books_query", "tkt_books_commands", "tkt_terminal_shell"):
+        receipt_root = (
+            seed_root
+            / "workspace"
+            / "wf_stage06_seed"
+            / "00-boardroom"
+            / "tickets"
+            / ticket_id
+            / "hook-receipts"
+        )
+        receipt_root.mkdir(parents=True, exist_ok=True)
+        (receipt_root / "worktree-checkout.json").write_text("{}", encoding="utf-8")
+        (receipt_root / "git-closeout.json").write_text("{}", encoding="utf-8")
+        context_root.mkdir(parents=True, exist_ok=True)
+        (context_root / f"{ticket_id}.md").write_text("# context\n", encoding="utf-8")
+
+    class FakePreparedDriver:
+        def __init__(self) -> None:
+            self.snapshot_calls = 0
+
+        def upsert_runtime_provider(self, payload: dict[str, object]) -> None:
+            return None
+
+        def ensure_workflow(
+            self,
+            input_payload: dict[str, object],
+            *,
+            seed_workflow_id: str | None,
+            resume_enabled: bool,
+        ) -> str:
+            assert seed_workflow_id == "wf_stage06_seed"
+            return "wf_stage06_seed"
+
+        def tick(self, workflow_id: str, tick_index: int, *, max_dispatches: int) -> None:
+            return None
+
+        def auto_advance(self, workflow_id: str, tick_index: int) -> None:
+            return None
+
+        def snapshot(self, workflow_id: str) -> ScenarioWorkflowSnapshot:
+            self.snapshot_calls += 1
+            current_stage = "review" if self.snapshot_calls == 1 else "closeout"
+            return ScenarioWorkflowSnapshot(
+                workflow_id=workflow_id,
+                workflow_status="EXECUTING",
+                current_stage=current_stage,
+                workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+                tickets=[
+                    ScenarioCheckpointTicket(
+                        ticket_id="tkt_books_query",
+                        node_id="books_query",
+                        status="FAILED",
+                        output_schema_ref="source_code_delivery",
+                        git_branch_ref="codex/tkt_books_query",
+                        git_merge_status="MERGED",
+                        summary="books query delivery",
+                    ),
+                    ScenarioCheckpointTicket(
+                        ticket_id="tkt_books_commands",
+                        node_id="books_commands",
+                        status="FAILED",
+                        output_schema_ref="source_code_delivery",
+                        git_branch_ref="codex/tkt_books_commands",
+                        git_merge_status="MERGED",
+                        summary="books commands delivery",
+                    ),
+                    ScenarioCheckpointTicket(
+                        ticket_id="tkt_terminal_shell",
+                        node_id="terminal_shell",
+                        status="FAILED",
+                        output_schema_ref="source_code_delivery",
+                        git_branch_ref="codex/tkt_terminal_shell",
+                        git_merge_status="MERGED",
+                        summary="terminal shell delivery",
+                    ),
+                    ScenarioCheckpointTicket(
+                        ticket_id="tkt_closeout",
+                        node_id="node_closeout",
+                        status="COMPLETED",
+                        output_schema_ref="delivery_closeout_package",
+                        summary="closeout package",
+                    ),
+                ],
+                employees=[],
+                approvals=[],
+                open_incidents=[],
+                graph_nodes=[
+                    ScenarioGraphNodeRecord(graph_node_id="books_query", node_id="books_query"),
+                    ScenarioGraphNodeRecord(graph_node_id="books_commands", node_id="books_commands"),
+                    ScenarioGraphNodeRecord(graph_node_id="terminal_shell", node_id="terminal_shell"),
+                ],
+                graph_edges=[],
+            )
+
+        def close(self) -> None:
+            return None
+
+    result = run_configured_stage(
+        config_path,
+        stage.stage_id,
+        run_root=tmp_path / "runs",
+        driver_factory=lambda _runtime: FakePreparedDriver(),
+    )
+
+    assert isinstance(result, ScenarioStageRunResult)
+    assert result.success is True
+    assert result.workflow_id == "wf_stage06_seed"
 
 
 def test_app_scenario_driver_rejects_empty_provider_api_key_before_request(tmp_path: Path) -> None:

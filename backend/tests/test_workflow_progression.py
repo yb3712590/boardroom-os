@@ -8,6 +8,7 @@ from app.core.workflow_progression import (
     AUTOPILOT_GOVERNANCE_CHAIN,
     build_project_init_kickoff_spec,
     resolve_workflow_progression_adapter,
+    select_governance_role_and_assignee,
 )
 
 
@@ -31,7 +32,7 @@ def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_autopilot()
 
     assert kickoff["adapter_id"] == AUTOPILOT_GOVERNANCE_CHAIN
     assert kickoff["node_id"] == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-    assert kickoff["role_profile_ref"] == "frontend_engineer_primary"
+    assert kickoff["role_profile_ref"] == "architect_primary"
     assert kickoff["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
 
 
@@ -47,5 +48,22 @@ def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_standard() 
 
     assert kickoff["adapter_id"] == AUTOPILOT_GOVERNANCE_CHAIN
     assert kickoff["node_id"] == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-    assert kickoff["role_profile_ref"] == "frontend_engineer_primary"
+    assert kickoff["role_profile_ref"] == "architect_primary"
     assert kickoff["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+
+
+def test_select_governance_role_and_assignee_requires_architect_for_architecture_brief() -> None:
+    role_profile_ref, assignee_employee_id = select_governance_role_and_assignee(
+        [
+            {
+                "employee_id": "emp_frontend_2",
+                "state": "ACTIVE",
+                "role_type": "frontend_engineer",
+                "role_profile_refs": ["frontend_engineer_primary"],
+            }
+        ],
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    )
+
+    assert role_profile_ref == "architect_primary"
+    assert assignee_employee_id is None

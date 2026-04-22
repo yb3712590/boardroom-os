@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from pathlib import Path
 
 
@@ -152,3 +153,45 @@ def test_seed_builder_main_dispatches_build_stage06(monkeypatch, tmp_path: Path)
     assert exit_code == 0
     assert captured["config_path"] == config_path
     assert captured["seed_id"] == "stage_06_parallel_git_fanout_merge"
+
+
+def test_handle_build_stage06_materializes_seed(tmp_path: Path) -> None:
+    from tests.scenario import _seed_builder
+    from tests.scenario._seed_copy import load_seed_manifest
+
+    config_path = _write_builder_config(tmp_path)
+    seed_root = tmp_path / "seeds" / "stage_06_parallel_git_fanout_merge" / "scenario"
+
+    exit_code = _seed_builder._handle_build_stage06(
+        Namespace(
+            config_path=config_path,
+            seed_id="stage_06_parallel_git_fanout_merge",
+            skip_config_update=True,
+        )
+    )
+
+    assert exit_code == 0
+    manifest = load_seed_manifest(seed_root)
+    assert manifest["seed_id"] == "stage_06_parallel_git_fanout_merge"
+    assert manifest["current_stage"] == "review"
+    assert manifest["workflow_id"]
+    assert len(manifest["source_delivery_git"]) == 3
+    merged_source_tickets = {
+        (item["ticket_id"], item["node_id"], item["merge_status"])
+        for item in manifest["source_delivery_git"]
+        if item.get("branch_ref")
+    }
+    assert merged_source_tickets == {
+        ("tkt_books_query", "books_query", "MERGED"),
+        ("tkt_books_commands", "books_commands", "MERGED"),
+        ("tkt_terminal_shell", "terminal_shell", "MERGED"),
+    }
+    for ticket_id in ("tkt_books_query", "tkt_books_commands", "tkt_terminal_shell"):
+        assert (
+            seed_root
+            / "audit"
+            / "records"
+            / "nodes"
+            / "ticket-context-archives"
+            / f"{ticket_id}.md"
+        ).is_file()
