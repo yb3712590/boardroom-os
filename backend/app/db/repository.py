@@ -108,7 +108,6 @@ from app.core.reducer import (
 from app.core.time import now_local
 from app.db.schema import TABLE_SCHEMA_SQL
 
-DEFAULT_EMPLOYEE_ROSTER = build_default_employee_roster()
 RETRIEVAL_REVIEW_SUMMARY_FTS = "retrieval_review_summary_fts"
 RETRIEVAL_INCIDENT_SUMMARY_FTS = "retrieval_incident_summary_fts"
 RETRIEVAL_ARTIFACT_SUMMARY_FTS = "retrieval_artifact_summary_fts"
@@ -8370,7 +8369,7 @@ class ControlPlaneRepository:
                 )
         else:
             seeded_at = now_local()
-            for employee in DEFAULT_EMPLOYEE_ROSTER:
+            for employee in build_default_employee_roster():
                 bootstrap_employees.append(
                     {
                         "employee_id": employee["employee_id"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import random
 from copy import deepcopy
 from typing import Any, Iterable, Mapping
@@ -340,6 +341,7 @@ def get_hire_persona_template_id(role_type: str) -> str:
 def build_default_employee_roster() -> tuple[dict[str, Any], ...]:
     frontend = clone_persona_template(get_baseline_persona_template_id("frontend_engineer"))
     checker = clone_persona_template(get_baseline_persona_template_id("checker"))
+    provider_id = str(os.environ.get("BOARDROOM_OS_DEFAULT_EMPLOYEE_PROVIDER_ID") or "prov_openai_compat").strip()
     return (
         {
             "employee_id": "emp_frontend_2",
@@ -349,7 +351,7 @@ def build_default_employee_roster() -> tuple[dict[str, Any], ...]:
             "aesthetic_profile_json": frontend["aesthetic_profile"],
             "state": "ACTIVE",
             "board_approved": True,
-            "provider_id": "prov_openai_compat",
+            "provider_id": provider_id,
             "role_profile_refs_json": ["frontend_engineer_primary"],
         },
         {
@@ -360,7 +362,7 @@ def build_default_employee_roster() -> tuple[dict[str, Any], ...]:
             "aesthetic_profile_json": checker["aesthetic_profile"],
             "state": "ACTIVE",
             "board_approved": True,
-            "provider_id": "prov_openai_compat",
+            "provider_id": provider_id,
             "role_profile_refs_json": ["checker_primary"],
         },
     )

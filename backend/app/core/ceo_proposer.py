@@ -379,6 +379,14 @@ def _normalize_provider_action_batch_payload(raw_payload: dict[str, Any]) -> dic
                     "payload_type": type(action_payload).__name__,
                 },
             )
+        if action_type == CEOActionType.CREATE_TICKET:
+            dispatch_intent = action_payload.get("dispatch_intent")
+            if isinstance(dispatch_intent, dict):
+                assignee_employee_id = str(dispatch_intent.get("assignee_employee_id") or "").strip()
+                if assignee_employee_id and not str(dispatch_intent.get("selection_reason") or "").strip():
+                    dispatch_intent["selection_reason"] = (
+                        "Provider selected the current assignee for this ticket and omitted an explicit selection_reason."
+                    )
         normalized_actions.append(
             {
                 "action_type": action_type,

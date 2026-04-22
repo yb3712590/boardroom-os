@@ -39,29 +39,45 @@ def test_backlog_recommendation_fallback_payload_includes_structured_ticket_spli
         ["art://runtime/tkt_backlog_runtime_fallback/backlog_recommendation.json"],
     )
 
-    sections = payload["sections"]
-    structured_section = next(
-        section
-        for section in sections
-        if isinstance(section.get("content_json"), dict) and section["content_json"].get("tickets")
-    )
-    dependency_section = next(
-        section
-        for section in sections
-        if isinstance(section.get("content_json"), dict)
-        and (
-            section["content_json"].get("dependency_graph")
-            or section["content_json"].get("recommended_sequence")
-        )
-    )
+    handoff = payload["implementation_handoff"]
+    tickets = handoff["tickets"]
+    dependency_graph = handoff["dependency_graph"]
+    recommended_sequence = handoff["recommended_sequence"]
 
     assert payload["source_process_asset_refs"] == [
         "pa://governance-document/tkt_architecture",
         "pa://governance-document/tkt_detailed_design",
     ]
-    assert len(structured_section["content_json"]["tickets"]) >= 30
-    assert dependency_section["content_json"]["dependency_graph"]
-    assert dependency_section["content_json"]["recommended_sequence"]
+
+    assert len(tickets) == 6
+    assert [ticket["ticket_id"] for ticket in tickets] == [
+        "BR-T01",
+        "BR-T02",
+        "BR-T03",
+        "BR-T04",
+        "BR-T05",
+        "BR-T06",
+    ]
+    assert recommended_sequence == ["BR-T01", "BR-T02", "BR-T03", "BR-T04", "BR-T05", "BR-T06"]
+    assert dependency_graph
+
+    ticket_blob = " ".join(
+        " ".join(
+            [
+                str(ticket.get("name") or ""),
+                *(str(item) for item in list(ticket.get("scope") or [])),
+                str(ticket.get("summary") or ""),
+                str(ticket.get("target_role") or ""),
+            ]
+        )
+        for ticket in tickets
+    )
+    assert "books" in ticket_blob
+    assert "IN_LIBRARY" in ticket_blob
+    assert "CHECKED_OUT" in ticket_blob
+    assert "terminal" in ticket_blob.lower()
+    for banned_scope in ["RBAC", "预约", "罚金", "报表", "运维", "监控", "用户档案", "借阅历史"]:
+        assert banned_scope not in ticket_blob
 
 
 def test_source_code_delivery_runtime_payload_includes_source_files_and_verification_runs():

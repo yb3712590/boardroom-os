@@ -1,4 +1,5 @@
 from app.core.persona_profiles import (
+    build_default_employee_roster,
     build_seeded_persona_variant,
     build_high_overlap_rejection_reason,
     clone_persona_template,
@@ -128,3 +129,11 @@ def test_build_seeded_persona_variant_is_deterministic_and_diverges_from_base_te
     assert first["personality_profile"] != base_normalized["personality_profile"]
     assert first["aesthetic_profile"] != base_normalized["aesthetic_profile"]
     assert third["profile_summary"] != first["profile_summary"]
+
+
+def test_build_default_employee_roster_supports_provider_override(monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_DEFAULT_EMPLOYEE_PROVIDER_ID", "prov_openai_compat_truerealbill")
+
+    roster = build_default_employee_roster()
+
+    assert {employee["provider_id"] for employee in roster} == {"prov_openai_compat_truerealbill"}

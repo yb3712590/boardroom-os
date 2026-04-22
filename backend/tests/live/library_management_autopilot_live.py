@@ -21,17 +21,19 @@ from tests.live._autopilot_live_harness import (
 )
 
 DEFAULT_SCENARIO_SLUG = "library_management_autopilot_live"
-SCENARIO_GOAL = "全自动开发一个计算机系毕业设计-有精美设计的图书馆管理系统"
+SCENARIO_GOAL = "实现一个完全匿名、单机运行的极简图书流转终端，只回答馆里有什么书以及这本书现在能不能拿走。"
 REQUIRED_LIBRARY_CAPABILITIES = {
-    "reader_search": ["reader_search", "图书查询", "检索"],
-    "reader_reservation": ["reader_reservation", "预约"],
-    "reader_loan_history": ["reader_loan_history", "借阅记录", "借阅历史"],
-    "reader_profile": ["reader_profile", "个人中心", "读者档案"],
-    "admin_procurement": ["admin_procurement", "图书采购", "采购"],
-    "admin_cataloging": ["admin_cataloging", "编目"],
-    "admin_inventory": ["admin_inventory", "库存"],
-    "admin_user_management": ["admin_user_management", "用户管理"],
-    "admin_system_config": ["admin_system_config", "系统配置"],
+    "books": ["books", "books table", "books terminal", "book tracker"],
+    "title": ["title", "书名"],
+    "author": ["author", "作者"],
+    "IN_LIBRARY": ["in_library"],
+    "CHECKED_OUT": ["checked_out"],
+    "add": [" add ", "add book", "新增图书", "入库"],
+    "check out": ["check out", "checked out", "借出"],
+    "return": [" return ", "归还"],
+    "remove": ["remove", "下架", "删除图书"],
+    "terminal": ["terminal", "终端", "hacker-console"],
+    "console": ["console", "控制台", "单色文本", "monochrome"],
 }
 SCENARIO_CONSTRAINTS = [
     (
@@ -45,16 +47,31 @@ SCENARIO_CONSTRAINTS = [
         "成功口径看 graph runtime 是否收敛、功能模块是否命中、source delivery 证据是否完整。"
     ),
     (
-        "读者自助部分只需要实现：图书查询 reader_search、预约 reader_reservation、"
-        "借阅记录 reader_loan_history、个人中心 reader_profile。"
+        "核心目标固定为极简图书流转终端：匿名、单机、只回答“馆里有什么书”和“这本书现在能不能拿走”。"
     ),
     (
-        "后台管理部分只需要实现：图书采购 admin_procurement、编目 admin_cataloging、"
-        "库存 admin_inventory、用户管理 admin_user_management、系统配置 admin_system_config。"
+        "绝对禁止 Auth / RBAC、登录注册、权限分层；系统固定为单租户无头模式，不区分管理员和普通读者。"
     ),
     (
-        "不要扩展认证与 RBAC、罚金、公告、统计报表、审计日志、运维监控等旧大而全模块，"
-        "除非它们是用户管理、系统配置或交付 closeout 的最小支撑。"
+        "绝对禁止借阅时长、逾期、罚款、时间轴计算；借阅动作只表现为状态切换，不要求记录时间戳。"
+    ),
+    (
+        "绝对禁止分类表、标签表、馆藏位置表；所有书籍拍平在同一个维度，不做 taxonomy 扩展。"
+    ),
+    (
+        "绝对禁止用户借阅历史、借阅人台账和个人中心；只记录书被借走这个状态，不记录是谁借的。"
+    ),
+    (
+        "唯一数据模型只允许 books 一张表，字段固定为 id、title、author、status；status 只允许 IN_LIBRARY 和 CHECKED_OUT。"
+    ),
+    (
+        "核心状态机只允许 Add、Check Out、Return、Remove 四个动作；不要扩展预约、采购、编目、库存盘点、系统配置等旧模块。"
+    ),
+    (
+        "前端 UI 必须采用深色、单色文本、高信息密度的 terminal / console 风格；不要动画、阴影、圆角或传统后台卡片。"
+    ),
+    (
+        "交互只保留一个新增输入框和一个纯文本列表；列表负责展示 books、title、author、status，并支持借出、归还、下架切换。"
     ),
 ]
 
@@ -80,7 +97,7 @@ def _library_scope_corpus(common: dict[str, Any]) -> str:
 
 
 def _missing_library_capabilities(common: dict[str, Any]) -> list[str]:
-    corpus = _library_scope_corpus(common)
+    corpus = f" {_library_scope_corpus(common)} "
     return [
         capability
         for capability, terms in REQUIRED_LIBRARY_CAPABILITIES.items()

@@ -91,7 +91,15 @@ def test_library_scenario_scope_no_longer_uses_ticket_count_as_size_limit() -> N
     assert "不得少于 30" not in constraints
     assert "ticket 总数" not in constraints
     assert "不再以 raw ticket 数量作为项目规模限制" in constraints
-    for capability in [
+    assert "books" in constraints
+    assert "IN_LIBRARY" in constraints
+    assert "CHECKED_OUT" in constraints
+    assert "Check Out" in constraints
+    assert "Return" in constraints
+    assert "匿名" in constraints
+    assert "单机" in constraints
+    assert "终端" in constraints
+    for banned_scope in [
         "reader_search",
         "reader_reservation",
         "reader_loan_history",
@@ -102,15 +110,21 @@ def test_library_scenario_scope_no_longer_uses_ticket_count_as_size_limit() -> N
         "admin_user_management",
         "admin_system_config",
     ]:
-        assert capability in constraints
+        assert banned_scope not in constraints
+    assert "Auth" in constraints or "auth" in constraints
+    assert "RBAC" in constraints
+    assert "罚款" in constraints or "罚金" in constraints
+    assert "借阅历史" in constraints
+    assert "分类表" in constraints
+    assert "标签表" in constraints
 
 
 def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_floor() -> None:
     scope_corpus = " ".join(
         [
-            "reader_search reader_reservation reader_loan_history reader_profile",
-            "admin_procurement admin_cataloging admin_inventory",
-            "admin_user_management admin_system_config",
+            "books title author IN_LIBRARY CHECKED_OUT",
+            "add check out return remove",
+            "terminal console monochrome dense dark",
         ]
     )
     common = {
@@ -159,15 +173,17 @@ def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_fl
     result = _assert_library_outcome(None, object(), "wf_library", common)
 
     assert result["scope_capabilities"] == [
-        "reader_search",
-        "reader_reservation",
-        "reader_loan_history",
-        "reader_profile",
-        "admin_procurement",
-        "admin_cataloging",
-        "admin_inventory",
-        "admin_user_management",
-        "admin_system_config",
+        "books",
+        "title",
+        "author",
+        "IN_LIBRARY",
+        "CHECKED_OUT",
+        "add",
+        "check out",
+        "return",
+        "remove",
+        "terminal",
+        "console",
     ]
 
 
@@ -1039,6 +1055,7 @@ def test_default_integration_test_provider_template_exists_and_uses_single_live_
     } == {
         ("prov_openai_compat_truerealbill::gpt-5.4",)
     }
+    assert payload["providers"][0]["fallback_provider_ids"] == []
 
 
 def test_load_integration_test_provider_payload_reads_template_and_sets_idempotency_key(tmp_path: Path) -> None:

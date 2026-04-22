@@ -5251,6 +5251,45 @@ def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):
     assert run["deterministic_fallback_used"] is False
 
 
+def test_provider_action_batch_backfills_missing_dispatch_selection_reason():
+    from app.core import ceo_proposer
+
+    payload = ceo_proposer._normalize_provider_action_batch_payload(
+        {
+            "summary": "Create the next governance ticket.",
+            "actions": [
+                {
+                    "action_type": "CREATE_TICKET",
+                    "payload": {
+                        "workflow_id": "wf_demo",
+                        "node_id": "node_ceo_architecture_brief",
+                        "role_profile_ref": "architect_primary",
+                        "output_schema_ref": "architecture_brief",
+                        "execution_contract": {
+                            "contract_kind": "GOVERNANCE_DOCUMENT",
+                            "role_profile_ref": "architect_primary",
+                            "output_schema_ref": "architecture_brief",
+                        },
+                        "dispatch_intent": {
+                            "assignee_employee_id": "emp_architect_governance",
+                            "dependency_gate_refs": ["tkt_seed_parent"],
+                        },
+                        "summary": "Create architecture brief ticket.",
+                        "parent_ticket_id": None,
+                    },
+                }
+            ],
+        }
+    )
+
+    dispatch_intent = payload["actions"][0]["payload"]["dispatch_intent"]
+    assert dispatch_intent["assignee_employee_id"] == "emp_architect_governance"
+    assert dispatch_intent["dependency_gate_refs"] == ["tkt_seed_parent"]
+    assert dispatch_intent["selection_reason"] == (
+        "Provider selected the current assignee for this ticket and omitted an explicit selection_reason."
+    )
+
+
 def test_ceo_shadow_run_raises_execution_failure_without_hidden_fallback(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _project_init(client, "CEO failed retry execution")

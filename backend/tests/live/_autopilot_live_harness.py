@@ -117,6 +117,7 @@ def scenario_environment(
     *,
     base_url: str,
     api_key: str,
+    provider_id: str | None,
     seed: int,
 ) -> Any:
     overrides = {
@@ -134,6 +135,7 @@ def scenario_environment(
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_REASONING_EFFORT": "high",
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC": str(DEFAULT_LIVE_PROVIDER_TIMEOUT_SEC),
         "BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED": str(seed),
+        "BOARDROOM_OS_DEFAULT_EMPLOYEE_PROVIDER_ID": str(provider_id or "prov_openai_compat").strip(),
     }
     previous = {key: os.environ.get(key) for key in overrides}
     try:
@@ -1591,7 +1593,13 @@ def run_live_scenario(
     reset_scenario_root(paths, clean=clean)
 
     started_at = time.monotonic()
-    with scenario_environment(paths, base_url=base_url, api_key=api_key, seed=seed):
+    with scenario_environment(
+        paths,
+        base_url=base_url,
+        api_key=api_key,
+        provider_id=str(first_provider.get("provider_id") or "").strip() or None,
+        seed=seed,
+    ):
         with TestClient(create_app()) as client:
             runtime_response = client.post(
                 "/api/v1/commands/runtime-provider-upsert",
