@@ -96,7 +96,7 @@
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
 - `project-init` 现在新增初始化澄清分支：当董事会显式传入 `force_requirement_elicitation=true`，或初始化输入同时命中保守阈值下的明显弱信号时，系统会先打开一次 workflow 级 `REQUIREMENT_ELICITATION` 板审；董事会在现有 Review Room 中提交结构化答卷后，`APPROVE` 才会继续创建首个 scope kickoff 票，`MODIFY_CONSTRAINTS` 会重新打开一版澄清板审
-- live runner 现在已抽成共享 harness；当前保留 3 条 full live 入口：`library_management_autopilot_live`、`requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`
+- live runner 现在已抽成共享 harness；当前 full live 入口收口为：配置驱动的 `run_configured --config data/live-tests/library_management_autopilot_live.toml`，以及固定场景 `requirement_elicitation_autopilot_live`、`architecture_governance_autopilot_live`
 - 上述 harness 现在还额外补了一条 `architecture_governance_autopilot_smoke` checkpoint smoke：只验证“CEO 招聘架构师 -> 技术决策会议 -> 架构治理文档批准”这段真实 provider 链，不等待 `source_code_delivery`
 - `run_report.json` 现在会显式区分 `completion_mode=full / checkpoint_smoke`；checkpoint smoke 不会再被误写成整条 workflow 已完成
 - 但这台机器上刚补跑真实 smoke 时，provider 仍反复命中 `UPSTREAM_UNAVAILABLE / timed out`，当前还没落出成功的 checkpoint `run_report.json`

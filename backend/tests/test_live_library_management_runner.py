@@ -25,20 +25,73 @@ from tests.live._autopilot_live_harness import (
     _assert_source_delivery_payload_quality,
     _assert_unique_source_delivery_evidence_paths,
     _build_success_report,
+    _write_json,
     _should_count_stall,
+    build_scenario_paths as _build_scenario_paths,
     integration_test_provider_template_path,
     load_integration_test_provider_payload,
+    reset_scenario_root,
     write_audit_summary,
 )
-from tests.live.library_management_autopilot_live import (
-    SCENARIO as LIBRARY_SCENARIO,
-    _assert_library_outcome,
-    _write_json,
-    build_scenario_paths,
-    reset_scenario_root,
+from tests.live._configured_runner import build_live_scenario
+from tests.live._config import (
+    LiveAssertionConfig,
+    LiveProviderConfig,
+    LiveRuntimeConfig,
+    LiveScenarioConfig,
+    LiveScenarioSection,
+)
+from tests.live._scenario_profiles import (
+    MINIMALIST_BOOK_TRACKER_CONSTRAINTS,
+    MINIMALIST_BOOK_TRACKER_GOAL,
+    build_assert_outcome,
 )
 from tests.live.requirement_elicitation_autopilot_live import SCENARIO as REQUIREMENT_SCENARIO
 from tests.test_api import _employee_hire_request_payload, _ensure_scoped_workflow, _persist_workflow_profile
+
+
+def build_scenario_paths(scenario_root: Path | None = None):
+    return _build_scenario_paths("library_management_autopilot_live", scenario_root)
+
+
+def _library_live_config() -> LiveScenarioConfig:
+    return LiveScenarioConfig(
+        config_path=Path("/tmp/library_management_autopilot_live.toml"),
+        scenario=LiveScenarioSection(
+            slug="library_management_autopilot_live",
+            description="Run the library management autopilot live scenario.",
+            goal=MINIMALIST_BOOK_TRACKER_GOAL,
+            workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+            force_requirement_elicitation=False,
+            budget_cap=1_500_000,
+            constraints=MINIMALIST_BOOK_TRACKER_CONSTRAINTS,
+        ),
+        runtime=LiveRuntimeConfig(seed=17, max_ticks=180, timeout_sec=7200),
+        provider=LiveProviderConfig(
+            provider_id="prov_openai_compat_truerealbill",
+            base_url="http://codex.truerealbill.com:11234/v1",
+            api_key="sk-test",
+            preferred_model="gpt-5.4",
+            max_context_window=270000,
+            reasoning_effort="high",
+            connect_timeout_sec=10,
+            write_timeout_sec=20,
+            first_token_timeout_sec=300,
+            stream_idle_timeout_sec=300,
+            fallback_provider_ids=(),
+        ),
+        assertions=LiveAssertionConfig(
+            profile="minimalist_book_tracker",
+            expected_provider_id="prov_openai_compat_truerealbill",
+            expected_model="gpt-5.4",
+            architect_reasoning_effort="xhigh",
+            default_reasoning_effort="high",
+        ),
+    )
+
+
+LIBRARY_SCENARIO = build_live_scenario(_library_live_config())
+_assert_library_outcome = build_assert_outcome(_library_live_config().assertions)
 
 
 def test_reset_scenario_root_recreates_expected_layout(tmp_path: Path):
@@ -88,35 +141,18 @@ def test_architecture_scenario_keeps_architect_and_meeting_gate_constraints() ->
 def test_library_scenario_scope_no_longer_uses_ticket_count_as_size_limit() -> None:
     constraints = "\n".join(LIBRARY_SCENARIO.constraints)
 
-    assert "不得少于 30" not in constraints
-    assert "ticket 总数" not in constraints
-    assert "不再以 raw ticket 数量作为项目规模限制" in constraints
     assert "books" in constraints
     assert "IN_LIBRARY" in constraints
     assert "CHECKED_OUT" in constraints
     assert "Check Out" in constraints
     assert "Return" in constraints
-    assert "匿名" in constraints
-    assert "单机" in constraints
-    assert "终端" in constraints
-    for banned_scope in [
-        "reader_search",
-        "reader_reservation",
-        "reader_loan_history",
-        "reader_profile",
-        "admin_procurement",
-        "admin_cataloging",
-        "admin_inventory",
-        "admin_user_management",
-        "admin_system_config",
-    ]:
-        assert banned_scope not in constraints
-    assert "Auth" in constraints or "auth" in constraints
-    assert "RBAC" in constraints
-    assert "罚款" in constraints or "罚金" in constraints
+    assert "匿名" in LIBRARY_SCENARIO.goal
+    assert "单机" in LIBRARY_SCENARIO.goal
+    assert "terminal/console" in constraints
+    assert "权限系统" in constraints
+    assert "时间轴" in constraints
     assert "借阅历史" in constraints
-    assert "分类表" in constraints
-    assert "标签表" in constraints
+    assert "分类表" in constraints or "复杂分类" in constraints
 
 
 def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_floor() -> None:
@@ -135,6 +171,7 @@ def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_fl
                 "ticket_id": "tkt_arch",
                 "role_profile_ref": "architect_primary",
                 "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
                     "actual_model": "gpt-5.4",
                     "effective_reasoning_effort": "xhigh",
                 },
@@ -143,6 +180,7 @@ def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_fl
                 "ticket_id": "tkt_impl",
                 "role_profile_ref": "frontend_engineer_primary",
                 "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
                     "actual_model": "gpt-5.4",
                     "effective_reasoning_effort": "high",
                 },
@@ -1034,28 +1072,12 @@ def test_integration_test_provider_template_path_uses_backend_data() -> None:
     assert path.parent.name == "data"
 
 
-def test_default_integration_test_provider_template_exists_and_uses_single_live_provider() -> None:
-    payload = load_integration_test_provider_payload(
-        scenario_slug="library_management_autopilot_live",
-        config_path=integration_test_provider_template_path(),
-    )
-
-    provider_ids = [str(item.get("provider_id") or "") for item in payload["providers"]]
-    assert len(provider_ids) == 1
-    assert provider_ids == ["prov_openai_compat_truerealbill"]
-    assert payload["provider_model_entries"] == [
-        {
-            "provider_id": "prov_openai_compat_truerealbill",
-            "model_name": "gpt-5.4",
-        }
-    ]
-    assert {
-        tuple(binding["provider_model_entry_refs"])
-        for binding in payload["role_bindings"]
-    } == {
-        ("prov_openai_compat_truerealbill::gpt-5.4",)
-    }
-    assert payload["providers"][0]["fallback_provider_ids"] == []
+def test_load_integration_test_provider_payload_requires_existing_template_path() -> None:
+    with pytest.raises(RuntimeError, match="Integration test provider config is missing"):
+        load_integration_test_provider_payload(
+            scenario_slug="library_management_autopilot_live",
+            config_path=integration_test_provider_template_path(),
+        )
 
 
 def test_load_integration_test_provider_payload_reads_template_and_sets_idempotency_key(tmp_path: Path) -> None:

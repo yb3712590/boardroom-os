@@ -17,7 +17,7 @@
 - **Context Compiler**：`TEXT / MARKDOWN / JSON` 内联、超预算降级、媒体/二进制引用、跨 workflow 历史摘要、`json_messages_v1` 渲染、`OpenAI Compat` 最小真实调用路径
 - **完整主链**：`project-init -> scope review -> BUILD -> CHECK -> REVIEW -> closeout` 已端到端打通
 - **CEO 最小接管闭环**：动作契约、快照、提示词、提议器、校验器、执行器、影子审计日志和只读 projection 已落地；当前可真实执行 `CREATE_TICKET / RETRY_TICKET / HIRE_EMPLOYEE`
-- **Live 长测入口**：后端现已补一条独立真实 LLM 场景 runner：`python -m tests.live.library_management_autopilot_live`；它会把 DB、provider 配置、artifact、developer inspector、失败快照和每票 markdown 上下文留档统一收进 `backend/data/scenarios/library_management_autopilot_live/`
+- **Live 长测入口**：后端现已把图书馆场景收口到配置驱动 runner：`python -m tests.live.run_configured --config data/live-tests/library_management_autopilot_live.toml`；它会把 DB、provider 配置、artifact、developer inspector、失败快照和每票 markdown 上下文留档统一收进 `backend/data/scenarios/library_management_autopilot_live/`
 - **Runtime 审阅留痕**：runtime 在持久化 compile 产物后，除了原有 `developer_inspector` JSON，还能额外写每票一份 markdown 上下文审阅档；provider assumptions 也会记录 `effective_reasoning_effort`
 - **Seeded staffing variants**：CEO 招聘在配置 `BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED` 后，会基于现有人格模板生成可复现但不完全同质的画像变体，降低同岗扩招时撞上高重合拒绝的概率
 - **React Boardroom UI**：`dashboard / inbox / review room / meeting room / incident detail / workforce / events / workflow river / board gate / project-init form / dependency inspector / runtime provider settings / completion card`
@@ -72,7 +72,7 @@
 
 ### P2-B：真实图书馆管理系统长测入口
 
-- 后端新增 `tests.live.library_management_autopilot_live` 独立 runner，不进入默认 `pytest`
+- 后端新增 `tests.live.run_configured` 配置驱动 live runner，图书馆场景通过 `data/live-tests/library_management_autopilot_live.toml` 启动，不进入默认 `pytest`
 - 这条场景固定走 `CEO_AUTOPILOT_FINE_GRAINED`，目标是把“图书馆管理系统毕业设计”一路推进到 closeout
 - runner 会先用 `runtime-provider-upsert` 把 live provider 绑定到 `gpt-5.4`，并固定 `architect_primary -> xhigh`、其他 live 角色 -> `high`
 - 场景结束时会断言：workflow 完成、closeout 产物存在、workflow chain report 存在、ticket 总数至少 30、架构师真实参与且招聘成功、每个 runtime ticket 都有 markdown 上下文审阅档

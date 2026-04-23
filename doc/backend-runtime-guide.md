@@ -82,14 +82,16 @@ python -m app.scheduler_runner
 ```bash
 cd backend
 source .venv/bin/activate
-export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL="https://<your-openai-compatible-base-url>/v1"
-export BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY="<your-api-key>"
-python -m tests.live.library_management_autopilot_live
+python -m tests.live.run_configured \
+  --config data/live-tests/library_management_autopilot_live.toml \
+  --clean \
+  --max-ticks 180 \
+  --timeout-sec 7200
 ```
 
 当前主线 full live 入口有 3 条：
 
-- `python -m tests.live.library_management_autopilot_live`
+- `python -m tests.live.run_configured --config data/live-tests/library_management_autopilot_live.toml`
 - `python -m tests.live.requirement_elicitation_autopilot_live`
 - `python -m tests.live.architecture_governance_autopilot_live`
 
@@ -161,7 +163,7 @@ py -m pytest tests/test_ceo_scheduler.py -q --basetemp D:\Projects\boardroom-os\
 
 ```bash
 cd backend
-python -m tests.live.library_management_autopilot_live
+python -m tests.live.run_configured --config data/live-tests/library_management_autopilot_live.toml
 python -m tests.live.requirement_elicitation_autopilot_live
 python -m tests.live.architecture_governance_autopilot_live
 python -m tests.live.architecture_governance_autopilot_smoke
@@ -242,7 +244,7 @@ live 集成场景会把这些路径整体重定向到各自场景目录：
 
 当前 live runner 已收成共享 harness，3 条 full 入口和 1 条 checkpoint smoke 共用同一套 provider 配置与目录骨架：
 
-- `tests.live.library_management_autopilot_live`
+- `tests.live.run_configured --config data/live-tests/library_management_autopilot_live.toml`
 - `tests.live.requirement_elicitation_autopilot_live`
 - `tests.live.architecture_governance_autopilot_live`
 - `tests.live.architecture_governance_autopilot_smoke`

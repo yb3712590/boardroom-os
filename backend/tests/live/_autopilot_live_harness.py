@@ -1576,8 +1576,29 @@ def run_live_scenario(
     seed: int = DEFAULT_SCENARIO_SEED,
     scenario_root: Path | None = None,
 ) -> dict[str, Any]:
-    paths = build_scenario_paths(scenario.slug, scenario_root)
     provider_payload = load_integration_test_provider_payload(scenario_slug=scenario.slug)
+    return run_live_scenario_with_provider_payload(
+        scenario,
+        provider_payload,
+        clean=clean,
+        max_ticks=max_ticks,
+        timeout_sec=timeout_sec,
+        seed=seed,
+        scenario_root=scenario_root,
+    )
+
+
+def run_live_scenario_with_provider_payload(
+    scenario: LiveScenarioDefinition,
+    provider_payload: dict[str, Any],
+    *,
+    clean: bool = True,
+    max_ticks: int = DEFAULT_MAX_TICKS,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    seed: int = DEFAULT_SCENARIO_SEED,
+    scenario_root: Path | None = None,
+) -> dict[str, Any]:
+    paths = build_scenario_paths(scenario.slug, scenario_root)
     first_provider = next(
         (
             item
