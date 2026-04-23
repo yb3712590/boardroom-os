@@ -24,7 +24,9 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderUnavailableError,
     invoke_openai_compat_response,
     list_openai_compat_models,
+    load_openai_compat_result_payload,
     probe_openai_compat_connectivity,
+    resolve_openai_compat_result_payload,
 )
 
 
@@ -121,7 +123,7 @@ def _config() -> OpenAICompatProviderConfig:
     )
 
 
-def test_invoke_openai_compat_response_uses_official_sdk_create_stream_with_strict_json_schema() -> None:
+def test_invoke_openai_compat_response_uses_streaming_text_request_without_provider_json_schema() -> None:
     client: _FakeOpenAIClient | None = None
 
     def _create_factory(**kwargs):
@@ -153,18 +155,7 @@ def test_invoke_openai_compat_response_uses_official_sdk_create_stream_with_stri
     assert client is not None
     request = client.responses.create_calls[0]
     assert request["model"] == "gpt-5.3-codex"
-    assert request["text"] == {
-        "format": {
-            "type": "json_schema",
-            "name": "ui_milestone_review_v1",
-            "schema": {
-                "type": "object",
-                "required": ["summary"],
-                "properties": {"summary": {"type": "string"}},
-            },
-            "strict": True,
-        }
-    }
+    assert "text" not in request
     assert request["stream"] is True
 
 
@@ -290,11 +281,11 @@ def test_invoke_openai_compat_response_deduplicates_duplicate_json_objects_from_
     assert result.output_payloads == (
         {"summary": "same"},
     )
-    assert result.duplicate_json_object_count == 1
+    assert result.duplicate_json_object_count == 0
     assert result.selected_payload_index == 0
 
 
-def test_invoke_openai_compat_response_marks_malformed_json_sequence_as_retryable() -> None:
+def test_load_openai_compat_result_payload_marks_malformed_json_sequence_as_retryable() -> None:
     def _create_factory(**kwargs):
         return _FakeResponseStream(
             events=[
@@ -308,15 +299,70 @@ def test_invoke_openai_compat_response_marks_malformed_json_sequence_as_retryabl
             ],
         )
 
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+    )
+
     with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
-        invoke_openai_compat_response(
-            _config(),
-            _rendered_payload(),
-            client_factory=lambda config: _FakeOpenAIClient(_create_factory),
-        )
+        load_openai_compat_result_payload(result)
 
     assert exc_info.value.failure_kind == "PROVIDER_MALFORMED_JSON"
     assert exc_info.value.failure_detail["provider_response_id"] == "resp_malformed_json_sequence"
+
+
+def test_load_openai_compat_result_payload_extracts_json_from_rich_text() -> None:
+    def _create_factory(**kwargs):
+        return _FakeResponseStream(
+            events=[
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(
+                        id="resp_rich_text_json",
+                        output_text='Here is the result:\n```json\n{"summary":"rich text ok"}\n```',
+                    ),
+                ),
+            ],
+        )
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+    )
+
+    assert load_openai_compat_result_payload(result) == {"summary": "rich text ok"}
+    assert result.repair_steps == ("extract_json_object_fragment",)
+
+
+def test_resolve_openai_compat_result_payload_raises_schema_validation_failed_when_candidates_do_not_match() -> None:
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        client_factory=lambda config: _FakeOpenAIClient(
+            lambda **kwargs: _FakeResponseStream(
+                events=[
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(
+                            id="resp_schema_validation_failed",
+                            output_text='{"summary":"ok"}{"wrong":true}',
+                        ),
+                    )
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
+        resolve_openai_compat_result_payload(
+            result,
+            payload_resolver=lambda payload: (_ for _ in ()).throw(ValueError(f"bad candidate: {sorted(payload.keys())}")),
+        )
+
+    assert exc_info.value.failure_kind == "SCHEMA_VALIDATION_FAILED"
+    assert exc_info.value.failure_detail["json_candidate_count"] == 2
 
 
 def test_invoke_openai_compat_response_includes_reasoning_effort_when_configured() -> None:

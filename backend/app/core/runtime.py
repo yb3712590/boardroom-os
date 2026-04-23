@@ -55,11 +55,12 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
     OpenAICompatProviderConfig,
+    OpenAICompatResolvedPayload,
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderUnavailableError,
+    append_openai_compat_retry_feedback,
     invoke_openai_compat_response,
-    iter_openai_compat_result_json_objects,
-    load_openai_compat_result_payload,
+    resolve_openai_compat_result_payload,
 )
 from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.runtime_provider_config import (
@@ -162,6 +163,8 @@ PROVIDER_RETRYABLE_FAILURE_KINDS = {
     "STREAM_IDLE_TIMEOUT",
     "REQUEST_TOTAL_TIMEOUT",
     "PROVIDER_MALFORMED_JSON",
+    "NO_JSON_OBJECT",
+    "SCHEMA_VALIDATION_FAILED",
 }
 PROVIDER_FAILOVER_FAILURE_KINDS = set(PROVIDER_RETRYABLE_FAILURE_KINDS)
 PROVIDER_AUTO_PAUSE_FAILURE_KINDS: set[str] = set()
@@ -1614,27 +1617,10 @@ def _normalize_provider_payload_for_execution(
 def _resolve_provider_result_payload(
     execution_package: CompiledExecutionPackage,
     provider_result: OpenAICompatProviderResult,
-) -> dict[str, Any]:
-    candidate_payloads = [
-        dict(item)
-        for item in list(iter_openai_compat_result_json_objects(provider_result))
-        if isinstance(item, dict)
-    ]
-
-    seen_serialized: set[str] = set()
-    for candidate in candidate_payloads:
-        serialized = json.dumps(candidate, ensure_ascii=False, sort_keys=True)
-        if serialized in seen_serialized:
-            continue
-        seen_serialized.add(serialized)
-        try:
-            return _normalize_provider_payload_for_execution(execution_package, candidate)
-        except ValueError:
-            continue
-
-    return _normalize_provider_payload_for_execution(
-        execution_package,
-        load_openai_compat_result_payload(provider_result),
+) -> OpenAICompatResolvedPayload:
+    return resolve_openai_compat_result_payload(
+        provider_result,
+        payload_resolver=lambda payload: _normalize_provider_payload_for_execution(execution_package, payload),
     )
 
 
@@ -2025,12 +2011,23 @@ def _execute_openai_compat_provider(
             )
 
         try:
+            rendered_payload = (
+                execution_package.rendered_execution_payload
+                if attempt_no == 1
+                else append_openai_compat_retry_feedback(
+                    execution_package.rendered_execution_payload,
+                    attempt_no=attempt_no,
+                    failure_kind=last_failure_kind,
+                    failure_message=last_failure_message,
+                )
+            )
             provider_result = _invoke_openai_compat_with_optional_observer(
                 config,
-                execution_package.rendered_execution_payload,
+                rendered_payload,
                 audit_observer=_audit_observer,
             )
-            result_payload = _resolve_provider_result_payload(execution_package, provider_result)
+            resolved_payload = _resolve_provider_result_payload(execution_package, provider_result)
+            result_payload = resolved_payload.payload
             if execution_package.execution.output_schema_ref == "maker_checker_verdict":
                 artifact_refs: list[str] = []
                 written_artifacts: list[dict[str, Any]] = []
@@ -2078,7 +2075,12 @@ def _execute_openai_compat_provider(
                     "request_id": getattr(provider_result, "request_id", None),
                     "json_object_count": len(getattr(provider_result, "json_objects", ()) or ()),
                     "duplicate_json_object_count": getattr(provider_result, "duplicate_json_object_count", 0),
-                    "selected_payload_index": getattr(provider_result, "selected_payload_index", None),
+                    "selected_payload_index": resolved_payload.selected_candidate_index,
+                    "ambiguous_candidate_count": resolved_payload.ambiguous_candidate_count,
+                    "repair_steps": list(resolved_payload.repair_steps),
+                    "raw_text_length": getattr(provider_result, "raw_text_length", 0),
+                    "first_token_elapsed_sec": getattr(provider_result, "first_token_elapsed_sec", None),
+                    "last_token_elapsed_sec": getattr(provider_result, "last_token_elapsed_sec", None),
                     "finish_state": getattr(provider_result, "finish_state", "COMPLETED"),
                 },
             )

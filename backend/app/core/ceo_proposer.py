@@ -36,7 +36,7 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
     invoke_openai_compat_response,
-    load_openai_compat_result_payload,
+    resolve_openai_compat_result_payload,
 )
 from app.core.provider_claude_code import ClaudeCodeProviderConfig, ClaudeCodeProviderError, invoke_claude_code_response
 from app.core.output_schemas import (
@@ -1109,8 +1109,8 @@ def propose_ceo_action_batch(
     def _invoke_selection(current_selection):
         rendered_payload = build_ceo_shadow_rendered_payload(snapshot)
         schema_entry = OUTPUT_SCHEMA_REGISTRY[(CEO_ACTION_BATCH_SCHEMA_REF, CEO_ACTION_BATCH_SCHEMA_VERSION)]
-        provider_result = (
-            invoke_openai_compat_response(
+        if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+            provider_result = invoke_openai_compat_response(
                 OpenAICompatProviderConfig(
                     base_url=str(current_selection.provider.base_url or ""),
                     api_key=str(current_selection.provider.api_key or ""),
@@ -1123,8 +1123,12 @@ def propose_ceo_action_batch(
                 ),
                 rendered_payload,
             )
-            if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
-            else invoke_claude_code_response(
+            raw_payload = resolve_openai_compat_result_payload(
+                provider_result,
+                payload_resolver=_normalize_provider_action_batch_payload,
+            ).payload
+        else:
+            provider_result = invoke_claude_code_response(
                 ClaudeCodeProviderConfig(
                     command_path=str(current_selection.provider.command_path or ""),
                     model=str(current_selection.actual_model or current_selection.provider.model or ""),
@@ -1132,12 +1136,7 @@ def propose_ceo_action_batch(
                 ),
                 rendered_payload,
             )
-        )
-        raw_payload = (
-            load_openai_compat_result_payload(provider_result)
-            if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT
-            else json.loads(provider_result.output_text)
-        )
+            raw_payload = json.loads(provider_result.output_text)
         try:
             payload = _normalize_provider_action_batch_payload(raw_payload)
             return CEOActionBatch.model_validate(payload), provider_result

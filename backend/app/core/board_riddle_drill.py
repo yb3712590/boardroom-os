@@ -25,7 +25,7 @@ from app.core.persona_profiles import (
 from app.core.provider_openai_compat import (
     OpenAICompatProviderError,
     invoke_openai_compat_response,
-    load_openai_compat_result_payload,
+    resolve_openai_compat_result_payload,
 )
 from app.core.runtime import _build_openai_compat_provider_config
 from app.core.runtime_provider_config import (
@@ -650,7 +650,7 @@ def _generate_ceo_assignments(
         _build_openai_compat_provider_config(selection),
         payload,
     )
-    parsed = load_openai_compat_result_payload(provider_result)
+    parsed = resolve_openai_compat_result_payload(provider_result).payload
     assignments = list(parsed.get("assignments") or [])
     expected_employee_ids = {candidate["employee_id"] for candidate in accepted_candidates}
     returned_employee_ids = {str(item.get("employee_id") or "").strip() for item in assignments if isinstance(item, dict)}
@@ -696,7 +696,7 @@ def _run_employee_assignment(
             _build_openai_compat_provider_config(selection),
             payload,
         )
-        parsed = load_openai_compat_result_payload(provider_result)
+        parsed = resolve_openai_compat_result_payload(provider_result).payload
         answer = str(parsed.get("answer") or "").strip()
         if not answer:
             raise BoardRiddleDrillError(

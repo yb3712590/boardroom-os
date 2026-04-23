@@ -68,7 +68,10 @@ from app.core.process_assets import (
     resolve_process_asset,
 )
 from app.core.provider_claude_code import invoke_claude_code_response
-from app.core.provider_openai_compat import invoke_openai_compat_response, load_openai_compat_result_payload
+from app.core.provider_openai_compat import (
+    invoke_openai_compat_response,
+    load_openai_compat_result_payload,
+)
 from app.core.review_subjects import resolve_graph_only_review_subject_execution_identity
 from app.core.runtime_provider_config import (
     RuntimeProviderAdapterKind,
@@ -608,13 +611,22 @@ def _execute_live_provider_mode(
         )
         provider_response_id = None
 
-    proposal_payload = load_openai_compat_result_payload(provider_result)
-    validate_output_payload(
-        schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
-        schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
-        submitted_schema_version=f"{GRAPH_PATCH_PROPOSAL_SCHEMA_REF}_v{GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION}",
-        payload=proposal_payload,
-    )
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        proposal_payload = load_openai_compat_result_payload(provider_result)
+        validate_output_payload(
+            schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
+            schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
+            submitted_schema_version=f"{GRAPH_PATCH_PROPOSAL_SCHEMA_REF}_v{GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION}",
+            payload=proposal_payload,
+        )
+    else:
+        proposal_payload = json.loads(provider_result.output_text)
+        validate_output_payload(
+            schema_ref=GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
+            schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
+            submitted_schema_version=f"{GRAPH_PATCH_PROPOSAL_SCHEMA_REF}_v{GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION}",
+            payload=proposal_payload,
+        )
     return _LiveExecutionResult(
         proposal_payload=proposal_payload,
         selection_summary={

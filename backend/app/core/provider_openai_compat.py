@@ -23,6 +23,7 @@ from app.contracts.runtime import (
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 ProviderAuditObserver = Callable[[str, dict[str, object]], None]
 OpenAIClientFactory = Callable[["OpenAICompatProviderConfig"], object]
+PayloadResolver = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class OpenAICompatProviderType(StrEnum):
@@ -65,7 +66,23 @@ class OpenAICompatProviderResult:
     request_id: str | None = None
     duplicate_json_object_count: int = 0
     selected_payload_index: int | None = None
+    ambiguous_candidate_count: int = 0
+    repair_steps: tuple[str, ...] = ()
+    json_parse_error: str | None = None
+    raw_text_length: int = 0
+    first_token_elapsed_sec: float | None = None
+    last_token_elapsed_sec: float | None = None
     events_summary: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OpenAICompatResolvedPayload:
+    payload: dict[str, Any]
+    candidate_count: int
+    selected_candidate_index: int
+    ambiguous_candidate_count: int = 0
+    repair_steps: tuple[str, ...] = ()
+    schema_validation_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +113,290 @@ class OpenAICompatProviderAuthError(OpenAICompatProviderError):
 
 class OpenAICompatProviderBadResponseError(OpenAICompatProviderError):
     pass
+
+
+def _strip_json_comments(value: str) -> str:
+    result: list[str] = []
+    index = 0
+    in_string = False
+    escaping = False
+
+    while index < len(value):
+        char = value[index]
+        next_char = value[index + 1] if index + 1 < len(value) else ""
+
+        if in_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            index += 2
+            while index < len(value) and value[index] not in "\r\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(value) and not (value[index] == "*" and value[index + 1] == "/"):
+                index += 1
+            index += 2 if index + 1 < len(value) else 0
+            continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
+
+
+def _strip_trailing_commas(value: str) -> str:
+    result: list[str] = []
+    index = 0
+    in_string = False
+    escaping = False
+
+    while index < len(value):
+        char = value[index]
+        if in_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char == ",":
+            look_ahead = index + 1
+            while look_ahead < len(value) and value[look_ahead].isspace():
+                look_ahead += 1
+            if look_ahead < len(value) and value[look_ahead] in "]}":
+                index += 1
+                continue
+
+        result.append(char)
+        index += 1
+
+    return "".join(result)
+
+
+def _normalize_single_quoted_strings(value: str) -> tuple[str, bool]:
+    result: list[str] = []
+    index = 0
+    in_double_string = False
+    escaping = False
+    changed = False
+
+    while index < len(value):
+        char = value[index]
+        if in_double_string:
+            result.append(char)
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_double_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_double_string = True
+            result.append(char)
+            index += 1
+            continue
+
+        if char != "'":
+            result.append(char)
+            index += 1
+            continue
+
+        string_buffer: list[str] = []
+        index += 1
+        while index < len(value):
+            string_char = value[index]
+            if string_char == "\\" and index + 1 < len(value):
+                string_buffer.append(string_char)
+                string_buffer.append(value[index + 1])
+                index += 2
+                continue
+            if string_char == "'":
+                break
+            string_buffer.append(string_char)
+            index += 1
+
+        if index >= len(value) or value[index] != "'":
+            return value, False
+
+        result.append(json.dumps("".join(string_buffer), ensure_ascii=False))
+        changed = True
+        index += 1
+
+    return "".join(result), changed
+
+
+def _extract_json_object_fragments(value: str) -> tuple[str, ...]:
+    fragments: list[str] = []
+    stack: list[str] = []
+    start_index: int | None = None
+    in_string = False
+    escaping = False
+
+    for index, char in enumerate(value):
+        if in_string:
+            if escaping:
+                escaping = False
+            elif char == "\\":
+                escaping = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            if not stack:
+                start_index = index
+            stack.append(char)
+            continue
+        if char == "}" and stack:
+            stack.pop()
+            if not stack and start_index is not None:
+                fragment = value[start_index : index + 1].strip()
+                if fragment:
+                    fragments.append(fragment)
+                start_index = None
+    return tuple(fragments)
+
+
+@dataclass(frozen=True)
+class _ResolvedJsonCandidate:
+    payload: dict[str, Any]
+    repair_steps: tuple[str, ...]
+    candidate_text: str
+
+
+class OpenAICompatJsonResolver:
+    def __init__(
+        self,
+        *,
+        output_text: str,
+        response_id: str | None,
+        request_id: str | None,
+    ) -> None:
+        self.output_text = str(output_text or "")
+        self.response_id = response_id
+        self.request_id = request_id
+
+    def collect_candidates(self) -> tuple[tuple[_ResolvedJsonCandidate, ...], str | None]:
+        raw_output = self.output_text
+        stripped_output = raw_output.strip()
+        if not stripped_output:
+            return (), None
+
+        candidates: list[_ResolvedJsonCandidate] = []
+        parse_errors: list[str] = []
+        variation_inputs: list[tuple[str, tuple[str, ...]]] = []
+
+        def _push_variation(candidate_text: str, repair_steps: tuple[str, ...]) -> None:
+            if not candidate_text.strip():
+                return
+            entry = (candidate_text, repair_steps)
+            if entry not in variation_inputs:
+                variation_inputs.append(entry)
+
+        bom_stripped = _strip_bom(stripped_output)
+        bom_steps: list[str] = ["strip_bom"] if bom_stripped != stripped_output else []
+        _push_variation(stripped_output, ())
+        _push_variation(bom_stripped, tuple(bom_steps))
+
+        fence_stripped = _strip_markdown_code_fence(bom_stripped)
+        fence_steps = list(bom_steps)
+        if fence_stripped != bom_stripped:
+            fence_steps.append("strip_markdown_code_fence")
+        _push_variation(fence_stripped, tuple(fence_steps))
+
+        comment_stripped = _strip_json_comments(fence_stripped)
+        comment_steps = list(fence_steps)
+        if comment_stripped != fence_stripped:
+            comment_steps.append("strip_json_comments")
+
+        comma_stripped = _strip_trailing_commas(comment_stripped)
+        comma_steps = list(comment_steps)
+        if comma_stripped != comment_stripped:
+            comma_steps.append("strip_trailing_commas")
+
+        normalized_quotes, normalized = _normalize_single_quoted_strings(comma_stripped)
+        normalized_steps = list(comma_steps)
+        if normalized:
+            normalized_steps.append("normalize_single_quoted_strings")
+        _push_variation(normalized_quotes, tuple(normalized_steps))
+
+        seen_payloads: set[str] = set()
+
+        def _record_payloads(candidate_text: str, repair_steps: tuple[str, ...]) -> None:
+            parsed_payloads, parse_error = _parse_json_object_sequence_with_error(candidate_text)
+            if parsed_payloads:
+                for payload in parsed_payloads:
+                    serialized = _canonical_json_object(payload)
+                    if serialized in seen_payloads:
+                        continue
+                    seen_payloads.add(serialized)
+                    candidates.append(
+                        _ResolvedJsonCandidate(
+                            payload=dict(payload),
+                            repair_steps=repair_steps,
+                            candidate_text=candidate_text,
+                        )
+                    )
+                return
+            if parse_error is not None:
+                parse_errors.append(parse_error)
+
+        for candidate_text, repair_steps in variation_inputs:
+            _record_payloads(candidate_text, repair_steps)
+            for fragment in _extract_json_object_fragments(candidate_text):
+                _record_payloads(fragment, repair_steps + ("extract_json_object_fragment",))
+
+        return tuple(candidates), (parse_errors[-1] if parse_errors else None)
+
+
+class OpenAICompatStreamingTextRequester:
+    def __init__(
+        self,
+        *,
+        config: OpenAICompatProviderConfig,
+        audit_observer: ProviderAuditObserver | None = None,
+    ) -> None:
+        self.config = config
+        self.audit_observer = audit_observer
+
+    def consume(self, stream: object) -> OpenAICompatProviderResult:
+        return _extract_streaming_responses_output(
+            stream,
+            config=self.config,
+            audit_observer=self.audit_observer,
+        )
 
 
 def _parse_retry_after_sec(header_value: str | None) -> float | None:
@@ -158,6 +459,42 @@ def _build_responses_input(rendered_payload: RenderedExecutionPayload) -> list[d
         for message in rendered_payload.messages
         if str(message.role or "").lower() != "system"
     ]
+
+
+def append_openai_compat_retry_feedback(
+    rendered_payload: RenderedExecutionPayload,
+    *,
+    attempt_no: int,
+    failure_kind: str,
+    failure_message: str,
+) -> RenderedExecutionPayload:
+    retry_message = RenderedExecutionMessage(
+        role="user",
+        channel="OUTPUT_CONTRACT_REMINDER",
+        content_type="JSON",
+        content_payload={
+            "retry_attempt": attempt_no,
+            "previous_failure_kind": failure_kind,
+            "previous_failure_message": failure_message,
+            "rules": [
+                "Return exactly one JSON object.",
+                "Do not wrap the JSON in markdown code fences.",
+                "Do not include any explanatory text before or after the JSON object.",
+            ],
+        },
+    )
+    summary = rendered_payload.summary.model_copy(
+        update={
+            "total_message_count": rendered_payload.summary.total_message_count + 1,
+            "control_message_count": rendered_payload.summary.control_message_count + 1,
+        }
+    )
+    return rendered_payload.model_copy(
+        update={
+            "messages": [*rendered_payload.messages, retry_message],
+            "summary": summary,
+        }
+    )
 
 
 def _object_to_plain(value: object) -> object:
@@ -441,14 +778,18 @@ def iter_openai_compat_result_json_objects(
         deduped_payloads, _ = _dedupe_json_objects(candidate_payloads)
         return deduped_payloads
 
-    raw_output_text = str(
-        getattr(provider_result, "raw_output_text", "")
-        or getattr(provider_result, "final_text", "")
-        or getattr(provider_result, "output_text", "")
+    raw_output_text = str(getattr(provider_result, "raw_output_text", "") or getattr(provider_result, "final_text", "") or getattr(provider_result, "output_text", ""))
+    parse_error = getattr(provider_result, "json_parse_error", None)
+    resolver = OpenAICompatJsonResolver(
+        output_text=raw_output_text,
+        response_id=getattr(provider_result, "response_id", None),
+        request_id=getattr(provider_result, "request_id", None),
     )
-    parsed_payloads, parse_error = _parse_json_object_sequence_with_error(raw_output_text)
-    if parsed_payloads:
-        return parsed_payloads
+    resolved_candidates, fallback_parse_error = resolver.collect_candidates()
+    if resolved_candidates:
+        return tuple(dict(item.payload) for item in resolved_candidates)
+    if parse_error is None:
+        parse_error = fallback_parse_error
     if parse_error is not None and raw_output_text.strip():
         raise _build_json_parse_error(
             output_text=raw_output_text,
@@ -460,16 +801,64 @@ def iter_openai_compat_result_json_objects(
 
 
 def load_openai_compat_result_payload(provider_result: OpenAICompatProviderResult) -> dict[str, Any]:
+    return resolve_openai_compat_result_payload(provider_result).payload
+
+
+def resolve_openai_compat_result_payload(
+    provider_result: OpenAICompatProviderResult,
+    *,
+    payload_resolver: PayloadResolver | None = None,
+) -> OpenAICompatResolvedPayload:
     payloads = iter_openai_compat_result_json_objects(provider_result)
-    if payloads:
-        return dict(payloads[0])
-    raise OpenAICompatProviderBadResponseError(
-        failure_kind="PROVIDER_BAD_RESPONSE",
-        message="Provider result did not include any JSON object payload.",
-        failure_detail={
-            "provider_response_id": getattr(provider_result, "response_id", None),
-            "request_id": getattr(provider_result, "request_id", None),
-        },
+    if not payloads:
+        raw_output_text = str(
+            getattr(provider_result, "raw_output_text", "")
+            or getattr(provider_result, "final_text", "")
+            or getattr(provider_result, "output_text", "")
+        )
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="NO_JSON_OBJECT",
+            message="Provider result did not include any JSON object payload.",
+            failure_detail={
+                "provider_response_id": getattr(provider_result, "response_id", None),
+                "request_id": getattr(provider_result, "request_id", None),
+                "raw_text_length": len(raw_output_text),
+                "repair_steps": list(getattr(provider_result, "repair_steps", ()) or ()),
+            },
+        )
+
+    resolved_candidates: list[tuple[int, dict[str, Any]]] = []
+    last_validation_error: str | None = None
+    for index, payload in enumerate(payloads):
+        candidate = dict(payload)
+        try:
+            normalized_payload = payload_resolver(candidate) if payload_resolver is not None else candidate
+        except ValueError as exc:
+            last_validation_error = str(exc)
+            continue
+        resolved_candidates.append((index, dict(normalized_payload)))
+
+    if payload_resolver is not None and not resolved_candidates:
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="SCHEMA_VALIDATION_FAILED",
+            message=last_validation_error or "Provider JSON candidates did not satisfy the local schema validator.",
+            failure_detail={
+                "provider_response_id": getattr(provider_result, "response_id", None),
+                "request_id": getattr(provider_result, "request_id", None),
+                "json_candidate_count": len(payloads),
+                "schema_validation_error": last_validation_error,
+                "repair_steps": list(getattr(provider_result, "repair_steps", ()) or ()),
+            },
+        )
+
+    selected_candidate_index, selected_payload = resolved_candidates[0] if resolved_candidates else (0, dict(payloads[0]))
+    return OpenAICompatResolvedPayload(
+        payload=selected_payload,
+        candidate_count=len(payloads),
+        selected_candidate_index=selected_candidate_index,
+        ambiguous_candidate_count=max(len(resolved_candidates) - 1, 0),
+        repair_steps=tuple(getattr(provider_result, "repair_steps", ()) or ()),
+        schema_validation_error=last_validation_error,
     )
 
 
@@ -574,15 +963,6 @@ def _responses_request_payload(
         payload["instructions"] = instructions
     if config.reasoning_effort is not None:
         payload["reasoning"] = {"effort": config.reasoning_effort}
-    if config.schema_name and isinstance(config.schema_body, dict):
-        payload["text"] = {
-            "format": {
-                "type": "json_schema",
-                "name": config.schema_name,
-                "schema": dict(config.schema_body),
-                "strict": bool(config.strict),
-            }
-        }
     return payload
 
 
@@ -669,35 +1049,25 @@ def _build_result_from_response(
         str(response_payload.get("id")) if response_payload.get("id") is not None else None
     )
     final_request_id = request_id or _extract_request_id(response)
-    parsed_payloads = _extract_response_parsed_payloads(response_payload)
-    output_text = ""
-    if response_payload:
+    output_text = "".join(output_parts).strip()
+    if not output_text and response_payload:
         try:
             output_text = _extract_output_text(response_payload)
         except OpenAICompatProviderBadResponseError:
             output_text = ""
-    if not output_text:
-        output_text = "".join(output_parts).strip()
     raw_output_text = output_text
-    text_payloads: tuple[dict[str, Any], ...] = ()
-    parse_error: str | None = None
-    if raw_output_text.strip():
-        text_payloads, parse_error = _parse_json_object_sequence_with_error(raw_output_text)
-
-    combined_payloads = [dict(item) for item in parsed_payloads]
-    combined_payloads.extend(dict(item) for item in text_payloads)
-    json_objects, duplicate_json_object_count = _dedupe_json_objects(combined_payloads)
+    resolver = OpenAICompatJsonResolver(
+        output_text=raw_output_text,
+        response_id=final_response_id,
+        request_id=final_request_id,
+    )
+    resolved_candidates, parse_error = resolver.collect_candidates()
+    json_objects = tuple(dict(item.payload) for item in resolved_candidates)
+    duplicate_json_object_count = 0
     selected_payload = dict(json_objects[0]) if json_objects else None
     if not output_text and selected_payload is not None:
         output_text = json.dumps(selected_payload, ensure_ascii=False, sort_keys=True)
         raw_output_text = output_text
-    elif parse_error is not None and not parsed_payloads:
-        raise _build_json_parse_error(
-            output_text=raw_output_text,
-            response_id=final_response_id,
-            request_id=final_request_id,
-            parse_error=parse_error,
-        )
     if not output_text:
         raise OpenAICompatProviderBadResponseError(
             failure_kind="PROVIDER_BAD_RESPONSE",
@@ -724,6 +1094,9 @@ def _build_result_from_response(
         request_id=final_request_id,
         duplicate_json_object_count=duplicate_json_object_count,
         selected_payload_index=(0 if selected_payload is not None else None),
+        repair_steps=(resolved_candidates[0].repair_steps if resolved_candidates else ()),
+        json_parse_error=parse_error,
+        raw_text_length=len(raw_output_text),
         events_summary={
             "event_count": len(events),
             "item_count": len(items),
@@ -731,6 +1104,7 @@ def _build_result_from_response(
             "json_object_count": len(json_objects),
             "duplicate_json_object_count": duplicate_json_object_count,
             "finish_state": finish_state,
+            "raw_text_length": len(raw_output_text),
         },
     )
 
@@ -749,6 +1123,7 @@ def _extract_streaming_responses_output(
     stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
     stream_started_at = time.monotonic()
     last_output_at: float | None = None
+    first_token_elapsed_sec: float | None = None
     first_token_timeout_sec = float(config.first_token_timeout_sec or config.timeout_sec)
     stream_idle_timeout_sec = float(config.stream_idle_timeout_sec or config.timeout_sec)
     def _stream_reader() -> None:
@@ -792,7 +1167,7 @@ def _extract_streaming_responses_output(
             ) from exc
 
         if event_kind == "done":
-            return _build_result_from_response(
+            result = _build_result_from_response(
                 None,
                 output_parts=output_parts,
                 response_id=response_id,
@@ -800,6 +1175,15 @@ def _extract_streaming_responses_output(
                 text_deltas=tuple(text_deltas),
                 finish_state="CLOSED",
                 request_id=request_id,
+            )
+            return OpenAICompatProviderResult(
+                **{
+                    **result.__dict__,
+                    "first_token_elapsed_sec": first_token_elapsed_sec,
+                    "last_token_elapsed_sec": (
+                        round(last_output_at - stream_started_at, 3) if last_output_at is not None else None
+                    ),
+                }
             )
         if event_kind == "error":
             error = payload if isinstance(payload, BaseException) else RuntimeError(str(payload))
@@ -838,12 +1222,14 @@ def _extract_streaming_responses_output(
         )
         if event_type in {"response.output_text.delta", "response.output_text.done"}:
             delta = _extract_event_delta(event)
-            if delta:
+            if delta and event_type == "response.output_text.delta":
                 output_parts.append(delta)
                 text_deltas.append(delta)
+            if delta:
                 output_mark = time.monotonic()
                 if last_output_at is None:
                     last_output_at = output_mark
+                    first_token_elapsed_sec = round(output_mark - stream_started_at, 3)
                     if audit_observer is not None:
                         audit_observer(
                             "first_token_received",
@@ -852,6 +1238,7 @@ def _extract_streaming_responses_output(
                                 "request_id": _extract_request_id(event),
                                 "streaming": True,
                                 "provider_type": config.provider_type.value,
+                                "first_token_elapsed_sec": first_token_elapsed_sec,
                             },
                         )
                 else:
@@ -870,7 +1257,7 @@ def _extract_streaming_responses_output(
                         "provider_type": config.provider_type.value,
                     },
                 )
-            return _build_result_from_response(
+            result = _build_result_from_response(
                 _value_from_object(event, "response") or _call_get_final_response(stream),
                 output_parts=output_parts,
                 response_id=response_id,
@@ -878,6 +1265,15 @@ def _extract_streaming_responses_output(
                 text_deltas=tuple(text_deltas),
                 finish_state="COMPLETED",
                 request_id=request_id,
+            )
+            return OpenAICompatProviderResult(
+                **{
+                    **result.__dict__,
+                    "first_token_elapsed_sec": first_token_elapsed_sec,
+                    "last_token_elapsed_sec": (
+                        round(last_output_at - stream_started_at, 3) if last_output_at is not None else None
+                    ),
+                }
             )
 
 
@@ -949,20 +1345,13 @@ def _invoke_streaming_responses(
     try:
         client = _client_for(config, transport=transport, client_factory=client_factory)
         stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
+        requester = OpenAICompatStreamingTextRequester(config=config, audit_observer=audit_observer)
         enter = getattr(stream, "__enter__", None)
         exit_ = getattr(stream, "__exit__", None)
         if callable(enter) and callable(exit_):
             with stream:
-                return _extract_streaming_responses_output(
-                    stream,
-                    config=config,
-                    audit_observer=audit_observer,
-                )
-        return _extract_streaming_responses_output(
-            stream,
-            config=config,
-            audit_observer=audit_observer,
-        )
+                return requester.consume(stream)
+        return requester.consume(stream)
     except OpenAICompatProviderError as exc:
         if audit_observer is not None:
             audit_observer(
@@ -1126,6 +1515,7 @@ def probe_openai_compat_connectivity(
             transport=transport,
             client_factory=client_factory,
         )
+        load_openai_compat_result_payload(result)
         return OpenAICompatConnectivityResult(
             ok=True,
             provider_type=config.provider_type,
@@ -1157,6 +1547,7 @@ def probe_openai_compat_connectivity(
             transport=transport,
             client_factory=client_factory,
         )
+        load_openai_compat_result_payload(fallback_result)
         return OpenAICompatConnectivityResult(
             ok=True,
             provider_type=OpenAICompatProviderType.RESPONSES_NON_STREAM,
