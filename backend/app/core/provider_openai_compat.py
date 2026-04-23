@@ -747,7 +747,10 @@ def _extract_streaming_responses_output(
     text_deltas: list[str] = []
     events: list[dict[str, object]] = []
     stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
-    first_output_at: float | None = None
+    stream_started_at = time.monotonic()
+    last_output_at: float | None = None
+    first_token_timeout_sec = float(config.first_token_timeout_sec or config.timeout_sec)
+    stream_idle_timeout_sec = float(config.stream_idle_timeout_sec or config.timeout_sec)
     def _stream_reader() -> None:
         try:
             for event in stream:
@@ -761,24 +764,30 @@ def _extract_streaming_responses_output(
     reader.start()
 
     while True:
-        phase_timeout_sec = float(
-            (
-                config.stream_idle_timeout_sec
-                if first_output_at is not None
-                else config.first_token_timeout_sec
+        current_mark = time.monotonic()
+        timeout_anchor = last_output_at if last_output_at is not None else stream_started_at
+        timeout_budget_sec = stream_idle_timeout_sec if last_output_at is not None else first_token_timeout_sec
+        phase_timeout_sec = timeout_budget_sec - (current_mark - timeout_anchor)
+        if phase_timeout_sec <= 0:
+            _call_stream_close(stream)
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                message="Provider stream timed out while waiting for the next output event.",
+                failure_detail={
+                    "provider_response_id": response_id,
+                    "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
+                },
             )
-            or config.timeout_sec
-        )
         try:
             event_kind, payload = stream_queue.get(timeout=phase_timeout_sec)
         except queue.Empty as exc:
             _call_stream_close(stream)
             raise OpenAICompatProviderUnavailableError(
-                failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
                 message="Provider stream timed out while waiting for the next output event.",
                 failure_detail={
                     "provider_response_id": response_id,
-                    "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                    "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
                 },
             ) from exc
 
@@ -796,12 +805,12 @@ def _extract_streaming_responses_output(
             error = payload if isinstance(payload, BaseException) else RuntimeError(str(payload))
             if isinstance(error, httpx.TimeoutException):
                 raise OpenAICompatProviderUnavailableError(
-                    failure_kind="STREAM_IDLE_TIMEOUT" if first_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                    failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
                     message=str(error),
                     failure_detail={
                         "provider_response_id": response_id,
                         "provider_transport_error": type(error).__name__,
-                        "timeout_phase": ("stream_idle" if first_output_at is not None else "first_token"),
+                        "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
                     },
                 ) from error
             if isinstance(error, httpx.TransportError):
@@ -832,8 +841,9 @@ def _extract_streaming_responses_output(
             if delta:
                 output_parts.append(delta)
                 text_deltas.append(delta)
-                if first_output_at is None:
-                    first_output_at = time.monotonic()
+                output_mark = time.monotonic()
+                if last_output_at is None:
+                    last_output_at = output_mark
                     if audit_observer is not None:
                         audit_observer(
                             "first_token_received",
@@ -844,6 +854,8 @@ def _extract_streaming_responses_output(
                                 "provider_type": config.provider_type.value,
                             },
                         )
+                else:
+                    last_output_at = output_mark
             continue
         if event_type in {"response.failed", "error"}:
             _raise_from_response_error(event, response_id=response_id)

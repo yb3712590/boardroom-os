@@ -575,11 +575,13 @@ def test_invoke_openai_compat_response_does_not_enforce_total_timeout_after_firs
                 response=SimpleNamespace(id="resp_stream_long_running"),
             )
 
-    monotonic_values = iter([0.0, 0.0, 0.5, 2.0])
+    monotonic_values = iter([0.0, 0.0, 0.5, 2.0, 2.0, 2.0])
 
     def _fake_monotonic() -> float:
-        value = next(monotonic_values)
-        return value
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 2.0
 
     monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
 
@@ -616,6 +618,47 @@ def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_str
     with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
         invoke_openai_compat_response(
             _config(),
+            _rendered_payload(),
+            client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+        )
+
+    assert exc_info.value.failure_kind == "FIRST_TOKEN_TIMEOUT"
+
+
+def test_invoke_openai_compat_response_enforces_first_token_timeout_across_non_output_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MetadataOnlyBeforeTokenStream(_FakeResponseStream):
+        def __iter__(self):
+            yield SimpleNamespace(type="response.created")
+            yield SimpleNamespace(type="response.output_item.added")
+            yield SimpleNamespace(type="response.content_part.added")
+            yield SimpleNamespace(type="response.output_text.delta", delta='{"ok":true}')
+
+    monotonic_values = iter([0.0, 0.0, 0.11, 0.22, 0.33, 0.44, 0.55])
+
+    def _fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 0.55
+
+    monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
+
+    def _create_factory(**kwargs):
+        return _MetadataOnlyBeforeTokenStream(events=[])
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            OpenAICompatProviderConfig(
+                base_url="https://api-vip.codex-for.me/v1",
+                api_key="test-key",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                first_token_timeout_sec=0.3,
+                stream_idle_timeout_sec=0.3,
+                provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+            ),
             _rendered_payload(),
             client_factory=lambda config: _FakeOpenAIClient(_create_factory),
         )
@@ -661,6 +704,47 @@ def test_invoke_openai_compat_response_raises_stream_idle_timeout_after_first_to
     with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
         invoke_openai_compat_response(
             _config(),
+            _rendered_payload(),
+            client_factory=lambda config: _FakeOpenAIClient(_create_factory),
+        )
+
+    assert exc_info.value.failure_kind == "STREAM_IDLE_TIMEOUT"
+
+
+def test_invoke_openai_compat_response_enforces_stream_idle_timeout_across_non_output_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MetadataOnlyAfterFirstTokenStream(_FakeResponseStream):
+        def __iter__(self):
+            yield SimpleNamespace(type="response.output_text.delta", delta='{"ok":')
+            yield SimpleNamespace(type="response.output_item.added")
+            yield SimpleNamespace(type="response.content_part.added")
+            yield SimpleNamespace(type="response.output_text.delta", delta="true}")
+
+    monotonic_values = iter([0.0, 0.0, 0.01, 0.12, 0.24, 0.36, 0.48])
+
+    def _fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 0.48
+
+    monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
+
+    def _create_factory(**kwargs):
+        return _MetadataOnlyAfterFirstTokenStream(events=[])
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            OpenAICompatProviderConfig(
+                base_url="https://api-vip.codex-for.me/v1",
+                api_key="test-key",
+                model="gpt-5.3-codex",
+                timeout_sec=30.0,
+                first_token_timeout_sec=0.3,
+                stream_idle_timeout_sec=0.3,
+                provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+            ),
             _rendered_payload(),
             client_factory=lambda config: _FakeOpenAIClient(_create_factory),
         )

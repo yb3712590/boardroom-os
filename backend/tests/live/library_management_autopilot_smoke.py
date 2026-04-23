@@ -17,7 +17,10 @@ from tests.live._autopilot_live_harness import (
     run_cli,
     run_live_scenario as _run_live_scenario,
 )
-from tests.live.library_management_autopilot_live import SCENARIO_CONSTRAINTS, SCENARIO_GOAL
+from tests.live._scenario_profiles import (
+    MINIMALIST_BOOK_TRACKER_CONSTRAINTS as SCENARIO_CONSTRAINTS,
+    MINIMALIST_BOOK_TRACKER_GOAL as SCENARIO_GOAL,
+)
 
 DEFAULT_SCENARIO_SLUG = "library_management_autopilot_smoke"
 
