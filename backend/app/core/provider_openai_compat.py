@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import queue
-import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -381,7 +380,82 @@ class OpenAICompatJsonResolver:
         return tuple(candidates), (parse_errors[-1] if parse_errors else None)
 
 
-class OpenAICompatStreamingTextRequester:
+def _responses_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/responses"
+
+
+def _stream_timeout(config: OpenAICompatProviderConfig) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=float(config.connect_timeout_sec or config.timeout_sec),
+        write=float(config.write_timeout_sec or config.timeout_sec),
+        read=None,
+        pool=float(config.connect_timeout_sec or config.timeout_sec),
+    )
+
+
+class _ResponsesHttpClient:
+    def __init__(self, config: OpenAICompatProviderConfig, *, transport: httpx.BaseTransport | None = None) -> None:
+        self.config = config
+        self.transport = transport
+
+    @contextmanager
+    def stream(self, payload: dict[str, object]):
+        with httpx.Client(
+            transport=self.transport,
+            timeout=_stream_timeout(self.config),
+        ) as client:
+            with client.stream(
+                "POST",
+                _responses_url(self.config.base_url),
+                headers={
+                    "Authorization": f"Bearer {self.config.api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                json=payload,
+            ) as response:
+                yield response
+
+
+@dataclass(frozen=True)
+class _SSEEvent:
+    event: str | None
+    data: str
+
+
+class _SSEDecoder:
+    def __init__(self) -> None:
+        self._event: str | None = None
+        self._data_lines: list[str] = []
+
+    def feed_line(self, line: str) -> _SSEEvent | None:
+        if line == "":
+            return self._flush()
+        if line.startswith(":"):
+            return None
+        field, _, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        if field == "event":
+            self._event = value
+        elif field == "data":
+            self._data_lines.append(value)
+        return None
+
+    def close(self) -> _SSEEvent | None:
+        return self._flush()
+
+    def _flush(self) -> _SSEEvent | None:
+        if not self._data_lines:
+            self._event = None
+            return None
+        event = _SSEEvent(event=self._event, data="\n".join(self._data_lines))
+        self._event = None
+        self._data_lines = []
+        return event
+
+
+class _ResponsesStreamAccumulator:
     def __init__(
         self,
         *,
@@ -390,12 +464,131 @@ class OpenAICompatStreamingTextRequester:
     ) -> None:
         self.config = config
         self.audit_observer = audit_observer
+        self.response_id: str | None = None
+        self.request_id: str | None = None
+        self.output_parts: list[str] = []
+        self.text_deltas: list[str] = []
+        self.events: list[dict[str, object]] = []
+        self.stream_started_at = time.monotonic()
+        self.last_output_at: float | None = None
+        self.first_token_elapsed_sec: float | None = None
 
-    def consume(self, stream: object) -> OpenAICompatProviderResult:
-        return _extract_streaming_responses_output(
-            stream,
-            config=self.config,
-            audit_observer=self.audit_observer,
+    def check_timeout(self) -> None:
+        elapsed = time.monotonic() - self.stream_started_at
+        total_timeout = self.config.request_total_timeout_sec
+        if total_timeout is not None and elapsed > float(total_timeout):
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="REQUEST_TOTAL_TIMEOUT",
+                message="Provider stream exceeded the configured total request timeout.",
+                failure_detail={
+                    "provider_response_id": self.response_id,
+                    "request_id": self.request_id,
+                    "timeout_phase": "request_total",
+                },
+            )
+        anchor = self.last_output_at if self.last_output_at is not None else self.stream_started_at
+        budget = float(
+            (self.config.stream_idle_timeout_sec if self.last_output_at is not None else self.config.first_token_timeout_sec)
+            or self.config.timeout_sec
+        )
+        if time.monotonic() - anchor > budget:
+            phase = "stream_idle" if self.last_output_at is not None else "first_token"
+            raise OpenAICompatProviderUnavailableError(
+                failure_kind="STREAM_IDLE_TIMEOUT" if self.last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
+                message=(
+                    "Provider stream timed out while waiting for the next output token."
+                    if self.last_output_at is not None
+                    else "Provider stream timed out while waiting for the first output token."
+                ),
+                failure_detail={
+                    "provider_response_id": self.response_id,
+                    "request_id": self.request_id,
+                    "timeout_phase": phase,
+                },
+            )
+
+    def consume_event(self, event: dict[str, object]) -> OpenAICompatProviderResult | None:
+        self.check_timeout()
+        event_type = str(event.get("type") or "")
+        self.response_id = self.response_id or _extract_response_id(event)
+        event_request_id = _extract_request_id(event)
+        self.request_id = self.request_id or event_request_id
+        self.events.append(
+            {
+                "type": event_type,
+                "provider_response_id": _extract_response_id(event),
+                "request_id": event_request_id,
+            }
+        )
+        if event_type in {"response.output_text.delta", "response.output_text.done"}:
+            delta = _extract_event_delta(event)
+            if delta and event_type == "response.output_text.delta":
+                self.output_parts.append(delta)
+                self.text_deltas.append(delta)
+            if delta:
+                output_mark = time.monotonic()
+                if self.last_output_at is None:
+                    self.last_output_at = output_mark
+                    self.first_token_elapsed_sec = round(output_mark - self.stream_started_at, 3)
+                    if self.audit_observer is not None:
+                        self.audit_observer(
+                            "first_token_received",
+                            {
+                                "provider_response_id": self.response_id,
+                                "request_id": event_request_id,
+                                "streaming": True,
+                                "provider_type": self.config.provider_type.value,
+                                "first_token_elapsed_sec": self.first_token_elapsed_sec,
+                            },
+                        )
+                else:
+                    self.last_output_at = output_mark
+            return None
+        if event_type in {"response.failed", "error"}:
+            _raise_from_response_error(event, response_id=self.response_id)
+        if event_type == "response.completed":
+            if self.audit_observer is not None:
+                self.audit_observer(
+                    "response_completed",
+                    {
+                        "provider_response_id": self.response_id,
+                        "request_id": event_request_id,
+                        "streaming": True,
+                        "provider_type": self.config.provider_type.value,
+                    },
+                )
+            return self.build_result(
+                _value_from_object(event, "response"),
+                finish_state="COMPLETED",
+            )
+        return None
+
+    def build_result(self, response: object | None = None, *, finish_state: str = "CLOSED") -> OpenAICompatProviderResult:
+        result = _build_result_from_response(
+            response,
+            output_parts=self.output_parts,
+            response_id=self.response_id,
+            events=tuple(self.events),
+            text_deltas=tuple(self.text_deltas),
+            finish_state=finish_state,
+            request_id=self.request_id,
+        )
+        events_summary = {
+            **dict(result.events_summary),
+            "stream_transport": "httpx_sse",
+            "first_token_timeout_sec": float(self.config.first_token_timeout_sec or self.config.timeout_sec),
+            "stream_idle_timeout_sec": float(self.config.stream_idle_timeout_sec or self.config.timeout_sec),
+            "request_total_timeout_sec": self.config.request_total_timeout_sec,
+        }
+        return OpenAICompatProviderResult(
+            **{
+                **result.__dict__,
+                "first_token_elapsed_sec": self.first_token_elapsed_sec,
+                "last_token_elapsed_sec": (
+                    round(self.last_output_at - self.stream_started_at, 3) if self.last_output_at is not None else None
+                ),
+                "events_summary": events_summary,
+            }
         )
 
 
@@ -1021,19 +1214,6 @@ def _client_for(
     return _build_openai_client(config, transport=transport)
 
 
-def _call_stream_close(stream: object) -> None:
-    close = getattr(stream, "close", None)
-    if callable(close):
-        close()
-
-
-def _call_get_final_response(stream: object) -> object | None:
-    getter = getattr(stream, "get_final_response", None)
-    if callable(getter):
-        return getter()
-    return None
-
-
 def _build_result_from_response(
     response: object | None,
     *,
@@ -1109,172 +1289,116 @@ def _build_result_from_response(
     )
 
 
-def _extract_streaming_responses_output(
+def _extract_legacy_streaming_responses_output(
     stream: object,
     *,
     config: OpenAICompatProviderConfig,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
-    response_id: str | None = None
-    request_id: str | None = None
-    output_parts: list[str] = []
-    text_deltas: list[str] = []
-    events: list[dict[str, object]] = []
-    stream_queue: queue.Queue[tuple[str, object | None]] = queue.Queue()
-    stream_started_at = time.monotonic()
-    last_output_at: float | None = None
-    first_token_elapsed_sec: float | None = None
-    first_token_timeout_sec = float(config.first_token_timeout_sec or config.timeout_sec)
-    stream_idle_timeout_sec = float(config.stream_idle_timeout_sec or config.timeout_sec)
-    def _stream_reader() -> None:
-        try:
-            for event in stream:
-                stream_queue.put(("event", event))
-        except BaseException as exc:  # pragma: no cover - exercised through queue handoff
-            stream_queue.put(("error", exc))
-        finally:
-            stream_queue.put(("done", None))
-
-    reader = threading.Thread(target=_stream_reader, daemon=True)
-    reader.start()
-
-    while True:
-        current_mark = time.monotonic()
-        timeout_anchor = last_output_at if last_output_at is not None else stream_started_at
-        timeout_budget_sec = stream_idle_timeout_sec if last_output_at is not None else first_token_timeout_sec
-        phase_timeout_sec = timeout_budget_sec - (current_mark - timeout_anchor)
-        if phase_timeout_sec <= 0:
-            _call_stream_close(stream)
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                message="Provider stream timed out while waiting for the next output event.",
-                failure_detail={
-                    "provider_response_id": response_id,
-                    "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
-                },
-            )
-        try:
-            event_kind, payload = stream_queue.get(timeout=phase_timeout_sec)
-        except queue.Empty as exc:
-            _call_stream_close(stream)
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                message="Provider stream timed out while waiting for the next output event.",
-                failure_detail={
-                    "provider_response_id": response_id,
-                    "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
-                },
-            ) from exc
-
-        if event_kind == "done":
-            result = _build_result_from_response(
-                None,
-                output_parts=output_parts,
-                response_id=response_id,
-                events=tuple(events),
-                text_deltas=tuple(text_deltas),
-                finish_state="CLOSED",
-                request_id=request_id,
-            )
-            return OpenAICompatProviderResult(
-                **{
-                    **result.__dict__,
-                    "first_token_elapsed_sec": first_token_elapsed_sec,
-                    "last_token_elapsed_sec": (
-                        round(last_output_at - stream_started_at, 3) if last_output_at is not None else None
-                    ),
+    accumulator = _ResponsesStreamAccumulator(config=config, audit_observer=audit_observer)
+    try:
+        for event in stream:
+            event_payload = _response_payload(event)
+            if not event_payload:
+                event_payload = {
+                    key: value
+                    for key in ("type", "delta", "text", "response", "error", "request_id", "_request_id")
+                    if (value := _value_from_object(event, key)) is not None
                 }
-            )
-        if event_kind == "error":
-            error = payload if isinstance(payload, BaseException) else RuntimeError(str(payload))
-            if isinstance(error, httpx.TimeoutException):
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="STREAM_IDLE_TIMEOUT" if last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
-                    message=str(error),
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "provider_transport_error": type(error).__name__,
-                        "timeout_phase": ("stream_idle" if last_output_at is not None else "first_token"),
-                    },
-                ) from error
-            if isinstance(error, httpx.TransportError):
-                raise OpenAICompatProviderUnavailableError(
-                    failure_kind="UPSTREAM_UNAVAILABLE",
-                    message=str(error),
-                    failure_detail={
-                        "provider_response_id": response_id,
-                        "provider_transport_error": type(error).__name__,
-                    },
-                ) from error
-            raise _map_sdk_exception(error)
+            result = accumulator.consume_event(event_payload)
+            if result is not None:
+                return result
+        return accumulator.build_result(finish_state="CLOSED")
+    except httpx.TransportError as exc:
+        raise _map_stream_transport_error(exc, accumulator=accumulator) from exc
 
-        event = payload
-        event_type = str(_value_from_object(event, "type") or "")
-        response_id = response_id or _extract_response_id(event)
-        event_request_id = _extract_request_id(event)
-        request_id = request_id or event_request_id
-        events.append(
-            {
-                "type": event_type,
-                "provider_response_id": _extract_response_id(event),
-                "request_id": event_request_id,
-            }
+
+def _parse_sse_event_data(data: str, *, response_id: str | None) -> dict[str, object] | None:
+    if data.strip() == "[DONE]":
+        return None
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Provider stream emitted malformed SSE JSON.",
+            failure_detail={
+                "provider_response_id": response_id,
+                "response_error_type": "MalformedSSEJson",
+                "response_error_message": str(exc),
+            },
+        ) from exc
+    if not isinstance(payload, dict):
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="PROVIDER_BAD_RESPONSE",
+            message="Provider stream emitted a non-object SSE payload.",
+            failure_detail={
+                "provider_response_id": response_id,
+                "response_error_type": "MalformedSSEPayload",
+            },
         )
-        if event_type in {"response.output_text.delta", "response.output_text.done"}:
-            delta = _extract_event_delta(event)
-            if delta and event_type == "response.output_text.delta":
-                output_parts.append(delta)
-                text_deltas.append(delta)
-            if delta:
-                output_mark = time.monotonic()
-                if last_output_at is None:
-                    last_output_at = output_mark
-                    first_token_elapsed_sec = round(output_mark - stream_started_at, 3)
-                    if audit_observer is not None:
-                        audit_observer(
-                            "first_token_received",
-                            {
-                                "provider_response_id": response_id,
-                                "request_id": _extract_request_id(event),
-                                "streaming": True,
-                                "provider_type": config.provider_type.value,
-                                "first_token_elapsed_sec": first_token_elapsed_sec,
-                            },
-                        )
-                else:
-                    last_output_at = output_mark
-            continue
-        if event_type in {"response.failed", "error"}:
-            _raise_from_response_error(event, response_id=response_id)
-        if event_type == "response.completed":
-            if audit_observer is not None:
-                audit_observer(
-                    "response_completed",
-                    {
-                        "provider_response_id": response_id,
-                        "request_id": _extract_request_id(event),
-                        "streaming": True,
-                        "provider_type": config.provider_type.value,
-                    },
-                )
-            result = _build_result_from_response(
-                _value_from_object(event, "response") or _call_get_final_response(stream),
-                output_parts=output_parts,
-                response_id=response_id,
-                events=tuple(events),
-                text_deltas=tuple(text_deltas),
-                finish_state="COMPLETED",
-                request_id=request_id,
-            )
-            return OpenAICompatProviderResult(
-                **{
-                    **result.__dict__,
-                    "first_token_elapsed_sec": first_token_elapsed_sec,
-                    "last_token_elapsed_sec": (
-                        round(last_output_at - stream_started_at, 3) if last_output_at is not None else None
-                    ),
-                }
-            )
+    return payload
+
+
+def _map_stream_transport_error(
+    exc: httpx.TransportError,
+    *,
+    accumulator: _ResponsesStreamAccumulator | None,
+) -> OpenAICompatProviderUnavailableError:
+    if isinstance(exc, httpx.TimeoutException):
+        phase = "stream_idle" if accumulator is not None and accumulator.last_output_at is not None else "first_token"
+        return OpenAICompatProviderUnavailableError(
+            failure_kind="STREAM_IDLE_TIMEOUT" if phase == "stream_idle" else "FIRST_TOKEN_TIMEOUT",
+            message=str(exc),
+            failure_detail={
+                "provider_response_id": accumulator.response_id if accumulator is not None else None,
+                "request_id": accumulator.request_id if accumulator is not None else None,
+                "provider_transport_error": type(exc).__name__,
+                "timeout_phase": phase,
+            },
+        )
+    return OpenAICompatProviderUnavailableError(
+        failure_kind="UPSTREAM_UNAVAILABLE",
+        message=str(exc),
+        failure_detail={
+            "provider_response_id": accumulator.response_id if accumulator is not None else None,
+            "request_id": accumulator.request_id if accumulator is not None else None,
+            "provider_transport_error": type(exc).__name__,
+        },
+    )
+
+
+def _extract_streaming_responses_output(
+    response: httpx.Response,
+    *,
+    config: OpenAICompatProviderConfig,
+    audit_observer: ProviderAuditObserver | None = None,
+) -> OpenAICompatProviderResult:
+    accumulator = _ResponsesStreamAccumulator(config=config, audit_observer=audit_observer)
+    decoder = _SSEDecoder()
+    try:
+        for line in response.iter_lines():
+            accumulator.check_timeout()
+            sse_event = decoder.feed_line(line)
+            if sse_event is None:
+                continue
+            payload = _parse_sse_event_data(sse_event.data, response_id=accumulator.response_id)
+            if payload is None:
+                return accumulator.build_result(finish_state="CLOSED")
+            result = accumulator.consume_event(payload)
+            if result is not None:
+                return result
+        sse_event = decoder.close()
+        if sse_event is not None:
+            payload = _parse_sse_event_data(sse_event.data, response_id=accumulator.response_id)
+            if payload is None:
+                return accumulator.build_result(finish_state="CLOSED")
+            result = accumulator.consume_event(payload)
+            if result is not None:
+                return result
+        return accumulator.build_result(finish_state="CLOSED")
+    except httpx.TransportError as exc:
+        raise _map_stream_transport_error(exc, accumulator=accumulator) from exc
 
 
 def _map_sdk_exception(exc: BaseException) -> OpenAICompatProviderError:
@@ -1340,18 +1464,37 @@ def _invoke_streaming_responses(
                 "provider_type": config.provider_type.value,
                 "streaming": True,
                 "model": config.model,
+                "stream_transport": "httpx_sse",
             },
         )
     try:
-        client = _client_for(config, transport=transport, client_factory=client_factory)
-        stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
-        requester = OpenAICompatStreamingTextRequester(config=config, audit_observer=audit_observer)
-        enter = getattr(stream, "__enter__", None)
-        exit_ = getattr(stream, "__exit__", None)
-        if callable(enter) and callable(exit_):
-            with stream:
-                return requester.consume(stream)
-        return requester.consume(stream)
+        if client_factory is not None and transport is None:
+            client = _client_for(config, transport=transport, client_factory=client_factory)
+            stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
+            enter = getattr(stream, "__enter__", None)
+            exit_ = getattr(stream, "__exit__", None)
+            if callable(enter) and callable(exit_):
+                with stream:
+                    return _extract_legacy_streaming_responses_output(
+                        stream,
+                        config=config,
+                        audit_observer=audit_observer,
+                    )
+            return _extract_legacy_streaming_responses_output(
+                stream,
+                config=config,
+                audit_observer=audit_observer,
+            )
+
+        client = _ResponsesHttpClient(config, transport=transport)
+        with client.stream(_responses_request_payload(config, rendered_payload, stream=True)) as response:
+            if response.status_code >= 400:
+                _map_provider_error_response(response, streaming=True)
+            return _extract_streaming_responses_output(
+                response,
+                config=config,
+                audit_observer=audit_observer,
+            )
     except OpenAICompatProviderError as exc:
         if audit_observer is not None:
             audit_observer(
@@ -1361,9 +1504,24 @@ def _invoke_streaming_responses(
                     **dict(exc.failure_detail),
                     "streaming": True,
                     "provider_type": config.provider_type.value,
+                    "stream_transport": "httpx_sse",
                 },
             )
         raise
+    except httpx.TransportError as exc:
+        mapped = _map_stream_transport_error(exc, accumulator=None)
+        if audit_observer is not None:
+            audit_observer(
+                "request_failed",
+                {
+                    "failure_kind": mapped.failure_kind,
+                    **dict(mapped.failure_detail),
+                    "streaming": True,
+                    "provider_type": config.provider_type.value,
+                    "stream_transport": "httpx_sse",
+                },
+            )
+        raise mapped from exc
     except BaseException as exc:
         mapped = _map_sdk_exception(exc)
         if audit_observer is not None:
@@ -1374,6 +1532,7 @@ def _invoke_streaming_responses(
                     **dict(mapped.failure_detail),
                     "streaming": True,
                     "provider_type": config.provider_type.value,
+                    "stream_transport": "httpx_sse",
                 },
             )
         raise mapped from exc
