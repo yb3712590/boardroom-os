@@ -69,6 +69,7 @@ from app.core.constants import (
     EVENT_GRAPH_PATCH_APPLIED,
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
+    INCIDENT_TYPE_DECOMPOSITION_RECOVERY,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     EVENT_SYSTEM_INITIALIZED,
@@ -2047,6 +2048,7 @@ def _ticket_create_payload(
     parent_ticket_id: str | None = None,
     dispatch_intent: dict | None = None,
     execution_contract: dict | None = None,
+    use_default_input_artifact_refs: bool = True,
 ) -> dict:
     resolved_role_profile_ref = role_profile_ref
     if resolved_role_profile_ref is None:
@@ -2061,7 +2063,11 @@ def _ticket_create_payload(
         "attempt_no": attempt_no,
         "role_profile_ref": resolved_role_profile_ref,
         "constraints_ref": "global_constraints_v3",
-        "input_artifact_refs": input_artifact_refs or ["art://inputs/brief.md", "art://inputs/brand-guide.md"],
+        "input_artifact_refs": (
+            input_artifact_refs
+            if input_artifact_refs is not None or not use_default_input_artifact_refs
+            else ["art://inputs/brief.md", "art://inputs/brand-guide.md"]
+        ),
         "context_query_plan": context_query_plan or {
             "keywords": ["homepage", "brand", "visual"],
             "semantic_queries": ["approved visual direction"],
@@ -2335,6 +2341,7 @@ def _create_and_lease_ticket(
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
     parent_ticket_id: str | None = None,
+    use_default_input_artifact_refs: bool = True,
 ) -> None:
     if tenant_id is not None and workspace_id is not None:
         _ensure_scoped_workflow(
@@ -2374,6 +2381,7 @@ def _create_and_lease_ticket(
             context_query_plan=context_query_plan,
             delivery_stage=delivery_stage,
             parent_ticket_id=parent_ticket_id,
+            use_default_input_artifact_refs=use_default_input_artifact_refs,
         ),
     )
     assert create_response.status_code == 200
@@ -2422,6 +2430,7 @@ def _create_lease_and_start_ticket(
     workspace_id: str | None = None,
     delivery_stage: str | None = None,
     parent_ticket_id: str | None = None,
+    use_default_input_artifact_refs: bool = True,
 ) -> None:
     _create_and_lease_ticket(
         client,
@@ -2451,6 +2460,7 @@ def _create_lease_and_start_ticket(
         workspace_id=workspace_id,
         delivery_stage=delivery_stage,
         parent_ticket_id=parent_ticket_id,
+        use_default_input_artifact_refs=use_default_input_artifact_refs,
     )
     start_response = client.post(
         "/api/v1/commands/ticket-start",
@@ -19649,6 +19659,133 @@ def test_ticket_fail_and_retry_stream_carries_failure_events(client, set_ticket_
     assert response.status_code == 200
     assert "TICKET_FAILED" in body
     assert "TICKET_RETRY_SCHEDULED" in body
+
+
+def test_decomposition_recovery_failure_creates_segments_and_aggregator_without_retry(client, set_ticket_time):
+    workflow_id = "wf_decomposition_recovery"
+    ticket_id = "tkt_decomposition_recovery_large"
+    node_id = "node_decomposition_recovery_large"
+    input_refs = ["art://inputs/large-brief.md", "art://inputs/domain-notes.md"]
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="architect_primary",
+        retry_budget=2,
+        input_artifact_refs=input_refs,
+        output_schema_ref="architecture_brief",
+        output_schema_version=1,
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            failure_kind="REQUEST_TOO_LARGE",
+            failure_message="Request exceeded the provider context limit and must be decomposed.",
+            failure_detail={"limit_kind": "context_window", "estimated_tokens": 240000},
+            idempotency_key="ticket-fail:decomposition-recovery:request-too-large",
+        ),
+    )
+
+    repository = client.app.state.repository
+    events = repository.list_events_for_testing()
+    recovery_incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == INCIDENT_TYPE_DECOMPOSITION_RECOVERY
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert not [
+        event
+        for event in events
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED
+    ]
+    assert repository.get_current_ticket_projection(ticket_id)["retry_count"] == 0
+    assert len(recovery_incidents) == 1
+
+    recovery_payload = recovery_incidents[0]["payload"]["decomposition_recovery"]
+    plan = recovery_payload["decomposition_plan"]
+    assert plan is not None, recovery_payload
+    segment_ticket_ids = recovery_payload["created_segment_ticket_ids"]
+    segment_artifact_refs = [segment["artifact_ref"] for segment in plan["segments"]]
+    aggregator_ticket_id = recovery_payload["aggregator_ticket_id"]
+    with repository.connection() as connection:
+        aggregator_spec = repository.get_latest_ticket_created_payload(connection, aggregator_ticket_id)
+
+    assert recovery_payload["source_ticket_id"] == ticket_id
+    assert recovery_payload["source_node_id"] == node_id
+    assert recovery_payload["source_output_schema_ref"] == "architecture_brief"
+    assert recovery_payload["failure_kind"] == "REQUEST_TOO_LARGE"
+    assert recovery_payload["recovery_status"] == "CREATED"
+    assert plan["uses_provider_hidden_state"] is False
+    assert len(segment_ticket_ids) == 2
+    assert aggregator_spec["dispatch_intent"]["dependency_gate_refs"] == segment_ticket_ids
+    assert aggregator_spec["input_artifact_refs"] == [*input_refs, *segment_artifact_refs]
+    assert all(repository.get_current_ticket_projection(segment_id) is not None for segment_id in segment_ticket_ids)
+
+
+def test_decomposition_recovery_blocks_without_replayable_created_spec(client, set_ticket_time):
+    workflow_id = "wf_decomposition_recovery_blocked"
+    ticket_id = "tkt_decomposition_recovery_blocked"
+    node_id = "node_decomposition_recovery_blocked"
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        role_profile_ref="architect_primary",
+        retry_budget=2,
+        input_artifact_refs=[],
+        use_default_input_artifact_refs=False,
+        output_schema_ref="architecture_brief",
+        output_schema_version=1,
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            failure_kind="NEEDS_DECOMPOSITION",
+            failure_message="The ticket is too broad but lacks replayable inputs.",
+            failure_detail={"reason": "missing_replayable_inputs"},
+            idempotency_key="ticket-fail:decomposition-recovery:blocked",
+        ),
+    )
+
+    repository = client.app.state.repository
+    events = repository.list_events_for_testing()
+    recovery_incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+        and incident["incident_type"] == INCIDENT_TYPE_DECOMPOSITION_RECOVERY
+    ]
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert not [
+        event
+        for event in events
+        if event["workflow_id"] == workflow_id and event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED
+    ]
+    assert len(recovery_incidents) == 1
+    recovery_payload = recovery_incidents[0]["payload"]["decomposition_recovery"]
+    assert recovery_payload["recovery_status"] == "BLOCKED"
+    assert recovery_payload["aggregator_ticket_id"] is None
+    assert recovery_payload["created_segment_ticket_ids"] == []
 
 
 def test_scheduler_timeout_stream_carries_timeout_events(client, set_ticket_time):

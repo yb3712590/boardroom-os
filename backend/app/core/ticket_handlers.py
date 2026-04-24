@@ -64,6 +64,7 @@ from app.core.constants import (
     FAILURE_KIND_PROVIDER_RATE_LIMITED,
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
+    INCIDENT_TYPE_DECOMPOSITION_RECOVERY,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
@@ -113,6 +114,7 @@ from app.core.ceo_scheduler import (
     trigger_ceo_shadow_with_recovery,
 )
 from app.core.ceo_execution_presets import build_internal_governance_review_request
+from app.core.decomposition import build_decomposition_recovery_plan, build_decomposition_ticket_specs
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.execution_targets import (
     employee_supports_execution_contract,
@@ -1256,6 +1258,12 @@ DEPENDENCY_GATE_INVALID_FAILURE_KIND = "DEPENDENCY_GATE_INVALID"
 DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND = "DEPENDENCY_GATE_UNHEALTHY"
 UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND = "UPSTREAM_DEPENDENCY_UNHEALTHY"
 WORKSPACE_HOOK_VALIDATION_FAILURE_KIND = "WORKSPACE_HOOK_VALIDATION_ERROR"
+DECOMPOSITION_RECOVERY_FAILURE_KINDS = {
+    "REQUEST_TOO_LARGE",
+    "CONTEXT_TOO_LARGE",
+    "OUTPUT_TOO_LARGE",
+    "NEEDS_DECOMPOSITION",
+}
 DEPENDENCY_TERMINAL_FAILURE_STATUSES = {
     TICKET_STATUS_FAILED,
     TICKET_STATUS_TIMED_OUT,
@@ -3128,6 +3136,173 @@ def _schedule_retry(
     if created_event is None:
         raise RuntimeError("Retry ticket creation idempotency conflict.")
     return next_ticket_id
+
+
+def _build_decomposition_recovery_ticket_spec(
+    *,
+    source_created_spec: dict[str, Any],
+    source_ticket_id: str,
+    planned: dict[str, Any],
+    dependency_gate_refs: list[str],
+    occurred_at: datetime,
+) -> dict[str, Any]:
+    retry_budget = int(source_created_spec.get("retry_budget") or 0)
+    escalation_policy = dict(source_created_spec.get("escalation_policy") or {})
+    return {
+        **source_created_spec,
+        "ticket_id": planned["ticket_id"],
+        "node_id": planned["node_id"],
+        "parent_ticket_id": source_ticket_id,
+        "attempt_no": 1,
+        "retry_count": 0,
+        "role_profile_ref": planned["role_profile_ref"],
+        "summary": planned["summary"],
+        "input_artifact_refs": list(planned["input_artifact_refs"]),
+        "context_query_plan": {
+            "keywords": list(planned.get("context_keywords") or []),
+            "semantic_queries": [str(planned.get("semantic_query") or planned["summary"])],
+            "max_context_tokens": int(
+                ((source_created_spec.get("context_query_plan") or {}).get("max_context_tokens") or 3000)
+            ),
+        },
+        "acceptance_criteria": list(planned["acceptance_criteria"]),
+        "output_schema_ref": planned["output_schema_ref"],
+        "output_schema_version": planned["output_schema_version"],
+        "allowed_tools": list(source_created_spec.get("allowed_tools") or ["read_artifact", "write_artifact"]),
+        "allowed_write_set": list(planned["allowed_write_set"]),
+        "retry_budget": retry_budget,
+        "escalation_policy": escalation_policy,
+        "dispatch_intent": {
+            **dict(source_created_spec.get("dispatch_intent") or {}),
+            "dependency_gate_refs": list(dependency_gate_refs),
+        },
+        "decomposition_recovery": {
+            "source_ticket_id": source_ticket_id,
+            "source_node_id": source_created_spec.get("node_id"),
+            "created_at": occurred_at.isoformat(),
+        },
+        "idempotency_key": f"decomposition-recovery-create:{planned['ticket_id']}",
+    }
+
+
+def _open_decomposition_recovery_incident(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    command_id: str,
+    occurred_at: datetime,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    created_spec: dict[str, Any],
+    failure_payload: dict[str, Any],
+    idempotency_key_base: str,
+) -> str | None:
+    existing_incident = repository.get_open_incident_for_node(workflow_id, node_id, connection=connection)
+    if existing_incident is not None:
+        return None
+
+    incident_id = new_prefixed_id("inc")
+    blocked_reason: str | None = None
+    decomposition_plan: dict[str, Any] | None = None
+    created_segment_ticket_ids: list[str] = []
+    aggregator_ticket_id: str | None = None
+    try:
+        decomposition_plan = build_decomposition_recovery_plan(
+            workflow_id=workflow_id,
+            source_ticket_id=ticket_id,
+            source_node_id=node_id,
+            created_spec=created_spec,
+            failure_payload=failure_payload,
+        )
+        ticket_specs = build_decomposition_ticket_specs(
+            decomposition_plan,
+            build_ticket_spec=lambda planned, dependency_gate_refs: _build_decomposition_recovery_ticket_spec(
+                source_created_spec=created_spec,
+                source_ticket_id=ticket_id,
+                planned=planned,
+                dependency_gate_refs=dependency_gate_refs,
+                occurred_at=occurred_at,
+            ),
+        )
+        for ticket_spec in ticket_specs:
+            created_ticket_id = _insert_followup_ticket_created_event(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=occurred_at,
+                workflow_id=workflow_id,
+                ticket_payload=ticket_spec,
+                idempotency_key=f"{idempotency_key_base}:decomposition-recovery-create:{ticket_spec['ticket_id']}",
+                actor_id="decomposition-recovery",
+            )
+            if created_ticket_id == decomposition_plan["aggregator"]["ticket_id"]:
+                aggregator_ticket_id = created_ticket_id
+            else:
+                created_segment_ticket_ids.append(created_ticket_id)
+        recovery_status = "CREATED"
+        incident_status = INCIDENT_STATUS_OPEN
+    except ValueError as exc:
+        blocked_reason = str(exc)
+        recovery_status = "BLOCKED"
+        incident_status = INCIDENT_STATUS_OPEN
+
+    recovery_payload = {
+        "source_ticket_id": ticket_id,
+        "source_node_id": node_id,
+        "source_output_schema_ref": created_spec.get("output_schema_ref"),
+        "source_output_schema_version": created_spec.get("output_schema_version"),
+        "failure_kind": failure_payload["failure_kind"],
+        "failure_fingerprint": failure_payload["failure_fingerprint"],
+        "recovery_policy": "decompose_failed_ticket_without_retry",
+        "recovery_status": recovery_status,
+        "blocked_reason": blocked_reason,
+        "decomposition_decision": (
+            {key: decomposition_plan[key] for key in (
+                "decision_kind",
+                "reason",
+                "evidence_refs",
+                "target_output_schema_ref",
+                "target_output_schema_version",
+                "uses_provider_hidden_state",
+            )}
+            if decomposition_plan is not None
+            else None
+        ),
+        "decomposition_plan": decomposition_plan,
+        "created_segment_ticket_ids": created_segment_ticket_ids,
+        "aggregator_ticket_id": aggregator_ticket_id,
+    }
+    incident_payload = {
+        "incident_id": incident_id,
+        "ticket_id": ticket_id,
+        "node_id": node_id,
+        "incident_type": INCIDENT_TYPE_DECOMPOSITION_RECOVERY,
+        "severity": "high",
+        "status": incident_status,
+        "fingerprint": f"{workflow_id}:{node_id}:decomposition-recovery:{failure_payload['failure_fingerprint']}",
+        "opened_at": occurred_at.isoformat(),
+        "summary": "Ticket failure requires explicit decomposition recovery instead of retrying the same large ticket.",
+        "failure_kind": failure_payload["failure_kind"],
+        "failure_message": failure_payload["failure_message"],
+        "failure_fingerprint": failure_payload["failure_fingerprint"],
+        "decomposition_recovery": recovery_payload,
+    }
+    incident_event = repository.insert_event(
+        connection,
+        event_type=EVENT_INCIDENT_OPENED,
+        actor_type="system",
+        actor_id="decomposition-recovery",
+        workflow_id=workflow_id,
+        idempotency_key=f"{idempotency_key_base}:decomposition-recovery-incident:{ticket_id}",
+        causation_id=command_id,
+        correlation_id=workflow_id,
+        payload=incident_payload,
+        occurred_at=occurred_at,
+    )
+    if incident_event is None:
+        raise RuntimeError("Decomposition recovery incident idempotency conflict.")
+    return aggregator_ticket_id
 
 
 def _auto_close_recovering_incidents_for_completed_ticket(
@@ -6503,7 +6678,20 @@ def handle_ticket_fail(
             ticket=current_ticket,
             failure_detail=failure_payload.get("failure_detail"),
         )
-        if _should_open_provider_incident_for_failure(payload.failure_kind) and provider_id is not None:
+        if payload.failure_kind in DECOMPOSITION_RECOVERY_FAILURE_KINDS and created_spec is not None:
+            next_ticket_id = _open_decomposition_recovery_incident(
+                repository=repository,
+                connection=connection,
+                command_id=command_id,
+                occurred_at=received_at,
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                created_spec=created_spec,
+                failure_payload=failure_payload,
+                idempotency_key_base=payload.idempotency_key,
+            )
+        elif _should_open_provider_incident_for_failure(payload.failure_kind) and provider_id is not None:
             _open_provider_incident(
                 repository=repository,
                 connection=connection,

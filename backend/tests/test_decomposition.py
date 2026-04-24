@@ -7,6 +7,7 @@ from app.core.decomposition import (
     NO_DECOMPOSITION,
     REJECT_UNBOUNDED_REQUEST,
     DecompositionDecision,
+    build_decomposition_recovery_plan,
     build_decomposition_ticket_specs,
     validate_decomposition_plan,
 )
@@ -125,3 +126,65 @@ def test_decomposition_plan_rejects_provider_hidden_state_and_fallback_fields() 
 
     with pytest.raises(ValueError, match="fallback_provider_ids"):
         validate_decomposition_plan(plan)
+
+
+def test_recovery_decomposition_plan_is_auditable_and_avoids_provider_state() -> None:
+    plan = build_decomposition_recovery_plan(
+        workflow_id="wf_recovery",
+        source_ticket_id="tkt_large_request",
+        source_node_id="node_large_request",
+        created_spec={
+            "ticket_id": "tkt_large_request",
+            "node_id": "node_large_request",
+            "role_profile_ref": "architect_primary",
+            "summary": "Create a complete governance brief.",
+            "input_artifact_refs": ["art://inputs/brief.md"],
+            "output_schema_ref": "architecture_brief",
+            "output_schema_version": 1,
+        },
+        failure_payload={
+            "failure_kind": "REQUEST_TOO_LARGE",
+            "failure_message": "Request exceeded provider context limits.",
+            "failure_fingerprint": "fp_large_request",
+            "failure_detail": {"limit": "context"},
+        },
+    )
+
+    validated = validate_decomposition_plan(plan)
+
+    assert validated["decision_kind"] == DECOMPOSE_NOW
+    assert validated["uses_provider_hidden_state"] is False
+    assert validated["target_output_schema_ref"] == "architecture_brief"
+    assert validated["final_output_schema_ref"] == "architecture_brief"
+    assert validated["segment_output_schema_ref"] == "architecture_brief_segment"
+    assert [segment["segment_id"] for segment in validated["segments"]] == [
+        "scope_and_requirements",
+        "solution_and_risks",
+    ]
+    assert validated["aggregator"]["dependency_policy"] == "all_segments_complete"
+    assert any("fp_large_request" in evidence_ref for evidence_ref in validated["evidence_refs"])
+    assert "provider_id" not in str(validated)
+    assert "fallback_provider_ids" not in str(validated)
+    assert "local_deterministic" not in str(validated)
+    assert "provider_response_id" not in str(validated)
+
+
+def test_recovery_decomposition_plan_blocks_without_replayable_source_spec() -> None:
+    with pytest.raises(ValueError, match="source ticket created spec"):
+        build_decomposition_recovery_plan(
+            workflow_id="wf_recovery",
+            source_ticket_id="tkt_large_request",
+            source_node_id="node_large_request",
+            created_spec={
+                "ticket_id": "tkt_large_request",
+                "node_id": "node_large_request",
+                "role_profile_ref": "architect_primary",
+                "input_artifact_refs": ["art://inputs/brief.md"],
+                "output_schema_ref": "architecture_brief",
+            },
+            failure_payload={
+                "failure_kind": "REQUEST_TOO_LARGE",
+                "failure_message": "Request exceeded provider context limits.",
+                "failure_fingerprint": "fp_large_request",
+            },
+        )

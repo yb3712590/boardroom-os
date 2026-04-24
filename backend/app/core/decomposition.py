@@ -7,6 +7,8 @@ from typing import Any
 NO_DECOMPOSITION = "NO_DECOMPOSITION"
 DECOMPOSE_NOW = "DECOMPOSE_NOW"
 REJECT_UNBOUNDED_REQUEST = "REJECT_UNBOUNDED_REQUEST"
+RECOVERY_SEGMENT_OUTPUT_SCHEMA_REF = "architecture_brief_segment"
+RECOVERY_SEGMENT_OUTPUT_SCHEMA_VERSION = 1
 DECOMPOSITION_DECISION_KINDS = {
     NO_DECOMPOSITION,
     DECOMPOSE_NOW,
@@ -191,6 +193,119 @@ def validate_decomposition_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if final_schema_ref == segment_schema_ref and final_schema_version == segment_schema_version:
         raise ValueError("Segment output schema must differ from final output schema.")
     return payload
+
+
+def _dedupe_string_values(values: list[Any]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def build_decomposition_recovery_plan(
+    *,
+    workflow_id: str,
+    source_ticket_id: str,
+    source_node_id: str,
+    created_spec: dict[str, Any],
+    failure_payload: dict[str, Any],
+) -> dict[str, Any]:
+    created_spec = _require_mapping(created_spec, field_path="source ticket created spec")
+    role_profile_ref = _require_string(created_spec, "role_profile_ref", field_path="source ticket created spec")
+    final_schema_ref = _require_string(created_spec, "output_schema_ref", field_path="source ticket created spec")
+    final_schema_version = _require_int(
+        created_spec,
+        "output_schema_version",
+        field_path="source ticket created spec",
+    )
+    source_summary = str(created_spec.get("summary") or source_ticket_id).strip()
+    input_artifact_refs = _dedupe_string_values(list(created_spec.get("input_artifact_refs") or []))
+    if not input_artifact_refs:
+        raise ValueError("source ticket created spec.input_artifact_refs must include replayable artifacts.")
+
+    failure_kind = _require_string(failure_payload, "failure_kind", field_path="failure payload")
+    failure_message = _require_string(failure_payload, "failure_message", field_path="failure payload")
+    failure_fingerprint = _require_string(
+        failure_payload,
+        "failure_fingerprint",
+        field_path="failure payload",
+    )
+    plan_id = f"decomp_recovery_{workflow_id}_{source_ticket_id}"
+    segment_specs = [
+        (
+            "scope_and_requirements",
+            "Clarify source scope, constraints, inputs, and acceptance boundaries.",
+            "Must produce a replayable scope-and-requirements segment artifact for the failed source ticket.",
+        ),
+        (
+            "solution_and_risks",
+            "Clarify solution structure, risks, verification, and delivery evidence.",
+            "Must produce a replayable solution-and-risks segment artifact for the failed source ticket.",
+        ),
+    ]
+    segments: list[dict[str, Any]] = []
+    for segment_id, summary, acceptance in segment_specs:
+        ticket_id = f"{source_ticket_id}_decomp_{segment_id}"
+        segments.append(
+            {
+                "segment_id": segment_id,
+                "ticket_id": ticket_id,
+                "node_id": f"{source_node_id}__decomp_{segment_id}",
+                "summary": f"{summary} Source ticket: {source_summary}",
+                "input_artifact_refs": list(input_artifact_refs),
+                "acceptance_criteria": [
+                    acceptance,
+                    f"Must address failure kind {failure_kind}: {failure_message}",
+                    "Must write the segment output as an artifact and avoid hidden provider state.",
+                ],
+                "artifact_ref": f"art://runtime/{ticket_id}/architecture_brief_segment.json",
+                "artifact_path": f"reports/decomposition/{ticket_id}/architecture_brief_segment.json",
+            }
+        )
+
+    segment_artifact_refs = [segment["artifact_ref"] for segment in segments]
+    aggregator_ticket_id = f"{source_ticket_id}_decomp_aggregator"
+    plan = {
+        "decision_kind": DECOMPOSE_NOW,
+        "reason": f"Source ticket failed with {failure_kind}; recover by decomposing into replayable atomic tickets.",
+        "evidence_refs": [
+            f"ticket://{source_ticket_id}",
+            f"node://{source_node_id}",
+            f"failure://{failure_fingerprint}",
+        ],
+        "target_output_schema_ref": final_schema_ref,
+        "target_output_schema_version": final_schema_version,
+        "uses_provider_hidden_state": False,
+        "plan_id": plan_id,
+        "final_output_schema_ref": final_schema_ref,
+        "final_output_schema_version": final_schema_version,
+        "segment_output_schema_ref": RECOVERY_SEGMENT_OUTPUT_SCHEMA_REF,
+        "segment_output_schema_version": RECOVERY_SEGMENT_OUTPUT_SCHEMA_VERSION,
+        "role_profile_ref": role_profile_ref,
+        "segments": segments,
+        "aggregator": {
+            "ticket_id": aggregator_ticket_id,
+            "node_id": f"{source_node_id}__decomp_aggregator",
+            "summary": f"Synthesize recovered output for failed source ticket {source_ticket_id}.",
+            "role_profile_ref": role_profile_ref,
+            "input_artifact_refs": [*input_artifact_refs, *segment_artifact_refs],
+            "acceptance_criteria": [
+                f"Must synthesize the final {final_schema_ref} from every segment artifact.",
+                "Must cite every segment artifact and preserve replayability through artifact refs.",
+                "Must not rely on provider hidden conversation or fallback state.",
+            ],
+            "artifact_path": f"reports/decomposition/{aggregator_ticket_id}/{final_schema_ref}.json",
+            "dependency_policy": "all_segments_complete",
+            "reduce_instructions": (
+                "Read every decomposition segment artifact and synthesize the final schema without hidden state. "
+                f"Recover from failure {failure_kind}: {failure_message}"
+            ),
+        },
+    }
+    return validate_decomposition_plan(plan)
 
 
 def build_decomposition_ticket_specs(
