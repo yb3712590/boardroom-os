@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-13
+> 最后更新：2026-04-25
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -15,6 +15,8 @@
 
 补充差异：
 
+- `architecture_brief` 首票过大问题当前不再由 project-init 专用 profile / 隐式 provider state 处理：代码已引入 CEO 感知式 `decomposition_plan_v1`，由 CEO-authored decomposition decision/plan 显式展开 segment tickets + aggregator；segment 输出必须落 `architecture_brief_segment` artifact，aggregator 通过 `dependency_gate_refs` 与 `input_artifact_refs` 显式 reduce，最终 `architecture_brief` schema 保持不变
+- 当前通用分解底座只覆盖“CEO 创建票据前预判”的主路径；如果已有大 ticket 执行后因 context/token/output/request 过大失败，异常-恢复链条中的 `NEEDS_DECOMPOSITION -> decomposition_plan -> segment tickets + aggregator` 仍是下一阶段待办，不能用普通 retry 或 provider fallback 冒充恢复
 - `project-init` 的首张 kickoff 票现在统一由 `BOARD_DIRECTIVE_RECEIVED` 的 CEO shadow run 发起，`STANDARD` 与 `CEO_AUTOPILOT_FINE_GRAINED` 都会落到稳定的 `node_ceo_architecture_brief / tkt_<workflow>_ceo_architecture_brief`
 - `workflow_progression` shared abstraction 这轮已经从“`AUTOPILOT_GOVERNANCE_CHAIN / STANDARD_LEGACY_SCOPE_CHAIN` 并存”推进到“project-init / requirement elicitation 后续 kickoff / controller / fallback / validator 都共用 governance-first 主线”；旧 legacy scope follow-up 只保留给非 autopilot 的手工 `consensus_document` 兼容链
 - `STANDARD` 这轮也已切到 governance-first：治理链未走完时，snapshot 同样会暴露 `task_sensemaking=governance_followup`、`deliverable_kind=structured_document_delivery`、`coordination_mode=document_chain`，controller state 也会切到 `GOVERNANCE_REQUIRED`

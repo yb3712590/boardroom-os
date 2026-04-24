@@ -1,6 +1,6 @@
 # TODO
 
-> 最后更新：2026-04-22
+> 最后更新：2026-04-25
 > 本文件仍是项目唯一的待办真相源，但正文只保留当前批次与条件批次。已完成能力改看 `todo/completed-capabilities.md`，远期储备改看 `todo/postponed.md` 与 `milestone-timeline.md`。
 
 ## 当前阶段目标
@@ -81,6 +81,15 @@
 - 2026-04-17 本轮同时把边界锁死：event / artifact 写入仍继续保留 `source_node_id` 兼容字段，不在这轮把 meeting / advisory / board review 的 command 与 event 合同整体改成 graph-only；当前已知剩余缺口是 meeting command 主链仍有一处 `graph_contract.lane_kind` 旧入口问题，后续要单独切片收口
 
 ## 当前批次
+
+### `P0-DEC-REC`：异常-恢复链条中的大请求切分
+
+状态：`待执行（2026-04-25 新增）`；主线关系：上一阶段已完成 CEO 预判式 `decomposition_plan_v1` 与 ticket-level segment/aggregator 展开，但它只覆盖创建票据前的主路径。下一阶段要把漏判的大 ticket 在失败/incident/recovery 链条中显式转成 decomposition plan，避免普通 retry 反复重跑同一个过大请求。
+
+- `P0-DEC-REC-001`：梳理并收口 request/context/output too large、provider size rejection、schema/output overflow 等 failure classification；命中后不得继续消耗普通 retry，也不得走 provider fallback / local deterministic。
+- `P0-DEC-REC-002`：在 recovery 链路中生成可审计 decomposition decision/plan artifact，最小输入包括 source_ticket_id、source_node_id、source output schema、失败证据与原 input artifact refs；信息不足时显式阻塞/升级。
+- `P0-DEC-REC-003`：复用 `build_decomposition_ticket_specs(...)` 展开 recovery segment tickets + aggregator；aggregator 必须显式依赖所有 segment tickets，并在 `input_artifact_refs` 中包含原输入与所有 segment artifacts。
+- `P0-DEC-REC-004`：补定向测试，覆盖 too-large failure 不走普通 retry、recovery plan 禁止 hidden/fallback provider 字段、普通无关失败仍保持原 retry/incident 行为。
 
 ### `P0-COR`：主线纠偏、能力驱动决策与真实交付重构
 
