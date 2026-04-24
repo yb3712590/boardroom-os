@@ -1677,7 +1677,11 @@ def _build_openai_compat_provider_config(
         write_timeout_sec=float(provider.write_timeout_sec or provider.timeout_sec or 0),
         first_token_timeout_sec=float(provider.first_token_timeout_sec or provider.timeout_sec or 0),
         stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or provider.timeout_sec or 0),
-        request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 0),
+        request_total_timeout_sec=(
+            float(provider.request_total_timeout_sec)
+            if provider.request_total_timeout_sec is not None
+            else None
+        ),
         reasoning_effort=selection.effective_reasoning_effort,
         schema_name=schema_id(schema_ref, schema_version) if schema_ref and schema_version > 0 else None,
         schema_body=(
@@ -1810,7 +1814,11 @@ def _provider_timeout_settings(selection: RuntimeProviderSelection) -> dict[str,
             "write_timeout_sec": float(config.write_timeout_sec),
             "first_token_timeout_sec": float(config.first_token_timeout_sec),
             "stream_idle_timeout_sec": float(config.stream_idle_timeout_sec),
-            "request_total_timeout_sec": float(config.request_total_timeout_sec),
+            "request_total_timeout_sec": (
+                float(config.request_total_timeout_sec)
+                if config.request_total_timeout_sec is not None
+                else None
+            ),
         }
     config = _build_claude_code_provider_config(selection)
     return {

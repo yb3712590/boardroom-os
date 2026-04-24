@@ -166,7 +166,11 @@ def _load_provider_config(provider_id: str) -> OpenAICompatProviderConfig:
         write_timeout_sec=float(provider.write_timeout_sec or 20.0),
         first_token_timeout_sec=float(provider.first_token_timeout_sec or 300.0),
         stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or 300.0),
-        request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 300.0),
+        request_total_timeout_sec=(
+            float(provider.request_total_timeout_sec)
+            if provider.request_total_timeout_sec is not None
+            else None
+        ),
         reasoning_effort=provider.reasoning_effort,
         provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
     )

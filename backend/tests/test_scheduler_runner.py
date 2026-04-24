@@ -3491,7 +3491,7 @@ def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_open
     assert first_attempt["attempt_no"] == 1
     assert first_attempt["max_attempts"] == 10
     assert first_attempt["retry_backoff_schedule_sec"] == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
-    assert first_attempt["request_total_timeout_sec"] == 300.0
+    assert first_attempt["request_total_timeout_sec"] is None
     first_retry = next(event for event in provider_events if event["event_type"] == "PROVIDER_RETRY_SCHEDULED")
     assert first_retry["payload"]["retry_delay_sec"] == 1.0
     last_finish = [event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"][-1]

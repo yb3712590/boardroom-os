@@ -69,7 +69,7 @@ def test_load_live_scenario_config_builds_single_provider_payload_and_derives_co
     assert provider["api_key"] == "sk-test"
     assert provider["preferred_model"] == "gpt-5.4"
     assert provider["timeout_sec"] == 300
-    assert provider["request_total_timeout_sec"] == 300
+    assert "request_total_timeout_sec" not in provider
     assert provider["connect_timeout_sec"] == 10
     assert provider["write_timeout_sec"] == 20
     assert provider["first_token_timeout_sec"] == 300

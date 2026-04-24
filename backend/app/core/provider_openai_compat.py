@@ -474,18 +474,6 @@ class _ResponsesStreamAccumulator:
         self.first_token_elapsed_sec: float | None = None
 
     def check_timeout(self) -> None:
-        elapsed = time.monotonic() - self.stream_started_at
-        total_timeout = self.config.request_total_timeout_sec
-        if total_timeout is not None and elapsed > float(total_timeout):
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="REQUEST_TOTAL_TIMEOUT",
-                message="Provider stream exceeded the configured total request timeout.",
-                failure_detail={
-                    "provider_response_id": self.response_id,
-                    "request_id": self.request_id,
-                    "timeout_phase": "request_total",
-                },
-            )
         anchor = self.last_output_at if self.last_output_at is not None else self.stream_started_at
         budget = float(
             (self.config.stream_idle_timeout_sec if self.last_output_at is not None else self.config.first_token_timeout_sec)

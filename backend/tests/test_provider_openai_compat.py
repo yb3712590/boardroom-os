@@ -566,7 +566,7 @@ def test_invoke_openai_compat_response_returns_after_response_completed_without_
     assert result.output_text == '{"ok":true}'
 
 
-def test_invoke_openai_compat_response_enforces_request_total_timeout_for_streaming(
+def test_invoke_openai_compat_response_ignores_request_total_timeout_for_streaming(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monotonic_values = iter([0.0, 0.0, 0.5, 2.0])
@@ -579,28 +579,27 @@ def test_invoke_openai_compat_response_enforces_request_total_timeout_for_stream
 
     monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
 
-    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
-        invoke_openai_compat_response(
-            OpenAICompatProviderConfig(
-                base_url="https://api-vip.codex-for.me/v1",
-                api_key="test-key",
-                model="gpt-5.3-codex",
-                timeout_sec=30.0,
-                first_token_timeout_sec=300.0,
-                stream_idle_timeout_sec=300.0,
-                request_total_timeout_sec=1.0,
-                provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
-            ),
-            _rendered_payload(),
-            transport=_stream_transport(
-                {"type": "response.output_text.delta", "delta": '{"ok":'},
-                {"type": "response.output_text.delta", "delta": "true}"},
-                {"type": "response.completed", "response": {"id": "resp_stream_long_running"}},
-            ),
-        )
+    result = invoke_openai_compat_response(
+        OpenAICompatProviderConfig(
+            base_url="https://api-vip.codex-for.me/v1",
+            api_key="test-key",
+            model="gpt-5.3-codex",
+            timeout_sec=30.0,
+            first_token_timeout_sec=300.0,
+            stream_idle_timeout_sec=300.0,
+            request_total_timeout_sec=1.0,
+            provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+        ),
+        _rendered_payload(),
+        transport=_stream_transport(
+            {"type": "response.output_text.delta", "delta": '{"ok":'},
+            {"type": "response.output_text.delta", "delta": "true}"},
+            {"type": "response.completed", "response": {"id": "resp_stream_long_running"}},
+        ),
+    )
 
-    assert exc_info.value.failure_kind == "REQUEST_TOTAL_TIMEOUT"
-    assert exc_info.value.failure_detail["timeout_phase"] == "request_total"
+    assert result.output_text == '{"ok":true}'
+    assert result.response_id == "resp_stream_long_running"
 
 
 def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_stream_output() -> None:

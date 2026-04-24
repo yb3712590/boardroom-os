@@ -306,12 +306,26 @@ def test_save_runtime_provider_command_normalizes_alias_window_and_model_entry_r
     assert loaded.providers[0].write_timeout_sec == 20.0
     assert loaded.providers[0].first_token_timeout_sec == 300.0
     assert loaded.providers[0].stream_idle_timeout_sec == 300.0
-    assert loaded.providers[0].request_total_timeout_sec == 300.0
+    assert loaded.providers[0].request_total_timeout_sec is None
     assert loaded.providers[0].retry_backoff_schedule_sec == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     assert loaded.provider_model_entries[0].entry_ref == build_provider_model_entry_ref(
         "prov_primary",
         "gpt-5.3-codex",
     )
+
+
+def test_save_runtime_provider_command_preserves_explicit_request_total_timeout(tmp_path: Path) -> None:
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+    command = _build_upsert_command()
+    command.providers[0].timeout_sec = 30.0
+    command.providers[0].request_total_timeout_sec = 45.0
+
+    save_runtime_provider_command(store, command)
+    loaded = store.load_saved_config()
+
+    assert loaded is not None
+    assert loaded.providers[0].timeout_sec == 45.0
+    assert loaded.providers[0].request_total_timeout_sec == 45.0
 
 
 def test_resolve_provider_selection_inherits_ceo_binding_and_provider_window(tmp_path: Path) -> None:

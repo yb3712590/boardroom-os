@@ -161,7 +161,6 @@ class LiveScenarioConfig:
                     "write_timeout_sec": self.provider.write_timeout_sec,
                     "first_token_timeout_sec": self.provider.first_token_timeout_sec,
                     "stream_idle_timeout_sec": self.provider.stream_idle_timeout_sec,
-                    "request_total_timeout_sec": compat_timeout_sec,
                     "fallback_provider_ids": list(self.provider.fallback_provider_ids),
                 }
             ],

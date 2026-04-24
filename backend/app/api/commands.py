@@ -108,11 +108,12 @@ def runtime_provider_upsert(
 
 def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict) -> OpenAICompatProviderConfig:
     provider_type = payload.type if isinstance(payload, RuntimeProviderConfigInput) else payload["type"]
-    timeout_sec = (
+    request_total_timeout_sec = (
         payload.request_total_timeout_sec
         if isinstance(payload, RuntimeProviderConfigInput)
         else payload.get("request_total_timeout_sec")
-    ) or (payload.timeout_sec if isinstance(payload, RuntimeProviderConfigInput) else payload.get("timeout_sec")) or 300.0
+    )
+    timeout_sec = (payload.timeout_sec if isinstance(payload, RuntimeProviderConfigInput) else payload.get("timeout_sec")) or 300.0
     return OpenAICompatProviderConfig(
         base_url=payload.base_url if isinstance(payload, RuntimeProviderConfigInput) else payload["base_url"],
         api_key=payload.api_key if isinstance(payload, RuntimeProviderConfigInput) else payload["api_key"],
@@ -153,7 +154,9 @@ def _build_openai_connectivity_config(payload: RuntimeProviderConfigInput | dict
             )
             or 300.0
         ),
-        request_total_timeout_sec=float(timeout_sec),
+        request_total_timeout_sec=(
+            float(request_total_timeout_sec) if request_total_timeout_sec is not None else None
+        ),
         reasoning_effort=(
             payload.reasoning_effort
             if isinstance(payload, RuntimeProviderConfigInput)
@@ -205,7 +208,11 @@ def runtime_provider_models_refresh(
             write_timeout_sec=float(provider.write_timeout_sec or provider.timeout_sec or 0),
             first_token_timeout_sec=float(provider.first_token_timeout_sec or provider.timeout_sec or 0),
             stream_idle_timeout_sec=float(provider.stream_idle_timeout_sec or provider.timeout_sec or 0),
-            request_total_timeout_sec=float(provider.request_total_timeout_sec or provider.timeout_sec or 0),
+            request_total_timeout_sec=(
+                float(provider.request_total_timeout_sec)
+                if provider.request_total_timeout_sec is not None
+                else None
+            ),
             provider_type=OpenAICompatProviderType(provider.type.value),
         )
     )

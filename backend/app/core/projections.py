@@ -310,7 +310,7 @@ def _build_runtime_provider_projection_data(
         model=default_provider.preferred_model if default_provider is not None else None,
         max_context_window=default_provider.max_context_window if default_provider is not None else 0,
         timeout_sec=(
-            default_provider.request_total_timeout_sec
+            default_provider.timeout_sec
             if default_provider is not None
             else 300.0
         ),

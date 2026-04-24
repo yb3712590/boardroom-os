@@ -1187,7 +1187,7 @@ def test_load_integration_test_provider_payload_preserves_long_test_timeout_and_
             '"base_url":"https://api.example.test/v1","api_key":"sk-test","alias":"integration-live",'
             '"preferred_model":"gpt-5.4","max_context_window":null,"timeout_sec":300,'
             '"connect_timeout_sec":10,"write_timeout_sec":20,"first_token_timeout_sec":300,'
-            '"stream_idle_timeout_sec":300,"request_total_timeout_sec":300,'
+            '"stream_idle_timeout_sec":300,'
             '"retry_backoff_schedule_sec":[1,2,4,8,16,32,60,60,60],"reasoning_effort":"high"}],'
             '"provider_model_entries":[{"provider_id":"prov_openai_compat","model_name":"gpt-5.4"}],'
             '"role_bindings":[{"target_ref":"ceo_shadow","provider_model_entry_refs":["prov_openai_compat::gpt-5.4"],'
@@ -1208,7 +1208,7 @@ def test_load_integration_test_provider_payload_preserves_long_test_timeout_and_
     assert provider["write_timeout_sec"] == 20
     assert provider["first_token_timeout_sec"] == 300
     assert provider["stream_idle_timeout_sec"] == 300
-    assert provider["request_total_timeout_sec"] == 300
+    assert "request_total_timeout_sec" not in provider
     assert provider["retry_backoff_schedule_sec"] == [1, 2, 4, 8, 16, 32, 60, 60, 60]
 
 

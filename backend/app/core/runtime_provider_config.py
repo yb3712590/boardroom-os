@@ -122,12 +122,15 @@ class RuntimeProviderConfigEntry(StrictModel):
         alias = _derive_alias(str(self.base_url or ""), self.alias or self.label)
         legacy_timeout_sec = float(self.timeout_sec or DEFAULT_TIMEOUT_SEC)
         timeout_was_explicit = self.timeout_sec is not None
-        request_total_timeout_sec = float(self.request_total_timeout_sec or legacy_timeout_sec)
+        request_total_timeout_sec = (
+            float(self.request_total_timeout_sec) if self.request_total_timeout_sec is not None else None
+        )
+        fallback_timeout_sec = float(request_total_timeout_sec or legacy_timeout_sec)
         connect_timeout_sec = float(
-            self.connect_timeout_sec or min(request_total_timeout_sec, DEFAULT_CONNECT_TIMEOUT_SEC)
+            self.connect_timeout_sec or min(fallback_timeout_sec, DEFAULT_CONNECT_TIMEOUT_SEC)
         )
         write_timeout_sec = float(
-            self.write_timeout_sec or min(request_total_timeout_sec, DEFAULT_WRITE_TIMEOUT_SEC)
+            self.write_timeout_sec or min(fallback_timeout_sec, DEFAULT_WRITE_TIMEOUT_SEC)
         )
         first_token_timeout_sec = float(
             self.first_token_timeout_sec
@@ -155,7 +158,7 @@ class RuntimeProviderConfigEntry(StrictModel):
         object.__setattr__(self, "model", self.preferred_model or self.model)
         object.__setattr__(self, "preferred_model", self.preferred_model or self.model)
         object.__setattr__(self, "max_context_window", self.max_context_window or DEFAULT_MAX_CONTEXT_WINDOW)
-        object.__setattr__(self, "timeout_sec", request_total_timeout_sec)
+        object.__setattr__(self, "timeout_sec", fallback_timeout_sec)
         object.__setattr__(self, "connect_timeout_sec", connect_timeout_sec)
         object.__setattr__(self, "write_timeout_sec", write_timeout_sec)
         object.__setattr__(self, "first_token_timeout_sec", first_token_timeout_sec)
@@ -377,7 +380,6 @@ def _build_env_backed_provider_config() -> RuntimeProviderStoredConfig:
             "max_context_window": DEFAULT_MAX_CONTEXT_WINDOW,
             "enabled": True,
             "timeout_sec": settings.provider_openai_compat_timeout_sec,
-            "request_total_timeout_sec": settings.provider_openai_compat_timeout_sec,
             "reasoning_effort": settings.provider_openai_compat_reasoning_effort,
         }
     )
