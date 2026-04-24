@@ -819,6 +819,7 @@ def resolve_provider_selection(
     target_ref: str,
     employee_provider_id: str | None,
     runtime_preference: RuntimeSelectionPreference | dict[str, Any] | None = None,
+    strict_explicit_binding: bool = False,
 ) -> RuntimeProviderSelection | None:
     normalized_preference = _normalize_runtime_preference(runtime_preference)
     if normalized_preference is not None:
@@ -857,6 +858,9 @@ def resolve_provider_selection(
         if selection is not None:
             return selection
         break
+
+    if strict_explicit_binding:
+        return None
 
     ceo_binding = _get_binding(config, ROLE_BINDING_CEO_SHADOW)
     if ceo_binding is not None:

@@ -87,6 +87,16 @@ def test_load_live_scenario_config_builds_single_provider_payload_and_derives_co
     } == {
         ("prov_openai_compat_truerealbill::gpt-5.4",)
     }
+    assert {
+        "ceo_shadow",
+        "role_profile:architect_primary",
+        "role_profile:frontend_engineer_primary",
+        "role_profile:checker_primary",
+        "role_profile:backend_engineer_primary",
+        "role_profile:database_engineer_primary",
+        "role_profile:platform_sre_primary",
+        "role_profile:cto_primary",
+    }.issubset({binding["target_ref"] for binding in payload["role_bindings"]})
 
 
 def test_load_live_scenario_config_rejects_stage_fields(tmp_path: Path) -> None:

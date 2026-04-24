@@ -128,6 +128,7 @@ def scenario_environment(
         "BOARDROOM_OS_DEVELOPER_INSPECTOR_ROOT": str(paths.developer_inspector_root),
         "BOARDROOM_OS_TICKET_CONTEXT_ARCHIVE_ROOT": str(paths.ticket_context_archive_root),
         "BOARDROOM_OS_RUNTIME_EXECUTION_MODE": "INPROCESS",
+        "BOARDROOM_OS_RUNTIME_STRICT_PROVIDER_SELECTION": "1",
         "BOARDROOM_OS_CEO_MAINTENANCE_INTERVAL_SEC": "1",
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL": base_url,
         "BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY": api_key,

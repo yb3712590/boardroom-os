@@ -91,7 +91,7 @@
 - provider 参与策略当前固定按主线语义收口：`ceo_shadow`、scope/governance 文档链、`architect / cto` 治理文档属于低频高杠杆；`BUILD / CHECK / REVIEW / CLOSEOUT` 属于高频执行或高频审查。标成 `low_frequency_only` 的高价 provider 只允许前一类目标命中
 - OpenAI-compatible provider 调用当前固定先走 Responses 流式；连通性测试如果确认流式不支持，会自动回退到 Responses 非流式并返回标准化 provider 结果；模型刷新接口会保留仍存在的已勾选模型并静默剔除失效模型，不再使用 `/chat/completions`
 - provider-to-provider failover 当前只覆盖 `PROVIDER_RATE_LIMITED / UPSTREAM_UNAVAILABLE`；运行时与 CEO live path 会按顺序尝试满足目标能力底线的备选 provider，鉴权错误、坏响应和配置不完整仍直接回退现有 deterministic 路径
-- 运行时、CEO live proposal、CEO shadow 审计和 provider fallback 失败明细现在都会统一写出 `provider_model_entry_ref / preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason / effective_max_context_window`；failover 或策略降级时保持 `preferred_*` 不变，只切换 `actual_*`
+- 运行时、CEO live proposal、CEO shadow 审计和 provider fallback 失败明细现在都会统一写出 `provider_model_entry_ref / preferred_provider_id / preferred_model / actual_provider_id / actual_model / selection_reason / policy_reason / effective_max_context_window`；failover 或策略降级时保持 `preferred_*` 不变，只切换 `actual_*`。如果根本没有选中 provider，失败明细会显式写 `provider_id=null / selection_missing=true`，不会伪装成 `prov_openai_compat`
 - 会议 `consensus_document@1` 现在可选携带 ADR 化 `decision_record`；`MeetingRoom` 默认先展示压缩后的决策视图，再把 round timeline 留作 audit trail
 - 只有 `MEETING_ESCALATION` 批准后生成的 follow-up ticket 会额外把 ADR `decision + consequences` 注入后续执行输入；其他 `consensus_document` 来源路径不变
 - `delivery_closeout_package@1` 现在可选携带 `documentation_updates`；internal closeout review 已把文档同步纳入 soft checker 口径，但 `FOLLOW_UP_REQUIRED` 不会自动变成硬门禁
@@ -104,7 +104,7 @@
 
 ## 2. Runtime 支持矩阵
 
-当前 runtime 默认走本地 `LOCAL_DETERMINISTIC`。如果 registry 里启用了匹配的 provider，并且 `ceo_shadow` 或当前 ticket 的 `execution_contract.execution_target_ref` 先命中角色绑定，否则再回退 legacy `role_profile:*` binding、员工 `provider_id` 兼容字段或默认 provider，同一批主线角色和输出会走对应 live path。
+当前 runtime 默认走本地 `LOCAL_DETERMINISTIC`。如果 registry 里启用了匹配的 provider，并且 `ceo_shadow` 或当前 ticket 的 `execution_contract.execution_target_ref` 先命中角色绑定，否则再回退 legacy `role_profile:*` binding、员工 `provider_id` 兼容字段或默认 provider，同一批主线角色和输出会走对应 live path。live/integration 长测会开启 strict provider selection：只接受 ticket runtime preference 或显式 role binding；缺少目标绑定时直接失败，不再继承 CEO binding、员工 provider 或默认 provider。
 
 | owner role | role profile | 输出 | Deterministic | OpenAI Compat Live | Claude Code CLI Live | 备注 |
 |------------|--------------|------|---------------|--------------------|----------------------|------|

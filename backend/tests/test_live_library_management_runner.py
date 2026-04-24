@@ -1095,6 +1095,7 @@ def test_live_scenario_environment_sets_configured_default_employee_provider(tmp
         seed=config.runtime.seed,
     ):
         assert os.environ["BOARDROOM_OS_DEFAULT_EMPLOYEE_PROVIDER_ID"] == "prov_openai_compat_truerealbill"
+        assert os.environ["BOARDROOM_OS_RUNTIME_STRICT_PROVIDER_SELECTION"] == "1"
 
 
 def test_load_integration_test_provider_payload_reads_template_and_sets_idempotency_key(tmp_path: Path) -> None:

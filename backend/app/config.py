@@ -20,6 +20,7 @@ class Settings:
     project_workspace_root: Path
     ticket_context_archive_root: Path | None
     runtime_provider_config_path: Path
+    runtime_strict_provider_selection: bool
     runtime_execution_mode: RuntimeExecutionMode
     artifact_object_store_enabled: bool
     artifact_object_store_endpoint: str | None
@@ -298,6 +299,10 @@ def get_settings() -> Settings:
         project_workspace_root=project_workspace_root,
         ticket_context_archive_root=ticket_context_archive_root,
         runtime_provider_config_path=runtime_provider_config_path,
+        runtime_strict_provider_selection=_read_bool_env(
+            "BOARDROOM_OS_RUNTIME_STRICT_PROVIDER_SELECTION",
+            default=False,
+        ),
         runtime_execution_mode=runtime_execution_mode,
         artifact_object_store_enabled=artifact_object_store_enabled,
         artifact_object_store_endpoint=artifact_object_store_endpoint,

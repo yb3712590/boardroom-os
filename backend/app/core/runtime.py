@@ -1748,7 +1748,8 @@ def _normalize_provider_failure_detail(
             [float(item) for item in list(selection.provider.retry_backoff_schedule_sec or [])],
         )
     else:
-        normalized.setdefault("provider_id", OPENAI_COMPAT_PROVIDER_ID)
+        normalized.setdefault("provider_id", None)
+        normalized.setdefault("selection_missing", True)
     normalized["attempt_count"] = attempt_count
     normalized["fallback_applied"] = fallback_applied
     if fallback_mode is not None:
@@ -2545,6 +2546,7 @@ def _resolve_provider_selection_for_ticket(
     created_spec: dict[str, Any] | None,
 ) -> RuntimeProviderSelection | None:
     config = resolve_runtime_provider_config()
+    settings = get_settings()
     target_ref = _resolve_ticket_target_ref(created_spec)
     if target_ref is None:
         return None
@@ -2553,6 +2555,7 @@ def _resolve_provider_selection_for_ticket(
         target_ref=target_ref,
         employee_provider_id=_resolve_ticket_provider_id(repository, ticket),
         runtime_preference=(created_spec or {}).get("runtime_preference"),
+        strict_explicit_binding=settings.runtime_strict_provider_selection,
     )
 
 

@@ -5,6 +5,9 @@ from pathlib import Path
 
 from app.contracts.commands import RuntimeProviderUpsertCommand
 from app.core.runtime_provider_config import (
+    RuntimeProviderConfigEntry,
+    RuntimeProviderModelEntry,
+    RuntimeProviderRoleBinding,
     RuntimeProviderConfigStore,
     RuntimeProviderStoredConfig,
     build_provider_model_entry_ref,
@@ -28,6 +31,72 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _provider_config(
+    *,
+    default_provider_id: str | None = "prov_default",
+    include_ceo_binding: bool = True,
+    include_target_binding: bool = False,
+) -> RuntimeProviderStoredConfig:
+    providers = [
+        RuntimeProviderConfigEntry(
+            provider_id="prov_default",
+            adapter_kind="openai_compat",
+            label="Default",
+            enabled=True,
+            base_url="https://api.default.test/v1",
+            api_key="sk-default",
+            preferred_model="gpt-5.4",
+        ),
+        RuntimeProviderConfigEntry(
+            provider_id="prov_employee",
+            adapter_kind="openai_compat",
+            label="Employee",
+            enabled=True,
+            base_url="https://api.employee.test/v1",
+            api_key="sk-employee",
+            preferred_model="gpt-5.4",
+        ),
+        RuntimeProviderConfigEntry(
+            provider_id="prov_role",
+            adapter_kind="openai_compat",
+            label="Role",
+            enabled=True,
+            base_url="https://api.role.test/v1",
+            api_key="sk-role",
+            preferred_model="gpt-5.4",
+        ),
+    ]
+    entries = [
+        RuntimeProviderModelEntry(
+            entry_ref=build_provider_model_entry_ref(provider.provider_id, "gpt-5.4"),
+            provider_id=provider.provider_id,
+            model_name="gpt-5.4",
+        )
+        for provider in providers
+    ]
+    bindings = []
+    if include_ceo_binding:
+        bindings.append(
+            RuntimeProviderRoleBinding(
+                target_ref="ceo_shadow",
+                provider_model_entry_refs=[build_provider_model_entry_ref("prov_default", "gpt-5.4")],
+            )
+        )
+    if include_target_binding:
+        bindings.append(
+            RuntimeProviderRoleBinding(
+                target_ref="role_profile:architect_primary",
+                provider_model_entry_refs=[build_provider_model_entry_ref("prov_role", "gpt-5.4")],
+            )
+        )
+    return RuntimeProviderStoredConfig(
+        default_provider_id=default_provider_id,
+        providers=providers,
+        provider_model_entries=entries,
+        role_bindings=bindings,
+    )
 
 
 def _build_upsert_command() -> RuntimeProviderUpsertCommand:
@@ -416,6 +485,48 @@ def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp
     assert selection.actual_model == "gpt-4.1"
     assert selection.effective_max_context_window == 180000
     assert selection.effective_reasoning_effort == "xhigh"
+
+
+def test_strict_provider_selection_requires_explicit_target_binding() -> None:
+    config = _provider_config(include_ceo_binding=True, include_target_binding=False)
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="role_profile:architect_primary",
+        employee_provider_id="prov_employee",
+        strict_explicit_binding=True,
+    )
+
+    assert selection is None
+
+
+def test_strict_provider_selection_uses_explicit_target_binding() -> None:
+    config = _provider_config(include_ceo_binding=True, include_target_binding=True)
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="role_profile:architect_primary",
+        employee_provider_id="prov_employee",
+        strict_explicit_binding=True,
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_role"
+    assert selection.selection_reason == "role_binding"
+
+
+def test_non_strict_provider_selection_keeps_existing_fallback_order() -> None:
+    config = _provider_config(include_ceo_binding=True, include_target_binding=False)
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="role_profile:architect_primary",
+        employee_provider_id="prov_employee",
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_default"
+    assert selection.selection_reason == "ceo_binding_inheritance"
 
 
 def test_resolve_provider_failover_selections_uses_remaining_binding_entries_before_provider_fallbacks(

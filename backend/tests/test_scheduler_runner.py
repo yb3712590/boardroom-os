@@ -63,6 +63,61 @@ def _provider_audit_events(repository, ticket_id: str) -> list[dict]:
         ]
 
 
+def test_provider_failure_detail_marks_missing_selection_without_default_provider() -> None:
+    detail = runtime_module._normalize_provider_failure_detail(
+        None,
+        selection=None,
+        attempt_count=0,
+        fallback_applied=False,
+    )
+
+    assert detail["provider_id"] is None
+    assert detail["selection_missing"] is True
+    assert detail["provider_id"] != OPENAI_COMPAT_PROVIDER_ID
+
+
+def test_live_strict_provider_selection_does_not_use_implicit_fallbacks(monkeypatch) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_STRICT_PROVIDER_SELECTION", "1")
+    monkeypatch.setattr(
+        runtime_module,
+        "resolve_runtime_provider_config",
+        lambda: RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                )
+            ],
+            role_bindings=[
+                RuntimeProviderRoleBinding(
+                    target_ref="ceo_shadow",
+                    provider_model_entry_refs=[f"{OPENAI_COMPAT_PROVIDER_ID}::gpt-5.3-codex"],
+                )
+            ],
+        ),
+    )
+
+    selection = runtime_module._resolve_provider_selection_for_ticket(
+        repository=type(
+            "Repository",
+            (),
+            {"get_employee_projection": lambda self, _employee_id: {"provider_id": OPENAI_COMPAT_PROVIDER_ID}},
+        )(),
+        ticket={"lease_owner": "emp_frontend"},
+        created_spec={"role_profile_ref": "frontend_engineer_primary"},
+    )
+
+    assert selection is None
+
+
 def _ticket_create_payload(
     *,
     workflow_id: str,
