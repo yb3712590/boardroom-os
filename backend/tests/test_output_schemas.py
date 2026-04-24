@@ -5,6 +5,8 @@ import pytest
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
     ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+    DECOMPOSITION_PLAN_SCHEMA_REF,
+    DECOMPOSITION_PLAN_SCHEMA_VERSION,
     get_output_schema_body,
     validate_output_payload,
 )
@@ -130,6 +132,79 @@ def test_output_schema_registry_rejects_architecture_brief_segment_missing_artif
                 "findings": ["Replayable ticket state is required."],
                 "decisions": ["Persist segment output as an artifact."],
                 "open_questions": [],
+            },
+        )
+
+
+def test_output_schema_registry_accepts_valid_decomposition_plan_payload() -> None:
+    validate_output_payload(
+        schema_ref=DECOMPOSITION_PLAN_SCHEMA_REF,
+        schema_version=DECOMPOSITION_PLAN_SCHEMA_VERSION,
+        submitted_schema_version="decomposition_plan_v1",
+        payload={
+            "plan_id": "decomp_wf_demo_architecture_brief",
+            "decision_kind": "DECOMPOSE_NOW",
+            "reason": "CEO determined the request spans independent architecture concerns.",
+            "evidence_refs": ["art://project-init/wf_demo/board-brief.md"],
+            "target_output_schema_ref": "architecture_brief",
+            "target_output_schema_version": 1,
+            "uses_provider_hidden_state": False,
+            "final_output_schema_ref": "architecture_brief",
+            "final_output_schema_version": 1,
+            "segment_output_schema_ref": "architecture_brief_segment",
+            "segment_output_schema_version": 1,
+            "role_profile_ref": "architect_primary",
+            "segments": [
+                {
+                    "segment_id": "scope",
+                    "ticket_id": "tkt_wf_demo_ceo_scope",
+                    "node_id": "node_ceo_scope",
+                    "summary": "Clarify scope and goals.",
+                    "input_artifact_refs": ["art://project-init/wf_demo/board-brief.md"],
+                    "acceptance_criteria": ["Produce an auditable scope segment artifact."],
+                    "artifact_ref": "art://runtime/tkt_wf_demo_ceo_scope/architecture_brief_segment.json",
+                    "artifact_path": "reports/governance/tkt_wf_demo_ceo_scope/architecture_brief_segment.json",
+                }
+            ],
+            "aggregator": {
+                "ticket_id": "tkt_wf_demo_ceo_architecture_brief",
+                "node_id": "node_ceo_architecture_brief",
+                "summary": "Synthesize final architecture brief from segment artifacts.",
+                "role_profile_ref": "architect_primary",
+                "input_artifact_refs": [
+                    "art://project-init/wf_demo/board-brief.md",
+                    "art://runtime/tkt_wf_demo_ceo_scope/architecture_brief_segment.json",
+                ],
+                "acceptance_criteria": ["Reduce all segment artifacts into the final architecture_brief."],
+                "artifact_path": "reports/governance/tkt_wf_demo_ceo_architecture_brief/architecture_brief.json",
+                "dependency_policy": "all_segments_complete",
+                "reduce_instructions": "Read every segment artifact and synthesize the final schema without hidden state.",
+            },
+        },
+    )
+
+
+def test_output_schema_registry_rejects_decomposition_plan_with_provider_hidden_state() -> None:
+    with pytest.raises(ValueError, match="provider hidden state"):
+        validate_output_payload(
+            schema_ref=DECOMPOSITION_PLAN_SCHEMA_REF,
+            schema_version=DECOMPOSITION_PLAN_SCHEMA_VERSION,
+            submitted_schema_version="decomposition_plan_v1",
+            payload={
+                "plan_id": "decomp_wf_demo_architecture_brief",
+                "decision_kind": "DECOMPOSE_NOW",
+                "reason": "CEO determined the request is too large.",
+                "evidence_refs": ["art://project-init/wf_demo/board-brief.md"],
+                "target_output_schema_ref": "architecture_brief",
+                "target_output_schema_version": 1,
+                "uses_provider_hidden_state": True,
+                "final_output_schema_ref": "architecture_brief",
+                "final_output_schema_version": 1,
+                "segment_output_schema_ref": "architecture_brief_segment",
+                "segment_output_schema_version": 1,
+                "role_profile_ref": "architect_primary",
+                "segments": [],
+                "aggregator": {},
             },
         )
 

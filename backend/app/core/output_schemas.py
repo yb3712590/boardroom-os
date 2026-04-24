@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from app.contracts.advisory import GraphPatchProposal
+from app.core.decomposition import validate_decomposition_plan
 from app.contracts.commands import DeliveryStage
 from app.contracts.ceo_actions import CEOActionBatch
 
@@ -20,6 +21,8 @@ ARCHITECTURE_BRIEF_SCHEMA_REF = "architecture_brief"
 ARCHITECTURE_BRIEF_SCHEMA_VERSION = 1
 ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF = "architecture_brief_segment"
 ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION = 1
+DECOMPOSITION_PLAN_SCHEMA_REF = "decomposition_plan"
+DECOMPOSITION_PLAN_SCHEMA_VERSION = 1
 TECHNOLOGY_DECISION_SCHEMA_REF = "technology_decision"
 TECHNOLOGY_DECISION_SCHEMA_VERSION = 1
 MILESTONE_PLAN_SCHEMA_REF = "milestone_plan"
@@ -769,6 +772,94 @@ def _architecture_brief_segment_schema_body() -> dict[str, Any]:
             "artifact_refs": {
                 "type": "array",
                 "items": {"type": "string"},
+            },
+        },
+    }
+
+
+def _decomposition_plan_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "plan_id",
+            "decision_kind",
+            "reason",
+            "evidence_refs",
+            "target_output_schema_ref",
+            "target_output_schema_version",
+            "uses_provider_hidden_state",
+            "final_output_schema_ref",
+            "final_output_schema_version",
+            "segment_output_schema_ref",
+            "segment_output_schema_version",
+            "role_profile_ref",
+            "segments",
+            "aggregator",
+        ],
+        "properties": {
+            "plan_id": {"type": "string"},
+            "decision_kind": {"type": "string", "enum": ["DECOMPOSE_NOW"]},
+            "reason": {"type": "string"},
+            "evidence_refs": {"type": "array", "items": {"type": "string"}},
+            "target_output_schema_ref": {"type": "string"},
+            "target_output_schema_version": {"type": "integer", "minimum": 1},
+            "uses_provider_hidden_state": {"type": "boolean", "const": False},
+            "final_output_schema_ref": {"type": "string"},
+            "final_output_schema_version": {"type": "integer", "minimum": 1},
+            "segment_output_schema_ref": {"type": "string"},
+            "segment_output_schema_version": {"type": "integer", "minimum": 1},
+            "role_profile_ref": {"type": "string"},
+            "segments": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "segment_id",
+                        "ticket_id",
+                        "node_id",
+                        "summary",
+                        "input_artifact_refs",
+                        "acceptance_criteria",
+                        "artifact_ref",
+                        "artifact_path",
+                    ],
+                    "properties": {
+                        "segment_id": {"type": "string"},
+                        "ticket_id": {"type": "string"},
+                        "node_id": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "input_artifact_refs": {"type": "array", "items": {"type": "string"}},
+                        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                        "artifact_ref": {"type": "string"},
+                        "artifact_path": {"type": "string"},
+                    },
+                },
+            },
+            "aggregator": {
+                "type": "object",
+                "required": [
+                    "ticket_id",
+                    "node_id",
+                    "summary",
+                    "role_profile_ref",
+                    "input_artifact_refs",
+                    "acceptance_criteria",
+                    "artifact_path",
+                    "dependency_policy",
+                    "reduce_instructions",
+                ],
+                "properties": {
+                    "ticket_id": {"type": "string"},
+                    "node_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "role_profile_ref": {"type": "string"},
+                    "input_artifact_refs": {"type": "array", "items": {"type": "string"}},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                    "artifact_path": {"type": "string"},
+                    "dependency_policy": {"type": "string", "enum": ["all_segments_complete"]},
+                    "reduce_instructions": {"type": "string"},
+                },
             },
         },
     }
@@ -1647,6 +1738,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
     (ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF, ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION): {
         "body": _architecture_brief_segment_schema_body,
         "validator": _validate_architecture_brief_segment_payload,
+    },
+    (DECOMPOSITION_PLAN_SCHEMA_REF, DECOMPOSITION_PLAN_SCHEMA_VERSION): {
+        "body": _decomposition_plan_schema_body,
+        "validator": validate_decomposition_plan,
     },
     (TECHNOLOGY_DECISION_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_VERSION): {
         "body": lambda: _governance_document_schema_body(TECHNOLOGY_DECISION_SCHEMA_REF),

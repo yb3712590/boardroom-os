@@ -81,6 +81,8 @@ def build_ceo_shadow_system_prompt(snapshot: dict) -> str:
         f"{', '.join(GOVERNANCE_DOCUMENT_CHAIN_ORDER)}.\n"
         "Before directly creating implementation tickets, consider whether one governance document should be created first.\n"
         "Keep the minimal document-first order explicit: architecture_brief -> technology_decision -> milestone_plan -> detailed_design -> backlog_recommendation -> source_code_delivery.\n"
+        "Before proposing any CREATE_TICKET, explicitly judge whether the work is atomic enough for one replayable ticket; if not, produce an explicit decomposition plan so follow-up segment tickets can reduce through graph dependencies and artifact refs.\n"
+        "Never rely on provider hidden conversation state, provider_response_id, legacy provider/model fields, default_provider, fallback_provider_ids, or local_deterministic behavior when decomposing large work.\n"
         "If workflow.workflow_profile is CEO_AUTOPILOT_FINE_GRAINED, keep task breakdown fine-grained and prefer atomic tasks with explicit dependency refs over large bundled tickets.\n"
         "Governance document kinds are a shared document family, not a hard role whitelist.\n"
         "Governance documents may stay on current live planning roles, or use architect_primary / cto_primary when those roles already exist in the active board-approved roster.\n"

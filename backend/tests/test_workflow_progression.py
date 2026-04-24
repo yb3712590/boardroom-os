@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from app.core.ceo_execution_presets import (
-    PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
-    build_project_init_architecture_segment_artifact_ref,
-    build_project_init_architecture_segment_ticket_id,
+    build_ceo_project_init_architecture_decomposition_plan,
 )
 from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF, ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF
 from app.core.workflow_progression import (
@@ -78,16 +76,21 @@ def test_build_project_init_architecture_brief_ticket_specs_splits_kickoff_into_
 
     segment_specs = [spec for spec in specs if spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF]
     aggregator_spec = specs[-1]
-    segment_ticket_ids = [
-        build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
-        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
-    ]
-    segment_artifact_refs = [
-        build_project_init_architecture_segment_artifact_ref(ticket_id)
-        for ticket_id in segment_ticket_ids
-    ]
+    decomposition_plan = build_ceo_project_init_architecture_decomposition_plan(
+        {
+            "workflow_id": workflow_id,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "north_star_goal": "Build a library management system",
+            "title": "Build a library management system",
+        },
+        board_brief_artifact_ref=board_brief_ref,
+    )
+    segment_ticket_ids = [segment["ticket_id"] for segment in decomposition_plan["segments"]]
+    segment_artifact_refs = [segment["artifact_ref"] for segment in decomposition_plan["segments"]]
 
     assert len(specs) == 5
+    assert decomposition_plan["decision_kind"] == "DECOMPOSE_NOW"
+    assert decomposition_plan["uses_provider_hidden_state"] is False
     assert [spec["ticket_id"] for spec in segment_specs] == segment_ticket_ids
     assert all(spec["role_profile_ref"] == "architect_primary" for spec in segment_specs)
     assert all(spec["output_schema_version"] == 1 for spec in segment_specs)

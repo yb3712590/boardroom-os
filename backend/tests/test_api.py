@@ -21,6 +21,7 @@ from app.contracts.advisory import GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
+    build_ceo_project_init_architecture_decomposition_plan,
     build_project_init_architecture_segment_artifact_ref,
     build_project_init_architecture_segment_ticket_id,
     build_project_init_scope_ticket_id,
@@ -3740,14 +3741,17 @@ def test_project_init_creates_architecture_brief_segments_and_aggregator(client,
 
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
-    segment_ticket_ids = [
-        build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
-        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
-    ]
-    segment_artifact_refs = [
-        build_project_init_architecture_segment_artifact_ref(ticket_id)
-        for ticket_id in segment_ticket_ids
-    ]
+    decomposition_plan = build_ceo_project_init_architecture_decomposition_plan(
+        {
+            "workflow_id": workflow_id,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "north_star_goal": "Ship MVP A",
+            "title": "Ship MVP A",
+        },
+        board_brief_artifact_ref=f"art://project-init/{workflow_id}/board-brief.md",
+    )
+    segment_ticket_ids = [segment["ticket_id"] for segment in decomposition_plan["segments"]]
+    segment_artifact_refs = [segment["artifact_ref"] for segment in decomposition_plan["segments"]]
     aggregator_ticket_id = build_project_init_scope_ticket_id(workflow_id)
 
     with repository.connection() as connection:
@@ -3776,7 +3780,7 @@ def test_project_init_creates_architecture_brief_segments_and_aggregator(client,
     ]
     for spec, segment_id, artifact_ref in zip(
         segment_specs,
-        PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
+        [segment["segment_id"] for segment in decomposition_plan["segments"]],
         segment_artifact_refs,
         strict=True,
     ):
