@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -1078,6 +1079,22 @@ def test_load_integration_test_provider_payload_requires_existing_template_path(
             scenario_slug="library_management_autopilot_live",
             config_path=integration_test_provider_template_path(),
         )
+
+
+def test_live_scenario_environment_sets_configured_default_employee_provider(tmp_path: Path) -> None:
+    config = _library_live_config()
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    provider_payload = config.build_runtime_provider_payload()
+    provider = provider_payload["providers"][0]
+
+    with live_harness.scenario_environment(
+        paths,
+        base_url=provider["base_url"],
+        api_key=provider["api_key"],
+        provider_id=provider["provider_id"],
+        seed=config.runtime.seed,
+    ):
+        assert os.environ["BOARDROOM_OS_DEFAULT_EMPLOYEE_PROVIDER_ID"] == "prov_openai_compat_truerealbill"
 
 
 def test_load_integration_test_provider_payload_reads_template_and_sets_idempotency_key(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ from app.contracts.commands import EmployeeHireRequestCommand, MeetingRequestCom
 from app.config import get_settings
 from app.core.ceo_execution_presets import build_ceo_create_ticket_command
 from app.core.persona_profiles import build_seeded_persona_variant
+from app.core.runtime_provider_config import resolve_runtime_provider_config
 from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
 from app.db.repository import ControlPlaneRepository
 
@@ -48,6 +49,7 @@ def execute_ceo_action_batch(
     action_batch: CEOActionBatch,
     accepted_actions: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    runtime_provider_config = resolve_runtime_provider_config()
     accepted_keys = {
         _action_key(action_type=str(item["action_type"]), payload=dict(item.get("payload") or {})): item
         for item in accepted_actions
@@ -182,7 +184,11 @@ def execute_ceo_action_batch(
                     skill_profile=dict(resolved_profiles.get("skill_profile") or {}),
                     personality_profile=dict(resolved_profiles.get("personality_profile") or {}),
                     aesthetic_profile=dict(resolved_profiles.get("aesthetic_profile") or {}),
-                    provider_id=action.payload.provider_id or template.get("provider_id"),
+                    provider_id=(
+                        action.payload.provider_id
+                        or runtime_provider_config.default_provider_id
+                        or template.get("provider_id")
+                    ),
                     request_summary=action.payload.request_summary,
                     idempotency_key=f"ceo-hire-request:{action.payload.workflow_id}:{employee_id}",
                 ),

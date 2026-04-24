@@ -2232,6 +2232,61 @@ def test_ceo_validator_accepts_new_role_hires_on_current_ceo_path(
     assert result["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
 
 
+def test_ceo_hire_execution_prefers_runtime_default_provider_over_template(client):
+    custom_provider_id = "prov_openai_compat_truerealbill"
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=custom_provider_id,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=custom_provider_id,
+                    adapter_kind="openai_compat",
+                    label="Truerealbill Compat",
+                    enabled=True,
+                    base_url="http://codex.truerealbill.com:11234/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.4",
+                    timeout_sec=30.0,
+                    reasoning_effort="high",
+                )
+            ],
+            role_bindings=[],
+        )
+    )
+    workflow_id = _project_init(client, "CEO custom provider hire")
+    repository = client.app.state.repository
+    action_batch = CEOActionBatch.model_validate(
+        {
+            "summary": "Hire one architect with runtime default provider.",
+            "actions": [
+                {
+                    "action_type": "HIRE_EMPLOYEE",
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "role_type": "governance_architect",
+                        "role_profile_refs": ["architect_primary"],
+                        "request_summary": "Hire one architect before governance kickoff starts.",
+                        "employee_id_hint": "emp_architect_governance",
+                    },
+                }
+            ],
+        }
+    )
+    validation = validate_ceo_action_batch(repository, action_batch=action_batch)
+
+    from app.core.ceo_executor import execute_ceo_action_batch
+
+    execute_ceo_action_batch(
+        repository,
+        action_batch=action_batch,
+        accepted_actions=validation["accepted_actions"],
+    )
+
+    hired_employee = repository.get_employee_projection("emp_architect_governance")
+    assert hired_employee is not None
+    assert hired_employee["provider_id"] == custom_provider_id
+
+
 def test_project_init_can_use_live_provider_to_hire_architect_before_kickoff(client, monkeypatch):
     _set_live_provider(client)
     monkeypatch.setattr("app.core.command_handlers._auto_advance_project_init_to_first_review", lambda *args, **kwargs: None)
@@ -2278,6 +2333,7 @@ def test_project_init_can_use_live_provider_to_hire_architect_before_kickoff(cli
     assert hired_employee is not None
     assert hired_employee["state"] == "ACTIVE"
     assert hired_employee["board_approved"] is True
+    assert hired_employee["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert board_directive_run["provider_response_id"] == "resp_ceo_project_init_1"
 
 
