@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.output_schemas import get_output_schema_body, validate_output_payload
+from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+    ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+    get_output_schema_body,
+    validate_output_payload,
+)
 
 
 def _iter_object_schemas(schema: object, *, path: str = "$"):
@@ -75,6 +80,7 @@ def test_output_schema_registry_marks_structured_objects_as_closed_for_openai_st
         "delivery_check_report",
         "delivery_closeout_package",
         "maker_checker_verdict",
+        "architecture_brief_segment",
     ]
 
     for schema_ref in schema_refs:
@@ -91,9 +97,41 @@ def test_output_schema_registry_marks_structured_objects_as_closed_for_openai_st
                 assert isinstance(required, list), (
                     f"{schema_ref} schema object {path} must expose required as a list"
                 )
-                assert set(required) == set(properties.keys()), (
-                    f"{schema_ref} schema object {path} must require every declared property for OpenAI strict mode"
-                )
+            assert set(required) == set(properties.keys()), (
+                f"{schema_ref} schema object {path} must require every declared property for OpenAI strict mode"
+            )
+
+
+def test_output_schema_registry_accepts_valid_architecture_brief_segment_payload() -> None:
+    validate_output_payload(
+        schema_ref=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+        schema_version=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+        submitted_schema_version="architecture_brief_segment_v1",
+        payload={
+            "segment_id": "scope_and_goals_brief",
+            "summary": "Scope is limited to the first auditable architecture brief slice.",
+            "findings": ["The workflow must remain replayable without provider hidden state."],
+            "decisions": ["Keep chunk state in tickets and artifacts only."],
+            "open_questions": [],
+            "artifact_refs": ["art://project-init/wf_demo/board-brief.md"],
+        },
+    )
+
+
+def test_output_schema_registry_rejects_architecture_brief_segment_missing_artifact_refs() -> None:
+    with pytest.raises(ValueError, match="artifact_refs"):
+        validate_output_payload(
+            schema_ref=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+            schema_version=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+            submitted_schema_version="architecture_brief_segment_v1",
+            payload={
+                "segment_id": "scope_and_goals_brief",
+                "summary": "Scope is explicit.",
+                "findings": ["Replayable ticket state is required."],
+                "decisions": ["Persist segment output as an artifact."],
+                "open_questions": [],
+            },
+        )
 
 
 def test_output_schema_registry_accepts_valid_consensus_document_payload() -> None:

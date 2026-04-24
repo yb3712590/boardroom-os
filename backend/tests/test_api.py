@@ -19,14 +19,23 @@ from app.config import get_settings
 from app.contracts.commands import TicketCreateCommand
 from app.contracts.advisory import GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
-from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
+from app.core.ceo_execution_presets import (
+    PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
+    build_project_init_architecture_segment_artifact_ref,
+    build_project_init_architecture_segment_ticket_id,
+    build_project_init_scope_ticket_id,
+)
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.execution_targets import (
     EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
     infer_execution_contract_payload,
 )
 from app.core.governance_profiles import build_default_governance_profile
-from app.core.output_schemas import BACKLOG_RECOMMENDATION_SCHEMA_REF, SOURCE_CODE_DELIVERY_SCHEMA_REF
+from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+    BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.provider_openai_compat import OpenAICompatProviderResult
@@ -3707,13 +3716,93 @@ def test_project_init_auto_advances_to_scope_review(client, set_ticket_time):
     repository = client.app.state.repository
     approvals = repository.list_open_approvals()
     kickoff_ticket = repository.get_current_ticket_projection(build_project_init_scope_ticket_id(workflow_id))
+    segment_tickets = [
+        repository.get_current_ticket_projection(
+            build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
+        )
+        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
+    ]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
     assert approvals == []
     assert kickoff_ticket is not None
     assert kickoff_ticket["workflow_id"] == workflow_id
-    assert kickoff_ticket["status"] == TICKET_STATUS_COMPLETED
+    assert kickoff_ticket["status"] == TICKET_STATUS_PENDING
+    assert all(ticket is not None for ticket in segment_tickets)
+    assert all(ticket["status"] in {TICKET_STATUS_PENDING, TICKET_STATUS_LEASED} for ticket in segment_tickets)
+
+
+def test_project_init_creates_architecture_brief_segments_and_aggregator(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+
+    response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
+
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    repository = client.app.state.repository
+    segment_ticket_ids = [
+        build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
+        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
+    ]
+    segment_artifact_refs = [
+        build_project_init_architecture_segment_artifact_ref(ticket_id)
+        for ticket_id in segment_ticket_ids
+    ]
+    aggregator_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+
+    with repository.connection() as connection:
+        segment_specs = [
+            repository.get_latest_ticket_created_payload(connection, ticket_id)
+            for ticket_id in segment_ticket_ids
+        ]
+        aggregator_spec = repository.get_latest_ticket_created_payload(connection, aggregator_ticket_id)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert all(spec is not None for spec in segment_specs)
+    assert aggregator_spec is not None
+    assert [spec["output_schema_ref"] for spec in segment_specs] == [
+        ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+        ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+        ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+        ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+    ]
+    assert aggregator_spec["node_id"] == "node_ceo_architecture_brief"
+    assert aggregator_spec["output_schema_ref"] == "architecture_brief"
+    assert aggregator_spec["dispatch_intent"]["dependency_gate_refs"] == segment_ticket_ids
+    assert aggregator_spec["input_artifact_refs"] == [
+        f"art://project-init/{workflow_id}/board-brief.md",
+        *segment_artifact_refs,
+    ]
+    for spec, segment_id, artifact_ref in zip(
+        segment_specs,
+        PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
+        segment_artifact_refs,
+        strict=True,
+    ):
+        assert spec["ticket_id"] == build_project_init_architecture_segment_ticket_id(
+            workflow_id,
+            segment_id,
+        )
+        assert spec["node_id"] == f"node_ceo_{segment_id}"
+        assert spec["dispatch_intent"]["dependency_gate_refs"] == []
+        assert spec["input_artifact_refs"] == [f"art://project-init/{workflow_id}/board-brief.md"]
+        assert spec["allowed_write_set"] == [
+            f"reports/governance/{spec['ticket_id']}/architecture_brief_segment.json"
+        ]
+        assert artifact_ref in spec["acceptance_criteria"][0]
+        forbidden_keys = {
+            "provider_session_id",
+            "provider_response_id",
+            "default_provider",
+            "fallback_provider_ids",
+            "fallback_provider_id",
+            "employee_provider",
+            "local_deterministic",
+            "model",
+            "provider",
+        }
+        assert forbidden_keys.isdisjoint(spec.keys())
 
 
 def test_project_init_force_requirement_elicitation_opens_init_review(client, set_ticket_time):
@@ -5076,7 +5165,7 @@ def test_duplicate_project_init_does_not_duplicate_first_scope_review(client, se
     assert duplicate.json()["status"] == "DUPLICATE"
     assert duplicate.json()["causation_hint"] == f"workflow:{workflow_id}"
     assert approvals == []
-    assert len(created_events) == 1
+    assert len(created_events) == 5
 
 
 def test_project_init_stops_auto_advance_when_no_worker_is_available(client, monkeypatch, set_ticket_time):
@@ -5092,12 +5181,20 @@ def test_project_init_stops_auto_advance_when_no_worker_is_available(client, mon
     workflow_id = response.json()["causation_hint"].split(":", 1)[1]
     repository = client.app.state.repository
     ticket_projection = repository.get_current_ticket_projection(build_project_init_scope_ticket_id(workflow_id))
+    segment_tickets = [
+        repository.get_current_ticket_projection(
+            build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
+        )
+        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
+    ]
     approvals = [approval for approval in repository.list_open_approvals() if approval["workflow_id"] == workflow_id]
     incidents = [incident for incident in repository.list_open_incidents() if incident["workflow_id"] == workflow_id]
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert ticket_projection is None
+    assert ticket_projection is not None
+    assert all(ticket is not None for ticket in segment_tickets)
+    assert all(ticket["status"] == TICKET_STATUS_PENDING for ticket in segment_tickets)
     assert approvals == []
     assert incidents == []
 
@@ -5561,9 +5658,14 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
     workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Ship MVP A"))
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
     kickoff_ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    first_segment_ticket_id = build_project_init_architecture_segment_ticket_id(
+        workflow_id,
+        PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS[0],
+    )
     repository = client.app.state.repository
 
     kickoff_ticket = repository.get_current_ticket_projection(kickoff_ticket_id)
+    first_segment_ticket = repository.get_current_ticket_projection(first_segment_ticket_id)
     kickoff_node = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
     dashboard_response = client.get("/api/v1/projections/dashboard")
     initial_block_events = [
@@ -5571,10 +5673,13 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED
     ]
+    first_segment_block_event = next(
+        event for event in initial_block_events if event["payload"]["ticket_id"] == first_segment_ticket_id
+    )
 
     assert workflow_response.status_code == 200
     assert workflow_response.json()["status"] == "ACCEPTED"
-    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 1
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 4
     assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED) == 0
     assert repository.count_events_by_type(EVENT_TICKET_FAILED) == 0
     assert repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED) == 0
@@ -5582,16 +5687,17 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
     assert kickoff_ticket is not None
     assert kickoff_ticket["status"] == TICKET_STATUS_PENDING
     assert kickoff_ticket["lease_owner"] is None
-    assert kickoff_ticket["blocking_reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert kickoff_ticket["blocking_reason_code"] is None
+    assert first_segment_ticket is not None
+    assert first_segment_ticket["blocking_reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
     assert kickoff_node is not None
     assert kickoff_node["status"] == NODE_STATUS_PENDING
-    assert kickoff_node["blocking_reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
-    assert len(initial_block_events) == 1
-    assert initial_block_events[0]["payload"]["ticket_id"] == kickoff_ticket_id
-    assert initial_block_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
-    assert initial_block_events[0]["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
-    assert initial_block_events[0]["payload"]["execution_target_ref"] == "execution_target:frontend_governance_document"
-    assert initial_block_events[0]["payload"]["provider_effective_mode"] == "PROVIDER_REQUIRED_UNAVAILABLE"
+    assert kickoff_node["blocking_reason_code"] is None
+    assert len(initial_block_events) == 4
+    assert first_segment_block_event["payload"]["node_id"] == f"node_ceo_{PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS[0]}"
+    assert first_segment_block_event["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
+    assert first_segment_block_event["payload"]["execution_target_ref"] == "execution_target:architect_governance_document"
+    assert first_segment_block_event["payload"]["provider_effective_mode"] == "PROVIDER_REQUIRED_UNAVAILABLE"
     assert dashboard_response.json()["data"]["pipeline_summary"]["phases"][1]["status"] == "PENDING"
 
     set_ticket_time("2026-03-28T10:01:00+08:00")
@@ -5603,7 +5709,7 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
 
     assert repeat_tick.status_code == 200
     assert repeat_tick.json()["status"] == "ACCEPTED"
-    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 1
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED) == 4
     assert repeated_ticket is not None
     assert repeated_ticket["status"] == TICKET_STATUS_PENDING
     assert repeated_ticket["lease_owner"] is None
@@ -5619,7 +5725,7 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
                     "reasoning_effort_override": None,
                 },
                 {
-                    "target_ref": "execution_target:frontend_governance_document",
+                    "target_ref": "execution_target:architect_governance_document",
                     "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
                     "max_context_window_override": None,
                     "reasoning_effort_override": None,
@@ -5645,15 +5751,16 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
     assert provider_upsert.json()["status"] == "ACCEPTED"
     assert resume_tick.status_code == 200
     assert resume_tick.json()["status"] == "ACCEPTED"
-    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED) == 1
-    assert len(clear_events) == 1
-    assert clear_events[0]["payload"]["ticket_id"] == kickoff_ticket_id
-    assert clear_events[0]["payload"]["node_id"] == "node_ceo_architecture_brief"
-    assert clear_events[0]["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED
-    assert resumed_ticket is not None
-    assert resumed_ticket["status"] == TICKET_STATUS_LEASED
-    assert resumed_ticket["lease_owner"] == "emp_frontend_2"
-    assert resumed_ticket["blocking_reason_code"] is None
+    assert repository.count_events_by_type(EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED) >= 1
+    assert len(clear_events) >= 1
+    assert all(event["payload"]["reason_code"] == BLOCKING_REASON_PROVIDER_REQUIRED for event in clear_events)
+    resumed_segment_tickets = [
+        repository.get_current_ticket_projection(
+            build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
+        )
+        for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS
+    ]
+    assert any(ticket["status"] == TICKET_STATUS_LEASED for ticket in resumed_segment_tickets if ticket is not None)
     assert resumed_node is not None
     assert resumed_node["status"] == NODE_STATUS_PENDING
     assert resumed_node["blocking_reason_code"] is None

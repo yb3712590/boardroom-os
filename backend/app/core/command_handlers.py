@@ -28,6 +28,7 @@ from app.core.workflow_progression import (
     resolve_workflow_progression_adapter,
 )
 from app.core.project_workspaces import bootstrap_project_workspace
+from app.core.project_init_architecture_tickets import insert_project_init_architecture_tickets
 from app.db.repository import ControlPlaneRepository
 
 PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
@@ -208,6 +209,16 @@ def handle_project_init(
         ticket_id=kickoff_ticket_id,
         node_id=kickoff_node_id,
         payload=payload,
+    )
+    insert_project_init_architecture_tickets(
+        repository,
+        workflow_id=workflow_id,
+        workflow_profile=payload.workflow_profile,
+        north_star_goal=payload.north_star_goal,
+        board_brief_artifact_ref=board_brief_artifact_ref,
+        command_id=command_id,
+        command_key=command_key,
+        occurred_at=received_at,
     )
     with repository.transaction() as connection:
         repository.save_governance_profile(

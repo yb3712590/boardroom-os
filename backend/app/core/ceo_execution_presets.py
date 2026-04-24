@@ -11,6 +11,8 @@ from app.core.ids import new_prefixed_id
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     ARCHITECTURE_BRIEF_SCHEMA_VERSION,
+    ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+    ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
     CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -48,6 +50,14 @@ class CEOCreateTicketPreset:
 
 
 _CREATE_TICKET_PRESETS: dict[tuple[str, str], CEOCreateTicketPreset] = {
+    ("architect_primary", ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF): CEOCreateTicketPreset(
+        role_profile_ref="architect_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+        output_schema_version=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+        constraints_ref="ceo_governance_document_architecture_brief_segment",
+        priority="high",
+        delivery_stage=None,
+    ),
     ("ui_designer_primary", CONSENSUS_DOCUMENT_SCHEMA_REF): CEOCreateTicketPreset(
         role_profile_ref="ui_designer_primary",
         output_schema_ref=CONSENSUS_DOCUMENT_SCHEMA_REF,
@@ -158,10 +168,35 @@ for role_profile_ref, output_schema_refs in _GOVERNANCE_DOCUMENT_ROLE_PROFILES.i
 
 PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID = "node_ceo_architecture_brief"
 PROJECT_INIT_SCOPE_NODE_ID = PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
+PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS = (
+    "scope_and_goals_brief",
+    "architecture_constraints_brief",
+    "module_plan_brief",
+    "risk_and_milestone_brief",
+)
+
+_PROJECT_INIT_ARCHITECTURE_SEGMENT_SUMMARIES: dict[str, str] = {
+    "scope_and_goals_brief": "Define goals, scope, non-goals, and acceptance boundaries.",
+    "architecture_constraints_brief": "Capture technical, runtime, provider, and autonomous-machine constraints.",
+    "module_plan_brief": "Plan module boundaries, interfaces, and data flow.",
+    "risk_and_milestone_brief": "Identify risks, milestones, and verification strategy.",
+}
 
 
 def build_project_init_scope_ticket_id(workflow_id: str) -> str:
     return f"tkt_{workflow_id}_ceo_architecture_brief"
+
+
+def build_project_init_architecture_segment_ticket_id(workflow_id: str, segment_id: str) -> str:
+    return f"tkt_{workflow_id}_ceo_{segment_id}"
+
+
+def build_project_init_architecture_segment_artifact_ref(ticket_id: str) -> str:
+    return f"art://runtime/{ticket_id}/{ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF}.json"
+
+
+def build_project_init_architecture_segment_artifact_path(ticket_id: str) -> str:
+    return f"reports/governance/{ticket_id}/{ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF}.json"
 
 
 def build_project_init_scope_summary(north_star_goal: str) -> str:
@@ -184,6 +219,175 @@ def build_autopilot_architecture_brief_summary(north_star_goal: str) -> str:
 
 def build_project_init_brief_artifact_ref(workflow_id: str) -> str:
     return f"art://project-init/{workflow_id}/board-brief.md"
+
+
+def _base_project_init_architecture_ticket_spec(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    role_profile_ref: str,
+    constraints_ref: str,
+    input_artifact_refs: list[str],
+    context_keywords: list[str],
+    semantic_query: str,
+    acceptance_criteria: list[str],
+    output_schema_ref: str,
+    output_schema_version: int,
+    allowed_write_set: list[str],
+    dependency_gate_refs: list[str],
+    priority: str,
+) -> dict[str, Any]:
+    return {
+        "ticket_id": ticket_id,
+        "workflow_id": workflow_id,
+        "node_id": node_id,
+        "parent_ticket_id": None,
+        "attempt_no": 1,
+        "role_profile_ref": role_profile_ref,
+        "constraints_ref": constraints_ref,
+        "input_artifact_refs": input_artifact_refs,
+        "input_process_asset_refs": [],
+        "context_query_plan": {
+            "keywords": context_keywords,
+            "semantic_queries": [semantic_query],
+            "max_context_tokens": get_settings().default_max_context_tokens,
+        },
+        "acceptance_criteria": acceptance_criteria,
+        "output_schema_ref": output_schema_ref,
+        "output_schema_version": output_schema_version,
+        "allowed_tools": [],
+        "allowed_write_set": allowed_write_set,
+        "forced_skill_ids": [],
+        "lease_timeout_sec": 3600,
+        "retry_budget": 1,
+        "priority": priority,
+        "timeout_sla_sec": 1800,
+        "deadline_at": None,
+        "delivery_stage": None,
+        "excluded_employee_ids": [],
+        "auto_review_request": None,
+        "meeting_context": None,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+        "graph_contract": {"lane_kind": "execution"},
+        "dispatch_intent": {
+            "assignee_employee_id": "emp_frontend_2",
+            "selection_reason": "Project-init architecture brief segmentation keeps each governance request atomic and replayable.",
+            "dependency_gate_refs": dependency_gate_refs,
+            "selected_by": "ceo",
+            "wakeup_policy": "default",
+        },
+        "runtime_preference": None,
+        "project_workspace_ref": None,
+        "project_methodology_profile": None,
+        "deliverable_kind": None,
+        "canonical_doc_refs": [],
+        "required_read_refs": [],
+        "doc_update_requirements": [],
+        "git_policy": None,
+        "escalation_policy": {
+            "on_timeout": "retry",
+            "on_schema_error": "retry",
+            "on_repeat_failure": "escalate_ceo",
+        },
+        "idempotency_key": f"ceo-create-ticket:{workflow_id}:{node_id}",
+    }
+
+
+def build_project_init_architecture_segment_specs(
+    workflow: dict[str, Any] | None,
+    *,
+    board_brief_artifact_ref: str,
+) -> list[dict[str, Any]]:
+    workflow = workflow or {}
+    workflow_id = str(workflow.get("workflow_id") or "").strip()
+    north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
+    clean_goal = north_star_goal or "the current workflow"
+    specs: list[dict[str, Any]] = []
+    for segment_id in PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS:
+        ticket_id = build_project_init_architecture_segment_ticket_id(workflow_id, segment_id)
+        artifact_ref = build_project_init_architecture_segment_artifact_ref(ticket_id)
+        segment_summary = _PROJECT_INIT_ARCHITECTURE_SEGMENT_SUMMARIES[segment_id]
+        specs.append(
+            _base_project_init_architecture_ticket_spec(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=f"node_ceo_{segment_id}",
+                role_profile_ref="architect_primary",
+                constraints_ref=f"ceo_governance_document_{ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF}_{segment_id}",
+                input_artifact_refs=[board_brief_artifact_ref],
+                context_keywords=["architecture", "segment", segment_id.replace("_", " ")],
+                semantic_query=f"{clean_goal}: {segment_summary}",
+                acceptance_criteria=[
+                    "Must produce architecture_brief_segment for "
+                    f"{segment_id} at {artifact_ref} without relying on provider hidden conversation state.",
+                    "Must include segment_id, summary, findings, decisions, open_questions, and artifact_refs.",
+                ],
+                output_schema_ref=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF,
+                output_schema_version=ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION,
+                allowed_write_set=[build_project_init_architecture_segment_artifact_path(ticket_id)],
+                dependency_gate_refs=[],
+                priority="high",
+            )
+        )
+    return specs
+
+
+def build_project_init_architecture_aggregator_spec(
+    workflow: dict[str, Any] | None,
+    *,
+    board_brief_artifact_ref: str,
+    segment_ticket_ids: list[str],
+) -> dict[str, Any]:
+    workflow = workflow or {}
+    workflow_id = str(workflow.get("workflow_id") or "").strip()
+    north_star_goal = str(workflow.get("north_star_goal") or workflow.get("title") or "").strip()
+    clean_goal = north_star_goal or "the current workflow"
+    ticket_id = build_project_init_scope_ticket_id(workflow_id)
+    segment_artifact_refs = [
+        build_project_init_architecture_segment_artifact_ref(segment_ticket_id)
+        for segment_ticket_id in segment_ticket_ids
+    ]
+    return _base_project_init_architecture_ticket_spec(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
+        role_profile_ref="architect_primary",
+        constraints_ref=f"ceo_governance_document_{ARCHITECTURE_BRIEF_SCHEMA_REF}",
+        input_artifact_refs=[board_brief_artifact_ref, *segment_artifact_refs],
+        context_keywords=["architecture", "constraints", "delivery path", "segments"],
+        semantic_query=f"{clean_goal}: synthesize architecture brief from explicit segment artifacts.",
+        acceptance_criteria=[
+            "Must read all architecture_brief_segment artifacts and synthesize the final architecture_brief.",
+            "Must preserve the architecture_brief output schema and cite segment artifact_refs explicitly.",
+            "Must not rely on provider hidden conversation state or implicit fallback context.",
+        ],
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        output_schema_version=ARCHITECTURE_BRIEF_SCHEMA_VERSION,
+        allowed_write_set=[f"reports/governance/{ticket_id}/{ARCHITECTURE_BRIEF_SCHEMA_REF}.json"],
+        dependency_gate_refs=segment_ticket_ids,
+        priority="high",
+    )
+
+
+def build_project_init_architecture_brief_ticket_specs(
+    workflow: dict[str, Any] | None,
+    *,
+    board_brief_artifact_ref: str,
+) -> list[dict[str, Any]]:
+    segment_specs = build_project_init_architecture_segment_specs(
+        workflow,
+        board_brief_artifact_ref=board_brief_artifact_ref,
+    )
+    aggregator_spec = build_project_init_architecture_aggregator_spec(
+        workflow,
+        board_brief_artifact_ref=board_brief_artifact_ref,
+        segment_ticket_ids=[str(spec["ticket_id"]) for spec in segment_specs],
+    )
+    return [*segment_specs, aggregator_spec]
 
 
 def is_project_init_scope_preset(*, role_profile_ref: str, output_schema_ref: str) -> bool:

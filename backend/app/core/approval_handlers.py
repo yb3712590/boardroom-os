@@ -20,10 +20,8 @@ from app.contracts.commands import (
     ModifyConstraintsCommand,
     TicketCreateCommand,
 )
-from app.contracts.ceo_actions import CEOCreateTicketPayload
 from app.core.ceo_execution_presets import (
     build_project_init_scope_ticket_id,
-    build_ceo_create_ticket_command,
 )
 from app.core.ceo_scheduler import trigger_ceo_shadow_with_recovery
 from app.core.constants import (
@@ -112,6 +110,7 @@ from app.core.project_workspaces import (
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
 )
+from app.core.project_init_architecture_tickets import insert_project_init_architecture_tickets
 from app.core.review_subjects import (
     resolve_graph_only_review_subject_execution_identity,
     resolve_review_subject_execution_identity,
@@ -1489,35 +1488,23 @@ def _kickoff_scope_after_requirement_elicitation(
     workflow = repository.get_workflow_projection(workflow_id)
     if workflow is None:
         raise ValueError("Workflow projection missing during requirement elicitation approval.")
-    kickoff_spec = build_project_init_kickoff_spec(workflow)
-    command = build_ceo_create_ticket_command(
-        workflow=workflow,
-        payload=CEOCreateTicketPayload(
-            workflow_id=workflow_id,
-            node_id=str(kickoff_spec["node_id"]),
-            role_profile_ref=str(kickoff_spec["role_profile_ref"]),
-            output_schema_ref=str(kickoff_spec["output_schema_ref"]),
-            summary=str(kickoff_spec["summary"]),
-            parent_ticket_id=None,
-        ),
-        repository=repository,
+    board_brief_artifact_ref = artifact_refs[-1] if artifact_refs else f"art://project-init/{workflow_id}/board-brief.md"
+    insert_project_init_architecture_tickets(
+        repository,
+        workflow_id=workflow_id,
+        workflow_profile=str(workflow.get("workflow_profile") or ""),
+        north_star_goal=str(workflow.get("title") or ""),
+        board_brief_artifact_ref=board_brief_artifact_ref,
+        command_id=f"{idempotency_key_prefix}:scope-kickoff",
+        command_key=f"{idempotency_key_prefix}:scope-kickoff",
     )
-    command = command.model_copy(
-        update={
-            "input_artifact_refs": list(dict.fromkeys(list(command.input_artifact_refs) + artifact_refs)),
-            "idempotency_key": f"{idempotency_key_prefix}:scope-kickoff",
-        }
-    )
-    ack = handle_ticket_create(repository, command)
-    if ack.status.value not in {"ACCEPTED", "DUPLICATE"}:
-        raise ValueError(ack.reason or "Scope kickoff could not be created after requirement elicitation.")
     auto_advance_workflow_to_next_stop(
         repository,
         workflow_id=workflow_id,
         idempotency_key_prefix=f"{idempotency_key_prefix}:auto-advance",
         max_steps=PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS,
     )
-    return ack.causation_hint
+    return f"ticket:{build_project_init_scope_ticket_id(workflow_id)}"
 
 
 def _resolve_approval_source_ticket_specs(

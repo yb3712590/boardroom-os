@@ -18,6 +18,8 @@ CONSENSUS_DOCUMENT_SCHEMA_REF = "consensus_document"
 CONSENSUS_DOCUMENT_SCHEMA_VERSION = 1
 ARCHITECTURE_BRIEF_SCHEMA_REF = "architecture_brief"
 ARCHITECTURE_BRIEF_SCHEMA_VERSION = 1
+ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF = "architecture_brief_segment"
+ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION = 1
 TECHNOLOGY_DECISION_SCHEMA_REF = "technology_decision"
 TECHNOLOGY_DECISION_SCHEMA_VERSION = 1
 MILESTONE_PLAN_SCHEMA_REF = "milestone_plan"
@@ -738,6 +740,40 @@ def _governance_document_schema_body(document_kind_ref: str) -> dict[str, Any]:
     }
 
 
+def _architecture_brief_segment_schema_body() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [
+            "segment_id",
+            "summary",
+            "findings",
+            "decisions",
+            "open_questions",
+            "artifact_refs",
+        ],
+        "properties": {
+            "segment_id": {"type": "string"},
+            "summary": {"type": "string"},
+            "findings": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "decisions": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "open_questions": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "artifact_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+    }
+
+
 def _backlog_recommendation_schema_body() -> dict[str, Any]:
     body = _governance_document_schema_body(BACKLOG_RECOMMENDATION_SCHEMA_REF)
     body["required"] = [*body["required"], "implementation_handoff"]
@@ -894,7 +930,41 @@ def _validate_governance_document_payload(
                     "Governance document followup recommendations require "
                     f"{key}."
                 ),
-            )
+        )
+
+
+def _validate_architecture_brief_segment_payload(payload: dict[str, Any]) -> None:
+    _require_object(payload, label="Architecture brief segment payload")
+    _require_non_empty_string(
+        payload,
+        "segment_id",
+        label="Architecture brief segment payload.segment_id",
+    )
+    _require_non_empty_string(
+        payload,
+        "summary",
+        label="Architecture brief segment payload.summary",
+    )
+    _require_string_array(
+        payload,
+        "findings",
+        label="Architecture brief segment payload.findings",
+    )
+    _require_string_array(
+        payload,
+        "decisions",
+        label="Architecture brief segment payload.decisions",
+    )
+    _require_string_array(
+        payload,
+        "open_questions",
+        label="Architecture brief segment payload.open_questions",
+    )
+    _require_string_array(
+        payload,
+        "artifact_refs",
+        label="Architecture brief segment payload.artifact_refs",
+    )
 
 
 def _validate_backlog_recommendation_payload(payload: dict[str, Any]) -> None:
@@ -1573,6 +1643,10 @@ OUTPUT_SCHEMA_REGISTRY: dict[tuple[str, int], dict[str, Any]] = {
             payload,
             expected_document_kind_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
         ),
+    },
+    (ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF, ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_VERSION): {
+        "body": _architecture_brief_segment_schema_body,
+        "validator": _validate_architecture_brief_segment_payload,
     },
     (TECHNOLOGY_DECISION_SCHEMA_REF, TECHNOLOGY_DECISION_SCHEMA_VERSION): {
         "body": lambda: _governance_document_schema_body(TECHNOLOGY_DECISION_SCHEMA_REF),

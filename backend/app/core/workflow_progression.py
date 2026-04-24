@@ -5,6 +5,7 @@ from typing import Any
 from app.core.ceo_execution_presets import (
     GOVERNANCE_DOCUMENT_CHAIN_ORDER,
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
+    build_project_init_architecture_brief_ticket_specs as _build_project_init_architecture_brief_ticket_specs,
     build_autopilot_architecture_brief_summary,
     supports_ceo_create_ticket_preset,
 )
@@ -60,6 +61,19 @@ def build_project_init_kickoff_spec(workflow: dict[str, Any] | None) -> dict[str
         "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
         "summary": build_autopilot_architecture_brief_summary(north_star_goal),
     }
+
+
+def build_project_init_architecture_brief_ticket_specs(
+    workflow: dict[str, Any] | None,
+    *,
+    board_brief_artifact_ref: str,
+) -> list[dict[str, Any]]:
+    return _build_project_init_architecture_brief_ticket_specs(
+        workflow,
+        board_brief_artifact_ref=board_brief_artifact_ref,
+    )
+
+
 def resolve_next_governance_schema(completed_ticket_ids_by_schema: dict[str, str]) -> str | None:
     for output_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
         if not completed_ticket_ids_by_schema.get(output_schema_ref):
