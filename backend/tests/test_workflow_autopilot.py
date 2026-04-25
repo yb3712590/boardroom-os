@@ -370,6 +370,7 @@ def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipel
             node_id="node_ceo_architecture_brief",
             role_profile_ref="frontend_engineer_primary",
             output_schema_ref="architecture_brief",
+            allowed_write_set=["reports/governance/tkt_autopilot_failed_ticket_retry_guard/*"],
         ),
     )
     lease_response = client.post(
@@ -421,6 +422,11 @@ def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipel
     node_projection = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
     assert node_projection is not None
     retry_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        retry_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
 
     assert create_response.status_code == 200
     assert create_response.json()["status"] == "ACCEPTED"
@@ -434,6 +440,9 @@ def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipel
     assert retry_ticket["ticket_id"] != leased_ticket["ticket_id"]
     assert retry_ticket["retry_count"] == 1
     assert retry_ticket["status"] in {"PENDING", "LEASED", "EXECUTING"}
+    assert retry_created_spec["allowed_write_set"] == [
+        f"reports/governance/{retry_ticket['ticket_id']}/*"
+    ]
     assert open_incidents == []
 
 
@@ -1291,7 +1300,7 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
                 node_id="node_autopilot_build_rework",
                 submitted_by="emp_frontend_2",
                 include_review_request=True,
-                written_artifact_path="artifacts/ui/scope-followups/tkt_autopilot_build_rework/source-code.tsx",
+                written_artifact_path=f"artifacts/ui/scope-followups/{fix_ticket_id}/source-code.tsx",
                 idempotency_key=f"ticket-result-submit:{workflow_id}:{fix_ticket_id}:implementation",
             ),
         )

@@ -35,6 +35,7 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_VERSION,
 )
 from app.core.process_assets import get_ticket_output_process_asset_refs
+from app.core.workspace_path_contracts import DEFAULT_WORKSPACE_PATH_TEMPLATES
 
 if TYPE_CHECKING:
     from app.db.repository import ControlPlaneRepository
@@ -798,21 +799,17 @@ def _allowed_tools_for_preset(preset: CEOCreateTicketPreset) -> list[str]:
 
 
 def _allowed_write_set_for_preset(ticket_id: str, preset: CEOCreateTicketPreset) -> list[str]:
+    workspace_paths = DEFAULT_WORKSPACE_PATH_TEMPLATES
     if preset.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF:
         return ["reports/meeting/*"]
     if preset.output_schema_ref in GOVERNANCE_DOCUMENT_SCHEMA_REFS:
-        return [f"reports/governance/{ticket_id}/*"]
+        return workspace_paths.governance_write_set(ticket_id)
     if preset.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
-        return [
-            "10-project/src/*",
-            "10-project/docs/*",
-            "20-evidence/tests/*",
-            "20-evidence/git/*",
-        ]
+        return workspace_paths.source_delivery_write_set()
     if preset.output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
-        return [f"reports/check/{ticket_id}/*"]
+        return workspace_paths.check_write_set(ticket_id)
     if preset.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
-        return [f"20-evidence/closeout/{ticket_id}/*"]
+        return workspace_paths.closeout_write_set(ticket_id)
     return [
         f"artifacts/ui/scope-followups/{ticket_id}/*",
         f"reports/review/{ticket_id}/*",

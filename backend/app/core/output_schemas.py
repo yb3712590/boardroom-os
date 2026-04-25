@@ -1245,11 +1245,20 @@ def _source_code_delivery_schema_body() -> dict[str, Any]:
             "summary": {"type": "string"},
             "source_file_refs": {
                 "type": "array",
+                "description": (
+                    "Artifact refs for source files only. In workspace-managed delivery these refs "
+                    "must correspond to source_files/written_artifacts under 10-project/src/ and "
+                    "must not include docs, test evidence, git evidence, or closeout evidence."
+                ),
                 "minItems": 1,
                 "items": {"type": "string"},
             },
             "source_files": {
                 "type": "array",
+                "description": (
+                    "Materialized source files. Workspace-managed source files belong under "
+                    "10-project/src/; documentation updates belong in documentation_updates."
+                ),
                 "minItems": 1,
                 "items": {
                     "type": "object",
@@ -1263,6 +1272,10 @@ def _source_code_delivery_schema_body() -> dict[str, Any]:
             },
             "verification_runs": {
                 "type": "array",
+                "description": (
+                    "Raw verification evidence. Workspace-managed verification artifacts belong "
+                    "under 20-evidence/tests/ and are referenced by verification_evidence_refs."
+                ),
                 "minItems": 1,
                 "items": {
                     "type": "object",

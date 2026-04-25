@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import tomllib
 from typing import Any
+
+from app.core.workspace_path_contracts import (
+    DEFAULT_WORKSPACE_PATH_TEMPLATES,
+    WorkspacePathTemplates,
+)
 
 
 DEFAULT_ROLE_TARGETS: tuple[str, ...] = (
@@ -87,6 +93,7 @@ class LiveProviderConfig:
     provider_id: str
     base_url: str
     api_key: str
+    api_key_env: str | None
     preferred_model: str
     max_context_window: int | None
     reasoning_effort: str | None
@@ -122,6 +129,7 @@ class LiveScenarioConfig:
     runtime: LiveRuntimeConfig
     provider: LiveProviderConfig
     assertions: LiveAssertionConfig
+    workspace_paths: WorkspacePathTemplates
 
     def build_project_init_payload(self) -> dict[str, Any]:
         return {
@@ -230,11 +238,33 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
     provider_payload = dict(payload.get("provider") or {})
     role_bindings_payload = list(provider_payload.get("role_bindings") or [])
     assertion_payload = dict(payload.get("assertions") or {})
+    workspace_paths_payload = dict(payload.get("workspace_paths") or {})
 
     provider_id = _require_str(provider_payload.get("provider_id"), field_name="provider.provider_id")
     preferred_model = _require_str(
         provider_payload.get("preferred_model"),
         field_name="provider.preferred_model",
+    )
+    api_key_env = str(provider_payload.get("api_key_env") or "").strip() or None
+    api_key = str(provider_payload.get("api_key") or "").strip()
+    if not api_key and api_key_env is not None:
+        api_key = str(os.environ.get(api_key_env) or "").strip()
+    if not api_key:
+        if api_key_env is not None:
+            raise ValueError(
+                "provider.api_key_env references "
+                f"`{api_key_env}`, but that environment variable is not set."
+            )
+        api_key = _require_str(provider_payload.get("api_key"), field_name="provider.api_key")
+    default_paths = DEFAULT_WORKSPACE_PATH_TEMPLATES
+    workspace_paths = WorkspacePathTemplates(
+        source=str(workspace_paths_payload.get("source") or default_paths.source).strip(),
+        docs=str(workspace_paths_payload.get("docs") or default_paths.docs).strip(),
+        tests=str(workspace_paths_payload.get("tests") or default_paths.tests).strip(),
+        git=str(workspace_paths_payload.get("git") or default_paths.git).strip(),
+        governance=str(workspace_paths_payload.get("governance") or default_paths.governance).strip(),
+        check=str(workspace_paths_payload.get("check") or default_paths.check).strip(),
+        closeout=str(workspace_paths_payload.get("closeout") or default_paths.closeout).strip(),
     )
 
     return LiveScenarioConfig(
@@ -267,7 +297,8 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
         provider=LiveProviderConfig(
             provider_id=provider_id,
             base_url=_require_str(provider_payload.get("base_url"), field_name="provider.base_url"),
-            api_key=_require_str(provider_payload.get("api_key"), field_name="provider.api_key"),
+            api_key=api_key,
+            api_key_env=api_key_env,
             preferred_model=preferred_model,
             max_context_window=(
                 int(provider_payload["max_context_window"])
@@ -309,4 +340,5 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
             default_reasoning_effort=str(provider_payload.get("reasoning_effort") or "high").strip() or "high",
             required_capabilities=DEFAULT_REQUIRED_CAPABILITIES,
         ),
+        workspace_paths=workspace_paths,
     )

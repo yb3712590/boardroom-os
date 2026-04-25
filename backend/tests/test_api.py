@@ -2905,6 +2905,7 @@ def test_governance_checker_changes_required_creates_fix_ticket(client):
     assert checker_response.json()["status"] == "ACCEPTED"
     assert fix_created_spec is not None
     assert fix_created_spec["output_schema_ref"] == "architecture_brief"
+    assert fix_created_spec["allowed_write_set"] == [f"reports/governance/{fix_ticket_id}/*"]
     assert fix_created_spec["ticket_kind"] == "MAKER_REWORK_FIX"
     assert fix_created_spec["maker_checker_context"]["checker_ticket_id"] == checker_ticket_id
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
@@ -4181,6 +4182,9 @@ def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and
     assert fix_created_spec is not None
     assert fix_created_spec["output_schema_ref"] == "source_code_delivery"
     assert fix_created_spec["delivery_stage"] == "BUILD"
+    assert fix_created_spec["allowed_write_set"] == [
+        f"artifacts/ui/scope-followups/{node_projection['latest_ticket_id']}/*"
+    ]
     assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_DELIVERY_REVIEW"
@@ -4432,16 +4436,16 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
     )
     fix_result = client.post(
         "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id="wf_build_rework_resume",
-            ticket_id=fix_ticket_id,
-            node_id="node_build_rework_resume",
-            submitted_by="emp_frontend_3",
-            include_review_request=True,
-            written_artifact_path="artifacts/ui/scope-followups/tkt_build_rework_resume/source-code.tsx",
-            idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{fix_ticket_id}:implementation",
-        ),
-    )
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id="wf_build_rework_resume",
+                ticket_id=fix_ticket_id,
+                node_id="node_build_rework_resume",
+                submitted_by="emp_frontend_3",
+                include_review_request=True,
+                written_artifact_path=f"artifacts/ui/scope-followups/{fix_ticket_id}/source-code.tsx",
+                idempotency_key=f"ticket-result-submit:wf_build_rework_resume:{fix_ticket_id}:implementation",
+            ),
+        )
     assert fix_lease.status_code == 200
     assert fix_start.status_code == 200
     assert fix_result.status_code == 200
@@ -4987,6 +4991,9 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
     assert fix_created_spec is not None
     assert fix_created_spec["output_schema_ref"] == "delivery_check_report"
     assert fix_created_spec["delivery_stage"] == "CHECK"
+    assert fix_created_spec["allowed_write_set"] == [
+        f"reports/check/{node_projection['latest_ticket_id']}/*"
+    ]
     assert fix_created_spec["excluded_employee_ids"] == ["emp_checker_1"]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_CHECK_REVIEW"
@@ -10700,7 +10707,13 @@ def test_ticket_fail_is_rejected_for_non_latest_ticket(client, set_ticket_time):
 
 def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    _create_lease_and_start_ticket(client)
+    _create_lease_and_start_ticket(
+        client,
+        allowed_write_set=[
+            "artifacts/ui/scope-followups/tkt_visual_001/*",
+            "reports/review/tkt_visual_001/*",
+        ],
+    )
 
     response = client.post(
         "/api/v1/commands/ticket-fail",
@@ -10726,6 +10739,11 @@ def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
     assert created_retry_events[0]["payload"]["parent_ticket_id"] == "tkt_visual_001"
     assert created_retry_events[0]["payload"]["attempt_no"] == 2
     assert created_retry_events[0]["payload"]["retry_count"] == 1
+    retry_ticket_id = created_retry_events[0]["payload"]["ticket_id"]
+    assert created_retry_events[0]["payload"]["allowed_write_set"] == [
+        f"artifacts/ui/scope-followups/{retry_ticket_id}/*",
+        f"reports/review/{retry_ticket_id}/*",
+    ]
     assert failed_ticket_projection["status"] == TICKET_STATUS_FAILED
     assert new_ticket_projection["status"] == TICKET_STATUS_PENDING
     assert new_ticket_projection["retry_count"] == 1
@@ -17498,6 +17516,9 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
     assert fix_ticket is not None
     assert fix_created_spec["output_schema_ref"] == "delivery_closeout_package"
     assert fix_created_spec["delivery_stage"] == "CLOSEOUT"
+    assert fix_created_spec["allowed_write_set"] == [
+        f"20-evidence/closeout/{node_projection['latest_ticket_id']}/*"
+    ]
     assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_CLOSEOUT_REVIEW"

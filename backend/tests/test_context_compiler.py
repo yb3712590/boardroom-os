@@ -18,6 +18,7 @@ from app.core.context_compiler import (
     compile_execution_package,
     export_latest_compile_artifacts_to_developer_inspector,
 )
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_compiled_context_bundle_process_asset_ref,
@@ -594,6 +595,54 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
         compiled_package.rendered_execution_payload.messages[0].content_payload["organization_context"]
         == compiled_package.org_context.model_dump(mode="json")
     )
+
+
+def test_compile_audit_artifacts_injects_workspace_source_delivery_hard_rules(
+    client,
+    set_ticket_time,
+) -> None:
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id="wf_compile",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Compile workspace source delivery hard rules.",
+    )
+    create_payload = _ticket_create_payload(
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=[
+            "10-project/src/*",
+            "10-project/docs/*",
+            "20-evidence/tests/*",
+            "20-evidence/git/*",
+        ],
+        delivery_stage="BUILD",
+    )
+    create_payload["execution_contract"] = infer_execution_contract_payload(
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    create_payload["graph_contract"] = {"lane_kind": "execution"}
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=create_payload,
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+    lease_response = client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+    compile_request = build_compile_request(repository, ticket)
+    compiled = compile_audit_artifacts(compile_request)
+
+    hard_rules = compiled.compiled_context_bundle.system_controls.hard_rules
+    assert any("source_file_refs" in rule and "10-project/src/" in rule for rule in hard_rules)
+    assert any("20-evidence/tests/" in rule for rule in hard_rules)
+    assert any("20-evidence/git/" in rule for rule in hard_rules)
 
 
 def test_build_compile_request_rejects_missing_governance_profile(client, set_ticket_time):

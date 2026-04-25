@@ -161,6 +161,86 @@ reasoning_effort_override = "high"
     ]
 
 
+def test_load_live_scenario_config_uses_api_key_env_and_workspace_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.live._config import load_live_scenario_config
+
+    config_path = _write_live_config(
+        tmp_path,
+        extra_body="""
+[workspace_paths]
+source = "10-project/src/*"
+docs = "10-project/docs/*"
+tests = "20-evidence/tests/*"
+git = "20-evidence/git/*"
+governance = "reports/governance/{ticket_id}/*"
+check = "reports/check/{ticket_id}/*"
+closeout = "20-evidence/closeout/{ticket_id}/*"
+""".strip(),
+    )
+    config_body = config_path.read_text(encoding="utf-8").replace(
+        'api_key = "sk-test"',
+        'api_key_env = "BOARDROOM_OS_INTEGRATION_TEST_API_KEY"',
+    )
+    config_path.write_text(config_body, encoding="utf-8")
+    monkeypatch.setenv("BOARDROOM_OS_INTEGRATION_TEST_API_KEY", "sk-env-test")
+
+    config = load_live_scenario_config(config_path)
+
+    assert config.provider.api_key == "sk-env-test"
+    assert config.provider.api_key_env == "BOARDROOM_OS_INTEGRATION_TEST_API_KEY"
+    assert config.workspace_paths.model_dump() == {
+        "source": "10-project/src/*",
+        "docs": "10-project/docs/*",
+        "tests": "20-evidence/tests/*",
+        "git": "20-evidence/git/*",
+        "governance": "reports/governance/{ticket_id}/*",
+        "check": "reports/check/{ticket_id}/*",
+        "closeout": "20-evidence/closeout/{ticket_id}/*",
+    }
+
+
+def test_load_live_scenario_config_reports_missing_api_key_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.live._config import load_live_scenario_config
+
+    config_path = _write_live_config(tmp_path)
+    config_body = config_path.read_text(encoding="utf-8").replace(
+        'api_key = "sk-test"',
+        'api_key_env = "MISSING_BOARDROOM_OS_INTEGRATION_TEST_API_KEY"',
+    )
+    config_path.write_text(config_body, encoding="utf-8")
+    monkeypatch.delenv("MISSING_BOARDROOM_OS_INTEGRATION_TEST_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="MISSING_BOARDROOM_OS_INTEGRATION_TEST_API_KEY"):
+        load_live_scenario_config(config_path)
+
+
+def test_integration_tests_template_loads_from_env_without_plaintext_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.live._config import load_live_scenario_config
+
+    template_path = Path(__file__).resolve().parents[1] / "integration-tests.template.toml"
+    template_body = template_path.read_text(encoding="utf-8")
+    monkeypatch.setenv("BOARDROOM_OS_INTEGRATION_TEST_API_KEY", "sk-template-test")
+
+    config = load_live_scenario_config(template_path)
+
+    assert 'api_key = "' not in template_body
+    assert config.provider.api_key == "sk-template-test"
+    assert config.workspace_paths.source_delivery_write_set() == [
+        "10-project/src/*",
+        "10-project/docs/*",
+        "20-evidence/tests/*",
+        "20-evidence/git/*",
+    ]
+
+
 def test_load_live_scenario_config_rejects_stage_fields(tmp_path: Path) -> None:
     from tests.live._config import load_live_scenario_config
 

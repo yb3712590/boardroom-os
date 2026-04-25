@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from app.config import get_settings
 from app.core import project_workspaces
 from app.core.context_compiler import compile_and_persist_execution_artifacts
@@ -45,6 +47,11 @@ def _ticket_create_payload(*, workflow_id: str, ticket_id: str, node_id: str) ->
         "acceptance_criteria": ["Must produce a structured result"],
         "output_schema_ref": "source_code_delivery",
         "output_schema_version": 1,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+        "graph_contract": {"lane_kind": "execution"},
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": [
             "10-project/src/*",
@@ -96,6 +103,35 @@ def _runtime_provider_upsert_payload(*, target_ref: str, idempotency_key: str) -
         ],
         "idempotency_key": idempotency_key,
     }
+
+
+@pytest.fixture(autouse=True)
+def _configure_runtime_provider_bindings(client) -> None:
+    target_refs = [
+        "ceo_shadow",
+        "execution_target:frontend_build",
+        "execution_target:frontend_governance_document",
+        "execution_target:frontend_closeout",
+    ]
+    payload = _runtime_provider_upsert_payload(
+        target_ref=target_refs[0],
+        idempotency_key="runtime-provider-upsert:project-workspace-hooks",
+    )
+    payload["role_bindings"] = [
+        {
+            "target_ref": target_ref,
+            "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+            "max_context_window_override": None,
+            "reasoning_effort_override": None,
+        }
+        for target_ref in target_refs
+    ]
+    response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=payload,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
 
 
 def _ticket_lease_payload(*, workflow_id: str, ticket_id: str, node_id: str) -> dict[str, object]:
@@ -832,6 +868,50 @@ def test_source_code_delivery_requires_project_source_file_refs(client) -> None:
     assert ticket is not None
     assert ticket["status"] == "FAILED"
     assert ticket["last_failure_kind"] == "SCHEMA_ERROR"
+
+
+def test_source_code_delivery_rejects_test_evidence_as_source_file_ref(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code evidence/source split demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_evidence_source_split_001"
+    node_id = "node_code_evidence_source_split_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    payload = _source_code_delivery_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        include_documentation_updates=True,
+        include_git_evidence=True,
+    )
+    verification_run = payload["payload"]["verification_runs"][0]
+    verification_ref = verification_run["artifact_ref"]
+    payload["payload"]["source_file_refs"] = [verification_ref]
+    payload["payload"]["source_files"] = [
+        {
+            "artifact_ref": verification_ref,
+            "path": verification_run["path"],
+            "content": "test evidence is not source code\n",
+        }
+    ]
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
 
 
 def test_source_code_delivery_rejects_placeholder_source_content(client) -> None:

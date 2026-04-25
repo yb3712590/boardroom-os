@@ -223,6 +223,10 @@ from app.core.ticket_context_archive import latest_provider_audit_for_ticket, wr
 from app.core.time import now_local
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_scope import resolve_workflow_scope
+from app.core.workspace_path_contracts import (
+    is_workspace_managed_write_set,
+    rebind_ticket_id_in_allowed_write_set,
+)
 from app.db.repository import ControlPlaneRepository
 
 
@@ -1023,8 +1027,10 @@ def _build_fix_ticket_payload(
         list(maker_ticket_spec.get("excluded_employee_ids") or [])
         + [maker_checker_context.get("maker_completed_by")]
     )
+    next_ticket_id = new_prefixed_id("tkt")
+    maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
     return {
-        "ticket_id": new_prefixed_id("tkt"),
+        "ticket_id": next_ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
         "parent_ticket_id": checker_ticket_id,
@@ -1051,7 +1057,11 @@ def _build_fix_ticket_payload(
             ),
         ),
         "allowed_tools": list(maker_ticket_spec.get("allowed_tools") or []),
-        "allowed_write_set": list(maker_ticket_spec.get("allowed_write_set") or []),
+        "allowed_write_set": rebind_ticket_id_in_allowed_write_set(
+            list(maker_ticket_spec.get("allowed_write_set") or []),
+            previous_ticket_id=maker_ticket_id,
+            next_ticket_id=next_ticket_id,
+        ),
         "lease_timeout_sec": int(maker_ticket_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC),
         "retry_budget": int(maker_ticket_spec.get("retry_budget") or 0),
         "priority": str(maker_ticket_spec.get("priority") or "high"),
@@ -1278,10 +1288,7 @@ def _validate_source_code_delivery_hooks(
 ) -> str | None:
     if str(created_spec.get("deliverable_kind") or "") != "source_code_delivery":
         return None
-    if not any(
-        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-        for pattern in list(created_spec.get("allowed_write_set") or [])
-    ):
+    if not is_workspace_managed_write_set(list(created_spec.get("allowed_write_set") or [])):
         return None
 
     result_payload = payload.payload if isinstance(payload.payload, dict) else {}
@@ -2765,6 +2772,11 @@ def _recreate_pending_delivery_descendants_for_retry(
             "ticket_id": next_ticket_id,
             "parent_ticket_id": ticket_replacements[parent_ticket_id],
             "idempotency_key": f"incident-recovery-recreate:{workflow_id}:{next_ticket_id}",
+            "allowed_write_set": rebind_ticket_id_in_allowed_write_set(
+                list(created_spec.get("allowed_write_set") or []),
+                previous_ticket_id=str(ticket["ticket_id"]),
+                next_ticket_id=next_ticket_id,
+            ),
             "input_artifact_refs": [
                 artifact_replacements.get(str(artifact_ref), str(artifact_ref))
                 for artifact_ref in (created_spec.get("input_artifact_refs") or [])
@@ -3143,6 +3155,11 @@ def _schedule_retry(
         "parent_ticket_id": failed_ticket_id,
         "attempt_no": next_attempt_no,
         "retry_count": next_retry_count,
+        "allowed_write_set": rebind_ticket_id_in_allowed_write_set(
+            list(created_spec.get("allowed_write_set") or []),
+            previous_ticket_id=failed_ticket_id,
+            next_ticket_id=next_ticket_id,
+        ),
         "idempotency_key": f"system-retry-create:{workflow_id}:{next_ticket_id}",
     }
     if retry_source_event_type == EVENT_TICKET_TIMED_OUT:
@@ -7315,9 +7332,8 @@ def handle_ticket_result_submit(
         raise
 
     workflow_has_project_workspace = project_workspace_manifest_exists(payload.workflow_id)
-    workspace_has_managed_paths = workflow_has_project_workspace and any(
-        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-        for pattern in list(created_spec.get("allowed_write_set") or [])
+    workspace_has_managed_paths = workflow_has_project_workspace and is_workspace_managed_write_set(
+        list(created_spec.get("allowed_write_set") or [])
     )
     if (
         str(created_spec.get("deliverable_kind") or "") == "source_code_delivery"

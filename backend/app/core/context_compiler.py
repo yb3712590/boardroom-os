@@ -106,6 +106,10 @@ from app.core.process_assets import (
 from app.core.skill_runtime import resolve_skill_binding
 from app.core.time import now_local
 from app.core.workflow_relationships import WorkflowRuntimeRelation, resolve_runtime_org_context_relations
+from app.core.workspace_path_contracts import (
+    is_workspace_managed_write_set,
+    workspace_source_delivery_hard_rules,
+)
 from app.core.developer_inspector import (
     DeveloperInspectorStore,
     PersistedDeveloperInspectorArtifact,
@@ -723,6 +727,15 @@ def _build_task_frame(compile_request: CompileRequest) -> CompiledTaskFrame:
         ],
         deliverable_kind=compile_request.execution.deliverable_kind,
     )
+
+
+def _build_hard_rules(compile_request: CompileRequest) -> list[str]:
+    if (
+        str(compile_request.control_refs.output_schema_ref or "").strip() == SOURCE_CODE_DELIVERY_SCHEMA_REF
+        and is_workspace_managed_write_set(compile_request.execution.allowed_write_set)
+    ):
+        return workspace_source_delivery_hard_rules()
+    return []
 
 
 def _build_context_layer_summary(
@@ -2167,7 +2180,7 @@ def compile_audit_artifacts(
             governance_mode_slice=compile_request.governance_mode_slice,
             required_doc_surfaces=required_doc_surfaces,
             skill_binding=skill_binding.model_dump(mode="json"),
-            hard_rules=[],
+            hard_rules=_build_hard_rules(compile_request),
             board_constraints=[],
             output_contract=CompiledOutputContract(
                 schema_ref=compile_request.control_refs.output_schema_ref,

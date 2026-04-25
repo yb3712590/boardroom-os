@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.core.runtime_liveness import build_runtime_liveness_report
+from app.core.workspace_path_contracts import DEFAULT_WORKSPACE_PATH_TEMPLATES
 
 from tests.live.architecture_governance_autopilot_live import SCENARIO as ARCHITECTURE_SCENARIO
 from tests.live.architecture_governance_autopilot_smoke import (
@@ -72,6 +73,7 @@ def _library_live_config() -> LiveScenarioConfig:
             provider_id="prov_openai_compat_truerealbill",
             base_url="http://codex.truerealbill.com:11234/v1",
             api_key="sk-test",
+            api_key_env=None,
             preferred_model="gpt-5.4",
             max_context_window=270000,
             reasoning_effort="high",
@@ -88,6 +90,7 @@ def _library_live_config() -> LiveScenarioConfig:
             architect_reasoning_effort="xhigh",
             default_reasoning_effort="high",
         ),
+        workspace_paths=DEFAULT_WORKSPACE_PATH_TEMPLATES,
     )
 
 

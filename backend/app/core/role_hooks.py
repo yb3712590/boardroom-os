@@ -39,6 +39,7 @@ from app.core.project_workspaces import (
     write_git_closeout_receipt,
     write_worker_postrun_receipt,
 )
+from app.core.workspace_path_contracts import is_workspace_managed_write_set
 
 if TYPE_CHECKING:
     import sqlite3
@@ -179,10 +180,7 @@ def _is_workspace_managed_source_code_delivery(created_spec: dict[str, Any]) -> 
         return False
     if not project_workspace_manifest_exists(str(created_spec.get("workflow_id") or "")):
         return False
-    return any(
-        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-        for pattern in list(created_spec.get("allowed_write_set") or [])
-    )
+    return is_workspace_managed_write_set(list(created_spec.get("allowed_write_set") or []))
 
 
 def _is_workspace_managed_structured_document_delivery(created_spec: dict[str, Any]) -> bool:
@@ -190,10 +188,7 @@ def _is_workspace_managed_structured_document_delivery(created_spec: dict[str, A
         return False
     if not project_workspace_manifest_exists(str(created_spec.get("workflow_id") or "")):
         return False
-    return any(
-        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-        for pattern in list(created_spec.get("allowed_write_set") or [])
-    )
+    return is_workspace_managed_write_set(list(created_spec.get("allowed_write_set") or []))
 
 
 def _is_workspace_managed_review_evidence(created_spec: dict[str, Any]) -> bool:

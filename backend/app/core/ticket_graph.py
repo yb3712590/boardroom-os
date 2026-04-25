@@ -322,13 +322,11 @@ def build_ticket_graph_snapshot(
         runtime_node_projection = (
             runtime_node_projection_by_graph_node_id.get(identity.graph_node_id) or {}
         )
+        is_runtime_latest_ticket = (
+            str(runtime_node_projection.get("latest_ticket_id") or "").strip() == ticket_id
+        )
         sort_key = (
-            1
-            if (
-                identity.graph_lane_kind == GRAPH_LANE_EXECUTION
-                and str(runtime_node_projection.get("latest_ticket_id") or "").strip() == ticket_id
-            )
-            else 0,
+            1 if is_runtime_latest_ticket else 0,
             *_ticket_sort_key(ticket),
         )
         if sort_key >= latest_sort_key_by_graph_node_id.get(

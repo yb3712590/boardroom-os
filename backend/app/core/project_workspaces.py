@@ -30,6 +30,7 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.time import now_local
+from app.core.workspace_path_contracts import is_workspace_managed_write_set
 from app.db.repository import ControlPlaneRepository
 
 WORKSPACE_REF_PREFIX = "workspace://"
@@ -1143,10 +1144,7 @@ def infer_ticket_workspace_bootstrap(ticket_payload: dict[str, Any]) -> TicketWo
     )
     is_workspace_managed_source_delivery = (
         deliverable_kind == DeliverableKind.SOURCE_CODE_DELIVERY
-        and any(
-            str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-            for pattern in list(ticket_payload.get("allowed_write_set") or [])
-        )
+        and is_workspace_managed_write_set(list(ticket_payload.get("allowed_write_set") or []))
     )
     ticket_id = str(ticket_payload.get("ticket_id") or "").strip()
     return TicketWorkspaceBootstrap(
@@ -1550,10 +1548,7 @@ def _latest_started_by(
 def is_workspace_managed_source_code_ticket(created_spec: dict[str, Any]) -> bool:
     if str(created_spec.get("deliverable_kind") or "") != DeliverableKind.SOURCE_CODE_DELIVERY.value:
         return False
-    return any(
-        str(pattern or "").startswith(("10-project/", "20-evidence/", "00-boardroom/"))
-        for pattern in list(created_spec.get("allowed_write_set") or [])
-    )
+    return is_workspace_managed_write_set(list(created_spec.get("allowed_write_set") or []))
 
 
 def resolve_source_code_ticket_from_chain(
