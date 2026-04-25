@@ -1200,15 +1200,16 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
         ],
         delivery_stage="BUILD",
     )
-    maker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_autopilot_build_rework",
-            node_id="node_autopilot_build_rework",
-            include_review_request=True,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        maker_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_autopilot_build_rework",
+                node_id="node_autopilot_build_rework",
+                include_review_request=True,
+            ),
+        )
     assert maker_response.status_code == 200
     assert maker_response.json()["status"] == "ACCEPTED"
 
@@ -1234,27 +1235,28 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
             started_by="emp_checker_1",
         ),
     )
-    first_checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id=first_checker_ticket_id,
-            node_id="node_autopilot_build_rework",
-            review_status="CHANGES_REQUIRED",
-            findings=[
-                {
-                    "finding_id": "finding_build_scope_cap",
-                    "severity": "high",
-                    "category": "SCOPE_DISCIPLINE",
-                    "headline": "Source code delivery drifted outside the locked scope.",
-                    "summary": "Build bundle still includes extra non-MVP sections.",
-                    "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
-                    "blocking": True,
-                }
-            ],
-            idempotency_key=f"ticket-result-submit:{workflow_id}:{first_checker_ticket_id}:changes-required",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        first_checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=first_checker_ticket_id,
+                node_id="node_autopilot_build_rework",
+                review_status="CHANGES_REQUIRED",
+                findings=[
+                    {
+                        "finding_id": "finding_build_scope_cap",
+                        "severity": "high",
+                        "category": "SCOPE_DISCIPLINE",
+                        "headline": "Source code delivery drifted outside the locked scope.",
+                        "summary": "Build bundle still includes extra non-MVP sections.",
+                        "required_action": "Trim the source code delivery back to the locked scope before downstream checks.",
+                        "blocking": True,
+                    }
+                ],
+                idempotency_key=f"ticket-result-submit:{workflow_id}:{first_checker_ticket_id}:changes-required",
+            ),
+        )
     assert first_checker_result.status_code == 200
     assert first_checker_result.json()["status"] == "ACCEPTED"
 
@@ -1280,18 +1282,19 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
             started_by="emp_frontend_2",
         ),
     )
-    fix_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id=fix_ticket_id,
-            node_id="node_autopilot_build_rework",
-            submitted_by="emp_frontend_2",
-            include_review_request=True,
-            written_artifact_path="artifacts/ui/scope-followups/tkt_autopilot_build_rework/source-code.tsx",
-            idempotency_key=f"ticket-result-submit:{workflow_id}:{fix_ticket_id}:implementation",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        fix_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=fix_ticket_id,
+                node_id="node_autopilot_build_rework",
+                submitted_by="emp_frontend_2",
+                include_review_request=True,
+                written_artifact_path="artifacts/ui/scope-followups/tkt_autopilot_build_rework/source-code.tsx",
+                idempotency_key=f"ticket-result-submit:{workflow_id}:{fix_ticket_id}:implementation",
+            ),
+        )
     assert fix_result.status_code == 200
     assert fix_result.json()["status"] == "ACCEPTED"
 
@@ -1317,27 +1320,28 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
             started_by="emp_checker_1",
         ),
     )
-    second_checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id=second_checker_ticket_id,
-            node_id="node_autopilot_build_rework",
-            review_status="CHANGES_REQUIRED",
-            findings=[
-                {
-                    "finding_id": "finding_build_scope_cap_followup",
-                    "severity": "high",
-                    "category": "DELIVERY_CLARITY",
-                    "headline": "Source code delivery still lacks a concise final handoff summary.",
-                    "summary": "The second pass fixed the scope issue, but the handoff notes are still too diffuse.",
-                    "required_action": "Compress the handoff summary to the final MVP deliverable only.",
-                    "blocking": True,
-                }
-            ],
-            idempotency_key=f"ticket-result-submit:{workflow_id}:{second_checker_ticket_id}:changes-required-again",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        second_checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=second_checker_ticket_id,
+                node_id="node_autopilot_build_rework",
+                review_status="CHANGES_REQUIRED",
+                findings=[
+                    {
+                        "finding_id": "finding_build_scope_cap_followup",
+                        "severity": "high",
+                        "category": "DELIVERY_CLARITY",
+                        "headline": "Source code delivery still lacks a concise final handoff summary.",
+                        "summary": "The second pass fixed the scope issue, but the handoff notes are still too diffuse.",
+                        "required_action": "Compress the handoff summary to the final MVP deliverable only.",
+                        "blocking": True,
+                    }
+                ],
+                idempotency_key=f"ticket-result-submit:{workflow_id}:{second_checker_ticket_id}:changes-required-again",
+            ),
+        )
 
     node_projection = repository.get_current_node_projection(workflow_id, "node_autopilot_build_rework")
     latest_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])

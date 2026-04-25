@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
-    build_ceo_project_init_architecture_decomposition_plan,
 )
-from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF, ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF
+from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF
 from app.core.workflow_progression import (
     AUTOPILOT_GOVERNANCE_CHAIN,
-    build_project_init_architecture_brief_ticket_specs,
     build_project_init_kickoff_spec,
     resolve_workflow_progression_adapter,
     select_governance_role_and_assignee,
@@ -58,47 +56,6 @@ def test_build_project_init_kickoff_spec_uses_governance_kickoff_for_standard() 
     assert "catalog-visibility contract" in kickoff["summary"]
     assert "availability lookup contract" in kickoff["summary"]
     assert "Remove action rules" in kickoff["summary"]
-
-
-def test_build_project_init_architecture_brief_ticket_specs_splits_kickoff_into_segments() -> None:
-    workflow_id = "wf_architecture_segments"
-    board_brief_ref = f"art://project-init/{workflow_id}/board-brief.md"
-
-    specs = build_project_init_architecture_brief_ticket_specs(
-        {
-            "workflow_id": workflow_id,
-            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
-            "north_star_goal": "Build a library management system",
-            "title": "Build a library management system",
-        },
-        board_brief_artifact_ref=board_brief_ref,
-    )
-
-    segment_specs = [spec for spec in specs if spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SEGMENT_SCHEMA_REF]
-    aggregator_spec = specs[-1]
-    decomposition_plan = build_ceo_project_init_architecture_decomposition_plan(
-        {
-            "workflow_id": workflow_id,
-            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
-            "north_star_goal": "Build a library management system",
-            "title": "Build a library management system",
-        },
-        board_brief_artifact_ref=board_brief_ref,
-    )
-    segment_ticket_ids = [segment["ticket_id"] for segment in decomposition_plan["segments"]]
-    segment_artifact_refs = [segment["artifact_ref"] for segment in decomposition_plan["segments"]]
-
-    assert len(specs) == 5
-    assert decomposition_plan["decision_kind"] == "DECOMPOSE_NOW"
-    assert decomposition_plan["uses_provider_hidden_state"] is False
-    assert [spec["ticket_id"] for spec in segment_specs] == segment_ticket_ids
-    assert all(spec["role_profile_ref"] == "architect_primary" for spec in segment_specs)
-    assert all(spec["output_schema_version"] == 1 for spec in segment_specs)
-    assert aggregator_spec["node_id"] == PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
-    assert aggregator_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
-    assert aggregator_spec["dispatch_intent"]["dependency_gate_refs"] == segment_ticket_ids
-    assert aggregator_spec["input_artifact_refs"] == [board_brief_ref, *segment_artifact_refs]
-    assert "synthesize the final architecture_brief" in aggregator_spec["acceptance_criteria"][0]
 
 
 def test_select_governance_role_and_assignee_requires_architect_for_architecture_brief() -> None:

@@ -185,6 +185,51 @@ fallback_provider_ids = []
     assert payload["providers"][0]["api_key"] == ""
 
 
+def test_build_runtime_provider_payload_includes_models_referenced_by_role_bindings(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(
+        tmp_path,
+        provider_body="""
+provider_id = "prov_default"
+base_url = "https://api.example.test/v1"
+api_key = "inline-secret"
+preferred_model = "gpt-5.4"
+max_context_window = 200000
+reasoning_effort = "high"
+timeout_sec = 480
+connect_timeout_sec = 10
+write_timeout_sec = 20
+first_token_timeout_sec = 300
+stream_idle_timeout_sec = 300
+request_total_timeout_sec = 480
+retry_backoff_schedule_sec = [1, 2, 4]
+fallback_provider_ids = []
+
+[[provider.role_bindings]]
+target_ref = "ceo_shadow"
+provider_model_entry_refs = ["prov_default::gpt-5.5"]
+reasoning_effort_override = "high"
+
+[[provider.role_bindings]]
+target_ref = "role_profile:frontend_engineer_primary"
+provider_model_entry_refs = ["prov_default::gpt-5.3-codex-spark"]
+reasoning_effort_override = "high"
+""".strip(),
+    )
+
+    from tests.scenario._config import load_scenario_test_config
+
+    config = load_scenario_test_config(config_path)
+    payload = config.build_runtime_provider_payload()
+
+    assert payload["provider_model_entries"] == [
+        {"provider_id": "prov_default", "model_name": "gpt-5.4"},
+        {"provider_id": "prov_default", "model_name": "gpt-5.5"},
+        {"provider_id": "prov_default", "model_name": "gpt-5.3-codex-spark"},
+    ]
+
+
 def test_load_scenario_test_config_rejects_unknown_seed_ref(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,

@@ -174,6 +174,29 @@ class ScenarioTestConfig:
 
     def build_runtime_provider_payload(self) -> dict[str, Any]:
         entry_ref = f"{self.provider.provider_id}::{self.provider.preferred_model}"
+        provider_model_entries: list[dict[str, str]] = []
+        seen_entry_refs: set[str] = set()
+
+        def add_provider_model_entry(raw_entry_ref: str) -> None:
+            entry_ref_value = str(raw_entry_ref or "").strip()
+            if not entry_ref_value or entry_ref_value in seen_entry_refs:
+                return
+            provider_id, separator, model_name = entry_ref_value.partition("::")
+            if not separator or not provider_id.strip() or not model_name.strip():
+                return
+            seen_entry_refs.add(entry_ref_value)
+            provider_model_entries.append(
+                {
+                    "provider_id": provider_id.strip(),
+                    "model_name": model_name.strip(),
+                }
+            )
+
+        add_provider_model_entry(entry_ref)
+        for binding in self.role_bindings:
+            for binding_entry_ref in binding.provider_model_entry_refs:
+                add_provider_model_entry(binding_entry_ref)
+
         return {
             "providers": [
                 {
@@ -196,12 +219,7 @@ class ScenarioTestConfig:
                     "fallback_provider_ids": list(self.provider.fallback_provider_ids),
                 }
             ],
-            "provider_model_entries": [
-                {
-                    "provider_id": self.provider.provider_id,
-                    "model_name": self.provider.preferred_model,
-                }
-            ],
+            "provider_model_entries": provider_model_entries,
             "role_bindings": [
                 {
                     "target_ref": binding.target_ref,

@@ -110,7 +110,7 @@ from app.core.project_workspaces import (
     sync_active_worktree_index,
     sync_ticket_boardroom_views,
 )
-from app.core.project_init_architecture_tickets import insert_project_init_architecture_tickets
+from app.core.project_init_governance import create_project_init_governance_kickoff_ticket
 from app.core.review_subjects import (
     resolve_graph_only_review_subject_execution_identity,
     resolve_review_subject_execution_identity,
@@ -1488,15 +1488,11 @@ def _kickoff_scope_after_requirement_elicitation(
     workflow = repository.get_workflow_projection(workflow_id)
     if workflow is None:
         raise ValueError("Workflow projection missing during requirement elicitation approval.")
-    board_brief_artifact_ref = artifact_refs[-1] if artifact_refs else f"art://project-init/{workflow_id}/board-brief.md"
-    insert_project_init_architecture_tickets(
+    create_project_init_governance_kickoff_ticket(
         repository,
         workflow_id=workflow_id,
-        workflow_profile=str(workflow.get("workflow_profile") or ""),
-        north_star_goal=str(workflow.get("title") or ""),
-        board_brief_artifact_ref=board_brief_artifact_ref,
-        command_id=f"{idempotency_key_prefix}:scope-kickoff",
-        command_key=f"{idempotency_key_prefix}:scope-kickoff",
+        workflow=workflow,
+        extra_input_artifact_refs=artifact_refs,
     )
     auto_advance_workflow_to_next_stop(
         repository,

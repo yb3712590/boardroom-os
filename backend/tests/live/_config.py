@@ -75,6 +75,14 @@ class LiveRuntimeConfig:
 
 
 @dataclass(frozen=True)
+class LiveProviderRoleBinding:
+    target_ref: str
+    provider_model_entry_refs: tuple[str, ...]
+    max_context_window_override: int | None = None
+    reasoning_effort_override: str | None = None
+
+
+@dataclass(frozen=True)
 class LiveProviderConfig:
     provider_id: str
     base_url: str
@@ -87,6 +95,7 @@ class LiveProviderConfig:
     first_token_timeout_sec: float
     stream_idle_timeout_sec: float
     fallback_provider_ids: tuple[str, ...] = ()
+    role_bindings: tuple[LiveProviderRoleBinding, ...] = ()
     default_role_targets: tuple[str, ...] = DEFAULT_ROLE_TARGETS
     architect_reasoning_effort: str = "xhigh"
     default_role_reasoning_effort: str = "high"
@@ -126,23 +135,56 @@ class LiveScenarioConfig:
 
     def build_runtime_provider_payload(self) -> dict[str, Any]:
         entry_ref = f"{self.provider.provider_id}::{self.provider.preferred_model}"
-        role_bindings = [
-            {
-                "target_ref": target_ref,
-                "provider_model_entry_refs": [entry_ref],
-                "max_context_window_override": self.provider.max_context_window,
-                "reasoning_effort_override": self.provider.default_role_reasoning_effort,
-            }
-            for target_ref in self.provider.default_role_targets
-        ]
-        role_bindings.append(
-            {
-                "target_ref": "role_profile:architect_primary",
-                "provider_model_entry_refs": [entry_ref],
-                "max_context_window_override": self.provider.max_context_window,
-                "reasoning_effort_override": self.provider.architect_reasoning_effort,
-            }
-        )
+        if self.provider.role_bindings:
+            role_bindings = [
+                {
+                    "target_ref": binding.target_ref,
+                    "provider_model_entry_refs": list(binding.provider_model_entry_refs or (entry_ref,)),
+                    "max_context_window_override": binding.max_context_window_override,
+                    "reasoning_effort_override": binding.reasoning_effort_override,
+                }
+                for binding in self.provider.role_bindings
+            ]
+        else:
+            role_bindings = [
+                {
+                    "target_ref": target_ref,
+                    "provider_model_entry_refs": [entry_ref],
+                    "max_context_window_override": self.provider.max_context_window,
+                    "reasoning_effort_override": self.provider.default_role_reasoning_effort,
+                }
+                for target_ref in self.provider.default_role_targets
+            ]
+            role_bindings.append(
+                {
+                    "target_ref": "role_profile:architect_primary",
+                    "provider_model_entry_refs": [entry_ref],
+                    "max_context_window_override": self.provider.max_context_window,
+                    "reasoning_effort_override": self.provider.architect_reasoning_effort,
+                }
+            )
+        provider_model_entries: list[dict[str, str]] = []
+        seen_entry_refs: set[str] = set()
+
+        def add_provider_model_entry(raw_entry_ref: str) -> None:
+            entry_ref_value = str(raw_entry_ref or "").strip()
+            if not entry_ref_value or entry_ref_value in seen_entry_refs:
+                return
+            provider_id, separator, model_name = entry_ref_value.partition("::")
+            if not separator or not provider_id.strip() or not model_name.strip():
+                return
+            seen_entry_refs.add(entry_ref_value)
+            provider_model_entries.append(
+                {
+                    "provider_id": provider_id.strip(),
+                    "model_name": model_name.strip(),
+                }
+            )
+
+        add_provider_model_entry(entry_ref)
+        for binding in role_bindings:
+            for binding_entry_ref in binding["provider_model_entry_refs"]:
+                add_provider_model_entry(binding_entry_ref)
         compat_timeout_sec = self.provider.compat_timeout_sec
         return {
             "providers": [
@@ -164,12 +206,7 @@ class LiveScenarioConfig:
                     "fallback_provider_ids": list(self.provider.fallback_provider_ids),
                 }
             ],
-            "provider_model_entries": [
-                {
-                    "provider_id": self.provider.provider_id,
-                    "model_name": self.provider.preferred_model,
-                }
-            ],
+            "provider_model_entries": provider_model_entries,
             "role_bindings": role_bindings,
             "idempotency_key": f"runtime-provider-upsert:{self.scenario.slug}",
         }
@@ -191,6 +228,7 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
     scenario_payload = dict(payload.get("scenario") or {})
     runtime_payload = dict(payload.get("runtime") or {})
     provider_payload = dict(payload.get("provider") or {})
+    role_bindings_payload = list(provider_payload.get("role_bindings") or [])
     assertion_payload = dict(payload.get("assertions") or {})
 
     provider_id = _require_str(provider_payload.get("provider_id"), field_name="provider.provider_id")
@@ -244,6 +282,23 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
             fallback_provider_ids=_require_list_of_str(
                 provider_payload.get("fallback_provider_ids", []),
                 field_name="provider.fallback_provider_ids",
+            ),
+            role_bindings=tuple(
+                LiveProviderRoleBinding(
+                    target_ref=_require_str(item.get("target_ref"), field_name="provider.role_bindings.target_ref"),
+                    provider_model_entry_refs=_require_list_of_str(
+                        item.get("provider_model_entry_refs"),
+                        field_name="provider.role_bindings.provider_model_entry_refs",
+                    ),
+                    max_context_window_override=(
+                        int(item["max_context_window_override"])
+                        if item.get("max_context_window_override") is not None
+                        else None
+                    ),
+                    reasoning_effort_override=str(item.get("reasoning_effort_override") or "").strip()
+                    or None,
+                )
+                for item in role_bindings_payload
             ),
         ),
         assertions=LiveAssertionConfig(

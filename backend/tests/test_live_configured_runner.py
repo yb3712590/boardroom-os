@@ -99,6 +99,68 @@ def test_load_live_scenario_config_builds_single_provider_payload_and_derives_co
     }.issubset({binding["target_ref"] for binding in payload["role_bindings"]})
 
 
+def test_load_live_scenario_config_uses_explicit_role_bindings_and_model_entries(
+    tmp_path: Path,
+) -> None:
+    from tests.live._config import load_live_scenario_config
+
+    config = load_live_scenario_config(
+        _write_live_config(
+            tmp_path,
+            extra_body="""
+[[provider.role_bindings]]
+target_ref = "ceo_shadow"
+provider_model_entry_refs = ["prov_openai_compat_truerealbill::gpt-5.5"]
+max_context_window_override = 270000
+reasoning_effort_override = "high"
+
+[[provider.role_bindings]]
+target_ref = "role_profile:architect_primary"
+provider_model_entry_refs = ["prov_openai_compat_truerealbill::gpt-5.5"]
+max_context_window_override = 270000
+reasoning_effort_override = "xhigh"
+
+[[provider.role_bindings]]
+target_ref = "role_profile:frontend_engineer_primary"
+provider_model_entry_refs = ["prov_openai_compat_truerealbill::gpt-5.3-codex-spark"]
+max_context_window_override = 220000
+reasoning_effort_override = "high"
+""".strip(),
+        )
+    )
+
+    payload = config.build_runtime_provider_payload()
+
+    assert payload["provider_model_entries"] == [
+        {"provider_id": "prov_openai_compat_truerealbill", "model_name": "gpt-5.4"},
+        {"provider_id": "prov_openai_compat_truerealbill", "model_name": "gpt-5.5"},
+        {
+            "provider_id": "prov_openai_compat_truerealbill",
+            "model_name": "gpt-5.3-codex-spark",
+        },
+    ]
+    assert payload["role_bindings"] == [
+        {
+            "target_ref": "ceo_shadow",
+            "provider_model_entry_refs": ["prov_openai_compat_truerealbill::gpt-5.5"],
+            "max_context_window_override": 270000,
+            "reasoning_effort_override": "high",
+        },
+        {
+            "target_ref": "role_profile:architect_primary",
+            "provider_model_entry_refs": ["prov_openai_compat_truerealbill::gpt-5.5"],
+            "max_context_window_override": 270000,
+            "reasoning_effort_override": "xhigh",
+        },
+        {
+            "target_ref": "role_profile:frontend_engineer_primary",
+            "provider_model_entry_refs": ["prov_openai_compat_truerealbill::gpt-5.3-codex-spark"],
+            "max_context_window_override": 220000,
+            "reasoning_effort_override": "high",
+        },
+    ]
+
+
 def test_load_live_scenario_config_rejects_stage_fields(tmp_path: Path) -> None:
     from tests.live._config import load_live_scenario_config
 

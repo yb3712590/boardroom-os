@@ -7,6 +7,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.core import project_workspaces
 from app.core.context_compiler import compile_and_persist_execution_artifacts
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
@@ -61,6 +62,39 @@ def _ticket_create_payload(*, workflow_id: str, ticket_id: str, node_id: str) ->
             "on_repeat_failure": "escalate_ceo",
         },
         "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}",
+    }
+
+
+def _runtime_provider_upsert_payload(*, target_ref: str, idempotency_key: str) -> dict[str, object]:
+    return {
+        "providers": [
+            {
+                "provider_id": "prov_openai_compat",
+                "type": "openai_responses_stream",
+                "enabled": True,
+                "base_url": "https://api.example.test/v1",
+                "api_key": "sk-test-secret",
+                "alias": "",
+                "preferred_model": "gpt-5.3-codex",
+                "max_context_window": None,
+                "reasoning_effort": "high",
+            }
+        ],
+        "provider_model_entries": [
+            {
+                "provider_id": "prov_openai_compat",
+                "model_name": "gpt-5.3-codex",
+            }
+        ],
+        "role_bindings": [
+            {
+                "target_ref": target_ref,
+                "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                "max_context_window_override": None,
+                "reasoning_effort_override": None,
+            }
+        ],
+        "idempotency_key": idempotency_key,
     }
 
 
@@ -1126,16 +1160,43 @@ def test_governance_document_writes_human_readable_audit_markdown(client) -> Non
     ticket_id = "tkt_governance_audit_markdown_001"
     node_id = "node_governance_audit_markdown_001"
 
-    client.post(
+    create_response = client.post(
         "/api/v1/commands/ticket-create",
         json={
             **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
             "output_schema_ref": "architecture_brief",
+            "execution_contract": infer_execution_contract_payload(
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref="architecture_brief",
+            ),
+            "graph_contract": {"lane_kind": "execution"},
             "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:governance-audit-md",
         },
     )
-    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
-    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    provider_response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(
+            target_ref="execution_target:frontend_governance_document",
+            idempotency_key=f"runtime-provider-upsert:{workflow_id}:{ticket_id}:audit-md",
+        ),
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED", create_response.json()
+    assert provider_response.status_code == 200
+    assert provider_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED", lease_response.json()
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
 
     response = client.post(
         "/api/v1/commands/ticket-result-submit",
@@ -1168,4 +1229,74 @@ def test_governance_document_writes_human_readable_audit_markdown(client) -> Non
     repository = client.app.state.repository
     artifacts = repository.list_ticket_artifacts(ticket_id)
     logical_paths = {str(item.get("logical_path") or "") for item in artifacts}
+    assert f"10-project/docs/{ticket_id}-architecture-brief.audit.md" in logical_paths
+
+
+def test_governance_audit_sidecar_is_allowed_for_precise_primary_json_write_set(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Governance precise write set demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_governance_precise_audit_001"
+    node_id = "node_governance_precise_audit_001"
+    primary_path = f"10-project/docs/{ticket_id}-architecture-brief.json"
+
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "architecture_brief",
+            "execution_contract": infer_execution_contract_payload(
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref="architecture_brief",
+            ),
+            "graph_contract": {"lane_kind": "execution"},
+            "allowed_write_set": [primary_path],
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:precise-governance-audit",
+        },
+    )
+    provider_response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(
+            target_ref="execution_target:frontend_governance_document",
+            idempotency_key=f"runtime-provider-upsert:{workflow_id}:{ticket_id}:precise-audit",
+        ),
+    )
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED", create_response.json()
+    assert provider_response.status_code == 200
+    assert provider_response.json()["status"] == "ACCEPTED"
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED", lease_response.json()
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_governance_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    artifacts = repository.list_ticket_artifacts(ticket_id)
+    logical_paths = {str(item.get("logical_path") or "") for item in artifacts}
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    assert ticket is not None
+    assert ticket["status"] != "FAILED"
     assert f"10-project/docs/{ticket_id}-architecture-brief.audit.md" in logical_paths

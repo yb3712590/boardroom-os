@@ -1654,20 +1654,12 @@ def _build_governance_audit_written_artifact(
     primary_path = str(primary_artifact.path or "").strip()
     if not primary_path:
         return None
-    audit_path = (
-        f"{primary_path[:-5]}.audit.md"
-        if primary_path.endswith(".json")
-        else f"{primary_path}.audit.md"
-    )
+    audit_path = _governance_audit_sidecar_path(primary_path)
     if any(str(item.path or "").strip() == audit_path for item in written_artifacts):
         return None
 
     primary_artifact_ref = str(primary_artifact.artifact_ref or "").strip()
-    audit_artifact_ref = (
-        f"{primary_artifact_ref[:-5]}.audit.md"
-        if primary_artifact_ref.endswith(".json")
-        else f"{primary_artifact_ref}.audit.md"
-    )
+    audit_artifact_ref = _governance_audit_sidecar_ref(primary_artifact_ref)
     return TicketWrittenArtifact.model_validate(
         {
             "path": audit_path,
@@ -1680,6 +1672,53 @@ def _build_governance_audit_written_artifact(
             ),
         }
     )
+
+
+def _governance_audit_sidecar_path(primary_path: str) -> str:
+    return (
+        f"{primary_path[:-5]}.audit.md"
+        if primary_path.endswith(".json")
+        else f"{primary_path}.audit.md"
+    )
+
+
+def _governance_audit_sidecar_ref(primary_artifact_ref: str) -> str:
+    return (
+        f"{primary_artifact_ref[:-5]}.audit.md"
+        if primary_artifact_ref.endswith(".json")
+        else f"{primary_artifact_ref}.audit.md"
+    )
+
+
+def _is_allowed_auto_governance_audit_sidecar(
+    item: TicketWrittenArtifact,
+    *,
+    governance_audit_artifact: TicketWrittenArtifact | None,
+    submitted_artifacts: list[TicketWrittenArtifact],
+    allowed_write_set: list[str],
+) -> bool:
+    if governance_audit_artifact is None:
+        return False
+    item_path = str(item.path or "").strip()
+    audit_path = str(governance_audit_artifact.path or "").strip()
+    if not item_path or item_path != audit_path:
+        return False
+    item_ref = str(item.artifact_ref or "").strip()
+    audit_ref = str(governance_audit_artifact.artifact_ref or "").strip()
+    if item_ref != audit_ref:
+        return False
+
+    for submitted in submitted_artifacts:
+        primary_path = str(submitted.path or "").strip()
+        if not primary_path or str(submitted.kind or "").upper() != "JSON":
+            continue
+        if _governance_audit_sidecar_path(primary_path) != item_path:
+            continue
+        primary_ref = str(submitted.artifact_ref or "").strip()
+        if primary_ref and _governance_audit_sidecar_ref(primary_ref) != item_ref:
+            continue
+        return _match_allowed_write_set(primary_path, allowed_write_set)
+    return False
 
 
 def _developer_inspector_refs_for_ticket(ticket_id: str) -> DeveloperInspectorRefs:
@@ -3632,8 +3671,8 @@ def open_ticket_graph_unavailable_incident(
             correlation_id=workflow_id,
             payload={
                 "incident_id": incident_id,
-                "ticket_id": source_ticket_id,
-                "node_id": source_node_id,
+                "ticket_id": None,
+                "node_id": None,
                 "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
                 "fingerprint": fingerprint,
             },
@@ -7037,7 +7076,15 @@ def handle_ticket_result_submit(
 
     allowed_write_set = list(created_spec.get("allowed_write_set") or [])
     violating_paths = [
-        item.path for item in effective_written_artifacts if not _match_allowed_write_set(item.path, allowed_write_set)
+        item.path
+        for item in effective_written_artifacts
+        if not _match_allowed_write_set(item.path, allowed_write_set)
+        and not _is_allowed_auto_governance_audit_sidecar(
+            item,
+            governance_audit_artifact=governance_audit_artifact,
+            submitted_artifacts=list(payload.written_artifacts),
+            allowed_write_set=allowed_write_set,
+        )
     ]
     if violating_paths:
         return handle_ticket_fail(

@@ -27,8 +27,8 @@ from app.core.workflow_progression import (
     build_project_init_kickoff_spec,
     resolve_workflow_progression_adapter,
 )
+from app.core.project_init_governance import create_project_init_governance_kickoff_ticket
 from app.core.project_workspaces import bootstrap_project_workspace
-from app.core.project_init_architecture_tickets import insert_project_init_architecture_tickets
 from app.db.repository import ControlPlaneRepository
 
 PROJECT_INIT_AUTO_ADVANCE_MAX_STEPS = 6
@@ -210,16 +210,6 @@ def handle_project_init(
         node_id=kickoff_node_id,
         payload=payload,
     )
-    insert_project_init_architecture_tickets(
-        repository,
-        workflow_id=workflow_id,
-        workflow_profile=payload.workflow_profile,
-        north_star_goal=payload.north_star_goal,
-        board_brief_artifact_ref=board_brief_artifact_ref,
-        command_id=command_id,
-        command_key=command_key,
-        occurred_at=received_at,
-    )
     with repository.transaction() as connection:
         repository.save_governance_profile(
             connection,
@@ -274,6 +264,12 @@ def handle_project_init(
                 command_key=command_key,
             )
     else:
+        workflow = repository.get_workflow_projection(workflow_id)
+        create_project_init_governance_kickoff_ticket(
+            repository,
+            workflow_id=workflow_id,
+            workflow=workflow,
+        )
         ceo_run = trigger_ceo_shadow_with_recovery(
             repository,
             workflow_id=workflow_id,
