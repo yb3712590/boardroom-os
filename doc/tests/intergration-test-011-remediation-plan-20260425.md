@@ -289,27 +289,27 @@ py -3 -m pytest tests/test_ticket_graph.py tests/test_ceo_scheduler.py tests/tes
 
 **实施清单：**
 
-- [ ] 新增 failing test：`test_library_outcome_rejects_missing_followup_fanout_even_if_capability_terms_present`
+- [x] 新增 failing test：`test_library_outcome_rejects_missing_followup_fanout_even_if_capability_terms_present`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：`created_specs` 和 terminal payload 文本包含 books/add/check out/remove 等关键词，但 BR004-BR007 对应 followup ticket 不存在。
   - 断言：`_assert_minimalist_book_tracker()` 抛出 `AssertionError`，错误指向 missing followup materialization。
 
-- [ ] 新增 failing test：`test_library_outcome_requires_checker_handoff_before_full_success`
+- [x] 新增 failing test：`test_library_outcome_requires_checker_handoff_before_full_success`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：source delivery tickets 完成，但没有 checker handoff / maker_checker verdict / delivery check evidence。
   - 断言：full success assertion 失败。
 
-- [ ] 新增 failing test：`test_failed_retry_history_is_reported_in_audit_summary_without_blocking_final_success`
+- [x] 新增 failing test：`test_failed_retry_history_is_reported_in_audit_summary_without_blocking_final_success`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：一个 source delivery retry failed，后续 retry completed。
   - 断言：`_assert_source_delivery_payload_quality()` 返回 completed ticket；同时 `write_audit_summary()` 或新增 audit collector 输出 failed retry count/detail。
 
-- [ ] 新增 failing test：`test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_success`
+- [x] 新增 failing test：`test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_success`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：repository 最新 workflow 已 `COMPLETED`，以 `clean=False` 启动。
   - 断言：runner 要么创建新 workflow，要么以 explicit resumed-completed mode 返回，不得标为本次 `completion_mode="full"`。
 
-- [ ] 修改 `_assert_minimalist_book_tracker()`
+- [x] 修改 `_assert_minimalist_book_tracker()`
   - 不再只用关键词 corpus 判断 scope capabilities。
   - 增加结构化断言：
     - backlog recommendation 存在 BR001-BR007 或等价 capability plan。
@@ -319,11 +319,11 @@ py -3 -m pytest tests/test_ticket_graph.py tests/test_ceo_scheduler.py tests/tes
     - BR007-equivalent checker handoff completed。
   - 如果无法依赖固定 BR id，按 `implementation_handoff.recommended_sequence` 和 `capability_plan.followup_ticket_plans` 推导 required followups。
 
-- [ ] 修改 `_assert_source_delivery_payload_quality()`
+- [x] 修改 `_assert_source_delivery_payload_quality()`
   - failed retry tickets 不阻断最终 completed retry，但要返回或记录 failed retry audit entries。
   - compact payload 只在明确 schema 支持且包含 written artifacts、verification evidence、raw command/output 时可接受。
 
-- [ ] 修改 resume 语义
+- [x] 修改 resume 语义
   - `_latest_resumable_workflow_id()` 默认只返回 `EXECUTING`。
   - 如果确实需要 attach completed workflow，应通过显式 `--attach-completed` 或报告 `completion_mode="attached_completed_report_only"`，不能当作新 full run 成功。
 
@@ -337,6 +337,15 @@ py -3 -m pytest tests/test_live_library_management_runner.py::test_failed_retry_
 py -3 -m pytest tests/test_live_library_management_runner.py::test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_success -q
 py -3 -m pytest tests/test_live_library_management_runner.py tests/test_live_configured_runner.py -q
 ```
+
+**Round 3 验证记录（2026-04-25）：**
+
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round3 tests/test_live_library_management_runner.py::test_library_outcome_rejects_missing_followup_fanout_even_if_capability_terms_present -q`
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round3b tests/test_live_library_management_runner.py::test_library_outcome_requires_checker_handoff_before_full_success -q`
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round3c tests/test_live_library_management_runner.py::test_failed_retry_history_is_reported_in_audit_summary_without_blocking_final_success -q`
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round3d tests/test_live_library_management_runner.py::test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_success -q`
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round3-suite tests/test_live_library_management_runner.py tests/test_live_configured_runner.py -q`，结果 52 passed。
+- 说明：本机默认 pytest temp root `C:\Users\yb371\AppData\Local\Temp\pytest-of-yb371` 当前会触发 `PermissionError`，本轮验证显式使用仓库内 `.tmp` basetemp。
 
 **验收标准：**
 

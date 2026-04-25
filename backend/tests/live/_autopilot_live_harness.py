@@ -368,40 +368,82 @@ def _source_delivery_ticket_ids(created_specs: dict[str, dict[str, Any]]) -> lis
     ]
 
 
+def _validate_source_delivery_payload(ticket_id: str, payload: dict[str, Any]) -> None:
+    source_files = list(payload.get("source_files") or [])
+    verification_runs = list(payload.get("verification_runs") or [])
+    written_artifacts = list(payload.get("written_artifacts") or [])
+    verification_evidence_refs = list(payload.get("verification_evidence_refs") or [])
+    if source_files:
+        if not verification_runs:
+            raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
+        for run in verification_runs:
+            if not isinstance(run, dict):
+                raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
+            if not str(run.get("stdout") or "").strip():
+                raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
+        return
+    if not written_artifacts:
+        raise AssertionError(f"{ticket_id} is missing written_artifacts in terminal payload.")
+    if not verification_evidence_refs:
+        raise AssertionError(f"{ticket_id} is missing verification_evidence_refs in terminal payload.")
+    if not verification_runs:
+        raise AssertionError(f"{ticket_id} compact source delivery payload is missing raw verification output.")
+    for run in verification_runs:
+        if not isinstance(run, dict):
+            raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
+        if not str(run.get("stdout") or "").strip():
+            raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
+
+
+def _collect_source_delivery_payload_audit(
+    created_specs: dict[str, dict[str, Any]],
+    terminals: dict[str, dict[str, Any] | None],
+) -> dict[str, Any]:
+    source_delivery_ticket_ids = _source_delivery_ticket_ids(created_specs)
+    completed_source_delivery_ticket_ids: list[str] = []
+    failed_retry_entries: list[dict[str, str]] = []
+    for ticket_id in source_delivery_ticket_ids:
+        terminal_event = terminals.get(ticket_id) or {}
+        terminal_event_type = str(terminal_event.get("event_type") or "TICKET_COMPLETED")
+        payload = terminal_event.get("payload") or {}
+        if terminal_event_type != "TICKET_COMPLETED":
+            if terminal_event_type == "TICKET_FAILED":
+                failure_detail = payload.get("failure_detail") if isinstance(payload, dict) else None
+                failure_detail_kind = (
+                    failure_detail.get("kind")
+                    if isinstance(failure_detail, dict)
+                    else None
+                )
+                payload_failure_kind = (
+                    payload.get("failure_kind")
+                    if isinstance(payload, dict)
+                    else None
+                )
+                failure_kind = str(payload_failure_kind or failure_detail_kind or "")
+                failed_retry_entries.append(
+                    {
+                        "ticket_id": ticket_id,
+                        "failure_kind": failure_kind or "UNKNOWN",
+                    }
+                )
+            continue
+        completed_source_delivery_ticket_ids.append(ticket_id)
+        if not isinstance(payload, dict):
+            raise AssertionError(f"{ticket_id} is missing source delivery payload.")
+        _validate_source_delivery_payload(ticket_id, payload)
+    return {
+        "completed_ticket_ids": completed_source_delivery_ticket_ids,
+        "failed_retry_entries": failed_retry_entries,
+        "failed_retry_count": len(failed_retry_entries),
+    }
+
+
 def _assert_source_delivery_payload_quality(
     created_specs: dict[str, dict[str, Any]],
     terminals: dict[str, dict[str, Any] | None],
 ) -> list[str]:
-    source_delivery_ticket_ids = _source_delivery_ticket_ids(created_specs)
-    completed_source_delivery_ticket_ids: list[str] = []
-    for ticket_id in source_delivery_ticket_ids:
-        terminal_event = terminals.get(ticket_id) or {}
-        if str(terminal_event.get("event_type") or "TICKET_COMPLETED") != "TICKET_COMPLETED":
-            continue
-        completed_source_delivery_ticket_ids.append(ticket_id)
-        payload = terminal_event.get("payload") or {}
-        if not isinstance(payload, dict):
-            raise AssertionError(f"{ticket_id} is missing source delivery payload.")
-        source_files = list(payload.get("source_files") or [])
-        verification_runs = list(payload.get("verification_runs") or [])
-        written_artifacts = list(payload.get("written_artifacts") or [])
-        verification_evidence_refs = list(payload.get("verification_evidence_refs") or [])
-        if source_files or verification_runs:
-            if not source_files:
-                raise AssertionError(f"{ticket_id} is missing source_files in terminal payload.")
-            if not verification_runs:
-                raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
-            for run in verification_runs:
-                if not isinstance(run, dict):
-                    raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
-                if not str(run.get("stdout") or "").strip():
-                    raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
-            continue
-        if not written_artifacts:
-            raise AssertionError(f"{ticket_id} is missing written_artifacts in terminal payload.")
-        if not verification_evidence_refs:
-            raise AssertionError(f"{ticket_id} is missing verification_evidence_refs in terminal payload.")
-    return completed_source_delivery_ticket_ids
+    audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+    return list(audit.get("completed_ticket_ids") or [])
 
 
 def _assert_unique_source_delivery_evidence_paths(artifact_rows: list[dict[str, Any]]) -> None:
@@ -1112,6 +1154,16 @@ def _build_audit_snapshot(
     incidents = _workflow_incidents(repository, workflow_id)
     provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
     runtime_execution_summary = _latest_runtime_execution_summary(repository, workflow_id)
+    if hasattr(repository, "connection"):
+        created_specs = workflow_created_specs(repository, workflow_id)
+        terminals = workflow_terminal_events(repository, workflow_id)
+        source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+    else:
+        source_delivery_payload_audit = {
+            "completed_ticket_ids": [],
+            "failed_retry_entries": [],
+            "failed_retry_count": 0,
+        }
     return {
         "workflow": workflow,
         "tickets": tickets[-20:],
@@ -1138,6 +1190,7 @@ def _build_audit_snapshot(
             provider_base_url=provider_base_url,
         ),
         "runtime_execution_summary": runtime_execution_summary,
+        "source_delivery_payload_audit": source_delivery_payload_audit,
         **provider_snapshot,
     }
 
@@ -1235,6 +1288,8 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     current_phase = snapshot.get("current_phase")
     provider_elapsed_sec = snapshot.get("elapsed_sec")
     runtime_execution_summary = dict(snapshot.get("runtime_execution_summary") or {})
+    source_delivery_payload_audit = dict(snapshot.get("source_delivery_payload_audit") or {})
+    failed_source_delivery_retries = list(source_delivery_payload_audit.get("failed_retry_entries") or [])
     lines = [
         "# Audit Summary",
         f"- Scenario: `{report.get('scenario_slug') or 'unknown'}`",
@@ -1299,6 +1354,23 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
             f"- Project code written: `{'yes' if artifact_summary.get('has_project_code') else 'no'}`",
             f"- Test evidence written: `{'yes' if artifact_summary.get('has_test_evidence') else 'no'}`",
             f"- Git evidence written: `{'yes' if artifact_summary.get('has_git_evidence') else 'no'}`",
+            "",
+            "## Source Delivery Retry Audit",
+            f"- Failed retry count: `{len(failed_source_delivery_retries)}`",
+            f"- Completed source delivery tickets: `{', '.join(source_delivery_payload_audit.get('completed_ticket_ids') or []) or 'none'}`",
+        ]
+    )
+    if failed_source_delivery_retries:
+        for item in failed_source_delivery_retries:
+            lines.append(
+                "- failed retry: "
+                f"`{item.get('ticket_id') or 'unknown-ticket'}` "
+                f"`{item.get('failure_kind') or 'UNKNOWN'}`"
+            )
+    else:
+        lines.append("- failed retry: `none`")
+    lines.extend(
+        [
             "",
             "## Incidents And Approvals",
             f"- Open approvals: `{approval_summary.get('open_count') or 0}`",
@@ -1456,7 +1528,8 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
     architect_ticket_ids = approved_architect_governance_ticket_ids(repository, workflow_id)
     compiled_ids = compiled_ticket_ids(repository, workflow_id)
     archived_ids = sorted(path.stem for path in paths.ticket_context_archive_root.glob("*.md"))
-    source_delivery_ticket_ids = _assert_source_delivery_payload_quality(created_specs, terminals)
+    source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+    source_delivery_ticket_ids = list(source_delivery_payload_audit.get("completed_ticket_ids") or [])
 
     if not artifact_exists(repository, f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"):
         raise AssertionError("Workflow chain report artifact is missing.")
@@ -1494,6 +1567,7 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
         "architect_ticket_ids": architect_ticket_ids,
         "employees": employees,
         "source_delivery_ticket_ids": source_delivery_ticket_ids,
+        "source_delivery_payload_audit": source_delivery_payload_audit,
         "compiled_ticket_ids": compiled_ids,
         "archived_ticket_ids": archived_ids,
         "base_report": {
@@ -1587,7 +1661,7 @@ def _latest_resumable_workflow_id(repository) -> str | None:
             """
             SELECT workflow_id
             FROM workflow_projection
-            WHERE status IN ('EXECUTING', 'COMPLETED')
+            WHERE status = 'EXECUTING'
             ORDER BY updated_at DESC, workflow_id DESC
             LIMIT 1
             """

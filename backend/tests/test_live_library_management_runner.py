@@ -24,6 +24,7 @@ from tests.live.library_management_autopilot_smoke import (
     build_scenario_paths as build_library_smoke_paths,
 )
 from tests.live._autopilot_live_harness import (
+    _collect_source_delivery_payload_audit,
     _assert_source_delivery_payload_quality,
     _assert_unique_source_delivery_evidence_paths,
     _build_success_report,
@@ -98,6 +99,159 @@ LIBRARY_SCENARIO = build_live_scenario(_library_live_config())
 _assert_library_outcome = build_assert_outcome(_library_live_config().assertions)
 
 
+def _library_backlog_payload(sequence: list[str] | None = None) -> dict:
+    recommended_sequence = sequence or [f"BR00{index}" for index in range(1, 8)]
+    return {
+        "document_kind_ref": "backlog_recommendation",
+        "title": "Library backlog recommendation",
+        "summary": "Split the terminal library tracker into auditable follow-up tickets.",
+        "implementation_handoff": {
+            "tickets": [
+                {
+                    "ticket_id": ticket_key,
+                    "name": f"{ticket_key} library delivery",
+                    "summary": f"{ticket_key} library delivery",
+                    "scope": ["books add check out return remove terminal console"],
+                    "target_role": "frontend_engineer",
+                }
+                for ticket_key in recommended_sequence
+            ],
+            "dependency_graph": [
+                {
+                    "ticket_id": ticket_key,
+                    "depends_on": [] if index == 0 else [recommended_sequence[index - 1]],
+                }
+                for index, ticket_key in enumerate(recommended_sequence)
+            ],
+            "recommended_sequence": recommended_sequence,
+        },
+    }
+
+
+def _complete_library_common(*, materialized_count: int = 7, include_checker: bool = True) -> dict:
+    scope_corpus = " ".join(
+        [
+            "books title author IN_LIBRARY CHECKED_OUT",
+            "add check out return remove",
+            "terminal console monochrome dense dark",
+        ]
+    )
+    created_specs = {
+        "tkt_arch": {
+            "output_schema_ref": "architecture_brief",
+            "summary": scope_corpus,
+        },
+        "tkt_backlog": {
+            "output_schema_ref": "backlog_recommendation",
+            "summary": scope_corpus,
+        },
+    }
+    terminals = {
+        "tkt_backlog": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": _library_backlog_payload(),
+        },
+    }
+    tickets = [
+        {"ticket_id": "tkt_arch", "status": "COMPLETED", "node_id": "node_arch"},
+        {"ticket_id": "tkt_backlog", "status": "COMPLETED", "node_id": "node_backlog"},
+    ]
+    audits = [
+        {
+            "ticket_id": "tkt_arch",
+            "role_profile_ref": "architect_primary",
+            "assumptions": {
+                "actual_provider_id": "prov_openai_compat_truerealbill",
+                "actual_model": "gpt-5.4",
+                "effective_reasoning_effort": "xhigh",
+            },
+        }
+    ]
+    source_delivery_ticket_ids: list[str] = []
+    for index in range(1, materialized_count + 1):
+        ticket_key = f"BR00{index}"
+        ticket_id = f"tkt_{ticket_key.lower()}"
+        created_specs[ticket_id] = {
+            "ticket_id": ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+            "node_id": f"node_backlog_followup_{ticket_key.lower()}",
+            "parent_ticket_id": "tkt_backlog",
+            "summary": f"{ticket_key} {scope_corpus}",
+        }
+        terminals[ticket_id] = {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {
+                "summary": f"{ticket_key} {scope_corpus}",
+                "source_files": [{"path": f"src/{ticket_key.lower()}.py", "content": scope_corpus}],
+                "verification_runs": [{"command": "pytest -q", "stdout": "1 passed\n"}],
+            },
+        }
+        tickets.append(
+            {
+                "ticket_id": ticket_id,
+                "status": "COMPLETED",
+                "node_id": f"node_backlog_followup_{ticket_key.lower()}",
+            }
+        )
+        audits.append(
+            {
+                "ticket_id": ticket_id,
+                "role_profile_ref": "frontend_engineer_primary",
+                "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "high",
+                },
+            }
+        )
+        source_delivery_ticket_ids.append(ticket_id)
+    if include_checker:
+        created_specs["tkt_br007_checker"] = {
+            "ticket_id": "tkt_br007_checker",
+            "output_schema_ref": "maker_checker_verdict",
+            "delivery_stage": "REVIEW",
+            "maker_checker_context": {
+                "maker_ticket_id": "tkt_br007",
+                "maker_ticket_spec": created_specs.get("tkt_br007", {}),
+            },
+        }
+        terminals["tkt_br007_checker"] = {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {
+                "review_status": "APPROVED",
+                "maker_checker_summary": {"review_status": "APPROVED"},
+            },
+        }
+        tickets.append(
+            {
+                "ticket_id": "tkt_br007_checker",
+                "status": "COMPLETED",
+                "node_id": "node_backlog_followup_br007",
+            }
+        )
+        audits.append(
+            {
+                "ticket_id": "tkt_br007_checker",
+                "role_profile_ref": "checker_primary",
+                "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "high",
+                },
+            }
+        )
+    return {
+        "tickets": tickets,
+        "employees": [{"role_type": "governance_architect"}],
+        "audits": audits,
+        "architect_ticket_ids": ["tkt_arch"],
+        "created_specs": created_specs,
+        "terminals": terminals,
+        "source_delivery_ticket_ids": source_delivery_ticket_ids,
+    }
+
+
 def test_reset_scenario_root_recreates_expected_layout(tmp_path: Path):
     paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
     paths.ticket_context_archive_root.mkdir(parents=True, exist_ok=True)
@@ -159,58 +313,8 @@ def test_library_scenario_scope_no_longer_uses_ticket_count_as_size_limit() -> N
     assert "分类表" in constraints or "复杂分类" in constraints
 
 
-def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_floor() -> None:
-    scope_corpus = " ".join(
-        [
-            "books title author IN_LIBRARY CHECKED_OUT",
-            "add check out return remove",
-            "terminal console monochrome dense dark",
-        ]
-    )
-    common = {
-        "tickets": [{"ticket_id": "tkt_1"} for _ in range(9)],
-        "employees": [{"role_type": "governance_architect"}],
-        "audits": [
-            {
-                "ticket_id": "tkt_arch",
-                "role_profile_ref": "architect_primary",
-                "assumptions": {
-                    "actual_provider_id": "prov_openai_compat_truerealbill",
-                    "actual_model": "gpt-5.4",
-                    "effective_reasoning_effort": "xhigh",
-                },
-            },
-            {
-                "ticket_id": "tkt_impl",
-                "role_profile_ref": "frontend_engineer_primary",
-                "assumptions": {
-                    "actual_provider_id": "prov_openai_compat_truerealbill",
-                    "actual_model": "gpt-5.4",
-                    "effective_reasoning_effort": "high",
-                },
-            },
-        ],
-        "architect_ticket_ids": ["tkt_arch"],
-        "created_specs": {
-            "tkt_arch": {
-                "output_schema_ref": "architecture_brief",
-                "summary": scope_corpus,
-            },
-            "tkt_impl": {
-                "output_schema_ref": "source_code_delivery",
-                "summary": scope_corpus,
-            },
-        },
-        "terminals": {
-            "tkt_impl": {
-                "payload": {
-                    "summary": scope_corpus,
-                    "source_files": [{"path": "src/library.tsx", "content": scope_corpus}],
-                }
-            }
-        },
-        "source_delivery_ticket_ids": ["tkt_impl"],
-    }
+def test_library_outcome_accepts_completed_followup_fanout_and_checker_handoff() -> None:
+    common = _complete_library_common()
 
     result = _assert_library_outcome(None, object(), "wf_library", common)
 
@@ -227,6 +331,22 @@ def test_library_outcome_accepts_compact_completed_scope_without_ticket_count_fl
         "terminal",
         "console",
     ]
+    assert result["required_followup_ticket_keys"] == [f"BR00{index}" for index in range(1, 8)]
+    assert result["checker_handoff_ticket_ids"] == ["tkt_br007_checker"]
+
+
+def test_library_outcome_rejects_missing_followup_fanout_even_if_capability_terms_present() -> None:
+    common = _complete_library_common(materialized_count=3, include_checker=False)
+
+    with pytest.raises(AssertionError, match="missing followup materialization"):
+        _assert_library_outcome(None, object(), "wf_library", common)
+
+
+def test_library_outcome_requires_checker_handoff_before_full_success() -> None:
+    common = _complete_library_common(include_checker=False)
+
+    with pytest.raises(AssertionError, match="checker handoff"):
+        _assert_library_outcome(None, object(), "wf_library", common)
 
 
 def test_build_success_report_marks_checkpoint_mode() -> None:
@@ -947,7 +1067,7 @@ def test_assert_source_delivery_payload_quality_requires_raw_verification_output
         _assert_source_delivery_payload_quality(created_specs, terminals)
 
 
-def test_assert_source_delivery_payload_quality_skips_failed_retry_history() -> None:
+def test_failed_retry_history_is_reported_in_audit_summary_without_blocking_final_success(tmp_path: Path) -> None:
     created_specs = {
         "tkt_failed": {"output_schema_ref": "source_code_delivery"},
         "tkt_completed": {"output_schema_ref": "source_code_delivery"},
@@ -966,11 +1086,50 @@ def test_assert_source_delivery_payload_quality_skips_failed_retry_history() -> 
                 "ticket_id": "tkt_completed",
                 "written_artifacts": [{"artifact_ref": "art://workspace/tkt_completed/source.py"}],
                 "verification_evidence_refs": ["art://workspace/tkt_completed/tests.json"],
+                "verification_runs": [
+                    {
+                        "command": "pytest -q",
+                        "stdout": "1 passed\n",
+                    }
+                ],
             },
         },
     }
 
     assert _assert_source_delivery_payload_quality(created_specs, terminals) == ["tkt_completed"]
+    audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+    assert audit["completed_ticket_ids"] == ["tkt_completed"]
+    assert audit["failed_retry_entries"] == [
+        {
+            "ticket_id": "tkt_failed",
+            "failure_kind": "WORKSPACE_HOOK_VALIDATION_ERROR",
+        }
+    ]
+
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": True,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "full",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "COMPLETED",
+                "current_stage": "closeout",
+            },
+            "source_delivery_payload_audit": audit,
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "Source Delivery Retry Audit" in body
+    assert "tkt_failed" in body
+    assert "WORKSPACE_HOOK_VALIDATION_ERROR" in body
 
 
 def test_assert_unique_source_delivery_evidence_paths_rejects_duplicate_paths() -> None:
@@ -1102,11 +1261,11 @@ def test_integration_test_provider_template_path_uses_backend_data() -> None:
     assert path.parent.name == "data"
 
 
-def test_load_integration_test_provider_payload_requires_existing_template_path() -> None:
+def test_load_integration_test_provider_payload_requires_existing_template_path(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="Integration test provider config is missing"):
         load_integration_test_provider_payload(
             scenario_slug="library_management_autopilot_live",
-            config_path=integration_test_provider_template_path(),
+            config_path=tmp_path / "missing-provider-config.json",
         )
 
 
@@ -1403,6 +1562,34 @@ def test_latest_resumable_workflow_id_prefers_newest_executing_workflow(
             )
 
         assert live_harness._latest_resumable_workflow_id(repository) == "wf_resumable"
+
+
+def test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_DB_PATH", str(tmp_path / "boardroom_os.db"))
+
+    with TestClient(create_app()) as client:
+        _ensure_scoped_workflow(
+            client,
+            workflow_id="wf_completed_only",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="Completed workflow must not be reused as a new live success.",
+        )
+
+        repository = client.app.state.repository
+        with repository.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE workflow_projection
+                SET status = 'COMPLETED', current_stage = 'closeout', updated_at = '2026-04-20T22:00:00+08:00'
+                WHERE workflow_id = 'wf_completed_only'
+                """
+            )
+
+        assert live_harness._latest_resumable_workflow_id(repository) is None
 
 
 def test_runtime_liveness_ignores_workflow_level_core_hire_board_review_blocker(
