@@ -570,6 +570,7 @@ def build_ceo_shadow_snapshot(
                 incidents=open_incidents,
             ),
             ticket_graph_snapshot=ticket_graph_snapshot,
+            graph_health_report=graph_health_report,
             connection=connection,
         )
     ready_ticket_id_set = set(ticket_graph_snapshot.index_summary.ready_ticket_ids)

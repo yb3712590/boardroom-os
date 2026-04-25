@@ -1534,6 +1534,159 @@ def test_graph_health_report_detects_persistent_failure_zone(client):
     assert finding["metric_value"] == 3
 
 
+def test_graph_health_clears_persistent_failure_zone_after_latest_retry_and_review_complete(client):
+    workflow_id = "wf_graph_health_failure_zone_recovered"
+    node_id = "node_graph_health_failure_zone_recovered"
+    retry_ticket_id = "tkt_graph_health_failure_zone_retry"
+    review_ticket_id = "tkt_graph_health_failure_zone_retry_check"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Persistent failure zones should clear after a completed retry and approved review.",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        for index in range(3):
+            incident_id = f"inc_graph_health_failure_zone_recovered_{index}"
+            repository.insert_event(
+                connection,
+                event_type="INCIDENT_OPENED",
+                actor_type="system",
+                actor_id="test-seed",
+                workflow_id=workflow_id,
+                idempotency_key=f"incident-opened:{workflow_id}:{incident_id}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "incident_id": incident_id,
+                    "node_id": node_id,
+                    "ticket_id": f"tkt_graph_health_failure_zone_failed_{index}",
+                    "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    "status": "OPEN",
+                    "severity": "high",
+                    "fingerprint": f"{workflow_id}:{node_id}:repeat-failure:{index}",
+                    "latest_failure_fingerprint": f"repeat-failure:{index}",
+                },
+                occurred_at=datetime.fromisoformat(f"2026-04-15T20:4{index}:00+08:00"),
+            )
+        repository.refresh_projections(connection)
+
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=retry_ticket_id,
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_COMPLETED",
+            actor_type="worker",
+            actor_id="emp_frontend_2",
+            workflow_id=workflow_id,
+            idempotency_key=f"ticket-completed:{workflow_id}:{retry_ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": retry_ticket_id,
+                "node_id": node_id,
+                "completion_summary": "Retry completed successfully.",
+                "artifact_refs": [f"art://runtime/{retry_ticket_id}/source-code.tsx"],
+                "written_artifacts": [],
+                "verification_evidence_refs": [],
+                "produced_process_assets": [],
+                "documentation_updates": [],
+                "review_status": None,
+                "board_review_requested": False,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-15T20:50:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:{review_ticket_id}",
+        occurred_at="2026-04-15T20:50:00+08:00",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=review_ticket_id,
+                node_id=node_id,
+                role_profile_ref="checker_primary",
+                output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+                delivery_stage="CHECK",
+                parent_ticket_id=retry_ticket_id,
+                dispatch_intent={
+                    "assignee_employee_id": "emp_checker_1",
+                    "selection_reason": "Seed approved retry review.",
+                    "dependency_gate_refs": [retry_ticket_id],
+                    "selected_by": "test",
+                    "wakeup_policy": "default",
+                },
+            ),
+            "graph_contract": {
+                "lane_kind": "review",
+            },
+            "ticket_kind": "MAKER_CHECKER_REVIEW",
+            "maker_checker_context": {
+                "maker_ticket_id": retry_ticket_id,
+                "maker_completed_by": "emp_frontend_2",
+                "maker_artifact_refs": [f"art://runtime/{retry_ticket_id}/source-code.tsx"],
+                "maker_process_asset_refs": [f"SOURCE_CODE_DELIVERY:scd_{retry_ticket_id}@1"],
+                "maker_ticket_spec": {
+                    "ticket_id": retry_ticket_id,
+                    "node_id": node_id,
+                    "role_profile_ref": "frontend_engineer_primary",
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "delivery_stage": "BUILD",
+                },
+                "original_review_request": {
+                    "review_type": "INTERNAL_DELIVERY_REVIEW",
+                },
+            },
+        },
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_COMPLETED",
+            actor_type="worker",
+            actor_id="emp_checker_1",
+            workflow_id=workflow_id,
+            idempotency_key=f"ticket-completed:{workflow_id}:{review_ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": review_ticket_id,
+                "node_id": node_id,
+                "completion_summary": "Checker approved the recovered retry.",
+                "artifact_refs": [],
+                "written_artifacts": [],
+                "verification_evidence_refs": [],
+                "produced_process_assets": [],
+                "documentation_updates": [],
+                "review_status": "APPROVED",
+                "board_review_requested": False,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-15T20:51:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    report = graph_health_module.build_graph_health_report(repository, workflow_id).model_dump(mode="json")
+    persistent_findings = [
+        item for item in report["findings"] if item["finding_type"] == "PERSISTENT_FAILURE_ZONE"
+    ]
+
+    assert persistent_findings == []
+    assert report["overall_health"] != "CRITICAL"
+
+
 def test_graph_health_report_detects_dependency_based_critical_path_depth(client):
     workflow_id = "wf_graph_health_dependency_depth"
     _ensure_scoped_workflow(

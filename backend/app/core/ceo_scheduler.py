@@ -85,7 +85,13 @@ def _build_comparison(
         deterministic_effect = "PIPELINE_FAILED_BEFORE_SNAPSHOT"
         expected_action = ""
     accepted_action_types = [item["action_type"] for item in accepted_actions]
-    mainline_waiting_states = {"WAIT_FOR_BOARD", "WAIT_FOR_INCIDENT", "WAIT_FOR_RUNTIME", "NO_IMMEDIATE_FOLLOWUP"}
+    mainline_waiting_states = {
+        "WAIT_FOR_BOARD",
+        "WAIT_FOR_INCIDENT",
+        "WAIT_FOR_RUNTIME",
+        "WAIT_FOR_GRAPH_HEALTH",
+        "NO_IMMEDIATE_FOLLOWUP",
+    }
     if deterministic_effect in mainline_waiting_states:
         diverges_from_mainline = any(action_type != "NO_ACTION" for action_type in accepted_action_types)
     elif expected_action in {"CREATE_TICKET", "HIRE_EMPLOYEE", "REQUEST_MEETING"}:
@@ -103,6 +109,30 @@ def _build_comparison(
     }
 
 
+def _snapshot_graph_health_requires_pause(snapshot: dict[str, Any]) -> bool:
+    try:
+        controller_state = controller_state_view(snapshot)
+    except ValueError:
+        controller_state = {}
+    if str(controller_state.get("state") or "").strip() == "GRAPH_HEALTH_WAIT":
+        return True
+
+    graph_health_report = (snapshot.get("projection_snapshot") or {}).get("graph_health_report") or {}
+    if str(graph_health_report.get("overall_health") or "").strip() != "CRITICAL":
+        return False
+    phrases: list[str] = []
+    phrases.extend(str(item or "") for item in list(graph_health_report.get("recommended_actions") or []))
+    for finding in list(graph_health_report.get("findings") or []):
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("severity") or "").strip() != "CRITICAL":
+            continue
+        phrases.append(str(finding.get("suggested_action") or ""))
+        phrases.append(str(finding.get("description") or ""))
+    haystack = " ".join(phrases).lower()
+    return "pause" in haystack and ("fanout" in haystack or "graph health" in haystack)
+
+
 def _needs_deterministic_fallback_after_validation(
     *,
     snapshot: dict[str, Any],
@@ -110,6 +140,8 @@ def _needs_deterministic_fallback_after_validation(
     rejected_actions: list[dict[str, Any]],
 ) -> bool:
     if accepted_actions or not rejected_actions:
+        return False
+    if _snapshot_graph_health_requires_pause(snapshot):
         return False
     expected_action = str((controller_state_view(snapshot) or {}).get("recommended_action") or "").strip()
     if expected_action not in {"CREATE_TICKET", "HIRE_EMPLOYEE", "REQUEST_MEETING"}:

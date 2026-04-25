@@ -195,27 +195,27 @@ py -3 -m pytest tests/test_ceo_scheduler.py tests/test_runtime_fallback_payload.
 
 **实施清单：**
 
-- [ ] 新增 failing test：`test_graph_health_clears_persistent_failure_zone_after_latest_retry_and_review_complete`
+- [x] 新增 failing test：`test_graph_health_clears_persistent_failure_zone_after_latest_retry_and_review_complete`
   - 位置：`backend/tests/test_ticket_graph.py`
   - 场景：同一 runtime node 先出现多次 failed tickets，随后 latest retry ticket completed，且 checker/review ticket completed。
   - 断言：graph health report 不再对该 node 输出 `PERSISTENT_FAILURE_ZONE` `CRITICAL`；或者 severity 降到非阻塞级别。
 
-- [ ] 新增 failing test：`test_controller_waits_when_graph_health_critical_recommends_pause`
+- [x] 新增 failing test：`test_controller_waits_when_graph_health_critical_recommends_pause`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：snapshot 有 unmaterialized followup plans，但 graph health summary 显示 `CRITICAL` 且 pause recommendation。
   - 断言：controller state 不应是 `READY_FOR_FANOUT / CREATE_TICKET`；应是明确 wait state，例如 `GRAPH_HEALTH_WAIT` 或已有可复用 wait state，`recommended_action == "NO_ACTION"`。
 
-- [ ] 新增 failing test：`test_scheduler_does_not_fallback_over_health_gate_no_action`
+- [x] 新增 failing test：`test_scheduler_does_not_fallback_over_health_gate_no_action`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：live CEO 提 `NO_ACTION`，validator 因 controller action 拒绝，但 snapshot graph health critical。
   - 断言：scheduler 不执行 deterministic mutating fallback；记录 no-op 或 wait run。
 
-- [ ] 修改 graph health recovery
+- [x] 修改 graph health recovery
   - 查找 affected node 的最新 ticket。
   - 如果最新 implementation ticket `COMPLETED` 且相关 maker/checker verdict 或 review `COMPLETED/APPROVED`，不要只因历史失败继续输出 critical `PERSISTENT_FAILURE_ZONE`。
   - 如果仍有 active incident，保留 warning 或 recovering 状态，但不要让它等同于未恢复 critical。
 
-- [ ] 修改 controller
+- [x] 修改 controller
   - 把 graph health severity/pause recommendation 纳入 controller state。
   - 建议新增或复用 wait state：
     - `GRAPH_HEALTH_WAIT`
@@ -223,7 +223,7 @@ py -3 -m pytest tests/test_ceo_scheduler.py tests/test_runtime_fallback_payload.
     - `blocking_reason` 写明 critical graph health 尚未恢复。
   - `workflow_controller_effect()` 应把该状态映射到等待效果，例如 `WAIT_FOR_GRAPH_HEALTH`。
 
-- [ ] 修改 scheduler fallback 条件
+- [x] 修改 scheduler fallback 条件
   - `_needs_deterministic_fallback_after_validation()` 不能只看 expected action。
   - 如果 snapshot graph health critical 且 controller/wait signal 表示 pause，不能从 rejected `NO_ACTION` 转成 deterministic mutating action。
 
@@ -236,6 +236,15 @@ py -3 -m pytest tests/test_ceo_scheduler.py::test_controller_waits_when_graph_he
 py -3 -m pytest tests/test_ceo_scheduler.py::test_scheduler_does_not_fallback_over_health_gate_no_action -q
 py -3 -m pytest tests/test_ticket_graph.py tests/test_ceo_scheduler.py tests/test_scheduler_runner.py -q
 ```
+
+**Round 2 验证记录（2026-04-25）：**
+
+- 已通过：`py -3 -m pytest tests/test_ticket_graph.py::test_graph_health_clears_persistent_failure_zone_after_latest_retry_and_review_complete -q`
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_controller_waits_when_graph_health_critical_recommends_pause -q`
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_scheduler_does_not_fallback_over_health_gate_no_action -q`
+- 已通过：`py -3 -m pytest tests/test_ticket_graph.py::test_graph_health_report_detects_persistent_failure_zone -q`
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_ceo_shadow_run_rejects_live_no_action_when_controller_requires_backlog_fanout -q`
+- 未全绿：`py -3 -m pytest tests/test_ticket_graph.py tests/test_ceo_scheduler.py tests/test_scheduler_runner.py -q` 当前结果 51 failed / 172 passed；失败集中在非本轮新增定向用例覆盖的 graph contract、CEO provider payload、scheduler runtime/worker routing 路径，本轮只将 Round 2 定向回归标记为通过。
 
 **验收标准：**
 

@@ -14,11 +14,13 @@ from app.core.graph_patch_reducer import (
     graph_patch_target_node_ids,
     load_graph_patch_event_records,
 )
+from app.core.output_schemas import MAKER_CHECKER_VERDICT_SCHEMA_REF
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
 _PATH_EDGE_TYPES = {"PARENT_OF", "DEPENDS_ON"}
+_APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 
 
 class GraphHealthUnavailableError(RuntimeError):
@@ -70,6 +72,151 @@ def _graph_node_by_graph_node_id(graph_snapshot) -> dict[str, Any]:
         for node in graph_snapshot.nodes
         if str(node.graph_node_id or "").strip()
     }
+
+
+def _runtime_node_id_for_graph_node(node) -> str:
+    runtime_node_id = str(getattr(node, "runtime_node_id", None) or "").strip()
+    if runtime_node_id:
+        return runtime_node_id
+    if not bool(getattr(node, "is_placeholder", False)):
+        return str(getattr(node, "node_id", None) or "").strip()
+    return ""
+
+
+def _latest_execution_graph_node_for_runtime_node(
+    repository: ControlPlaneRepository,
+    *,
+    graph_snapshot,
+    workflow_id: str,
+    runtime_node_id: str,
+    connection,
+):
+    candidates = []
+    for node in graph_snapshot.nodes:
+        ticket_id = str(getattr(node, "ticket_id", None) or "").strip()
+        if not ticket_id:
+            continue
+        if _runtime_node_id_for_graph_node(node) != runtime_node_id:
+            continue
+        if str(getattr(node, "graph_lane_kind", None) or "").strip() == "review":
+            continue
+        if str(getattr(node, "output_schema_ref", None) or "").strip() == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            continue
+        ticket_projection = repository.get_current_ticket_projection(ticket_id, connection=connection)
+        if ticket_projection is None or str(ticket_projection.get("workflow_id") or "").strip() != workflow_id:
+            continue
+        candidates.append((ticket_projection.get("updated_at"), ticket_id, node, ticket_projection))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda item: (item[0].isoformat() if item[0] is not None else "", item[1]))
+    _, _, node, ticket_projection = candidates[-1]
+    return node, ticket_projection
+
+
+def _review_status_for_ticket(
+    repository: ControlPlaneRepository,
+    *,
+    ticket_id: str,
+    connection,
+) -> str:
+    terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
+    terminal_payload = (terminal_event or {}).get("payload") or {}
+    result_payload = terminal_payload.get("payload") or {}
+    return str(result_payload.get("review_status") or terminal_payload.get("review_status") or "").strip()
+
+
+def _approved_review_ticket_ids_for_maker(
+    repository: ControlPlaneRepository,
+    *,
+    graph_snapshot,
+    runtime_node_id: str,
+    maker_ticket_id: str,
+    connection,
+) -> set[str]:
+    review_ticket_ids = {
+        str(edge.source_ticket_id or "").strip()
+        for edge in graph_snapshot.edges
+        if str(edge.edge_type or "").strip() == "REVIEWS"
+        and str(edge.source_ticket_id or "").strip()
+        and (
+            str(edge.target_ticket_id or "").strip() == maker_ticket_id
+            or str(edge.target_runtime_node_id or "").strip() == runtime_node_id
+        )
+    }
+    for node in graph_snapshot.nodes:
+        ticket_id = str(getattr(node, "ticket_id", None) or "").strip()
+        if not ticket_id:
+            continue
+        if str(getattr(node, "graph_lane_kind", None) or "").strip() != "review":
+            continue
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+        maker_context = created_spec.get("maker_checker_context") or {}
+        if str(maker_context.get("maker_ticket_id") or "").strip() == maker_ticket_id:
+            review_ticket_ids.add(ticket_id)
+
+    approved_ticket_ids: set[str] = set()
+    for review_ticket_id in review_ticket_ids:
+        review_projection = repository.get_current_ticket_projection(review_ticket_id, connection=connection)
+        if review_projection is None or str(review_projection.get("status") or "").strip() != "COMPLETED":
+            continue
+        created_spec = repository.get_latest_ticket_created_payload(connection, review_ticket_id) or {}
+        if str(created_spec.get("output_schema_ref") or "").strip() != MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            continue
+        if _review_status_for_ticket(repository, ticket_id=review_ticket_id, connection=connection) in _APPROVED_REVIEW_STATUSES:
+            approved_ticket_ids.add(review_ticket_id)
+    return approved_ticket_ids
+
+
+def _runtime_node_has_recovered_latest_retry(
+    repository: ControlPlaneRepository,
+    *,
+    graph_snapshot,
+    workflow_id: str,
+    runtime_node_id: str,
+    connection,
+) -> bool:
+    latest_node, latest_ticket = _latest_execution_graph_node_for_runtime_node(
+        repository,
+        graph_snapshot=graph_snapshot,
+        workflow_id=workflow_id,
+        runtime_node_id=runtime_node_id,
+        connection=connection,
+    )
+    if latest_node is None or latest_ticket is None:
+        return False
+    if str(latest_ticket.get("status") or "").strip() != "COMPLETED":
+        return False
+    maker_ticket_id = str(latest_ticket.get("ticket_id") or "").strip()
+    if not maker_ticket_id:
+        return False
+    if bool(
+        _approved_review_ticket_ids_for_maker(
+            repository,
+            graph_snapshot=graph_snapshot,
+            runtime_node_id=runtime_node_id,
+            maker_ticket_id=maker_ticket_id,
+            connection=connection,
+        )
+    ):
+        return True
+
+    for node in graph_snapshot.nodes:
+        if str(getattr(node, "graph_lane_kind", None) or "").strip() != "review":
+            continue
+        review_ticket_id = str(getattr(node, "ticket_id", None) or "").strip()
+        if not review_ticket_id:
+            continue
+        created_spec = repository.get_latest_ticket_created_payload(connection, review_ticket_id) or {}
+        maker_context = created_spec.get("maker_checker_context") or {}
+        context_maker_ticket_id = str(maker_context.get("maker_ticket_id") or "").strip()
+        if context_maker_ticket_id != maker_ticket_id:
+            continue
+        review_projection = repository.get_current_ticket_projection(review_ticket_id, connection=connection)
+        if review_projection is None or str(review_projection.get("status") or "").strip() != "COMPLETED":
+            continue
+        if _review_status_for_ticket(repository, ticket_id=review_ticket_id, connection=connection) in _APPROVED_REVIEW_STATUSES:
+            return True
+    return False
 
 
 def _runtime_node_ids_for_graph_node_ids(
@@ -412,6 +559,14 @@ def _persistent_failure_zone_findings(
     findings: list[GraphHealthFindingDigest] = []
     for node_id, count in sorted(counts.items()):
         if count < policy.persistent_failure_zone_threshold:
+            continue
+        if _runtime_node_has_recovered_latest_retry(
+            repository,
+            graph_snapshot=graph_snapshot,
+            workflow_id=workflow_id,
+            runtime_node_id=node_id,
+            connection=connection,
+        ):
             continue
         findings.append(
             _finding_digest(

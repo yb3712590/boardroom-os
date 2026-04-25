@@ -154,6 +154,8 @@ def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
         return "WAIT_FOR_BOARD"
     if state == "WAIT_FOR_INCIDENT":
         return "WAIT_FOR_INCIDENT"
+    if state == "GRAPH_HEALTH_WAIT":
+        return "WAIT_FOR_GRAPH_HEALTH"
     if state == "READY_TICKET":
         return "RUN_SCHEDULER_TICK"
     if state == "WAIT_FOR_RUNTIME":
@@ -163,6 +165,24 @@ def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
     if state == "READY_FOR_FANOUT":
         return "READY_FOR_FANOUT"
     return "NO_IMMEDIATE_FOLLOWUP"
+
+
+def _graph_health_requires_pause(graph_health_report: dict[str, Any] | None) -> bool:
+    if not isinstance(graph_health_report, dict):
+        return False
+    if str(graph_health_report.get("overall_health") or "").strip() != "CRITICAL":
+        return False
+    phrases: list[str] = []
+    phrases.extend(str(item or "") for item in list(graph_health_report.get("recommended_actions") or []))
+    for finding in list(graph_health_report.get("findings") or []):
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("severity") or "").strip() != "CRITICAL":
+            continue
+        phrases.append(str(finding.get("suggested_action") or ""))
+        phrases.append(str(finding.get("description") or ""))
+    haystack = " ".join(phrases).lower()
+    return "pause" in haystack and ("fanout" in haystack or "graph health" in haystack)
 
 
 def _normalize_topic(value: str) -> str:
@@ -825,6 +845,7 @@ def build_workflow_controller_view(
     trigger_ref: str | None,
     meeting_candidates: list[dict[str, Any]],
     ticket_graph_snapshot: TicketGraphSnapshot | None = None,
+    graph_health_report: dict[str, Any] | None = None,
     connection,
 ) -> dict[str, Any]:
     workflow_id = str(workflow.get("workflow_id") or "").strip()
@@ -983,6 +1004,12 @@ def build_workflow_controller_view(
             "state": "READY_TICKET",
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Ready tickets already exist on the current mainline.",
+        }
+    elif _graph_health_requires_pause(graph_health_report):
+        controller_state = {
+            "state": "GRAPH_HEALTH_WAIT",
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": "Critical graph health recommends pausing new fanout until recovery is confirmed.",
         }
     elif required_governance_ticket_plan is not None:
         missing_assignee = _required_governance_ticket_missing_assignee(required_governance_ticket_plan)

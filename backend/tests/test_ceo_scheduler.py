@@ -39,6 +39,7 @@ from app.core.constants import (
     EVENT_BOARD_DIRECTIVE_RECEIVED,
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_EMPLOYEE_HIRED,
+    EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_OPENED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_TIMED_OUT,
@@ -340,6 +341,62 @@ def _persist_workflow_directive_details(
             connection.execute(
                 "UPDATE workflow_projection SET workflow_profile = ? WHERE workflow_id = ?",
                 (workflow_profile, workflow_id),
+            )
+        repository.refresh_projections(connection)
+
+
+def _seed_closed_persistent_failure_zone_incidents(
+    repository,
+    workflow_id: str,
+    node_id: str,
+    *,
+    ticket_id_prefix: str = "tkt_persistent_failure",
+) -> None:
+    with repository.transaction() as connection:
+        for index in range(3):
+            incident_id = f"inc_{workflow_id}_{index}"
+            opened_at = datetime.fromisoformat(f"2026-04-15T20:4{index}:00+08:00")
+            repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_OPENED,
+                actor_type="system",
+                actor_id="test-seed",
+                workflow_id=workflow_id,
+                idempotency_key=f"incident-opened:{workflow_id}:{incident_id}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "incident_id": incident_id,
+                    "node_id": node_id,
+                    "ticket_id": f"{ticket_id_prefix}_{index}",
+                    "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    "status": "OPEN",
+                    "severity": "high",
+                    "fingerprint": f"{workflow_id}:{node_id}:repeat-failure:{index}",
+                    "latest_failure_fingerprint": f"repeat-failure:{index}",
+                },
+                occurred_at=opened_at,
+            )
+            repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_CLOSED,
+                actor_type="system",
+                actor_id="test-seed",
+                workflow_id=workflow_id,
+                idempotency_key=f"incident-closed:{workflow_id}:{incident_id}",
+                causation_id=None,
+                correlation_id=workflow_id,
+                payload={
+                    "incident_id": incident_id,
+                    "node_id": node_id,
+                    "ticket_id": f"{ticket_id_prefix}_{index}",
+                    "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    "status": "CLOSED",
+                    "severity": "high",
+                    "fingerprint": f"{workflow_id}:{node_id}:repeat-failure:{index}",
+                    "close_reason": "Seed closed historical failure for graph health gate coverage.",
+                },
+                occurred_at=opened_at.replace(minute=opened_at.minute + 1),
             )
         repository.refresh_projections(connection)
 
@@ -3850,6 +3907,70 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
     assert snapshot["capability_plan"]["followup_ticket_plans"][1]["blocked_by_plan_keys"] == ["BR-BE-01"]
 
 
+def test_controller_waits_when_graph_health_critical_recommends_pause(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_controller_graph_health_wait",
+        "Controller should pause fanout while graph health is critical.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_graph_health_wait",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="graph_health_wait",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_graph_health_wait",
+        node_id="node_ceo_backlog_graph_health_wait",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+    _seed_closed_persistent_failure_zone_incidents(
+        client.app.state.repository,
+        workflow_id,
+        "node_graph_health_wait_failure_zone",
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_graph_health_wait",
+    )
+
+    assert snapshot["projection_snapshot"]["graph_health_report"]["overall_health"] == "CRITICAL"
+    assert snapshot["controller_state"]["state"] == "GRAPH_HEALTH_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "graph health" in snapshot["controller_state"]["blocking_reason"].lower()
+
+
 def test_ceo_shadow_snapshot_ignores_noncanonical_backlog_json_artifact(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_backlog_canonical_artifact", "Canonical backlog artifact only")
@@ -4072,6 +4193,149 @@ def test_ceo_shadow_run_rejects_live_no_action_when_controller_requires_backlog_
     assert run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
     assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
     assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["rejected_actions"][0]["action_type"] == "NO_ACTION"
+    assert "controller_state.recommended_action is CREATE_TICKET" in run["rejected_actions"][0]["reason"]
+
+
+def test_scheduler_does_not_fallback_over_health_gate_no_action(client, monkeypatch):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_scheduler_graph_health_no_action",
+        "Scheduler should not override graph health pause.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_graph_health_no_action",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _set_live_provider(client)
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Pause while graph health is critical.",
+            },
+            "trigger": {"trigger_type": "TICKET_COMPLETED", "trigger_ref": "tkt_backlog_graph_health_no_action"},
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 1},
+            "nodes": [],
+            "employees": [
+                {
+                    "employee_id": "emp_backend_graph_health_no_action",
+                    "state": "ACTIVE",
+                    "role_profile_refs": ["backend_engineer_primary"],
+                }
+            ],
+            "projection_snapshot": {
+                "graph_health_report": {
+                    "overall_health": "CRITICAL",
+                    "findings": [
+                        {
+                            "finding_type": "PERSISTENT_FAILURE_ZONE",
+                            "severity": "CRITICAL",
+                            "affected_nodes": ["node_scheduler_graph_health_no_action"],
+                            "affected_graph_node_ids": [],
+                            "metric_value": 3,
+                            "threshold": 3,
+                            "description": "The graph health gate recommends pausing new fanout.",
+                            "suggested_action": (
+                                "Pause new fanout and rerun the CEO against the latest graph health snapshot."
+                            ),
+                        }
+                    ],
+                    "recommended_actions": [
+                        "Pause new fanout and rerun the CEO against the latest graph health snapshot."
+                    ],
+                },
+                "runtime_liveness_report": {"overall_health": "HEALTHY", "findings": [], "recommended_actions": []},
+            },
+            "replan_focus": {
+                "task_sensemaking": {
+                    "task_type": "implementation_fanout",
+                    "deliverable_kind": "source_code_delivery",
+                    "coordination_mode": "fanout",
+                    "source_ticket_id": "tkt_backlog_graph_health_no_action",
+                },
+                "controller_state": {
+                    "state": "READY_FOR_FANOUT",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": None,
+                },
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "existing_ticket_id": None,
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_graph_health_no_action",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="backend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_backend_graph_health_no_action",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-BE-01 借阅后端 API 交付。",
+                                "parent_ticket_id": "tkt_backlog_graph_health_no_action",
+                            },
+                        }
+                    ]
+                },
+                "meeting_candidates": [],
+            },
+        }
+
+    from app.core import ceo_proposer
+
+    def _fake_invoke(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Graph health is critical, so the CEO waits.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {
+                                "reason": "Pause new fanout until graph health recovers.",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_graph_health_no_action_1",
+        )
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    repository = client.app.state.repository
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_graph_health_no_action",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["deterministic_fallback_used"] is False
+    assert run["accepted_actions"] == []
+    assert run["executed_actions"] == []
     assert run["rejected_actions"][0]["action_type"] == "NO_ACTION"
     assert "controller_state.recommended_action is CREATE_TICKET" in run["rejected_actions"][0]["reason"]
 
