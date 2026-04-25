@@ -4932,3 +4932,115 @@ def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(cl
     assert ticket_projection["status"] == "COMPLETED"
     assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_2"
     assert latest_created_spec["excluded_employee_ids"] == ["emp_frontend_backup"]
+
+
+def test_ready_ticket_without_eligible_worker_surfaces_staffing_gap(client):
+    workflow_id = _project_init(client, "Ready backend ticket needs staffing")
+    repository = client.app.state.repository
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_backend_staffing_gap",
+            node_id="node_runner_backend_staffing_gap",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+            excluded_employee_ids=["emp_backend_previous"],
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["artifacts/backend/staffing-gap/*"],
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    run_scheduler_tick(
+        repository,
+        idempotency_key="scheduler-tick:backend-staffing-gap",
+        max_dispatches=10,
+    )
+
+    diagnostics = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "SCHEDULER_LEASE_DIAGNOSTIC_RECORDED"
+        and event["payload"].get("reason_code") == "NO_ELIGIBLE_WORKER"
+        and event["payload"].get("ticket_id") == "tkt_runner_backend_staffing_gap"
+    ]
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_backend_staffing_gap")
+
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "PENDING"
+    assert diagnostics
+    diagnostic = diagnostics[-1]["payload"]
+    assert diagnostic["node_id"] == "node_runner_backend_staffing_gap"
+    assert diagnostic["required_role_profile_ref"] == "backend_engineer_primary"
+    assert diagnostic["excluded_employee_ids"] == ["emp_backend_previous"]
+    assert diagnostic["candidate_summary"]["matching_role_count"] == 0
+
+
+def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, set_ticket_time):
+    from app.core.ceo_scheduler import run_ceo_shadow_for_trigger
+    from tests.test_ceo_scheduler import _set_deterministic_mode
+
+    set_ticket_time("2026-04-25T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "Ready backend ticket auto hire")
+    repository = client.app.state.repository
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    create_response = client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_backend_auto_hire",
+            node_id="node_runner_backend_auto_hire",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+            allowed_tools=["read_artifact", "write_artifact"],
+            allowed_write_set=["artifacts/backend/auto-hire/*"],
+        ),
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "ACCEPTED"
+
+    run_scheduler_tick(
+        repository,
+        idempotency_key="scheduler-tick:backend-auto-hire-diagnostic",
+        max_dispatches=10,
+    )
+    set_ticket_time("2026-04-25T10:01:05+08:00")
+    run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:backend-auto-hire",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    run_scheduler_tick(
+        repository,
+        idempotency_key="scheduler-tick:backend-auto-hire-after-hire",
+        max_dispatches=10,
+    )
+
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_backend_auto_hire")
+    hired_employee = repository.get_employee_projection("emp_backend_backup")
+    leased_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_backend_auto_hire"
+    ]
+    runs = repository.list_ceo_shadow_runs(workflow_id)
+    idle_run = next(run for run in runs if run["trigger_type"] == SCHEDULER_IDLE_MAINTENANCE_TRIGGER)
+
+    assert idle_run["snapshot"]["controller_state"]["state"] == "STAFFING_REQUIRED"
+    assert idle_run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert hired_employee is not None
+    assert hired_employee["role_profile_refs"] == ["backend_engineer_primary"]
+    assert ticket_projection is not None
+    assert ticket_projection["status"] == "LEASED"
+    assert leased_events[-1]["payload"]["leased_by"] == "emp_backend_backup"

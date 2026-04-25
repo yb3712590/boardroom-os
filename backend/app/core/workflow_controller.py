@@ -680,6 +680,134 @@ def _active_board_approved_employees(
     return sorted(matched, key=lambda item: str(item.get("employee_id") or ""))
 
 
+def _busy_worker_ids(connection) -> set[str]:
+    rows = connection.execute(
+        """
+        SELECT lease_owner
+        FROM ticket_projection
+        WHERE status IN ('LEASED', 'EXECUTING')
+          AND lease_owner IS NOT NULL
+          AND TRIM(lease_owner) != ''
+        """
+    ).fetchall()
+    return {str(row["lease_owner"]) for row in rows}
+
+
+def _provider_paused_for_employee(
+    repository: ControlPlaneRepository,
+    connection,
+    employee: dict[str, Any],
+) -> bool:
+    provider_id = str(employee.get("provider_id") or "").strip()
+    if not provider_id:
+        return False
+    return repository.has_open_circuit_breaker_for_provider(provider_id, connection=connection)
+
+
+def _build_ready_ticket_staffing_gaps(
+    repository: ControlPlaneRepository,
+    *,
+    ready_ticket_ids: list[str],
+    tickets: list[dict[str, Any]],
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    employees: list[dict[str, Any]],
+    connection,
+) -> list[dict[str, Any]]:
+    if not ready_ticket_ids:
+        return []
+    ticket_by_id = {str(ticket.get("ticket_id") or ""): ticket for ticket in tickets}
+    busy_workers = _busy_worker_ids(connection)
+    gaps: list[dict[str, Any]] = []
+    for ticket_id in ready_ticket_ids:
+        ticket = ticket_by_id.get(str(ticket_id))
+        created_spec = created_specs_by_ticket.get(str(ticket_id)) or {}
+        if ticket is None or not created_spec:
+            continue
+        role_profile_ref = str(created_spec.get("role_profile_ref") or "").strip()
+        role_type = _ROLE_TYPE_BY_ROLE_PROFILE.get(role_profile_ref)
+        if not role_profile_ref or role_type is None:
+            continue
+        excluded_employee_ids = {
+            str(employee_id)
+            for employee_id in list(created_spec.get("excluded_employee_ids") or [])
+            if str(employee_id).strip()
+        }
+        execution_contract = created_spec.get("execution_contract")
+        candidate_details: list[dict[str, Any]] = []
+        matching_role_count = 0
+        excluded_count = 0
+        busy_count = 0
+        provider_paused_count = 0
+        eligible_count = 0
+        for employee in sorted(employees, key=lambda item: str(item.get("employee_id") or "")):
+            employee_id = str(employee.get("employee_id") or "").strip()
+            role_profile_refs = set(employee.get("role_profile_refs") or [])
+            has_required_role = role_profile_ref in role_profile_refs
+            supports_contract = employee_supports_execution_contract(
+                employee=employee,
+                execution_contract=execution_contract,
+            )
+            is_excluded = employee_id in excluded_employee_ids
+            is_busy = employee_id in busy_workers
+            provider_paused = _provider_paused_for_employee(repository, connection, employee)
+            if has_required_role and supports_contract:
+                matching_role_count += 1
+            if is_excluded:
+                excluded_count += 1
+            if is_busy:
+                busy_count += 1
+            if provider_paused:
+                provider_paused_count += 1
+            eligible = (
+                has_required_role
+                and supports_contract
+                and not is_excluded
+                and not is_busy
+                and not provider_paused
+                and str(employee.get("state") or "") == "ACTIVE"
+                and bool(employee.get("board_approved"))
+            )
+            if eligible:
+                eligible_count += 1
+            candidate_details.append(
+                {
+                    "employee_id": employee_id,
+                    "role_profile_refs": sorted(role_profile_refs),
+                    "has_required_role": has_required_role,
+                    "supports_execution_contract": supports_contract,
+                    "excluded": is_excluded,
+                    "busy": is_busy,
+                    "provider_id": employee.get("provider_id"),
+                    "provider_paused": provider_paused,
+                    "eligible": eligible,
+                }
+            )
+        if eligible_count > 0:
+            continue
+        if matching_role_count > 0 and matching_role_count == busy_count:
+            continue
+        gaps.append(
+            {
+                "ticket_id": str(ticket_id),
+                "node_id": str(ticket.get("node_id") or created_spec.get("node_id") or ""),
+                "reason_code": "NO_ELIGIBLE_WORKER",
+                "required_role_profile_ref": role_profile_ref,
+                "role_type": role_type,
+                "excluded_employee_ids": sorted(excluded_employee_ids),
+                "candidate_summary": {
+                    "total_candidate_count": len(candidate_details),
+                    "matching_role_count": matching_role_count,
+                    "excluded_count": excluded_count,
+                    "busy_count": busy_count,
+                    "provider_paused_count": provider_paused_count,
+                    "eligible_count": eligible_count,
+                },
+                "candidate_details": candidate_details,
+            }
+        )
+    return gaps
+
+
 def _has_approved_architect_document(
     repository: ControlPlaneRepository,
     *,
@@ -895,6 +1023,14 @@ def build_workflow_controller_view(
         str(ticket["ticket_id"]): repository.get_latest_ticket_terminal_event(connection, str(ticket["ticket_id"]))
         for ticket in tickets
     }
+    ready_ticket_staffing_gaps = _build_ready_ticket_staffing_gaps(
+        repository,
+        ready_ticket_ids=graph_ready_ticket_ids,
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        employees=employees,
+        connection=connection,
+    )
     graph_truth_nodes = [
         {
             "node_id": str(node.node_id or node.runtime_node_id or ""),
@@ -963,6 +1099,14 @@ def build_workflow_controller_view(
             ).strip()
         }
     )
+    staffing_gaps = sorted(
+        set(staffing_gaps)
+        | {
+            str(gap.get("required_role_profile_ref") or "").strip()
+            for gap in ready_ticket_staffing_gaps
+            if str(gap.get("required_role_profile_ref") or "").strip()
+        }
+    )
 
     controller_state = {
         "state": "NO_IMMEDIATE_FOLLOWUP",
@@ -999,17 +1143,27 @@ def build_workflow_controller_view(
                 "Resolve the legacy graph issue before dispatching more work."
             ),
         }
-    elif graph_ready_ticket_ids:
-        controller_state = {
-            "state": "READY_TICKET",
-            "recommended_action": "NO_ACTION",
-            "blocking_reason": "Ready tickets already exist on the current mainline.",
-        }
     elif _graph_health_requires_pause(graph_health_report):
         controller_state = {
             "state": "GRAPH_HEALTH_WAIT",
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Critical graph health recommends pausing new fanout until recovery is confirmed.",
+        }
+    elif ready_ticket_staffing_gaps:
+        first_gap = ready_ticket_staffing_gaps[0]
+        controller_state = {
+            "state": "STAFFING_REQUIRED",
+            "recommended_action": "HIRE_EMPLOYEE",
+            "blocking_reason": (
+                "A ready ticket cannot be leased because no eligible worker matches "
+                f"{first_gap['required_role_profile_ref']}."
+            ),
+        }
+    elif graph_ready_ticket_ids:
+        controller_state = {
+            "state": "READY_TICKET",
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": "Ready tickets already exist on the current mainline.",
         }
     elif required_governance_ticket_plan is not None:
         missing_assignee = _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
@@ -1155,6 +1309,7 @@ def build_workflow_controller_view(
         "requires_meeting": requires_meeting,
         "required_governance_ticket_plan": required_governance_ticket_plan,
         "followup_ticket_plans": followup_ticket_plans,
+        "ready_ticket_staffing_gaps": ready_ticket_staffing_gaps,
         "progression_adapter_id": progression_adapter_id,
     }
     if required_governance_ticket_plan is not None:
@@ -1169,7 +1324,18 @@ def build_workflow_controller_view(
             )
         )
     if controller_state["recommended_action"] == "HIRE_EMPLOYEE":
-        if (
+        if ready_ticket_staffing_gaps:
+            first_gap = ready_ticket_staffing_gaps[0]
+            capability_plan["recommended_hire"] = {
+                "role_type": str(first_gap["role_type"]),
+                "role_profile_refs": [str(first_gap["required_role_profile_ref"])],
+                "request_summary": (
+                    "Hire "
+                    f"{first_gap['required_role_profile_ref']} so ready ticket "
+                    f"{first_gap['ticket_id']} can be leased."
+                ),
+            }
+        elif (
             required_governance_ticket_plan is not None
             and _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
         ):

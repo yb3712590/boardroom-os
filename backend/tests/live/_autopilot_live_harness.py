@@ -558,6 +558,53 @@ def build_runtime_ticket_audit(repository, workflow_id: str) -> list[dict[str, A
     return audits
 
 
+def _collect_staffing_gap_audit(repository, workflow_id: str) -> dict[str, Any]:
+    gaps: list[dict[str, Any]] = []
+    hire_actions: list[dict[str, Any]] = []
+    with repository.connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM events
+            WHERE workflow_id = ?
+              AND event_type = 'SCHEDULER_LEASE_DIAGNOSTIC_RECORDED'
+            ORDER BY sequence_no ASC
+            """,
+            (workflow_id,),
+        ).fetchall()
+    for row in rows:
+        event = repository._convert_event_row(row)
+        payload = dict(event.get("payload") or {})
+        if str(payload.get("reason_code") or "").strip() != "NO_ELIGIBLE_WORKER":
+            continue
+        gaps.append(
+            {
+                "ticket_id": str(payload.get("ticket_id") or ""),
+                "node_id": str(payload.get("node_id") or ""),
+                "required_role_profile_ref": str(payload.get("required_role_profile_ref") or ""),
+                "reason_code": "NO_ELIGIBLE_WORKER",
+            }
+        )
+    for run in repository.list_ceo_shadow_runs(workflow_id):
+        for action in list(run.get("executed_actions") or []):
+            if str(action.get("action_type") or "").strip() != "HIRE_EMPLOYEE":
+                continue
+            payload = dict(action.get("payload") or {})
+            hire_actions.append(
+                {
+                    "run_id": str(run.get("run_id") or ""),
+                    "role_type": str(payload.get("role_type") or ""),
+                    "role_profile_refs": list(payload.get("role_profile_refs") or []),
+                    "employee_id": str(payload.get("employee_id") or ""),
+                    "execution_status": str(action.get("execution_status") or ""),
+                }
+            )
+    return {
+        "gaps": gaps,
+        "hire_actions": hire_actions,
+    }
+
+
 def approved_architect_governance_ticket_ids(repository, workflow_id: str) -> list[str]:
     approved_ticket_ids: list[str] = []
     seen_ticket_ids: set[str] = set()
@@ -1158,11 +1205,16 @@ def _build_audit_snapshot(
         created_specs = workflow_created_specs(repository, workflow_id)
         terminals = workflow_terminal_events(repository, workflow_id)
         source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+        staffing_gap_audit = _collect_staffing_gap_audit(repository, workflow_id)
     else:
         source_delivery_payload_audit = {
             "completed_ticket_ids": [],
             "failed_retry_entries": [],
             "failed_retry_count": 0,
+        }
+        staffing_gap_audit = {
+            "gaps": [],
+            "hire_actions": [],
         }
     return {
         "workflow": workflow,
@@ -1191,6 +1243,7 @@ def _build_audit_snapshot(
         ),
         "runtime_execution_summary": runtime_execution_summary,
         "source_delivery_payload_audit": source_delivery_payload_audit,
+        "staffing_gap_audit": staffing_gap_audit,
         **provider_snapshot,
     }
 
@@ -1289,6 +1342,9 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     provider_elapsed_sec = snapshot.get("elapsed_sec")
     runtime_execution_summary = dict(snapshot.get("runtime_execution_summary") or {})
     source_delivery_payload_audit = dict(snapshot.get("source_delivery_payload_audit") or {})
+    staffing_gap_audit = dict(snapshot.get("staffing_gap_audit") or {})
+    staffing_gaps = list(staffing_gap_audit.get("gaps") or [])
+    staffing_hire_actions = list(staffing_gap_audit.get("hire_actions") or [])
     failed_source_delivery_retries = list(source_delivery_payload_audit.get("failed_retry_entries") or [])
     lines = [
         "# Audit Summary",
@@ -1369,6 +1425,36 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
             )
     else:
         lines.append("- failed retry: `none`")
+    lines.extend(
+        [
+            "",
+            "## Staffing Gap Audit",
+            f"- No eligible worker gaps: `{len(staffing_gaps)}`",
+            f"- CEO hire actions: `{len(staffing_hire_actions)}`",
+        ]
+    )
+    if staffing_gaps:
+        for item in staffing_gaps:
+            lines.append(
+                "- staffing gap: "
+                f"`{item.get('ticket_id') or 'unknown-ticket'}` "
+                f"`{item.get('required_role_profile_ref') or 'unknown-role'}` "
+                f"`{item.get('reason_code') or 'UNKNOWN'}`"
+            )
+    else:
+        lines.append("- staffing gap: `none`")
+    if staffing_hire_actions:
+        for item in staffing_hire_actions:
+            role_profile_refs = ", ".join(str(value) for value in list(item.get("role_profile_refs") or []))
+            lines.append(
+                "- hire action: "
+                f"`{item.get('employee_id') or 'unknown-employee'}` "
+                f"`{item.get('role_type') or 'unknown-role-type'}` "
+                f"`{role_profile_refs or 'no-role-profile'}` "
+                f"`{item.get('execution_status') or 'UNKNOWN'}`"
+            )
+    else:
+        lines.append("- hire action: `none`")
     lines.extend(
         [
             "",

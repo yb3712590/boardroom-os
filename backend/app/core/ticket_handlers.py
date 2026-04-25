@@ -49,6 +49,7 @@ from app.core.constants import (
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
+    EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
@@ -4219,6 +4220,118 @@ def _worker_is_dispatchable_for_ticket(
     )
 
 
+def _build_no_eligible_worker_diagnostic_payload(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    target_role_profile: str,
+    excluded_employee_ids: set[str],
+    worker_candidates: list[str],
+    worker_by_id: dict[str, set[str]],
+    busy_workers: set[str],
+) -> dict[str, Any]:
+    candidate_details: list[dict[str, Any]] = []
+    matching_role_count = 0
+    excluded_count = 0
+    busy_count = 0
+    provider_paused_count = 0
+    eligible_count = 0
+    for worker_id in worker_candidates:
+        roles = sorted(worker_by_id.get(worker_id, set()))
+        has_required_role = target_role_profile in set(roles)
+        is_excluded = worker_id in excluded_employee_ids
+        is_busy = worker_id in busy_workers
+        provider_id = _resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            lease_owner=worker_id,
+        )
+        provider_paused = _is_provider_paused(repository, connection, provider_id)
+        if has_required_role:
+            matching_role_count += 1
+        if is_excluded:
+            excluded_count += 1
+        if is_busy:
+            busy_count += 1
+        if provider_paused:
+            provider_paused_count += 1
+        eligible = has_required_role and not is_excluded and not is_busy and not provider_paused
+        if eligible:
+            eligible_count += 1
+        candidate_details.append(
+            {
+                "employee_id": worker_id,
+                "role_profile_refs": roles,
+                "has_required_role": has_required_role,
+                "excluded": is_excluded,
+                "busy": is_busy,
+                "provider_id": provider_id,
+                "provider_paused": provider_paused,
+                "eligible": eligible,
+            }
+        )
+    return {
+        "ticket_id": str(ticket.get("ticket_id") or ""),
+        "node_id": str(ticket.get("node_id") or created_spec.get("node_id") or ""),
+        "workflow_id": str(ticket.get("workflow_id") or created_spec.get("workflow_id") or ""),
+        "reason_code": "NO_ELIGIBLE_WORKER",
+        "required_role_profile_ref": target_role_profile,
+        "excluded_employee_ids": sorted(excluded_employee_ids),
+        "candidate_summary": {
+            "total_candidate_count": len(worker_candidates),
+            "matching_role_count": matching_role_count,
+            "excluded_count": excluded_count,
+            "busy_count": busy_count,
+            "provider_paused_count": provider_paused_count,
+            "eligible_count": eligible_count,
+        },
+        "candidate_details": candidate_details,
+    }
+
+
+def _record_no_eligible_worker_diagnostic(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    command_id: str,
+    occurred_at: datetime,
+    idempotency_key: str,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any],
+    target_role_profile: str,
+    excluded_employee_ids: set[str],
+    worker_candidates: list[str],
+    worker_by_id: dict[str, set[str]],
+    busy_workers: set[str],
+) -> bool:
+    payload = _build_no_eligible_worker_diagnostic_payload(
+        repository,
+        connection,
+        ticket=ticket,
+        created_spec=created_spec,
+        target_role_profile=target_role_profile,
+        excluded_employee_ids=excluded_employee_ids,
+        worker_candidates=worker_candidates,
+        worker_by_id=worker_by_id,
+        busy_workers=busy_workers,
+    )
+    event = repository.insert_event(
+        connection,
+        event_type=EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED,
+        actor_type="system",
+        actor_id="scheduler",
+        workflow_id=payload["workflow_id"],
+        idempotency_key=idempotency_key,
+        causation_id=command_id,
+        correlation_id=payload["workflow_id"],
+        payload=payload,
+        occurred_at=occurred_at,
+    )
+    return event is not None
+
+
 def _should_relax_singleton_rework_exclusions(
     repository: ControlPlaneRepository,
     connection,
@@ -4782,6 +4895,29 @@ def run_scheduler_tick(
                     changed_state = True
                     continue
             if selected_worker_id is None:
+                recorded = _record_no_eligible_worker_diagnostic(
+                    repository,
+                    connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    idempotency_key=next_idempotency_key(
+                        f"lease-diagnostic:{ticket['ticket_id']}:no-eligible-worker"
+                    ),
+                    ticket=ticket,
+                    created_spec=created_spec,
+                    target_role_profile=str(target_role_profile),
+                    excluded_employee_ids=effective_excluded_employee_ids,
+                    worker_candidates=worker_candidates,
+                    worker_by_id=worker_by_id,
+                    busy_workers=busy_workers,
+                )
+                if not recorded:
+                    return _scheduler_duplicate_ack(
+                        command_id=command_id,
+                        idempotency_key=idempotency_key,
+                        received_at=received_at,
+                    )
+                changed_state = True
                 continue
 
             if selected_worker_precondition is not None and _sync_ticket_execution_precondition_state(

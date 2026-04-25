@@ -543,12 +543,12 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_runtime_
 
 **实施清单：**
 
-- [ ] 新增 failing test：`test_ready_ticket_without_eligible_worker_surfaces_staffing_gap`
+- [x] 新增 failing test：`test_ready_ticket_without_eligible_worker_surfaces_staffing_gap`
   - 位置：`backend/tests/test_scheduler_runner.py` 或 scheduler routing 测试文件。
   - 场景：创建 ready ticket，role profile 为 `backend_engineer_primary`；roster 无 backend worker，或唯一候选在 `excluded_employee_ids`。
   - 断言：scheduler/diagnostic 层输出明确的 `NO_ELIGIBLE_WORKER` 或等价 staffing signal，包含 ticket id、node id、required role profile、排除原因。
 
-- [ ] 新增 failing test：`test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker`
+- [x] 新增 failing test：`test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker`
   - 位置：`backend/tests/test_ceo_scheduler.py`。
   - 场景：snapshot 中存在 ready ticket，但 lease diagnostics 表明无 eligible worker。
   - 断言：
@@ -557,17 +557,17 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_runtime_
     - `recommended_action == "HIRE_EMPLOYEE"`
     - `capability_plan.recommended_hire.role_profile_refs` 包含缺失角色，例如 `backend_engineer_primary`
 
-- [ ] 新增 failing test：`test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile`
+- [x] 新增 failing test：`test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile`
   - 位置：`backend/tests/test_ceo_scheduler.py`。
   - 场景：controller 推荐 `HIRE_EMPLOYEE`，capability plan 中有 `recommended_hire`。
   - 断言：`build_deterministic_fallback_batch()` 生成合法 `HIRE_EMPLOYEE` action，payload 包含 `workflow_id`、`role_type`、`role_profile_refs`、`request_summary`，不使用 legacy shape。
 
-- [ ] 新增 failing test：`test_scheduler_progresses_ready_ticket_after_ceo_hire`
+- [x] 新增 failing test：`test_scheduler_progresses_ready_ticket_after_ceo_hire`
   - 位置：`backend/tests/test_scheduler_runner.py`。
   - 场景：先运行一次 scheduler，发现 no eligible worker；CEO hire backend/database worker；再运行 scheduler。
   - 断言：原 ready ticket 被新员工 lease，而不是继续空转。
 
-- [ ] 修改 scheduler/lease diagnostics
+- [x] 修改 scheduler/lease diagnostics
   - ready ticket 如果无法 lease，不应只表现为 runtime execution count 0。
   - 需要记录结构化原因：
     - required role profile
@@ -576,16 +576,16 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_runtime_
     - 是否存在 inactive / unapproved / provider 不匹配候选
   - 该 signal 必须进入 controller snapshot 或 capability plan 输入。
 
-- [ ] 修改 controller
+- [x] 修改 controller
   - 如果存在 ready ticket 且 no eligible worker diagnostic，优先输出 staffing-required 状态，而不是 `READY_TICKET / NO_ACTION`。
   - 生成 `capability_plan.staffing_gaps` 和 `capability_plan.recommended_hire`。
   - 如果多个 ready tickets 缺不同角色，先选择最早 ready / critical path / highest priority 的角色；不要一次无界雇佣大量员工。
 
-- [ ] 修改 CEO scheduler/fallback
+- [x] 修改 CEO scheduler/fallback
   - 当 controller 推荐 `HIRE_EMPLOYEE` 时，允许 live CEO 或 deterministic fallback 创建 hire action。
   - 如果 live CEO `NO_ACTION` 但 controller 推荐 hire，fallback 可执行 hire；但仍需尊重 graph health 的 hard wait gate。
 
-- [ ] 修改 live audit
+- [x] 修改 live audit
   - 如果 live run 中发生 no eligible worker，audit summary 应记录 staffing gap 和后续 hire action。
   - 不再允许人工插员工成为唯一可见修复动作。
 
@@ -598,6 +598,15 @@ py -3 -m pytest tests/test_ceo_scheduler.py::test_controller_recommends_hire_whe
 py -3 -m pytest tests/test_ceo_scheduler.py::test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile -q
 py -3 -m pytest tests/test_scheduler_runner.py::test_scheduler_progresses_ready_ticket_after_ceo_hire -q
 ```
+
+**Round 5 验证记录（2026-04-26）：**
+
+- 已确认红灯：`test_ready_ticket_without_eligible_worker_surfaces_staffing_gap` 首次失败于缺少 `SCHEDULER_LEASE_DIAGNOSTIC_RECORDED / NO_ELIGIBLE_WORKER` 事件。
+- 已确认红灯：`test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker` 首次失败为 controller 仍返回 `READY_TICKET`，未推荐 `HIRE_EMPLOYEE`。
+- 已确认红灯：`test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile` 首次失败为 deterministic fallback 返回 `NO_ACTION`，未生成 `HIRE_EMPLOYEE`。
+- 已确认红灯：`test_write_audit_summary_renders_staffing_gap_and_hire_action` 首次失败于 audit summary 缺少 `Staffing Gap Audit`。
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round5-final-reapply tests/test_scheduler_runner.py::test_ready_ticket_without_eligible_worker_surfaces_staffing_gap tests/test_ceo_scheduler.py::test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker tests/test_ceo_scheduler.py::test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile tests/test_scheduler_runner.py::test_scheduler_progresses_ready_ticket_after_ceo_hire tests/test_live_library_management_runner.py::test_write_audit_summary_renders_staffing_gap_and_hire_action -q`，结果 5 passed。
+- 说明：`test_scheduler_progresses_ready_ticket_after_ceo_hire` 验证 hire 后原 ready ticket 被新员工 lease；为避免单测触发真实 provider runtime，本用例断言最终状态为 `LEASED`，不要求 runtime 完成。
 
 **验收标准：**
 

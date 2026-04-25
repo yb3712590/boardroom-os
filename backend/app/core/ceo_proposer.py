@@ -179,6 +179,12 @@ def _maybe_raise_mainline_deterministic_fallback_blocked(
     blocked_action_types = _mainline_deterministic_mutating_actions(action_batch)
     if not blocked_action_types:
         return
+    if (
+        str(trigger.get("trigger_type") or "").strip() == "SCHEDULER_IDLE_MAINTENANCE"
+        and set(blocked_action_types) == {CEOActionType.HIRE_EMPLOYEE.value}
+        and str(controller_state_view(snapshot).get("state") or "").strip() == "STAFFING_REQUIRED"
+    ):
+        return
     _raise_proposal_contract_error(
         source_component="mainline_deterministic_fallback",
         reason_code="mutating_fallback_blocked",

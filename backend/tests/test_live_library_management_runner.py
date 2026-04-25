@@ -538,6 +538,53 @@ def test_write_audit_summary_renders_formal_sections(tmp_path: Path) -> None:
     assert "MVP scope is locked to library management." in body
 
 
+def test_write_audit_summary_renders_staffing_gap_and_hire_action(tmp_path: Path) -> None:
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": False,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "timeout",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "EXECUTING",
+                "current_stage": "build",
+            },
+            "staffing_gap_audit": {
+                "gaps": [
+                    {
+                        "ticket_id": "tkt_br004_rework",
+                        "node_id": "node_br004",
+                        "required_role_profile_ref": "backend_engineer_primary",
+                        "reason_code": "NO_ELIGIBLE_WORKER",
+                    }
+                ],
+                "hire_actions": [
+                    {
+                        "run_id": "ceo_run_001",
+                        "role_type": "backend_engineer",
+                        "role_profile_refs": ["backend_engineer_primary"],
+                        "employee_id": "emp_backend_backup",
+                        "execution_status": "EXECUTED",
+                    }
+                ],
+            },
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "## Staffing Gap Audit" in body
+    assert "tkt_br004_rework" in body
+    assert "backend_engineer_primary" in body
+    assert "emp_backend_backup" in body
+
+
 def test_latest_provider_runtime_snapshot_uses_in_progress_provider_audit_events(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         live_harness,

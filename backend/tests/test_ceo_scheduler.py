@@ -3824,6 +3824,91 @@ def test_mainline_deterministic_fallback_blocks_request_meeting_on_ticket_comple
     assert "request_meeting" in str(runs[0]["fallback_reason"] or "").lower()
 
 
+def test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_staffing_required",
+        "Ready ticket should surface staffing gap.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ready_backend_staffing_required",
+            node_id="node_ready_backend_staffing_required",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-staffing-required",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_REQUIRED"
+    assert snapshot["controller_state"]["recommended_action"] == "HIRE_EMPLOYEE"
+    assert snapshot["capability_plan"]["recommended_hire"]["role_profile_refs"] == [
+        "backend_engineer_primary"
+    ]
+    assert snapshot["capability_plan"]["recommended_hire"]["role_type"] == "backend_engineer"
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"][0]["ticket_id"] == (
+        "tkt_ready_backend_staffing_required"
+    )
+
+
+def test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_hire_fallback",
+        "CEO fallback should hire missing ready-ticket role.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ready_database_hire_fallback",
+            node_id="node_ready_database_hire_fallback",
+            role_profile_ref="database_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-hire-fallback",
+    )
+
+    from app.core.ceo_proposer import build_deterministic_fallback_batch
+
+    batch = build_deterministic_fallback_batch(
+        client.app.state.repository,
+        snapshot,
+        "Hire the missing ready-ticket role.",
+    )
+    action = batch.model_dump(mode="json")["actions"][0]
+
+    assert action["action_type"] == "HIRE_EMPLOYEE"
+    assert action["payload"]["workflow_id"] == workflow_id
+    assert action["payload"]["role_type"] == "database_engineer"
+    assert action["payload"]["role_profile_refs"] == ["database_engineer_primary"]
+    assert "request_summary" in action["payload"]
+    assert "role_profile_ref" not in action["payload"]
+
+
 def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_backlog_capability_plan", "Capability-driven backlog fanout")
