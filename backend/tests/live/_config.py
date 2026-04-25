@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import tomllib
@@ -120,6 +120,8 @@ class LiveAssertionConfig:
     architect_reasoning_effort: str = "xhigh"
     default_reasoning_effort: str = "high"
     required_capabilities: tuple[str, ...] = DEFAULT_REQUIRED_CAPABILITIES
+    expected_models_by_role_profile_ref: dict[str, str] = field(default_factory=dict)
+    expected_reasoning_by_role_profile_ref: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -266,6 +268,24 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
         check=str(workspace_paths_payload.get("check") or default_paths.check).strip(),
         closeout=str(workspace_paths_payload.get("closeout") or default_paths.closeout).strip(),
     )
+    expected_models_by_role_profile_ref: dict[str, str] = {}
+    expected_reasoning_by_role_profile_ref: dict[str, str] = {}
+    for item in role_bindings_payload:
+        target_ref = str((item or {}).get("target_ref") or "").strip()
+        if not target_ref.startswith("role_profile:"):
+            continue
+        role_profile_ref = target_ref.split(":", 1)[1].strip()
+        refs = _require_list_of_str(
+            (item or {}).get("provider_model_entry_refs"),
+            field_name="provider.role_bindings.provider_model_entry_refs",
+        )
+        if refs:
+            _provider_id, separator, model_name = refs[0].partition("::")
+            if separator and model_name.strip():
+                expected_models_by_role_profile_ref[role_profile_ref] = model_name.strip()
+        reasoning_effort = str((item or {}).get("reasoning_effort_override") or "").strip()
+        if reasoning_effort:
+            expected_reasoning_by_role_profile_ref[role_profile_ref] = reasoning_effort
 
     return LiveScenarioConfig(
         config_path=Path(config_path),
@@ -339,6 +359,8 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
             architect_reasoning_effort="xhigh",
             default_reasoning_effort=str(provider_payload.get("reasoning_effort") or "high").strip() or "high",
             required_capabilities=DEFAULT_REQUIRED_CAPABILITIES,
+            expected_models_by_role_profile_ref=expected_models_by_role_profile_ref,
+            expected_reasoning_by_role_profile_ref=expected_reasoning_by_role_profile_ref,
         ),
         workspace_paths=workspace_paths,
     )

@@ -62,6 +62,21 @@ def _missing_required_capabilities(common: dict[str, Any], required_capabilities
     return missing
 
 
+def _expected_model_for_role(config: LiveAssertionConfig, role_profile_ref: str) -> str:
+    return config.expected_models_by_role_profile_ref.get(role_profile_ref) or config.expected_model
+
+
+def _expected_reasoning_for_role(config: LiveAssertionConfig, role_profile_ref: str) -> str:
+    return (
+        config.expected_reasoning_by_role_profile_ref.get(role_profile_ref)
+        or (
+            config.architect_reasoning_effort
+            if role_profile_ref == "architect_primary"
+            else config.default_reasoning_effort
+        )
+    )
+
+
 def _assert_minimalist_book_tracker(
     paths,
     repository,
@@ -82,8 +97,14 @@ def _assert_minimalist_book_tracker(
         item
         for item in architect_audits
         if item.get("assumptions", {}).get("actual_provider_id") != config.expected_provider_id
-        or item.get("assumptions", {}).get("actual_model") != config.expected_model
-        or item.get("assumptions", {}).get("effective_reasoning_effort") != config.architect_reasoning_effort
+        or item.get("assumptions", {}).get("actual_model") != _expected_model_for_role(
+            config,
+            str(item.get("role_profile_ref") or ""),
+        )
+        or item.get("assumptions", {}).get("effective_reasoning_effort") != _expected_reasoning_for_role(
+            config,
+            str(item.get("role_profile_ref") or ""),
+        )
     ]
     if invalid_architect_audits:
         raise AssertionError(f"Architect runtime audit deviated from expected provider/model profile: {invalid_architect_audits}")
@@ -99,8 +120,14 @@ def _assert_minimalist_book_tracker(
         item
         for item in non_architect_audits
         if item.get("assumptions", {}).get("actual_provider_id") != config.expected_provider_id
-        or item.get("assumptions", {}).get("actual_model") != config.expected_model
-        or item.get("assumptions", {}).get("effective_reasoning_effort") != config.default_reasoning_effort
+        or item.get("assumptions", {}).get("actual_model") != _expected_model_for_role(
+            config,
+            str(item.get("role_profile_ref") or ""),
+        )
+        or item.get("assumptions", {}).get("effective_reasoning_effort") != _expected_reasoning_for_role(
+            config,
+            str(item.get("role_profile_ref") or ""),
+        )
     ]
     if invalid_non_architect:
         raise AssertionError(f"Non-architect runtime audits deviated from expected provider/model profile: {invalid_non_architect}")

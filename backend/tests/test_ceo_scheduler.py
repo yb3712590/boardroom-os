@@ -4067,9 +4067,11 @@ def test_ceo_shadow_run_rejects_live_no_action_when_controller_requires_backlog_
 
     assert run["snapshot"]["controller_state"]["state"] == "READY_FOR_FANOUT"
     assert run["snapshot"]["controller_state"]["recommended_action"] == "CREATE_TICKET"
-    assert run["deterministic_fallback_used"] is False
-    assert run["accepted_actions"] == []
-    assert run["executed_actions"] == []
+    assert run["deterministic_fallback_used"] is True
+    assert "no accepted actions" in run["deterministic_fallback_reason"]
+    assert run["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
     assert run["rejected_actions"][0]["action_type"] == "NO_ACTION"
     assert "controller_state.recommended_action is CREATE_TICKET" in run["rejected_actions"][0]["reason"]
 
@@ -6677,3 +6679,51 @@ def test_idle_ceo_maintenance_waits_for_recent_state_change_cooldown(client, mon
     }
 
     assert workflow_id not in due_workflow_ids
+
+
+def test_idle_ceo_maintenance_targets_controller_action_even_without_idle_signal(monkeypatch):
+    workflow_id = "wf_idle_controller_action"
+
+    class _Repository:
+        def list_workflow_projections(self):
+            return [
+                {
+                    "workflow_id": workflow_id,
+                    "status": "EXECUTING",
+                    "updated_at": datetime.fromisoformat("2026-04-04T10:00:00+08:00"),
+                }
+            ]
+
+        def get_latest_ceo_shadow_run_for_trigger(self, *_args, **_kwargs):
+            return None
+
+    def _fake_snapshot(*_args, **_kwargs):
+        return {
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"working_count": 0},
+            "idle_maintenance": {
+                "signal_types": [],
+                "latest_state_change_at": "2026-04-04T10:00:00+08:00",
+            },
+            "replan_focus": {
+                "controller_state": {
+                    "state": "READY_FOR_FANOUT",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": None,
+                }
+            },
+        }
+
+    monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
+
+    due_workflow_ids = {
+        item["workflow_id"]
+        for item in list_due_ceo_maintenance_workflows(
+            _Repository(),
+            current_time=datetime.fromisoformat("2026-04-04T10:01:05+08:00"),
+            interval_sec=60,
+        )
+    }
+
+    assert workflow_id in due_workflow_ids

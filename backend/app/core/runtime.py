@@ -472,6 +472,26 @@ def _default_source_code_delivery_file_refs(execution_package: CompiledExecution
     return [f"art://workspace/{quote(ticket_id, safe='')}/source.{extension}"]
 
 
+def _source_code_delivery_artifact_ref(
+    execution_package: CompiledExecutionPackage,
+    *,
+    path: str,
+    artifact_ref: str,
+    category: str,
+    index: int,
+) -> str:
+    ticket_id = execution_package.meta.ticket_id
+    encoded_ticket_id = quote(ticket_id, safe="")
+    normalized_ref = str(artifact_ref or "").strip()
+    if f"/{encoded_ticket_id}/" in normalized_ref or f"/{ticket_id}/" in normalized_ref:
+        return normalized_ref
+    normalized_path = str(path or "").strip()
+    if not normalized_path:
+        normalized_path = normalized_ref or f"{category}-{index}"
+    encoded_path = quote(normalized_path, safe="")
+    return f"art://workspace/{encoded_ticket_id}/{category}/{index}-{encoded_path}"
+
+
 def _default_source_code_delivery_source_path(
     execution_package: CompiledExecutionPackage,
     source_pattern: str | None,
@@ -631,10 +651,33 @@ def _normalize_source_code_delivery_payload(
                     "content": content,
                 }
             )
-    if not source_file_refs and source_files:
+    normalized_source_files: list[dict[str, Any]] = []
+    for index, source_file in enumerate(source_files, start=1):
+        normalized_ref = _source_code_delivery_artifact_ref(
+            execution_package,
+            path=source_file["path"],
+            artifact_ref=source_file["artifact_ref"],
+            category="source",
+            index=index,
+        )
+        normalized_source_files.append({**source_file, "artifact_ref": normalized_ref})
+    source_files = normalized_source_files
+
+    if source_files:
         source_file_refs = [item["artifact_ref"] for item in source_files]
-    if not source_file_refs:
+    elif not source_file_refs:
         source_file_refs = _default_source_code_delivery_file_refs(execution_package)
+    else:
+        source_file_refs = [
+            _source_code_delivery_artifact_ref(
+                execution_package,
+                path="",
+                artifact_ref=artifact_ref,
+                category="source",
+                index=index,
+            )
+            for index, artifact_ref in enumerate(source_file_refs, start=1)
+        ]
     normalized["source_file_refs"] = source_file_refs
     if not source_files:
         source_files = _default_source_code_delivery_source_files(execution_package, source_file_refs)
@@ -647,6 +690,23 @@ def _normalize_source_code_delivery_payload(
     ]
     if not verification_runs:
         verification_runs = _default_source_code_delivery_verification_runs(execution_package)
+    normalized_verification_runs: list[dict[str, Any]] = []
+    for index, run in enumerate(verification_runs, start=1):
+        artifact_ref = str(run.get("artifact_ref") or "").strip()
+        path = str(run.get("path") or "").strip()
+        normalized_verification_runs.append(
+            {
+                **run,
+                "artifact_ref": _source_code_delivery_artifact_ref(
+                    execution_package,
+                    path=path,
+                    artifact_ref=artifact_ref,
+                    category="tests",
+                    index=index,
+                ),
+            }
+        )
+    verification_runs = normalized_verification_runs
     normalized["verification_runs"] = verification_runs
 
     implementation_notes = [

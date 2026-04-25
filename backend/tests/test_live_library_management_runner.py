@@ -947,6 +947,32 @@ def test_assert_source_delivery_payload_quality_requires_raw_verification_output
         _assert_source_delivery_payload_quality(created_specs, terminals)
 
 
+def test_assert_source_delivery_payload_quality_skips_failed_retry_history() -> None:
+    created_specs = {
+        "tkt_failed": {"output_schema_ref": "source_code_delivery"},
+        "tkt_completed": {"output_schema_ref": "source_code_delivery"},
+    }
+    terminals = {
+        "tkt_failed": {
+            "event_type": "TICKET_FAILED",
+            "payload": {
+                "ticket_id": "tkt_failed",
+                "failure_kind": "WORKSPACE_HOOK_VALIDATION_ERROR",
+            },
+        },
+        "tkt_completed": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {
+                "ticket_id": "tkt_completed",
+                "written_artifacts": [{"artifact_ref": "art://workspace/tkt_completed/source.py"}],
+                "verification_evidence_refs": ["art://workspace/tkt_completed/tests.json"],
+            },
+        },
+    }
+
+    assert _assert_source_delivery_payload_quality(created_specs, terminals) == ["tkt_completed"]
+
+
 def test_assert_unique_source_delivery_evidence_paths_rejects_duplicate_paths() -> None:
     with pytest.raises(AssertionError, match="duplicate source delivery evidence paths"):
         _assert_unique_source_delivery_evidence_paths(

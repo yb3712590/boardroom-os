@@ -7,6 +7,7 @@ from typing import Any
 from app.config import get_settings
 from app.core.ceo_executor import execute_ceo_action_batch
 from app.core.ceo_proposer import (
+    build_deterministic_fallback_batch,
     build_no_action_batch,
     propose_ceo_action_batch,
 )
@@ -102,9 +103,32 @@ def _build_comparison(
     }
 
 
+def _needs_deterministic_fallback_after_validation(
+    *,
+    snapshot: dict[str, Any],
+    accepted_actions: list[dict[str, Any]],
+    rejected_actions: list[dict[str, Any]],
+) -> bool:
+    if accepted_actions or not rejected_actions:
+        return False
+    expected_action = str((controller_state_view(snapshot) or {}).get("recommended_action") or "").strip()
+    if expected_action not in {"CREATE_TICKET", "HIRE_EMPLOYEE", "REQUEST_MEETING"}:
+        return False
+    return all(str(item.get("action_type") or "").strip() == "NO_ACTION" for item in rejected_actions)
+
+
 def _snapshot_has_idle_maintenance_signal(snapshot: dict[str, Any]) -> bool:
     idle_maintenance = snapshot.get("idle_maintenance") or {}
     return bool(idle_maintenance.get("signal_types"))
+
+
+def _snapshot_has_controller_action_signal(snapshot: dict[str, Any]) -> bool:
+    controller_state = controller_state_view(snapshot)
+    return str(controller_state.get("recommended_action") or "").strip() in {
+        "CREATE_TICKET",
+        "HIRE_EMPLOYEE",
+        "REQUEST_MEETING",
+    }
 
 
 def _has_blocking_idle_maintenance_incident(snapshot: dict[str, Any]) -> bool:
@@ -158,7 +182,7 @@ def list_due_ceo_maintenance_workflows(
             continue
         if int((snapshot.get("ticket_summary") or {}).get("working_count") or 0) > 0:
             continue
-        if not _snapshot_has_idle_maintenance_signal(snapshot):
+        if not _snapshot_has_idle_maintenance_signal(snapshot) and not _snapshot_has_controller_action_signal(snapshot):
             continue
         latest_state_change_at = _snapshot_latest_state_change_at(snapshot)
         if latest_state_change_at is not None:
@@ -363,13 +387,38 @@ def run_ceo_shadow_for_trigger(
         validation = validate_ceo_action_batch(repository, action_batch=proposal.action_batch, snapshot=snapshot)
         accepted_actions = validation["accepted_actions"]
         rejected_actions = validation["rejected_actions"]
+        action_batch_for_execution = proposal.action_batch
+        validation_fallback_reason = None
+        if _needs_deterministic_fallback_after_validation(
+            snapshot=snapshot,
+            accepted_actions=accepted_actions,
+            rejected_actions=rejected_actions,
+        ):
+            expected_action = str(controller_state_view(snapshot).get("recommended_action") or "").strip()
+            validation_fallback_reason = (
+                "Deterministic fallback used because the live CEO proposal had no accepted actions "
+                f"while controller_state.recommended_action is {expected_action}."
+            )
+            action_batch_for_execution = build_deterministic_fallback_batch(
+                repository,
+                snapshot,
+                validation_fallback_reason,
+            )
+            fallback_validation = validate_ceo_action_batch(
+                repository,
+                action_batch=action_batch_for_execution,
+                snapshot=snapshot,
+            )
+            accepted_actions = fallback_validation["accepted_actions"]
+            rejected_actions = rejected_actions + fallback_validation["rejected_actions"]
+            proposed_action_batch = action_batch_for_execution.model_dump(mode="json")
     except Exception as exc:
         _raise_pipeline_error("validation", exc)
 
     try:
         execution_result = execute_ceo_action_batch(
             repository,
-            action_batch=proposal.action_batch,
+            action_batch=action_batch_for_execution,
             accepted_actions=accepted_actions,
         )
         executed_actions = execution_result["executed_actions"]
@@ -394,10 +443,14 @@ def run_ceo_shadow_for_trigger(
             ),
         )
 
-    if proposal.fallback_reason is not None:
+    if validation_fallback_reason is not None:
+        deterministic_fallback_used = True
+        deterministic_fallback_reason = validation_fallback_reason
+    elif proposal.fallback_reason is not None:
         deterministic_fallback_used = True
         deterministic_fallback_reason = proposal.fallback_reason
 
+    fallback_reason = validation_fallback_reason or proposal.fallback_reason
     return _append_run(
         effective_mode=proposal.effective_mode,
         provider_health_summary=proposal.provider_health_summary,
@@ -409,7 +462,7 @@ def run_ceo_shadow_for_trigger(
         selection_reason=proposal.selection_reason,
         policy_reason=proposal.policy_reason,
         provider_response_id=proposal.provider_response_id,
-        fallback_reason=proposal.fallback_reason,
+        fallback_reason=fallback_reason,
         deterministic_used=deterministic_fallback_used,
         deterministic_reason=deterministic_fallback_reason,
     )

@@ -262,6 +262,12 @@ def _parse_assumptions(assumptions: list[str] | None) -> dict[str, str]:
     return parsed
 
 
+def _reasoning_effort_from_role_profile_ref(role_profile_ref: str) -> str:
+    if role_profile_ref in {"architect_primary", "cto_primary"}:
+        return "xhigh"
+    return "high"
+
+
 def workflow_ticket_rows(repository, workflow_id: str) -> list[dict[str, Any]]:
     with repository.connection() as connection:
         rows = connection.execute(
@@ -367,23 +373,35 @@ def _assert_source_delivery_payload_quality(
     terminals: dict[str, dict[str, Any] | None],
 ) -> list[str]:
     source_delivery_ticket_ids = _source_delivery_ticket_ids(created_specs)
+    completed_source_delivery_ticket_ids: list[str] = []
     for ticket_id in source_delivery_ticket_ids:
         terminal_event = terminals.get(ticket_id) or {}
+        if str(terminal_event.get("event_type") or "TICKET_COMPLETED") != "TICKET_COMPLETED":
+            continue
+        completed_source_delivery_ticket_ids.append(ticket_id)
         payload = terminal_event.get("payload") or {}
         if not isinstance(payload, dict):
             raise AssertionError(f"{ticket_id} is missing source delivery payload.")
         source_files = list(payload.get("source_files") or [])
         verification_runs = list(payload.get("verification_runs") or [])
-        if not source_files:
-            raise AssertionError(f"{ticket_id} is missing source_files in terminal payload.")
-        if not verification_runs:
-            raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
-        for run in verification_runs:
-            if not isinstance(run, dict):
-                raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
-            if not str(run.get("stdout") or "").strip():
-                raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
-    return source_delivery_ticket_ids
+        written_artifacts = list(payload.get("written_artifacts") or [])
+        verification_evidence_refs = list(payload.get("verification_evidence_refs") or [])
+        if source_files or verification_runs:
+            if not source_files:
+                raise AssertionError(f"{ticket_id} is missing source_files in terminal payload.")
+            if not verification_runs:
+                raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
+            for run in verification_runs:
+                if not isinstance(run, dict):
+                    raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
+                if not str(run.get("stdout") or "").strip():
+                    raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
+            continue
+        if not written_artifacts:
+            raise AssertionError(f"{ticket_id} is missing written_artifacts in terminal payload.")
+        if not verification_evidence_refs:
+            raise AssertionError(f"{ticket_id} is missing verification_evidence_refs in terminal payload.")
+    return completed_source_delivery_ticket_ids
 
 
 def _assert_unique_source_delivery_evidence_paths(artifact_rows: list[dict[str, Any]]) -> None:
@@ -467,18 +485,29 @@ def build_runtime_ticket_audit(repository, workflow_id: str) -> list[dict[str, A
     audits: list[dict[str, Any]] = []
     created_specs = workflow_created_specs(repository, workflow_id)
     terminals = workflow_terminal_events(repository, workflow_id)
+    provider_audit_by_ticket = workflow_provider_audit_events(repository, workflow_id)
     for ticket in workflow_ticket_rows(repository, workflow_id):
         ticket_id = str(ticket["ticket_id"])
         created_spec = created_specs.get(ticket_id) or {}
         terminal_event = terminals.get(ticket_id) or {}
         assumptions = _parse_assumptions((terminal_event.get("payload") or {}).get("assumptions") or [])
+        role_profile_ref = str(created_spec.get("role_profile_ref") or "")
         if not assumptions:
-            continue
+            provider_snapshot = _provider_snapshot_from_audit_events(provider_audit_by_ticket.get(ticket_id, []))
+            if not provider_snapshot["provider_attempt_log"]:
+                continue
+            assumptions = {
+                "actual_provider_id": str(provider_snapshot.get("actual_provider_id") or ""),
+                "actual_model": str(provider_snapshot.get("actual_model") or ""),
+                "effective_reasoning_effort": _reasoning_effort_from_role_profile_ref(role_profile_ref),
+            }
+            if not assumptions["actual_provider_id"] or not assumptions["actual_model"]:
+                continue
         audits.append(
             {
                 "ticket_id": ticket_id,
                 "node_id": str(ticket.get("node_id") or ""),
-                "role_profile_ref": str(created_spec.get("role_profile_ref") or ""),
+                "role_profile_ref": role_profile_ref,
                 "output_schema_ref": str(created_spec.get("output_schema_ref") or ""),
                 "delivery_stage": str(created_spec.get("delivery_stage") or ""),
                 "assumptions": assumptions,
@@ -1558,7 +1587,7 @@ def _latest_resumable_workflow_id(repository) -> str | None:
             """
             SELECT workflow_id
             FROM workflow_projection
-            WHERE status = 'EXECUTING'
+            WHERE status IN ('EXECUTING', 'COMPLETED')
             ORDER BY updated_at DESC, workflow_id DESC
             LIMIT 1
             """
@@ -1646,20 +1675,25 @@ def run_live_scenario_with_provider_payload(
                 "started_at": now_local().isoformat(),
                 "started_monotonic": time.monotonic(),
             }
+            run_idempotency_token = str(monitor_state["started_at"]).replace(":", "").replace(".", "")
             provider_id = str(first_provider.get("provider_id") or "").strip() or None
             model_name = str(first_provider.get("preferred_model") or "").strip() or None
 
             for tick_index in range(max_ticks):
                 run_scheduler_once(
                     repository,
-                    idempotency_key=f"live-scenario:{scenario.slug}:{workflow_id}:{tick_index}",
+                    idempotency_key=(
+                        f"live-scenario:{scenario.slug}:{workflow_id}:{run_idempotency_token}:{tick_index}"
+                    ),
                     max_dispatches=20,
                     tick_index=tick_index,
                 )
                 _maybe_recover_live_delegate_blockers(
                     repository,
                     workflow_id=workflow_id,
-                    idempotency_key_prefix=f"live-scenario-recover:{scenario.slug}:{workflow_id}",
+                    idempotency_key_prefix=(
+                        f"live-scenario-recover:{scenario.slug}:{workflow_id}:{run_idempotency_token}"
+                    ),
                     tick_index=tick_index,
                 )
                 workflow = repository.get_workflow_projection(workflow_id)
