@@ -4175,6 +4175,305 @@ def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_wh
     assert payload["parent_ticket_id"] == "tkt_backlog_parent"
 
 
+def test_deterministic_fallback_prefers_missing_backlog_followup_over_closeout(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_fallback_prefers_backlog_followup",
+        "Fallback should fan out backlog before closeout",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_closeout_frontend",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_existing_delivery_parent",
+        node_id="node_existing_delivery_parent",
+    )
+
+    from app.core import ceo_proposer
+
+    followup_ticket_plans = [
+        {
+            "ticket_key": f"BR00{index}",
+            "existing_ticket_id": f"tkt_completed_br00{index}",
+            "blocked_by_plan_keys": [f"BR00{index - 1}"] if index > 1 else [],
+            "ticket_payload": {
+                "workflow_id": workflow_id,
+                "node_id": f"node_backlog_followup_br00{index}",
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": "source_code_delivery",
+                "execution_contract": infer_execution_contract_payload(
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref="source_code_delivery",
+                ),
+                "dispatch_intent": {
+                    "assignee_employee_id": "emp_closeout_frontend",
+                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                    "dependency_gate_refs": [],
+                },
+                "summary": f"BR00{index} completed backlog follow-up.",
+                "parent_ticket_id": "tkt_backlog_parent",
+            },
+        }
+        for index in range(1, 4)
+    ]
+    followup_ticket_plans.extend(
+        {
+            "ticket_key": f"BR00{index}",
+            "existing_ticket_id": None,
+            "blocked_by_plan_keys": [f"BR00{index - 1}"],
+            "ticket_payload": {
+                "workflow_id": workflow_id,
+                "node_id": f"node_backlog_followup_br00{index}",
+                "role_profile_ref": "frontend_engineer_primary",
+                "output_schema_ref": "source_code_delivery",
+                "execution_contract": infer_execution_contract_payload(
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref="source_code_delivery",
+                ),
+                "dispatch_intent": {
+                    "assignee_employee_id": "emp_closeout_frontend",
+                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                    "dependency_gate_refs": [],
+                },
+                "summary": f"BR00{index} pending backlog follow-up.",
+                "parent_ticket_id": "tkt_backlog_parent",
+            },
+        }
+        for index in range(4, 8)
+    )
+    batch = ceo_proposer.build_deterministic_fallback_batch(
+        repository,
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Ship the library workflow.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0, "total": 7},
+            "nodes": [{"node_id": "node_existing_delivery_parent", "status": "COMPLETED"}],
+            "employees": [
+                {
+                    "employee_id": "emp_closeout_frontend",
+                    "state": "ACTIVE",
+                    "role_profile_refs": ["frontend_engineer_primary"],
+                }
+            ],
+            "replan_focus": {
+                "controller_state": {
+                    "state": "READY_FOR_FANOUT",
+                    "recommended_action": "CREATE_TICKET",
+                    "blocking_reason": None,
+                },
+                "capability_plan": {
+                    "followup_ticket_plans": followup_ticket_plans,
+                },
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    action = batch.model_dump(mode="json")["actions"][0]
+    assert action["action_type"] == "CREATE_TICKET"
+    assert action["payload"]["node_id"] == "node_backlog_followup_br004"
+    assert action["payload"]["node_id"] != "node_ceo_delivery_closeout"
+    assert action["payload"]["dispatch_intent"]["dependency_gate_refs"] == ["tkt_completed_br003"]
+
+
+def test_autopilot_closeout_blocked_by_unmaterialized_followup_plans(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_closeout_blocked_unmaterialized_followups",
+        "Closeout should wait for planned follow-up materialization",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_closeout_blocked_frontend",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_closeout_blocked_parent",
+        node_id="node_closeout_blocked_parent",
+    )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_autopilot_closeout_batch(
+        repository,
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Do not close out early.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0},
+            "nodes": [{"node_id": "node_closeout_blocked_parent", "status": "COMPLETED"}],
+            "employees": [
+                {
+                    "employee_id": "emp_closeout_blocked_frontend",
+                    "state": "ACTIVE",
+                    "role_profile_refs": ["frontend_engineer_primary"],
+                }
+            ],
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR004",
+                            "existing_ticket_id": None,
+                            "blocked_by_plan_keys": ["BR003"],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br004",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_closeout_blocked_frontend",
+                                    "selection_reason": "Translate backlog follow-up before closeout.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR004 pending backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        }
+                    ]
+                }
+            },
+        },
+        "Closeout should be blocked.",
+    )
+
+    assert batch is None
+
+
+def test_autopilot_closeout_parent_prefers_checker_handoff_maker_ticket(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_closeout_parent_prefers_checker_handoff",
+        "Closeout parent should use the final checked maker ticket",
+    )
+    repository = client.app.state.repository
+    maker_ticket_payload = {
+        **_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_checked_maker_delivery",
+            node_id="node_checked_delivery",
+            retry_budget=0,
+        ),
+        "output_schema_ref": "source_code_delivery",
+    }
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_checked_maker_delivery",
+        node_id="node_checked_delivery",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_later_unchecked_delivery",
+        node_id="node_later_unchecked_delivery",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    checker_ticket_payload = {
+        **_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_checked_delivery_checker",
+            node_id="node_checked_delivery",
+            retry_budget=0,
+            role_profile_ref="checker_primary",
+            output_schema_ref="maker_checker_verdict",
+        )
+        ,
+        "maker_checker_context": {
+            "maker_ticket_id": "tkt_checked_maker_delivery",
+            "maker_completed_by": "emp_frontend_2",
+            "maker_artifact_refs": [],
+            "maker_process_asset_refs": [],
+            "maker_ticket_spec": maker_ticket_payload,
+            "original_review_request": {
+                "review_type": "INTERNAL_DELIVERY_REVIEW",
+                "title": "Review checked delivery",
+            },
+        },
+    }
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_CREATED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_checked_delivery_checker",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=checker_ticket_payload,
+            occurred_at=datetime.fromisoformat("2026-04-25T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET status = ?,
+                updated_at = ?
+            WHERE ticket_id IN (?, ?)
+            """,
+            (
+                "COMPLETED",
+                "2026-04-25T10:30:00+08:00",
+                "tkt_checked_maker_delivery",
+                "tkt_checked_delivery_checker",
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET status = ?,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("COMPLETED", "2026-04-25T23:59:00+08:00", "tkt_later_unchecked_delivery"),
+        )
+
+    from app.core import ceo_proposer
+
+    with repository.connection() as connection:
+        parent_ticket_id = ceo_proposer._resolve_autopilot_closeout_parent_ticket_id(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+
+    assert parent_ticket_id == "tkt_checked_maker_delivery"
+
+
 def test_backlog_followup_batch_builds_retry_ticket_for_retryable_existing_ticket(client):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(

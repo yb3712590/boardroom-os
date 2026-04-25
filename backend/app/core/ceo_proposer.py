@@ -43,6 +43,7 @@ from app.core.output_schemas import (
     CEO_ACTION_BATCH_SCHEMA_REF,
     CEO_ACTION_BATCH_SCHEMA_VERSION,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
     OUTPUT_SCHEMA_REGISTRY,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
@@ -878,19 +879,60 @@ def _resolve_autopilot_closeout_parent_ticket_id(
         str(row["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(row["ticket_id"])) or {}
         for row in rows
     }
+    fallback_parent_ticket_id: str | None = None
     for row in rows:
         ticket_id = str(row["ticket_id"])
         created_spec = created_specs_by_ticket[ticket_id]
         if not ticket_has_delivery_mainline_evidence(created_spec, created_specs_by_ticket):
             continue
         output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
-        if output_schema_ref == "maker_checker_verdict":
+        if output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
             maker_checker_context = created_spec.get("maker_checker_context") or {}
             maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
             if maker_ticket_id:
                 return maker_ticket_id
-        return ticket_id
-    return None
+        if fallback_parent_ticket_id is None:
+            fallback_parent_ticket_id = ticket_id
+    return fallback_parent_ticket_id
+
+
+def _snapshot_followup_ticket_plans(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    replan_focus = snapshot.get("replan_focus")
+    if not isinstance(replan_focus, dict):
+        return []
+    capability_plan = replan_focus.get("capability_plan")
+    if not isinstance(capability_plan, dict):
+        return []
+    followup_ticket_plans = capability_plan.get("followup_ticket_plans")
+    if not isinstance(followup_ticket_plans, list):
+        return []
+    return [plan for plan in followup_ticket_plans if isinstance(plan, dict)]
+
+
+def _has_incomplete_followup_ticket_plans(
+    *,
+    snapshot: dict[str, Any],
+    workflow_id: str,
+    connection,
+) -> bool:
+    followup_ticket_plans = _snapshot_followup_ticket_plans(snapshot)
+    if not followup_ticket_plans:
+        return False
+    for followup_plan in followup_ticket_plans:
+        existing_ticket_id = str(followup_plan.get("existing_ticket_id") or "").strip()
+        if not existing_ticket_id:
+            return True
+        row = connection.execute(
+            """
+            SELECT status
+            FROM ticket_projection
+            WHERE workflow_id = ? AND ticket_id = ?
+            """,
+            (workflow_id, existing_ticket_id),
+        ).fetchone()
+        if row is None or str(row["status"] or "").strip() != "COMPLETED":
+            return True
+    return False
 
 
 def _workflow_has_existing_closeout_ticket(
@@ -950,6 +992,12 @@ def _build_autopilot_closeout_batch(
         return None
 
     with repository.connection() as connection:
+        if _has_incomplete_followup_ticket_plans(
+            snapshot=snapshot,
+            workflow_id=workflow_id,
+            connection=connection,
+        ):
+            return None
         if _workflow_has_existing_closeout_ticket(
             repository,
             workflow_id=workflow_id,
@@ -1000,9 +1048,6 @@ def build_deterministic_fallback_batch(
     controller_state = controller_state_view(snapshot)
     recommended_action = str(controller_state.get("recommended_action") or "").strip()
     capability_plan = capability_plan_view(snapshot)
-    closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
-    if closeout_batch is not None:
-        return closeout_batch
     if recommended_action == "HIRE_EMPLOYEE":
         return _build_capability_hire_batch(snapshot, reason)
     if recommended_action == "REQUEST_MEETING":
@@ -1048,6 +1093,9 @@ def build_deterministic_fallback_batch(
         )
     if _should_fallback_to_project_init_kickoff(snapshot):
         return _build_project_init_kickoff_batch(snapshot, reason)
+    closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
+    if closeout_batch is not None:
+        return closeout_batch
     if recommended_action == "NO_ACTION":
         return build_no_action_batch(reason)
     _raise_proposal_contract_error(

@@ -108,32 +108,40 @@
 
 **实施清单：**
 
-- [ ] 新增 failing test：`test_deterministic_fallback_prefers_missing_backlog_followup_over_closeout`
+- [x] 新增 failing test：`test_deterministic_fallback_prefers_missing_backlog_followup_over_closeout`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：seed workflow，完成最小治理链，创建 backlog recommendation，推荐 BR001-BR007；把 BR001-BR003 设为已完成，BR004-BR007 的 `existing_ticket_id` 保持 `None`；snapshot controller state 为 `READY_FOR_FANOUT / CREATE_TICKET`。
   - 断言：`build_deterministic_fallback_batch()` 返回 `CREATE_TICKET`，payload `node_id` 指向 BR004 followup，不是 `node_ceo_delivery_closeout`。
 
-- [ ] 新增 failing test：`test_autopilot_closeout_blocked_by_unmaterialized_followup_plans`
+- [x] 新增 failing test：`test_autopilot_closeout_blocked_by_unmaterialized_followup_plans`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：snapshot 中 `capability_plan.followup_ticket_plans` 存在至少一个 `existing_ticket_id is None`。
   - 断言：`_build_autopilot_closeout_batch()` 返回 `None`。
 
-- [ ] 修改 `build_deterministic_fallback_batch()`
+- [x] 修改 `build_deterministic_fallback_batch()`
   - 如果 `recommended_action == "CREATE_TICKET"`，先处理：
     - `required_governance_ticket_plan`
     - `followup_ticket_plans`
     - project init kickoff
   - 只有 controller 没有 mutating action 或所有 fanout/required governance 已经完成时，才考虑 closeout。
 
-- [ ] 修改 `_build_autopilot_closeout_batch()`
+- [x] 修改 `_build_autopilot_closeout_batch()`
   - 增加 guard：
     - `capability_plan.followup_ticket_plans` 中任何 `existing_ticket_id is None` -> return `None`
     - 如果存在 planned followup tickets，但这些 tickets 未全部 terminal completed/reviewed -> return `None`
   - 不要只依赖 `ticket_summary.active_count == 0` 和 nodes 全 completed。
 
-- [ ] 强化 closeout parent 选择
+- [x] 强化 closeout parent 选择
   - `_resolve_autopilot_closeout_parent_ticket_id()` 不能把 BR002/BR003 的 command-contract 或 repository-contract 证据当成整个 workflow 的最终 parent。
   - 若存在 maker/checker handoff ticket，优先使用最终 checker/handoff 对应 maker ticket。
+
+**Round 1 验证记录（2026-04-25）：**
+
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_deterministic_fallback_prefers_missing_backlog_followup_over_closeout -q`
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_autopilot_closeout_blocked_by_unmaterialized_followup_plans -q`
+- 已通过：`py -3 -m pytest tests/test_ceo_scheduler.py::test_autopilot_closeout_parent_prefers_checker_handoff_maker_ticket -q`
+- 已通过：`py -3 -m pytest tests/test_runtime_fallback_payload.py -q`
+- 未全绿：`py -3 -m pytest tests/test_ceo_scheduler.py tests/test_runtime_fallback_payload.py -q` 当前失败 17 个 `tests/test_ceo_scheduler.py` 非本轮新增用例，集中在 governance / provider / project-init 相关路径；本轮未把该文件级套件标记为通过。
 
 **建议测试命令：**
 

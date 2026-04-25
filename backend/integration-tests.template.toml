@@ -1,7 +1,7 @@
 [scenario]
 slug = "library_management_full_integration"
 description = "Run the full library-management live integration scenario."
-goal = "实现一个完全匿名的、纯粹用于记录实体书本当前是否在馆的单机版终端系统。系统只回答馆里有什么书，以及这本书现在能不能拿走。"
+goal = "实现一个完全匿名的、纯粹用于记录实体书本当前是否在馆的极简网站。系统只展示馆里有什么书，以及这本书现在能不能拿走。"
 workflow_profile = "CEO_AUTOPILOT_FINE_GRAINED"
 force_requirement_elicitation = false
 budget_cap = 1500000
@@ -11,7 +11,8 @@ constraints = [
   "status 只允许 IN_LIBRARY 和 CHECKED_OUT。",
   "核心动作只允许 Add、Check Out、Return、Remove。",
   "禁止 Auth、RBAC、预约、罚金、借阅历史、分类表、标签表。",
-  "界面固定为高信息密度 terminal/console 风格。"
+  "界面固定为图书陈列，点选后告知能否借阅",
+  "生成30本图书作为数据，其中10本标记为不能借阅"
 ]
 
 [runtime]
