@@ -4,7 +4,7 @@
 
 **目标：** 把 011 的 `success=true` 从“harness/workflow 假绿”整改为“控制面不能早收尾、live harness 能拦截不完整交付、产品行为能真实查询和修改图书状态”。
 
-**架构：** 先修控制面 closeout/fanout 的判定，再修 graph health 与 controller 的等待语义，然后收紧 live harness 的成功门槛，最后补齐 011 产物本身缺失的 BR004-BR007 行为。不要先改产品代码来掩盖控制面早收尾；否则下一次 live run 仍可能把不完整工作流标为完成。
+**架构：** 先修控制面 closeout/fanout 的判定，再修 graph health 与 controller 的等待语义，然后收紧 live harness 的成功门槛，补齐 011 产物本身缺失的 BR004-BR007 行为，最后修复 ready ticket 无可用员工时不能触发 CEO 按需雇佣的问题。不要先改产品代码来掩盖控制面早收尾；否则下一次 live run 仍可能把不完整工作流标为完成。
 
 **Tech Stack:** Python, FastAPI/TestClient, SQLite, pytest, boardroom-os control-plane repository/event projection, live harness.
 
@@ -79,7 +79,7 @@
 
 ---
 
-## 2. 四轮执行顺序
+## 2. 五轮执行顺序
 
 ### Round 1：阻断早收尾，恢复 backlog fanout 优先级
 
@@ -399,7 +399,7 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_live_con
 
 **实施清单：**
 
-- [ ] 新增 `library_service.py`
+- [x] 新增 `library_service.py`
   - 定义 service result 类型。
   - `add_book(title, author)` 调用 `BooksRepository.insert_book()`。
   - `check_out(book_id)`：
@@ -420,20 +420,20 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_live_con
     - one normalized author group -> aggregate total/in_library and can-take-now
     - multiple normalized author groups -> `AMBIGUOUS_TITLE`
 
-- [ ] 修改 `terminal_command_contract.py`
+- [x] 修改 `terminal_command_contract.py`
   - 保留 parser，但把 state-changing commands 交给 service。
   - `availability/title` 和 `availability/id` 查询 repository，不再返回 queued echo。
   - 删除或停止使用 `_book_snapshot()` 伪造结果。
 
-- [ ] 新增 `terminal_renderer.py`
+- [x] 新增 `terminal_renderer.py`
   - 将 service result 渲染为高信息密度纯文本。
   - 不引入 web UI、权限系统、时间轴、分类、用户历史。
 
-- [ ] 修 `books_db_contract_probe.py`
+- [x] 修 `books_db_contract_probe.py`
   - 用 `with BooksRepository(db_path) as repo:` 或 `try/finally: repo.close()`。
   - Windows 下 `TemporaryDirectory` cleanup 不应因 SQLite handle 未关闭失败。
 
-- [ ] 新增 service tests
+- [x] 新增 service tests
   - add 后 list 可见。
   - check out 后 repository status 变 `CHECKED_OUT`。
   - return 后 status 变 `IN_LIBRARY`。
@@ -441,7 +441,7 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_live_con
   - missing id 不改变状态。
   - title availability 覆盖 single match、multiple copies、checked-out-only、ambiguous title。
 
-- [ ] 新增 terminal e2e tests
+- [x] 新增 terminal e2e tests
   - canonical run：
     - add
     - catalog/list
@@ -469,6 +469,14 @@ cd D:\Projects\boardroom-os\backend
 py -3 -m pytest tests/test_live_library_management_runner.py tests/test_runtime_fallback_payload.py -q
 ```
 
+**Round 4 验证记录（2026-04-25）：**
+
+- 已确认红灯：新增 Round4 测试首次运行失败于 `ModuleNotFoundError: No module named 'library_service'`，对应缺失 service artifact。
+- 已通过：`py -3 -m pytest --basetemp .tmp\pytest-round4-final tests/test_library_service.py tests/test_terminal_e2e.py -q`，结果 8 passed。
+- 已通过：`py -3 src/books_db_contract_probe.py`，输出包含 `PASS_CONTRACT_CHECKS` 和 `FINAL_COUNT=3`。
+- 已通过：`py -3 -m compileall -q src tests`。
+- 说明：本机默认 pytest temp root `C:\Users\yb371\AppData\Local\Temp\pytest-of-yb371` 当前仍会触发 `PermissionError`，本轮验证显式使用 scenario artifact 内 `.tmp` basetemp。
+
 **验收标准：**
 
 - `check out 1` 后 SQLite 中 id=1 的 status 必须变为 `CHECKED_OUT`。
@@ -483,6 +491,128 @@ py -3 -m pytest tests/test_live_library_management_runner.py tests/test_runtime_
 - 不把 terminal-only scope 改成 web UI。011 的 scenario 明确是单机 terminal/console。
 - 不新增权限、用户、借阅历史、时间戳、分类表。
 - 不把业务失败伪装成 parser success。
+
+---
+
+### Round 5：ready ticket 无可用员工时触发 CEO 按需雇佣
+
+**目标：** 当图上已有 ready/pending ticket，但 scheduler 因 role profile 不匹配、worker 被 `excluded_employee_ids` 排除、或 roster 缺少对应员工而无法 lease 时，系统不能长期保持 `READY_TICKET / NO_ACTION`。该状态应反馈为 staffing gap，由 controller 产出 `HIRE_EMPLOYEE`，让 CEO 自动拼装合适员工接手图节点。
+
+**优先级：** P1/P2。011 中这是人工修补过的真实卡点；若不修，后续 live run 仍可能靠人工插员工才能继续。
+
+**011 证据：**
+
+- 时间：2026-04-25 16:23-16:27 +08:00。
+- 现象：BR002/BR003 rework tickets 已 ready，但 scheduler 反复空转，未能 lease。
+- 原因：tickets 需要 `backend_engineer_primary` 和 `database_engineer_primary`，roster 当时缺少可用 backend/database 员工，原 frontend worker 又被 rework `excluded_employee_ids` 排除。
+- 手工修补：通过 CEO direct hire handler 插入：
+  - `emp_backend_integration_011`
+  - `emp_database_integration_011`
+  - `emp_platform_integration_011`
+- DB 事件：三条 `EMPLOYEE_HIRED` 事件 actor 显示为 `ceo`，但这是测试过程中人工调用 handler 的最小修补，不是 live CEO 自行提出并执行的 `HIRE_EMPLOYEE`。
+- 结果：插入 backend/database 员工后，scheduler 立即 lease BR002/BR003 rework tickets。
+
+**主要文件：**
+
+- Modify: `backend/app/core/workflow_controller.py`
+- Modify: `backend/app/core/scheduler.py` 或实际 lease/worker selection 所在模块
+- Modify: `backend/app/core/ceo_scheduler.py`
+- Modify: `backend/app/core/ceo_proposer.py` only if deterministic hire fallback shape needs adjustment
+- Test: `backend/tests/test_ceo_scheduler.py`
+- Test: `backend/tests/test_scheduler_runner.py`
+- Test: worker routing / scheduler leasing 相关测试文件，按实际命名补充
+
+**需要理解的现有代码：**
+
+- `backend/app/core/workflow_controller.py`
+  - `staffing_gaps`
+  - `_recommended_hire_for_role_profile()`
+  - controller state `HIRE_EMPLOYEE`
+  - `capability_plan.recommended_hire`
+- `backend/app/core/ceo_proposer.py`
+  - `_build_capability_hire_batch()`
+  - `build_deterministic_fallback_batch()`
+- `backend/app/core/ceo_executor.py`
+  - `HIRE_EMPLOYEE` execution path
+  - `handle_ceo_direct_employee_hire()`
+- scheduler lease selection path
+  - ready ticket collection
+  - eligible employee filtering
+  - `excluded_employee_ids`
+  - role profile matching
+
+**实施清单：**
+
+- [ ] 新增 failing test：`test_ready_ticket_without_eligible_worker_surfaces_staffing_gap`
+  - 位置：`backend/tests/test_scheduler_runner.py` 或 scheduler routing 测试文件。
+  - 场景：创建 ready ticket，role profile 为 `backend_engineer_primary`；roster 无 backend worker，或唯一候选在 `excluded_employee_ids`。
+  - 断言：scheduler/diagnostic 层输出明确的 `NO_ELIGIBLE_WORKER` 或等价 staffing signal，包含 ticket id、node id、required role profile、排除原因。
+
+- [ ] 新增 failing test：`test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker`
+  - 位置：`backend/tests/test_ceo_scheduler.py`。
+  - 场景：snapshot 中存在 ready ticket，但 lease diagnostics 表明无 eligible worker。
+  - 断言：
+    - controller state 不是 `READY_TICKET / NO_ACTION`
+    - controller state 为 `STAFFING_REQUIRED` 或现有等价状态
+    - `recommended_action == "HIRE_EMPLOYEE"`
+    - `capability_plan.recommended_hire.role_profile_refs` 包含缺失角色，例如 `backend_engineer_primary`
+
+- [ ] 新增 failing test：`test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile`
+  - 位置：`backend/tests/test_ceo_scheduler.py`。
+  - 场景：controller 推荐 `HIRE_EMPLOYEE`，capability plan 中有 `recommended_hire`。
+  - 断言：`build_deterministic_fallback_batch()` 生成合法 `HIRE_EMPLOYEE` action，payload 包含 `workflow_id`、`role_type`、`role_profile_refs`、`request_summary`，不使用 legacy shape。
+
+- [ ] 新增 failing test：`test_scheduler_progresses_ready_ticket_after_ceo_hire`
+  - 位置：`backend/tests/test_scheduler_runner.py`。
+  - 场景：先运行一次 scheduler，发现 no eligible worker；CEO hire backend/database worker；再运行 scheduler。
+  - 断言：原 ready ticket 被新员工 lease，而不是继续空转。
+
+- [ ] 修改 scheduler/lease diagnostics
+  - ready ticket 如果无法 lease，不应只表现为 runtime execution count 0。
+  - 需要记录结构化原因：
+    - required role profile
+    - 当前 roster 中缺失 role
+    - 候选员工被排除的原因
+    - 是否存在 inactive / unapproved / provider 不匹配候选
+  - 该 signal 必须进入 controller snapshot 或 capability plan 输入。
+
+- [ ] 修改 controller
+  - 如果存在 ready ticket 且 no eligible worker diagnostic，优先输出 staffing-required 状态，而不是 `READY_TICKET / NO_ACTION`。
+  - 生成 `capability_plan.staffing_gaps` 和 `capability_plan.recommended_hire`。
+  - 如果多个 ready tickets 缺不同角色，先选择最早 ready / critical path / highest priority 的角色；不要一次无界雇佣大量员工。
+
+- [ ] 修改 CEO scheduler/fallback
+  - 当 controller 推荐 `HIRE_EMPLOYEE` 时，允许 live CEO 或 deterministic fallback 创建 hire action。
+  - 如果 live CEO `NO_ACTION` 但 controller 推荐 hire，fallback 可执行 hire；但仍需尊重 graph health 的 hard wait gate。
+
+- [ ] 修改 live audit
+  - 如果 live run 中发生 no eligible worker，audit summary 应记录 staffing gap 和后续 hire action。
+  - 不再允许人工插员工成为唯一可见修复动作。
+
+**建议测试命令：**
+
+```powershell
+cd D:\Projects\boardroom-os\backend
+py -3 -m pytest tests/test_scheduler_runner.py::test_ready_ticket_without_eligible_worker_surfaces_staffing_gap -q
+py -3 -m pytest tests/test_ceo_scheduler.py::test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker -q
+py -3 -m pytest tests/test_ceo_scheduler.py::test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile -q
+py -3 -m pytest tests/test_scheduler_runner.py::test_scheduler_progresses_ready_ticket_after_ceo_hire -q
+```
+
+**验收标准：**
+
+- ready ticket 无 eligible worker 时，系统产生结构化 staffing gap。
+- controller 推荐 `HIRE_EMPLOYEE`，而不是继续 `READY_TICKET / NO_ACTION`。
+- CEO hire action 自动创建所需角色员工。
+- hire 后 scheduler 能 lease 原 ready ticket。
+- 011 同类状态不再需要手工插入 `emp_backend_integration_011` / `emp_database_integration_011` / `emp_platform_integration_011` 才能推进。
+
+**不要在本轮做：**
+
+- 不把所有空转都解释成 staffing gap；只有 ready ticket 存在且 lease diagnostics 证明无 eligible worker 时才触发。
+- 不绕过 board-approved / provider routing / role profile 约束。
+- 不默认雇佣 platform SRE；011 实际需要的是 backend/database，platform 当时是保守人工补位。
+- 不改 Round 1-4 的 closeout、graph health、harness、产品行为修复逻辑。
 
 ---
 
@@ -511,13 +641,14 @@ py -3 -m pytest <本轮测试> -q
 
 ## 4. 最终整体验收
 
-四轮都完成后，至少要有这些证据：
+五轮都完成后，至少要有这些证据：
 
 1. Round 1 regression：missing BR004-BR007 时 fallback 创建 BR004，不 closeout。
 2. Round 2 regression：critical graph health 下 controller/scheduler 允许 wait；成功 retry+review 后 critical 清除或降级。
 3. Round 3 regression：011 缺 BR004-BR007 不能 full success；failed retry history 进入 audit。
 4. Round 4 behavior：terminal commands 真实查询/修改 SQLite。
-5. 可选 live clean run：
+5. Round 5 regression：ready ticket 无 eligible worker 时 controller 推荐 hire，CEO 自动雇佣后 scheduler 能 lease 原 ticket。
+6. 可选 live clean run：
 
 ```powershell
 cd D:\Projects\boardroom-os\backend
@@ -528,6 +659,7 @@ live clean run 成功时仍要人工核对：
 
 - BR004-BR007 或等价 followups 已 materialize。
 - closeout 在 checker handoff 之后。
+- staffing gap 如出现，应由 CEO `HIRE_EMPLOYEE` 自动修复，而不是人工插员工。
 - `run_report.json` 的 `success=true` 对应完整产品行为证据。
 - `audit-summary.md` 包含 failed retry history 与最终 completed evidence。
 
@@ -539,6 +671,7 @@ live clean run 成功时仍要人工核对：
 - 不要把 graph health historical failures 永久等同于当前 critical。
 - 不要把 failed retry history 从 audit 中删除。
 - 不要把 scenario artifact 的临时修补当成主线生成能力修复。
+- 不要把 ready ticket 无法 lease 的人工员工插入当成主线 staffing 修复。
 - 不要把 011 改成网站；本轮目标是 terminal/console。
 
 ## 6. 建议提交拆分
@@ -549,5 +682,6 @@ live clean run 成功时仍要人工核对：
 - `fix(graph): 恢复成功后降级持久失败区`
 - `test(live): 收紧011完整交付断言`
 - `fix(library): 接通终端命令与库存状态`
+- `fix(staffing): ready票据无可用员工时触发雇佣`
 
-不要把四轮混成一个提交。
+不要把五轮混成一个提交。
