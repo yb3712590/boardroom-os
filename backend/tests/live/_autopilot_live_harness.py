@@ -19,6 +19,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.main import create_app
 from app.scheduler_runner import run_scheduler_once
+from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
+from app.core.runtime_provider_config import resolve_provider_selection, resolve_runtime_provider_config
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
@@ -301,6 +303,24 @@ def _reasoning_effort_from_role_profile_ref(role_profile_ref: str) -> str:
     if role_profile_ref in {"architect_primary", "cto_primary"}:
         return "xhigh"
     return "high"
+
+
+def _reasoning_effort_from_runtime_provider_binding(created_spec: dict[str, Any]) -> str | None:
+    target_ref = resolve_execution_target_ref_from_ticket_spec(created_spec)
+    if target_ref is None:
+        return None
+    try:
+        config = resolve_runtime_provider_config()
+        selection = resolve_provider_selection(
+            config,
+            target_ref=target_ref,
+            employee_provider_id=None,
+        )
+    except Exception:
+        return None
+    if selection is None:
+        return None
+    return str(selection.effective_reasoning_effort or "").strip() or None
 
 
 def workflow_ticket_rows(repository, workflow_id: str) -> list[dict[str, Any]]:
@@ -867,7 +887,11 @@ def build_runtime_ticket_audit(repository, workflow_id: str) -> list[dict[str, A
             assumptions = {
                 "actual_provider_id": str(provider_snapshot.get("actual_provider_id") or ""),
                 "actual_model": str(provider_snapshot.get("actual_model") or ""),
-                "effective_reasoning_effort": _reasoning_effort_from_role_profile_ref(role_profile_ref),
+                "effective_reasoning_effort": str(
+                    provider_snapshot.get("effective_reasoning_effort")
+                    or _reasoning_effort_from_runtime_provider_binding(created_spec)
+                    or _reasoning_effort_from_role_profile_ref(role_profile_ref)
+                ),
             }
             if not assumptions["actual_provider_id"] or not assumptions["actual_model"]:
                 continue
@@ -1104,6 +1128,7 @@ def _provider_snapshot_from_audit_events(events: list[dict[str, Any]]) -> dict[s
         "preferred_provider_id": latest_payload.get("preferred_provider_id"),
         "actual_provider_id": latest_payload.get("actual_provider_id") or latest_payload.get("provider_id"),
         "actual_model": latest_payload.get("actual_model"),
+        "effective_reasoning_effort": latest_payload.get("effective_reasoning_effort"),
         "provider_failover_to": provider_failover_to,
         "provider_attempt_count": max(
             [int((event.get("payload") or {}).get("attempt_no") or 0) for event in events],

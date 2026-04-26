@@ -35,6 +35,22 @@ DEFAULT_REQUIRED_CAPABILITIES: tuple[str, ...] = (
     "terminal",
     "console",
 )
+DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES: tuple[str, ...] = (
+    "user roles",
+    "book management",
+    "reader management",
+    "circulation",
+    "renewal",
+    "reservation",
+    "fines",
+    "search",
+    "reports",
+    "notifications",
+    "auth rbac",
+    "sqlite",
+    "vue element plus",
+    "acceptance cases",
+)
 
 
 def _require_str(value: Any, *, field_name: str) -> str:
@@ -287,6 +303,13 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
         if reasoning_effort:
             expected_reasoning_by_role_profile_ref[role_profile_ref] = reasoning_effort
 
+    assertion_profile = _require_str(assertion_payload.get("profile"), field_name="assertions.profile")
+    required_capabilities = (
+        DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES
+        if assertion_profile == "library_management_prd"
+        else DEFAULT_REQUIRED_CAPABILITIES
+    )
+
     return LiveScenarioConfig(
         config_path=Path(config_path),
         scenario=LiveScenarioSection(
@@ -353,12 +376,12 @@ def load_live_scenario_config(config_path: Path) -> LiveScenarioConfig:
             ),
         ),
         assertions=LiveAssertionConfig(
-            profile=_require_str(assertion_payload.get("profile"), field_name="assertions.profile"),
+            profile=assertion_profile,
             expected_provider_id=provider_id,
             expected_model=preferred_model,
             architect_reasoning_effort="xhigh",
             default_reasoning_effort=str(provider_payload.get("reasoning_effort") or "high").strip() or "high",
-            required_capabilities=DEFAULT_REQUIRED_CAPABILITIES,
+            required_capabilities=required_capabilities,
             expected_models_by_role_profile_ref=expected_models_by_role_profile_ref,
             expected_reasoning_by_role_profile_ref=expected_reasoning_by_role_profile_ref,
         ),

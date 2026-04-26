@@ -202,6 +202,22 @@ closeout = "20-evidence/closeout/{ticket_id}/*"
     }
 
 
+def test_load_live_scenario_config_uses_prd_assertion_capabilities(tmp_path: Path) -> None:
+    from tests.live._config import DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES, load_live_scenario_config
+
+    config_path = _write_live_config(tmp_path)
+    config_body = config_path.read_text(encoding="utf-8").replace(
+        'profile = "minimalist_book_tracker"',
+        'profile = "library_management_prd"',
+    )
+    config_path.write_text(config_body, encoding="utf-8")
+
+    config = load_live_scenario_config(config_path)
+
+    assert config.assertions.profile == "library_management_prd"
+    assert config.assertions.required_capabilities == DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES
+
+
 def test_load_live_scenario_config_reports_missing_api_key_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -335,6 +351,52 @@ def test_minimalist_book_tracker_profile_rejects_missing_scope_capabilities() ->
     }
 
     with pytest.raises(AssertionError, match="CHECKED_OUT|remove|check out"):
+        assert_outcome(None, object(), "wf_library", common)
+
+
+def test_library_management_prd_profile_rejects_missing_prd_capabilities() -> None:
+    from tests.live._config import DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES, LiveAssertionConfig
+    from tests.live._scenario_profiles import build_assert_outcome
+
+    assert_outcome = build_assert_outcome(
+        LiveAssertionConfig(
+            profile="library_management_prd",
+            expected_provider_id="prov_openai_compat_truerealbill",
+            required_capabilities=DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES,
+        )
+    )
+
+    common = {
+        "employees": [{"role_type": "governance_architect"}],
+        "audits": [
+            {
+                "ticket_id": "tkt_arch",
+                "role_profile_ref": "architect_primary",
+                "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "xhigh",
+                },
+            },
+            {
+                "ticket_id": "tkt_impl",
+                "role_profile_ref": "frontend_engineer_primary",
+                "assumptions": {
+                    "actual_provider_id": "prov_openai_compat_truerealbill",
+                    "actual_model": "gpt-5.4",
+                    "effective_reasoning_effort": "high",
+                },
+            },
+        ],
+        "architect_ticket_ids": ["tkt_arch"],
+        "created_specs": {
+            "tkt_arch": {"output_schema_ref": "architecture_brief", "summary": "books only"},
+            "tkt_impl": {"output_schema_ref": "source_code_delivery", "summary": "books only"},
+        },
+        "terminals": {},
+    }
+
+    with pytest.raises(AssertionError, match="user roles|reader management|reservation"):
         assert_outcome(None, object(), "wf_library", common)
 
 

@@ -277,6 +277,7 @@ def _select_default_assignee(
     *,
     role_profile_ref: str,
     output_schema_ref: str,
+    require_role_profile: bool = False,
 ) -> str | None:
     execution_contract = infer_execution_contract_payload(
         role_profile_ref=role_profile_ref,
@@ -286,6 +287,8 @@ def _select_default_assignee(
         return None
     for employee in sorted(employees, key=lambda item: str(item.get("employee_id") or "")):
         if str(employee.get("state") or "") != "ACTIVE":
+            continue
+        if require_role_profile and role_profile_ref not in set(employee.get("role_profile_refs") or []):
             continue
         if not employee_supports_execution_contract(
             employee=employee,
@@ -309,6 +312,8 @@ def _resolve_target_role_profile(raw_ticket: dict[str, Any]) -> str:
 def _resolve_followup_output_schema_ref(role_profile_ref: str) -> str:
     if role_profile_ref == "architect_primary":
         return ARCHITECTURE_BRIEF_SCHEMA_REF
+    if role_profile_ref == "cto_primary":
+        return BACKLOG_RECOMMENDATION_SCHEMA_REF
     if role_profile_ref == "checker_primary":
         return DELIVERY_CHECK_REPORT_SCHEMA_REF
     return SOURCE_CODE_DELIVERY_SCHEMA_REF
@@ -630,6 +635,7 @@ def _build_followup_ticket_plans(
             employees,
             role_profile_ref=role_profile_ref,
             output_schema_ref=output_schema_ref,
+            require_role_profile=True,
         )
         dependency_ticket_keys = list(dependency_map.get(ticket_key) or [])
         dependency_gate_refs = [

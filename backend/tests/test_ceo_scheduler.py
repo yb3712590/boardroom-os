@@ -5884,6 +5884,65 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
     assert followup_run["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
+def test_ceo_shadow_snapshot_uses_existing_cto_for_backlog_governance_followup(client, monkeypatch):
+    workflow_id = _seed_workflow(client, "wf_backlog_cto_existing_staff", "Reuse existing CTO")
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=["现有 CTO 治理角色可承接 backlog fanout traceability。"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_cto_governance",
+        role_type="governance_cto",
+        role_profile_refs=["cto_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="cto_existing_staff",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_cto_existing_staff",
+        node_id="node_ceo_backlog_cto_existing_staff",
+        tickets=[
+            {
+                "ticket_id": "BR-GOV-001",
+                "name": "Governance fanout and traceability setup",
+                "priority": "P0",
+                "target_role": "cto",
+                "scope": ["Record PRD traceability and handoff IDs without implementation code."],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-GOV-001", "depends_on": [], "reason": "Governance traceability starts fanout."},
+        ],
+        recommended_sequence=[
+            "BR-GOV-001 Governance fanout and traceability setup",
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_cto_existing_staff",
+    )
+
+    assert snapshot["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert snapshot["capability_plan"]["staffing_gaps"] == []
+    followup_plan = snapshot["capability_plan"]["followup_ticket_plans"][0]
+    ticket_payload = followup_plan["ticket_payload"]
+    assert ticket_payload["role_profile_ref"] == "cto_primary"
+    assert ticket_payload["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+    assert ticket_payload["dispatch_intent"]["assignee_employee_id"] == "emp_cto_governance"
+
+
 def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing(
     client,
     monkeypatch,

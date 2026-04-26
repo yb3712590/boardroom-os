@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from tests.live._config import DEFAULT_REQUIRED_CAPABILITIES, LiveAssertionConfig
+from tests.live._config import (
+    DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES,
+    DEFAULT_REQUIRED_CAPABILITIES,
+    LiveAssertionConfig,
+)
 
 
 MINIMALIST_BOOK_TRACKER_GOAL = (
@@ -21,7 +25,7 @@ MINIMALIST_BOOK_TRACKER_CONSTRAINTS: tuple[str, ...] = (
     "前端采用深色、单色文本、高信息密度 terminal/console 风格，不要动画、阴影或圆角。",
     "交互只保留一个新增输入框和一个纯文本列表。",
 )
-_REQUIRED_LIBRARY_CAPABILITY_TERMS = {
+_MINIMALIST_LIBRARY_CAPABILITY_TERMS = {
     "books": ("books", "books table", "book tracker", "books terminal"),
     "title": ("title", "书名"),
     "author": ("author", "作者"),
@@ -33,6 +37,22 @@ _REQUIRED_LIBRARY_CAPABILITY_TERMS = {
     "remove": ("remove", "下架", "删除图书"),
     "terminal": ("terminal", "终端", "hacker-console"),
     "console": ("console", "控制台", "单色文本", "monochrome"),
+}
+_LIBRARY_MANAGEMENT_PRD_CAPABILITY_TERMS = {
+    "user roles": ("读者", "馆员", "系统管理员", "reader", "librarian", "admin"),
+    "book management": ("图书管理", "isbn", "编目", "馆藏", "book management", "catalog"),
+    "reader management": ("读者管理", "学工号", "本科生", "研究生", "教师", "reader management"),
+    "circulation": ("借书", "还书", "借阅", "归还", "circulation", "checkout", "return"),
+    "renewal": ("续借", "renewal", "renew"),
+    "reservation": ("预约", "reservation", "hold"),
+    "fines": ("罚款", "超期", "欠费", "fine", "overdue"),
+    "search": ("检索", "高级筛选", "分页", "search", "filter"),
+    "reports": ("统计", "报表", "借阅排行", "导出 csv", "reports", "analytics"),
+    "notifications": ("通知", "邮件", "还书提醒", "notification", "email"),
+    "auth rbac": ("jwt", "rbac", "权限", "认证", "auth"),
+    "sqlite": ("sqlite",),
+    "vue element plus": ("vue 3", "vue3", "element plus", "element-plus"),
+    "acceptance cases": ("ac-01", "ac-10", "验收用例", "并发借", "isbn 自动录入"),
 }
 
 
@@ -64,11 +84,15 @@ def _library_scope_corpus(common: dict[str, Any]) -> str:
     )
 
 
-def _missing_required_capabilities(common: dict[str, Any], required_capabilities: tuple[str, ...]) -> list[str]:
+def _missing_required_capabilities(
+    common: dict[str, Any],
+    required_capabilities: tuple[str, ...],
+    capability_terms: dict[str, tuple[str, ...]],
+) -> list[str]:
     corpus = f" {_library_scope_corpus(common)} "
     missing: list[str] = []
     for capability in required_capabilities:
-        terms = _REQUIRED_LIBRARY_CAPABILITY_TERMS.get(capability, (capability,))
+        terms = capability_terms.get(capability, (capability,))
         if not any(term.lower() in corpus for term in terms):
             missing.append(capability)
     return missing
@@ -99,6 +123,15 @@ def _find_backlog_handoff(common: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         handoff = payload.get("implementation_handoff") if isinstance(payload, dict) else None
         if isinstance(handoff, dict):
             return str(ticket_id), handoff
+        for artifact in list(payload.get("written_artifacts") or []) if isinstance(payload, dict) else []:
+            if not isinstance(artifact, dict):
+                continue
+            content_json = artifact.get("content_json")
+            if not isinstance(content_json, dict):
+                continue
+            handoff = content_json.get("implementation_handoff")
+            if isinstance(handoff, dict):
+                return str(ticket_id), handoff
     raise AssertionError("No backlog implementation_handoff evidence was recorded.")
 
 
@@ -130,6 +163,7 @@ def _materialized_followup_ticket_ids(
     *,
     backlog_ticket_id: str,
     required_followup_keys: list[str],
+    required_output_schema_ref: str | None = "source_code_delivery",
 ) -> dict[str, str]:
     created_specs = dict(common.get("created_specs") or {})
     ticket_statuses = _ticket_status_by_id(common)
@@ -137,7 +171,10 @@ def _materialized_followup_ticket_ids(
     for ticket_key in required_followup_keys:
         expected_node_id = _followup_node_id(ticket_key)
         for ticket_id, created_spec in created_specs.items():
-            if str(created_spec.get("output_schema_ref") or "").strip() != "source_code_delivery":
+            if (
+                required_output_schema_ref is not None
+                and str(created_spec.get("output_schema_ref") or "").strip() != required_output_schema_ref
+            ):
                 continue
             if str(ticket_statuses.get(str(ticket_id)) or "").strip() != "COMPLETED":
                 continue
@@ -194,6 +231,8 @@ def _assert_minimalist_book_tracker(
     common: dict[str, Any],
     *,
     config: LiveAssertionConfig,
+    capability_terms: dict[str, tuple[str, ...]] = _MINIMALIST_LIBRARY_CAPABILITY_TERMS,
+    require_source_delivery_followups: bool = True,
 ) -> dict[str, Any]:
     employees = list(common.get("employees") or [])
     if not any(str(item.get("role_type") or "") == "governance_architect" for item in employees):
@@ -242,7 +281,11 @@ def _assert_minimalist_book_tracker(
     if invalid_non_architect:
         raise AssertionError(f"Non-architect runtime audits deviated from expected provider/model profile: {invalid_non_architect}")
 
-    missing_capabilities = _missing_required_capabilities(common, config.required_capabilities)
+    missing_capabilities = _missing_required_capabilities(
+        common,
+        config.required_capabilities,
+        capability_terms,
+    )
     if missing_capabilities:
         raise AssertionError(f"Library delivery missed required capabilities: {missing_capabilities}")
 
@@ -254,6 +297,7 @@ def _assert_minimalist_book_tracker(
         common,
         backlog_ticket_id=backlog_ticket_id,
         required_followup_keys=required_followup_keys,
+        required_output_schema_ref=("source_code_delivery" if require_source_delivery_followups else None),
     )
     missing_followup_keys = [
         ticket_key
@@ -291,10 +335,21 @@ def build_assert_outcome(config: LiveAssertionConfig) -> Callable[[Any, Any, str
             common,
             config=config,
         )
+    if config.profile == "library_management_prd":
+        return lambda paths, repository, workflow_id, common: _assert_minimalist_book_tracker(
+            paths,
+            repository,
+            workflow_id,
+            common,
+            config=config,
+            capability_terms=_LIBRARY_MANAGEMENT_PRD_CAPABILITY_TERMS,
+            require_source_delivery_followups=False,
+        )
     raise ValueError(f"Unknown live assertion profile: {config.profile}")
 
 
 __all__ = [
+    "DEFAULT_LIBRARY_MANAGEMENT_PRD_CAPABILITIES",
     "DEFAULT_REQUIRED_CAPABILITIES",
     "MINIMALIST_BOOK_TRACKER_CONSTRAINTS",
     "MINIMALIST_BOOK_TRACKER_GOAL",

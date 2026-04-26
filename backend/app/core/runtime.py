@@ -2043,6 +2043,7 @@ def _provider_audit_payload_base(
         "node_id": str(ticket["node_id"]),
         "provider_id": selection.provider.provider_id,
         "actual_model": selection.actual_model or selection.provider.model,
+        "effective_reasoning_effort": selection.effective_reasoning_effort,
         "adapter_kind": selection.provider.adapter_kind,
         "provider_candidate_chain": list(candidate_chain),
         "attempt_no": attempt_no,

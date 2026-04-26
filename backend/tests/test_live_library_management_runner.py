@@ -4,9 +4,11 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import tests.live._autopilot_live_harness as live_harness
+import tests.live._scenario_profiles as scenario_profiles
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -646,6 +648,185 @@ def test_latest_provider_runtime_snapshot_uses_in_progress_provider_audit_events
             "failure_kind": None,
         }
     ]
+
+
+def test_runtime_ticket_audit_uses_reasoning_effort_from_provider_audit_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_ticket_rows",
+        lambda _repository, _workflow_id: [
+            {
+                "ticket_id": "tkt_checker_001",
+                "node_id": "node_check",
+                "status": "COMPLETED",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_created_specs",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_001": {
+                "role_profile_ref": "checker_primary",
+                "output_schema_ref": "maker_checker_verdict",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_terminal_events",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_001": {
+                "payload": {
+                    "review_status": "APPROVED",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_provider_audit_events",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_001": [
+                {
+                    "event_type": "PROVIDER_ATTEMPT_FINISHED",
+                    "payload": {
+                        "provider_id": "prov_primary",
+                        "actual_model": "gpt-5.5",
+                        "attempt_no": 1,
+                        "status": "COMPLETED",
+                        "effective_reasoning_effort": "xhigh",
+                    },
+                }
+            ]
+        },
+    )
+
+    audits = live_harness.build_runtime_ticket_audit(object(), "wf_live")
+
+    assert audits[0]["assumptions"]["effective_reasoning_effort"] == "xhigh"
+
+
+def test_runtime_ticket_audit_infers_reasoning_effort_from_runtime_binding_when_audit_is_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_ticket_rows",
+        lambda _repository, _workflow_id: [
+            {
+                "ticket_id": "tkt_checker_legacy",
+                "node_id": "node_check",
+                "status": "COMPLETED",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_created_specs",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_legacy": {
+                "role_profile_ref": "checker_primary",
+                "output_schema_ref": "maker_checker_verdict",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_terminal_events",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_legacy": {
+                "payload": {
+                    "review_status": "APPROVED",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        live_harness,
+        "workflow_provider_audit_events",
+        lambda _repository, _workflow_id: {
+            "tkt_checker_legacy": [
+                {
+                    "event_type": "PROVIDER_ATTEMPT_FINISHED",
+                    "payload": {
+                        "provider_id": "prov_primary",
+                        "actual_model": "gpt-5.5",
+                        "attempt_no": 1,
+                        "status": "COMPLETED",
+                    },
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(live_harness, "resolve_runtime_provider_config", lambda: object(), raising=False)
+    monkeypatch.setattr(
+        live_harness,
+        "resolve_provider_selection",
+        lambda _config, **_kwargs: SimpleNamespace(effective_reasoning_effort="xhigh"),
+        raising=False,
+    )
+
+    audits = live_harness.build_runtime_ticket_audit(object(), "wf_live")
+
+    assert audits[0]["assumptions"]["effective_reasoning_effort"] == "xhigh"
+
+
+def test_find_backlog_handoff_reads_written_artifact_content_json() -> None:
+    ticket_id, handoff = scenario_profiles._find_backlog_handoff(
+        {
+            "created_specs": {
+                "tkt_backlog": {
+                    "output_schema_ref": "backlog_recommendation",
+                }
+            },
+            "terminals": {
+                "tkt_backlog": {
+                    "payload": {
+                        "written_artifacts": [
+                            {
+                                "content_json": {
+                                    "implementation_handoff": {
+                                        "recommended_sequence": ["BR-001"],
+                                        "tickets": [{"ticket_id": "BR-001"}],
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+    )
+
+    assert ticket_id == "tkt_backlog"
+    assert handoff["recommended_sequence"] == ["BR-001"]
+
+
+def test_materialized_followups_can_accept_non_source_delivery_tickets_for_prd_profiles() -> None:
+    materialized = scenario_profiles._materialized_followup_ticket_ids(
+        {
+            "tickets": [
+                {
+                    "ticket_id": "tkt_gov",
+                    "status": "COMPLETED",
+                }
+            ],
+            "created_specs": {
+                "tkt_gov": {
+                    "node_id": "node_backlog_followup_br_gov_001",
+                    "output_schema_ref": "backlog_recommendation",
+                }
+            },
+        },
+        backlog_ticket_id="tkt_backlog",
+        required_followup_keys=["BR-GOV-001"],
+        required_output_schema_ref=None,
+    )
+
+    assert materialized == {"BR-GOV-001": "tkt_gov"}
 
 
 def test_write_audit_summary_renders_in_progress_provider_status(tmp_path: Path) -> None:
