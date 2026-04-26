@@ -27,7 +27,13 @@ from app.core.ceo_snapshot_contracts import (
     controller_state_view,
     replan_focus_view,
 )
-from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_TICKET_FAILED, EVENT_TICKET_TIMED_OUT
+from app.core.constants import (
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_GRAPH_PATCH_APPLIED,
+    EVENT_TICKET_COMPLETED,
+    EVENT_TICKET_FAILED,
+    EVENT_TICKET_TIMED_OUT,
+)
 from app.core.execution_targets import (
     employee_supports_execution_contract,
     infer_execution_contract_payload,
@@ -53,7 +59,7 @@ from app.core.runtime_node_views import (
 from app.core.runtime_node_lifecycle import (
     resolve_runtime_node_lifecycle,
 )
-from app.core.workflow_completion import ticket_has_delivery_mainline_evidence
+from app.core.workflow_completion import ticket_has_delivery_mainline_evidence, ticket_lineage_ticket_ids
 from app.core.workflow_progression import (
     build_project_init_kickoff_spec,
 )
@@ -88,6 +94,13 @@ class CEOProposalResult:
     policy_reason: str | None = None
     provider_response_id: str | None = None
     fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _CompletedTicketGateResult:
+    satisfies: bool
+    reason_code: str | None = None
+    details: dict[str, Any] | None = None
 
 
 PROVIDER_FAILOVER_FAILURE_KINDS = {"PROVIDER_RATE_LIMITED", "UPSTREAM_UNAVAILABLE"}
@@ -557,6 +570,7 @@ def _build_existing_backlog_followup_retry_action(
     node_id: str,
     ticket_key: str,
     existing_ticket_id: str,
+    completed_ticket_gate_rejection: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     current_ticket = repository.get_current_ticket_projection(existing_ticket_id, connection=connection)
     if current_ticket is None:
@@ -606,18 +620,21 @@ def _build_existing_backlog_followup_retry_action(
         ).model_dump(mode="json")
 
     if recommended_followup_action is not None:
+        error_details: dict[str, Any] = {
+            "source_ticket_id": existing_ticket_id,
+            "node_id": node_id,
+            "ticket_key": ticket_key,
+            "source_ticket_status": source_ticket_status,
+            "failure_kind": failure_kind,
+            "recommended_followup_action": recommended_followup_action,
+        }
+        if completed_ticket_gate_rejection is not None:
+            error_details["completed_ticket_gate_rejection"] = dict(completed_ticket_gate_rejection)
         _raise_proposal_contract_error(
             source_component="deterministic_fallback.backlog_followup",
             reason_code="restore_needed",
             message="Existing backlog follow-up ticket needs restore/retry recovery instead of a new fallback ticket.",
-            details={
-                "source_ticket_id": existing_ticket_id,
-                "node_id": node_id,
-                "ticket_key": ticket_key,
-                "source_ticket_status": source_ticket_status,
-                "failure_kind": failure_kind,
-                "recommended_followup_action": recommended_followup_action,
-            },
+            details=error_details,
         )
 
     return None
@@ -644,14 +661,328 @@ def _latest_completed_ticket_id_for_node(
     return None if row is None else str(row["ticket_id"])
 
 
+def _completed_ticket_gate_failure(
+    *,
+    reason_code: str,
+    completed_ticket_id: str,
+    terminal_failed_ticket_id: str,
+    node_id: str,
+    **extra_details: Any,
+) -> _CompletedTicketGateResult:
+    details = {
+        "completed_ticket_id": completed_ticket_id,
+        "terminal_failed_ticket_id": terminal_failed_ticket_id,
+        "node_id": node_id,
+        "reason_code": reason_code,
+    }
+    details.update(extra_details)
+    return _CompletedTicketGateResult(
+        satisfies=False,
+        reason_code=reason_code,
+        details=details,
+    )
+
+
+def _terminal_payload_delivery_evidence_refs(payload: dict[str, Any]) -> list[str]:
+    refs = _normalize_dependency_gate_refs(payload.get("artifact_refs"))
+    for ref in _normalize_dependency_gate_refs(payload.get("verification_evidence_refs")):
+        if ref not in refs:
+            refs.append(ref)
+    for written_artifact in list(payload.get("written_artifacts") or []):
+        if not isinstance(written_artifact, dict):
+            continue
+        artifact_ref = str(written_artifact.get("artifact_ref") or "").strip()
+        if artifact_ref and artifact_ref not in refs:
+            refs.append(artifact_ref)
+    return refs
+
+
+def _inactive_materialized_artifact_refs(connection, artifact_refs: list[str]) -> list[str]:
+    if not artifact_refs:
+        return []
+    placeholders = ", ".join("?" for _ in artifact_refs)
+    rows = connection.execute(
+        f"""
+        SELECT artifact_ref, lifecycle_status, materialization_status
+        FROM artifact_index
+        WHERE artifact_ref IN ({placeholders})
+        """,
+        tuple(artifact_refs),
+    ).fetchall()
+    invalid_refs: list[str] = []
+    for row in rows:
+        if str(row["lifecycle_status"] or "") != "ACTIVE" or str(row["materialization_status"] or "") != "MATERIALIZED":
+            invalid_refs.append(str(row["artifact_ref"]))
+    return invalid_refs
+
+
+def _created_specs_for_ticket_lineage(
+    repository: ControlPlaneRepository,
+    connection,
+    ticket_id: str,
+) -> dict[str, dict[str, Any]]:
+    created_specs_by_ticket: dict[str, dict[str, Any]] = {}
+    current_ticket_id = str(ticket_id or "").strip()
+    seen_ticket_ids: set[str] = set()
+    while current_ticket_id and current_ticket_id not in seen_ticket_ids:
+        seen_ticket_ids.add(current_ticket_id)
+        created_spec = repository.get_latest_ticket_created_payload(connection, current_ticket_id)
+        if not isinstance(created_spec, dict):
+            break
+        created_specs_by_ticket[current_ticket_id] = created_spec
+        current_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
+    return created_specs_by_ticket
+
+
+def _ticket_payload_explicitly_supersedes_completed_ticket(
+    payload: dict[str, Any],
+    completed_ticket_id: str,
+) -> bool:
+    scalar_fields = {
+        "replaces_ticket_id",
+        "replacement_of_ticket_id",
+        "supersedes_ticket_id",
+        "superseded_ticket_id",
+        "invalidates_ticket_id",
+    }
+    list_fields = {
+        "replaces_ticket_ids",
+        "replacement_of_ticket_ids",
+        "supersedes_ticket_ids",
+        "superseded_ticket_ids",
+        "invalidates_ticket_ids",
+        "invalidated_ticket_ids",
+    }
+    for field_name in scalar_fields:
+        if str(payload.get(field_name) or "").strip() == completed_ticket_id:
+            return True
+    for field_name in list_fields:
+        if completed_ticket_id in _normalize_dependency_gate_refs(payload.get(field_name)):
+            return True
+    for replacement in list(payload.get("replacements") or []):
+        if not isinstance(replacement, dict):
+            continue
+        old_ticket_id = str(
+            replacement.get("old_ticket_id")
+            or replacement.get("source_ticket_id")
+            or replacement.get("replaced_ticket_id")
+            or replacement.get("superseded_ticket_id")
+            or ""
+        ).strip()
+        if old_ticket_id == completed_ticket_id:
+            return True
+    return False
+
+
+def _graph_patch_supersedes_completed_ticket(
+    connection,
+    *,
+    workflow_id: str,
+    completed_created_spec: dict[str, Any],
+    failed_created_spec: dict[str, Any],
+) -> bool:
+    completed_node_id = str(completed_created_spec.get("node_id") or "").strip()
+    failed_node_id = str(failed_created_spec.get("node_id") or "").strip()
+    if not completed_node_id or not failed_node_id or completed_node_id == failed_node_id:
+        return False
+    rows = connection.execute(
+        """
+        SELECT payload_json
+        FROM events
+        WHERE workflow_id = ?
+          AND event_type = ?
+        ORDER BY sequence_no ASC
+        """,
+        (workflow_id, EVENT_GRAPH_PATCH_APPLIED),
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            continue
+        for replacement in list(payload.get("replacements") or []):
+            if not isinstance(replacement, dict):
+                continue
+            if (
+                str(replacement.get("old_node_id") or "").strip() == completed_node_id
+                and str(replacement.get("new_node_id") or "").strip() == failed_node_id
+            ):
+                return True
+    return False
+
+
+def _evaluate_completed_ticket_followup_dependency_gate(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    node_id: str,
+    completed_ticket_id: str,
+    planned_output_schema_ref: str,
+    terminal_failed_ticket_id: str,
+) -> _CompletedTicketGateResult:
+    normalized_workflow_id = str(workflow_id or "").strip()
+    normalized_node_id = str(node_id or "").strip()
+    normalized_completed_ticket_id = str(completed_ticket_id or "").strip()
+    normalized_failed_ticket_id = str(terminal_failed_ticket_id or "").strip()
+    completed_ticket = repository.get_current_ticket_projection(normalized_completed_ticket_id, connection=connection)
+    if completed_ticket is None:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_missing",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+        )
+    if str(completed_ticket.get("status") or "").strip() != "COMPLETED":
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_not_completed",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+            completed_ticket_status=str(completed_ticket.get("status") or "").strip(),
+        )
+    if str(completed_ticket.get("workflow_id") or "").strip() != normalized_workflow_id:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_workflow_mismatch",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+            completed_ticket_workflow_id=str(completed_ticket.get("workflow_id") or "").strip(),
+        )
+    if str(completed_ticket.get("node_id") or "").strip() != normalized_node_id:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_node_mismatch",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+            completed_ticket_node_id=str(completed_ticket.get("node_id") or "").strip(),
+        )
+
+    completed_created_spec = repository.get_latest_ticket_created_payload(connection, normalized_completed_ticket_id)
+    if not isinstance(completed_created_spec, dict):
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_created_spec_missing",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+        )
+    completed_output_schema_ref = str(completed_created_spec.get("output_schema_ref") or "").strip()
+    if completed_output_schema_ref != str(planned_output_schema_ref or "").strip():
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_schema_mismatch",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+            completed_output_schema_ref=completed_output_schema_ref,
+            planned_output_schema_ref=str(planned_output_schema_ref or "").strip(),
+        )
+
+    terminal_event = repository.get_latest_ticket_terminal_event(connection, normalized_completed_ticket_id)
+    if not isinstance(terminal_event, dict) or str(terminal_event.get("event_type") or "").strip() != EVENT_TICKET_COMPLETED:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_missing_terminal_event",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+        )
+    terminal_payload = terminal_event.get("payload") or {}
+    if not isinstance(terminal_payload, dict):
+        terminal_payload = {}
+    evidence_refs = _terminal_payload_delivery_evidence_refs(terminal_payload)
+    if not evidence_refs:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_missing_delivery_evidence",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+        )
+    invalid_artifact_refs = _inactive_materialized_artifact_refs(connection, evidence_refs)
+    if invalid_artifact_refs:
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_artifact_invalid",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+            invalid_artifact_refs=invalid_artifact_refs,
+        )
+
+    failed_created_spec = repository.get_latest_ticket_created_payload(connection, normalized_failed_ticket_id)
+    failed_created_spec = failed_created_spec if isinstance(failed_created_spec, dict) else {}
+    if failed_created_spec:
+        lineage_specs = _created_specs_for_ticket_lineage(repository, connection, normalized_failed_ticket_id)
+        failed_lineage_ticket_ids = ticket_lineage_ticket_ids(normalized_failed_ticket_id, lineage_specs)
+        if normalized_completed_ticket_id in failed_lineage_ticket_ids[1:]:
+            return _completed_ticket_gate_failure(
+                reason_code="completed_ticket_lineage_invalidated",
+                completed_ticket_id=normalized_completed_ticket_id,
+                terminal_failed_ticket_id=normalized_failed_ticket_id,
+                node_id=normalized_node_id,
+            )
+        if _ticket_payload_explicitly_supersedes_completed_ticket(failed_created_spec, normalized_completed_ticket_id):
+            return _completed_ticket_gate_failure(
+                reason_code="completed_ticket_superseded",
+                completed_ticket_id=normalized_completed_ticket_id,
+                terminal_failed_ticket_id=normalized_failed_ticket_id,
+                node_id=normalized_node_id,
+            )
+        if _graph_patch_supersedes_completed_ticket(
+            connection,
+            workflow_id=normalized_workflow_id,
+            completed_created_spec=completed_created_spec,
+            failed_created_spec=failed_created_spec,
+        ):
+            return _completed_ticket_gate_failure(
+                reason_code="completed_ticket_superseded",
+                completed_ticket_id=normalized_completed_ticket_id,
+                terminal_failed_ticket_id=normalized_failed_ticket_id,
+                node_id=normalized_node_id,
+            )
+    failed_terminal_event = repository.get_latest_ticket_terminal_event(connection, normalized_failed_ticket_id)
+    failed_terminal_payload = (failed_terminal_event or {}).get("payload") if isinstance(failed_terminal_event, dict) else {}
+    if isinstance(failed_terminal_payload, dict) and _ticket_payload_explicitly_supersedes_completed_ticket(
+        failed_terminal_payload,
+        normalized_completed_ticket_id,
+    ):
+        return _completed_ticket_gate_failure(
+            reason_code="completed_ticket_superseded",
+            completed_ticket_id=normalized_completed_ticket_id,
+            terminal_failed_ticket_id=normalized_failed_ticket_id,
+            node_id=normalized_node_id,
+        )
+
+    return _CompletedTicketGateResult(satisfies=True)
+
+
+def _completed_ticket_satisfies_followup_dependency_gate(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    workflow_id: str,
+    node_id: str,
+    completed_ticket_id: str,
+    planned_output_schema_ref: str,
+    terminal_failed_ticket_id: str,
+) -> bool:
+    return _evaluate_completed_ticket_followup_dependency_gate(
+        repository,
+        connection,
+        workflow_id=workflow_id,
+        node_id=node_id,
+        completed_ticket_id=completed_ticket_id,
+        planned_output_schema_ref=planned_output_schema_ref,
+        terminal_failed_ticket_id=terminal_failed_ticket_id,
+    ).satisfies
+
+
 def _prefer_completed_ticket_when_existing_terminal_failed(
     repository: ControlPlaneRepository,
     *,
     connection,
     workflow_id: str,
     existing_ticket_ids_by_node_id: dict[str, str],
-) -> dict[str, str]:
+    planned_output_schema_refs_by_node_id: dict[str, str],
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     resolved: dict[str, str] = {}
+    completed_ticket_rejection_details_by_node_id: dict[str, dict[str, Any]] = {}
     for node_id, existing_ticket_id in existing_ticket_ids_by_node_id.items():
         current_ticket = repository.get_current_ticket_projection(existing_ticket_id, connection=connection)
         if current_ticket is None:
@@ -665,8 +996,27 @@ def _prefer_completed_ticket_when_existing_terminal_failed(
             workflow_id=workflow_id,
             node_id=node_id,
         )
-        resolved[node_id] = completed_ticket_id or existing_ticket_id
-    return resolved
+        if not completed_ticket_id:
+            resolved[node_id] = existing_ticket_id
+            continue
+        gate_result = _evaluate_completed_ticket_followup_dependency_gate(
+            repository,
+            connection,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            completed_ticket_id=completed_ticket_id,
+            planned_output_schema_ref=planned_output_schema_refs_by_node_id.get(node_id, ""),
+            terminal_failed_ticket_id=existing_ticket_id,
+        )
+        if gate_result.satisfies:
+            resolved[node_id] = completed_ticket_id
+        else:
+            resolved[node_id] = existing_ticket_id
+            if gate_result.details is not None:
+                completed_ticket_rejection_details_by_node_id[node_id] = dict(gate_result.details)
+    return resolved, completed_ticket_rejection_details_by_node_id
+
+
 
 
 def _build_backlog_followup_batch(
@@ -695,6 +1045,13 @@ def _build_backlog_followup_batch(
         if str(((plan.get("ticket_payload") or {}).get("node_id") or "")).strip()
         and str(plan.get("existing_ticket_id") or "").strip()
     }
+    planned_output_schema_refs_by_node_id = {
+        str(((plan.get("ticket_payload") or {}).get("node_id") or "")).strip(): str(
+            ((plan.get("ticket_payload") or {}).get("output_schema_ref") or "")
+        ).strip()
+        for plan in followup_ticket_plans
+        if str(((plan.get("ticket_payload") or {}).get("node_id") or "")).strip()
+    }
     existing_node_ids = set(existing_ticket_ids_by_node_id)
     planned_ticket_keys = {
         str(plan.get("ticket_key") or "").strip()
@@ -703,11 +1060,15 @@ def _build_backlog_followup_batch(
     }
 
     with repository.connection() as connection:
-        existing_ticket_ids_by_node_id = _prefer_completed_ticket_when_existing_terminal_failed(
+        (
+            existing_ticket_ids_by_node_id,
+            completed_ticket_rejection_details_by_node_id,
+        ) = _prefer_completed_ticket_when_existing_terminal_failed(
             repository,
             connection=connection,
             workflow_id=workflow_id,
             existing_ticket_ids_by_node_id=existing_ticket_ids_by_node_id,
+            planned_output_schema_refs_by_node_id=planned_output_schema_refs_by_node_id,
         )
         for index, followup_plan in enumerate(followup_ticket_plans):
             if not isinstance(followup_plan, dict):
@@ -748,6 +1109,7 @@ def _build_backlog_followup_batch(
                     node_id=node_id,
                     ticket_key=ticket_key,
                     existing_ticket_id=existing_ticket_id,
+                    completed_ticket_gate_rejection=completed_ticket_rejection_details_by_node_id.get(node_id),
                 )
                 if retry_action is not None:
                     retry_actions.append(retry_action)

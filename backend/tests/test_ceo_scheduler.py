@@ -427,6 +427,7 @@ def _ticket_create_payload(
     workflow_id: str,
     ticket_id: str,
     node_id: str,
+    parent_ticket_id: str | None = None,
     retry_budget: int = 0,
     role_profile_ref: str = "frontend_engineer_primary",
     output_schema_ref: str = "ui_milestone_review",
@@ -435,7 +436,7 @@ def _ticket_create_payload(
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
-        "parent_ticket_id": None,
+        "parent_ticket_id": parent_ticket_id,
         "attempt_no": 1,
         "role_profile_ref": role_profile_ref,
         "constraints_ref": "global_constraints_v3",
@@ -537,6 +538,8 @@ def _seed_failed_ticket_projection_for_existing_node(
     workflow_id: str,
     ticket_id: str,
     node_id: str,
+    parent_ticket_id: str | None = None,
+    failure_kind: str = "WORKSPACE_HOOK_VALIDATION_ERROR",
     updated_at: str = "2026-04-25T10:45:00+08:00",
 ) -> None:
     repository = client.app.state.repository
@@ -544,6 +547,7 @@ def _seed_failed_ticket_projection_for_existing_node(
         workflow_id=workflow_id,
         ticket_id=ticket_id,
         node_id=node_id,
+        parent_ticket_id=parent_ticket_id,
         retry_budget=0,
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="source_code_delivery",
@@ -573,7 +577,7 @@ def _seed_failed_ticket_projection_for_existing_node(
             """,
             (
                 "FAILED",
-                "WORKSPACE_HOOK_VALIDATION_ERROR",
+                failure_kind,
                 "Synthetic failed retry after a completed attempt.",
                 updated_at,
                 ticket_id,
@@ -5088,6 +5092,197 @@ def test_backlog_followup_batch_uses_completed_attempt_when_latest_existing_tick
     action = batch.model_dump(mode="json")["actions"][0]
     assert action["action_type"] == "CREATE_TICKET"
     assert action["payload"]["node_id"] == "node_backlog_followup_br_next"
+    assert action["payload"]["dispatch_intent"]["dependency_gate_refs"] == ["tkt_followup_completed_attempt"]
+
+
+def test_backlog_followup_completed_attempt_superseded_by_failed_replacement_does_not_open_downstream(
+    client,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_completed_superseded_by_failed_replacement",
+        "Backlog follow-up should not reuse a completed attempt superseded by a failed replacement.",
+    )
+    node_id = "node_backlog_followup_br_superseded"
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_completed_attempt",
+        node_id=node_id,
+    )
+    _seed_failed_ticket_projection_for_existing_node(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_failed_replacement",
+        node_id=node_id,
+        parent_ticket_id="tkt_followup_completed_attempt",
+        failure_kind="WORKSPACE_HOOK_VALIDATION_ERROR",
+    )
+
+    from app.core import ceo_proposer
+
+    with pytest.raises(ceo_proposer.CEOProposalContractError) as exc_info:
+        ceo_proposer._build_backlog_followup_batch(
+            client.app.state.repository,
+            {
+                "workflow": {"workflow_id": workflow_id},
+                "replan_focus": {
+                    "capability_plan": {
+                        "followup_ticket_plans": [
+                            {
+                                "ticket_key": "BR-SUPERSEDED",
+                                "existing_ticket_id": "tkt_followup_failed_replacement",
+                                "blocked_by_plan_keys": [],
+                                "ticket_payload": {
+                                    "workflow_id": workflow_id,
+                                    "node_id": node_id,
+                                    "role_profile_ref": "frontend_engineer_primary",
+                                    "output_schema_ref": "source_code_delivery",
+                                    "execution_contract": infer_execution_contract_payload(
+                                        role_profile_ref="frontend_engineer_primary",
+                                        output_schema_ref="source_code_delivery",
+                                    ),
+                                    "dispatch_intent": {
+                                        "assignee_employee_id": "emp_frontend_2",
+                                        "selection_reason": "Translate the approved backlog item into implementation work.",
+                                        "dependency_gate_refs": [],
+                                    },
+                                    "summary": "BR-SUPERSEDED completed backlog follow-up.",
+                                    "parent_ticket_id": "tkt_backlog_parent_superseded",
+                                },
+                            },
+                            {
+                                "ticket_key": "BR-NEXT",
+                                "existing_ticket_id": None,
+                                "blocked_by_plan_keys": ["BR-SUPERSEDED"],
+                                "ticket_payload": {
+                                    "workflow_id": workflow_id,
+                                    "node_id": "node_backlog_followup_br_next_after_superseded",
+                                    "role_profile_ref": "frontend_engineer_primary",
+                                    "output_schema_ref": "source_code_delivery",
+                                    "execution_contract": infer_execution_contract_payload(
+                                        role_profile_ref="frontend_engineer_primary",
+                                        output_schema_ref="source_code_delivery",
+                                    ),
+                                    "dispatch_intent": {
+                                        "assignee_employee_id": "emp_frontend_2",
+                                        "selection_reason": "Translate the approved backlog item into implementation work.",
+                                        "dependency_gate_refs": [],
+                                    },
+                                    "summary": "BR-NEXT dependent backlog follow-up.",
+                                    "parent_ticket_id": "tkt_backlog_parent_superseded",
+                                },
+                            },
+                        ]
+                    }
+                },
+            },
+            "Continue the approved backlog fanout.",
+        )
+
+    error = exc_info.value
+    assert error.source_component == "deterministic_fallback.backlog_followup"
+    assert error.reason_code == "restore_needed"
+    assert error.details["source_ticket_id"] == "tkt_followup_failed_replacement"
+    rejection = error.details["completed_ticket_gate_rejection"]
+    assert rejection["completed_ticket_id"] == "tkt_followup_completed_attempt"
+    assert rejection["terminal_failed_ticket_id"] == "tkt_followup_failed_replacement"
+    assert rejection["node_id"] == node_id
+    assert rejection["reason_code"] in {
+        "completed_ticket_lineage_invalidated",
+        "completed_ticket_superseded",
+    }
+
+
+def test_backlog_followup_completed_attempt_still_satisfies_gate_when_failed_retry_is_unrelated(
+    client,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_completed_unrelated_failed_retry",
+        "Backlog follow-up should reuse completed attempt when failed retry is unrelated noise.",
+    )
+    node_id = "node_backlog_followup_br_unrelated_failed_retry"
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_completed_attempt",
+        node_id=node_id,
+    )
+    _seed_failed_ticket_projection_for_existing_node(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_failed_retry",
+        node_id=node_id,
+        failure_kind="PROVIDER_MALFORMED_JSON",
+    )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_backlog_followup_batch(
+        client.app.state.repository,
+        {
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-UNRELATED-FAILED-RETRY",
+                            "existing_ticket_id": "tkt_followup_failed_retry",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": node_id,
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-DONE-THEN-NOISY-FAILED completed backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent_unrelated_failed_retry",
+                            },
+                        },
+                        {
+                            "ticket_key": "BR-NEXT",
+                            "existing_ticket_id": None,
+                            "blocked_by_plan_keys": ["BR-UNRELATED-FAILED-RETRY"],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_next_after_unrelated_failed_retry",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-NEXT dependent backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent_unrelated_failed_retry",
+                            },
+                        },
+                    ]
+                }
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    assert batch is not None
+    action = batch.model_dump(mode="json")["actions"][0]
+    assert action["action_type"] == "CREATE_TICKET"
+    assert action["payload"]["node_id"] == "node_backlog_followup_br_next_after_unrelated_failed_retry"
     assert action["payload"]["dispatch_intent"]["dependency_gate_refs"] == ["tkt_followup_completed_attempt"]
 
 

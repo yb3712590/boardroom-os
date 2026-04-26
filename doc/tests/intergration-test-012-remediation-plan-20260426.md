@@ -68,7 +68,7 @@
 
 ### 1.2 建议保留但必须继续整改的修改
 
-- [ ] `backend/app/core/ceo_proposer.py`：latest existing ticket 失败时使用同 node completed ticket 满足依赖 gate。
+- [x] `backend/app/core/ceo_proposer.py`：latest existing ticket 失败时使用同 node completed ticket 满足依赖 gate。
   - 风险：当前 node-only 兜底可能让旧 completed ticket 掩盖后续失败证明出的失效、replacement 或 superseded 状态。
   - 整改方向：引入 completed ticket 可用性判断，至少检查 schema、terminal evidence、lineage、replacement / supersession、artifact validity。
 
@@ -121,7 +121,7 @@
 
 **实施清单：**
 
-- [ ] 新增 helper：`_completed_ticket_satisfies_followup_dependency_gate()`
+- [x] 新增 helper：`_completed_ticket_satisfies_followup_dependency_gate()`
   - 位置：`backend/app/core/ceo_proposer.py`
   - 输入：`repository`, `connection`, `workflow_id`, `node_id`, `completed_ticket_id`, `planned_output_schema_ref`, `terminal_failed_ticket_id`
   - 返回：`bool`
@@ -133,11 +133,11 @@
     - completed ticket 有 terminal event，且 terminal payload 至少包含 `artifact_refs`、`verification_evidence_refs` 或可识别的 delivery evidence
     - terminal failed ticket 没有通过 parent lineage、replacement、graph patch 或 created spec 明确声明该 completed ticket 已被替代
 
-- [ ] 将 `_prefer_completed_ticket_when_existing_terminal_failed()` 改成只返回满足 helper 的 completed ticket。
+- [x] 将 `_prefer_completed_ticket_when_existing_terminal_failed()` 改成只返回满足 helper 的 completed ticket。
   - 不满足时保留原 failed ticket id，让后续 retry / restore-needed 路径处理。
   - 不允许只靠 `workflow_id + node_id + latest COMPLETED` 判定可用。
 
-- [ ] 新增 failing test：`test_backlog_followup_completed_attempt_superseded_by_failed_replacement_does_not_open_downstream`
+- [x] 新增 failing test：`test_backlog_followup_completed_attempt_superseded_by_failed_replacement_does_not_open_downstream`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：
     - 同一 workflow / node 先有 `tkt_followup_completed_attempt` completed。
@@ -148,7 +148,7 @@
     - 结果应是 retry action 或 structured restore-needed error。
     - `dependency_gate_refs` 不得指向被 superseded 的 completed attempt。
 
-- [ ] 新增 passing regression：`test_backlog_followup_completed_attempt_still_satisfies_gate_when_failed_retry_is_unrelated`
+- [x] 新增 passing regression：`test_backlog_followup_completed_attempt_still_satisfies_gate_when_failed_retry_is_unrelated`
   - 位置：`backend/tests/test_ceo_scheduler.py`
   - 场景：
     - completed ticket 有有效 source delivery evidence。
@@ -157,7 +157,7 @@
     - 下游 ticket 可创建。
     - `dependency_gate_refs == ["tkt_followup_completed_attempt"]`。
 
-- [ ] 把 helper 的失效原因记录到 deterministic fallback error details。
+- [x] 把 helper 的失效原因记录到 deterministic fallback error details。
   - 当 helper 拒绝 completed ticket 时，details 至少包含：
     - `completed_ticket_id`
     - `terminal_failed_ticket_id`
@@ -674,7 +674,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 
 六轮都完成后，至少要有这些证据：
 
-- [ ] Round 1 regression：completed ticket 兜底只有在 lineage / supersession / evidence 有效时开放下游。
+- [x] Round 1 regression：completed ticket 兜底只有在 lineage / supersession / evidence 有效时开放下游。
 - [ ] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
 - [ ] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
 - [ ] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。

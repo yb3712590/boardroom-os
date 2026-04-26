@@ -34,7 +34,7 @@ class WorkflowCloseoutCompletion:
     closeout_terminal_event: dict[str, Any]
 
 
-def _ticket_lineage_ticket_ids(
+def ticket_lineage_ticket_ids(
     ticket_id: str,
     created_specs_by_ticket: dict[str, dict[str, Any]],
 ) -> list[str]:
@@ -47,6 +47,13 @@ def _ticket_lineage_ticket_ids(
         created_spec = created_specs_by_ticket.get(current_ticket_id) or {}
         current_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
     return lineage_ticket_ids
+
+
+def _ticket_lineage_ticket_ids(
+    ticket_id: str,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+) -> list[str]:
+    return ticket_lineage_ticket_ids(ticket_id, created_specs_by_ticket)
 
 
 def _is_redundant_active_closeout_ticket(
