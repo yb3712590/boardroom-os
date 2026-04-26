@@ -1434,26 +1434,115 @@ def _validate_structured_document_delivery_hooks(
     return None
 
 
+_CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS = {
+    "source_delivery_source_file_refs",
+    "source_delivery_verification_evidence_refs",
+    "maker_checker_verdict_artifact_refs",
+    "delivery_check_report_artifact_refs",
+    "closeout_package_artifact_refs",
+}
+
+
+def _is_delivery_evidence_artifact_ref(artifact_ref: str, *, source_context: str) -> bool:
+    normalized_artifact_ref = str(artifact_ref).strip()
+    if not normalized_artifact_ref:
+        return False
+    return str(source_context).strip() in _CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS
+
+
+def _add_closeout_delivery_evidence_refs(
+    known_artifact_refs: set[str],
+    values: list[Any],
+    *,
+    source_context: str,
+) -> None:
+    for artifact_ref in values:
+        normalized_artifact_ref = str(artifact_ref).strip()
+        if _is_delivery_evidence_artifact_ref(
+            normalized_artifact_ref,
+            source_context=source_context,
+        ):
+            known_artifact_refs.add(normalized_artifact_ref)
+
+
+def _add_source_delivery_evidence_refs_from_terminal_payload(
+    known_artifact_refs: set[str],
+    terminal_payload: dict[str, Any],
+) -> None:
+    result_payload = terminal_payload.get("payload")
+    if isinstance(result_payload, dict):
+        _add_closeout_delivery_evidence_refs(
+            known_artifact_refs,
+            list(result_payload.get("source_file_refs") or []),
+            source_context="source_delivery_source_file_refs",
+        )
+        _add_closeout_delivery_evidence_refs(
+            known_artifact_refs,
+            list(result_payload.get("verification_evidence_refs") or []),
+            source_context="source_delivery_verification_evidence_refs",
+        )
+    _add_closeout_delivery_evidence_refs(
+        known_artifact_refs,
+        list(terminal_payload.get("verification_evidence_refs") or []),
+        source_context="source_delivery_verification_evidence_refs",
+    )
+    for produced_asset in list(terminal_payload.get("produced_process_assets") or []):
+        if not isinstance(produced_asset, dict):
+            continue
+        if str(produced_asset.get("process_asset_kind") or "").strip() != "SOURCE_CODE_DELIVERY":
+            continue
+        source_metadata = produced_asset.get("source_metadata")
+        if not isinstance(source_metadata, dict):
+            continue
+        _add_closeout_delivery_evidence_refs(
+            known_artifact_refs,
+            list(source_metadata.get("source_file_refs") or []),
+            source_context="source_delivery_source_file_refs",
+        )
+        _add_closeout_delivery_evidence_refs(
+            known_artifact_refs,
+            list(source_metadata.get("verification_evidence_refs") or []),
+            source_context="source_delivery_verification_evidence_refs",
+        )
+
+
 def _closeout_known_final_artifact_refs(
     repository: ControlPlaneRepository,
     *,
     created_spec: dict[str, Any],
+    closeout_artifact_refs: list[str] | None = None,
 ) -> set[str]:
-    known_artifact_refs = {
-        str(item).strip()
-        for item in list(created_spec.get("input_artifact_refs") or [])
-        if str(item).strip()
-    }
+    known_artifact_refs: set[str] = set()
+    _add_closeout_delivery_evidence_refs(
+        known_artifact_refs,
+        list(closeout_artifact_refs or []),
+        source_context="closeout_package_artifact_refs",
+    )
     with repository.connection() as connection:
         parent_ticket_id = str(created_spec.get("parent_ticket_id") or "").strip()
         if parent_ticket_id:
             parent_terminal_event = repository.get_latest_ticket_terminal_event(connection, parent_ticket_id)
             parent_terminal_payload = parent_terminal_event.get("payload") if parent_terminal_event is not None else {}
             if isinstance(parent_terminal_payload, dict):
-                for artifact_ref in list(parent_terminal_payload.get("artifact_refs") or []):
-                    normalized_artifact_ref = str(artifact_ref).strip()
-                    if normalized_artifact_ref:
-                        known_artifact_refs.add(normalized_artifact_ref)
+                parent_created_spec = repository.get_latest_ticket_created_payload(connection, parent_ticket_id) or {}
+                parent_output_schema_ref = str(parent_created_spec.get("output_schema_ref") or "").strip()
+                if parent_output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+                    _add_source_delivery_evidence_refs_from_terminal_payload(
+                        known_artifact_refs,
+                        parent_terminal_payload,
+                    )
+                elif parent_output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+                    _add_closeout_delivery_evidence_refs(
+                        known_artifact_refs,
+                        list(parent_terminal_payload.get("artifact_refs") or []),
+                        source_context="maker_checker_verdict_artifact_refs",
+                    )
+                elif parent_output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+                    _add_closeout_delivery_evidence_refs(
+                        known_artifact_refs,
+                        list(parent_terminal_payload.get("artifact_refs") or []),
+                        source_context="delivery_check_report_artifact_refs",
+                    )
         for process_asset_ref in list(created_spec.get("input_process_asset_refs") or []):
             try:
                 kind, ticket_id = parse_process_asset_ref(str(process_asset_ref))
@@ -1465,14 +1554,10 @@ def _closeout_known_final_artifact_refs(
             terminal_payload = terminal_event.get("payload") if terminal_event is not None else {}
             if not isinstance(terminal_payload, dict):
                 continue
-            for artifact_ref in list(terminal_payload.get("artifact_refs") or []):
-                normalized_artifact_ref = str(artifact_ref).strip()
-                if normalized_artifact_ref:
-                    known_artifact_refs.add(normalized_artifact_ref)
-            for artifact_ref in list(terminal_payload.get("verification_evidence_refs") or []):
-                normalized_artifact_ref = str(artifact_ref).strip()
-                if normalized_artifact_ref:
-                    known_artifact_refs.add(normalized_artifact_ref)
+            _add_source_delivery_evidence_refs_from_terminal_payload(
+                known_artifact_refs,
+                terminal_payload,
+            )
     return known_artifact_refs
 
 
@@ -1497,6 +1582,7 @@ def _validate_closeout_delivery_hooks(
     known_artifact_refs = _closeout_known_final_artifact_refs(
         repository,
         created_spec=created_spec,
+        closeout_artifact_refs=list(payload.artifact_refs),
     )
     if not known_artifact_refs:
         return "Closeout tickets must reference known delivery evidence before completion."

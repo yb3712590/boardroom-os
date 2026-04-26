@@ -877,6 +877,58 @@ def _build_source_code_delivery_submission_evidence(
     return verification_evidence_refs, None
 
 
+def _dedupe_non_empty_strings(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    results: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(normalized)
+    return results
+
+
+def _delivery_closeout_source_evidence_refs(
+    execution_package: CompiledExecutionPackage,
+) -> list[str]:
+    evidence_refs: list[Any] = []
+    context_blocks = list(execution_package.atomic_context_bundle.context_blocks)
+    for block in context_blocks:
+        if getattr(block, "source_kind", None) != "PROCESS_ASSET":
+            continue
+        content_payload = getattr(block, "content_payload", {}) or {}
+        if not isinstance(content_payload, dict):
+            continue
+        if str(content_payload.get("process_asset_kind") or "").strip() != "SOURCE_CODE_DELIVERY":
+            continue
+        for payload_key in ("content_json", "source_metadata"):
+            payload = content_payload.get(payload_key)
+            if not isinstance(payload, dict):
+                continue
+            evidence_refs.extend(list(payload.get("source_file_refs") or []))
+            evidence_refs.extend(list(payload.get("verification_evidence_refs") or []))
+    return _dedupe_non_empty_strings(evidence_refs)
+
+
+def _delivery_closeout_final_artifact_refs(
+    execution_package: CompiledExecutionPackage,
+) -> list[str]:
+    delivery_evidence_refs = _delivery_closeout_source_evidence_refs(execution_package)
+    if not delivery_evidence_refs:
+        return []
+    delivery_evidence_ref_set = set(delivery_evidence_refs)
+    input_artifact_refs = _dedupe_non_empty_strings(
+        list(getattr(execution_package.execution, "input_artifact_refs", []) or [])
+    )
+    selected_input_refs = [
+        artifact_ref
+        for artifact_ref in input_artifact_refs
+        if artifact_ref in delivery_evidence_ref_set
+    ]
+    return selected_input_refs or delivery_evidence_refs
+
+
 def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: list[str]) -> list[str]:
     if round_type == "POSITION":
         return [f"{employee_id} stated the main constraint for {topic}." for employee_id in participant_ids]
@@ -1323,11 +1375,7 @@ def _build_runtime_success_payload(
             ],
         }
     if execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
-        final_artifact_refs = [
-            str(item).strip()
-            for item in list(execution_package.execution.input_artifact_refs)
-            if str(item).strip()
-        ] or list(artifact_refs)
+        final_artifact_refs = _delivery_closeout_final_artifact_refs(execution_package)
         return {
             "summary": (
                 "Final delivery closeout package captures the approved board choice and the handoff notes "

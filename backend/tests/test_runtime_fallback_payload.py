@@ -7,7 +7,14 @@ from app.core.runtime import (
 )
 
 
-def _fake_execution_package(*, ticket_id: str, output_schema_ref: str, process_asset_refs: list[str]):
+def _fake_execution_package(
+    *,
+    ticket_id: str,
+    output_schema_ref: str,
+    process_asset_refs: list[str],
+    input_artifact_refs: list[str] | None = None,
+    context_blocks: list[SimpleNamespace] | None = None,
+):
     return SimpleNamespace(
         meta=SimpleNamespace(ticket_id=ticket_id, attempt_no=1),
         compiled_role=SimpleNamespace(
@@ -18,12 +25,16 @@ def _fake_execution_package(*, ticket_id: str, output_schema_ref: str, process_a
             output_schema_ref=output_schema_ref,
             doc_update_requirements=[],
             allowed_write_set=["10-project/src/*", "20-evidence/tests/*", "20-evidence/git/*"],
+            input_artifact_refs=list(input_artifact_refs or []),
+            input_process_asset_refs=list(process_asset_refs),
         ),
         atomic_context_bundle=SimpleNamespace(
-            context_blocks=[
+            context_blocks=list(context_blocks)
+            if context_blocks is not None
+            else [
                 SimpleNamespace(source_kind="PROCESS_ASSET", source_ref=ref)
                 for ref in process_asset_refs
-            ]
+            ],
         ),
     )
 
@@ -256,3 +267,40 @@ def test_source_code_delivery_normalization_rewrites_wrong_attempt_path_to_curre
     assert payload["verification_runs"][0]["path"] == (
         "20-evidence/tests/tkt_source_delivery_retry_wrong_attempt/attempt-4/report.json"
     )
+
+
+def test_delivery_closeout_runtime_payload_filters_non_delivery_input_artifact_refs():
+    source_file_ref = "art://workspace/tkt_runtime_source_delivery/source.ts"
+    verification_ref = "art://workspace/tkt_runtime_source_delivery/test-report.json"
+    project_document_ref = "art://workspace/wf_runtime_closeout/10-project/ARCHITECTURE.md"
+    source_delivery_ref = "pa://source-code-delivery/tkt_runtime_source_delivery@1"
+    execution_package = _fake_execution_package(
+        ticket_id="tkt_runtime_closeout_filters",
+        output_schema_ref="delivery_closeout_package",
+        process_asset_refs=[source_delivery_ref],
+        input_artifact_refs=[
+            project_document_ref,
+            source_file_ref,
+            verification_ref,
+        ],
+        context_blocks=[
+            SimpleNamespace(
+                source_kind="PROCESS_ASSET",
+                source_ref=source_delivery_ref,
+                content_payload={
+                    "process_asset_kind": "SOURCE_CODE_DELIVERY",
+                    "content_json": {
+                        "source_file_refs": [source_file_ref],
+                        "verification_evidence_refs": [verification_ref],
+                    },
+                },
+            )
+        ],
+    )
+
+    payload = _build_runtime_success_payload(
+        execution_package,
+        ["art://runtime/tkt_runtime_closeout_filters/delivery-closeout-package.json"],
+    )
+
+    assert payload["final_artifact_refs"] == [source_file_ref, verification_ref]

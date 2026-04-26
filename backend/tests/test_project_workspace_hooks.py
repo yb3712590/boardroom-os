@@ -567,6 +567,55 @@ def _closeout_result_submit_payload(
     }
 
 
+def _complete_source_code_delivery_ticket(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+) -> tuple[str, str]:
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    return (
+        f"art://workspace/{ticket_id}/source.ts",
+        f"art://workspace/{ticket_id}/test-report.json",
+    )
+
+
 def test_source_code_delivery_requires_documentation_updates(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
@@ -1220,15 +1269,15 @@ def test_closeout_ticket_requires_final_artifact_refs_to_match_known_delivery_ev
     assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
 
 
-def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(client) -> None:
+def test_closeout_ticket_rejects_project_document_as_final_artifact_ref(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
-        json=_project_init_payload("Closeout workspace evidence demo"),
+        json=_project_init_payload("Closeout rejects project document final evidence"),
     )
     workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
-    ticket_id = "tkt_closeout_workspace_evidence_001"
-    node_id = "node_closeout_workspace_evidence_001"
-    known_final_artifact_ref = "art://runtime/tkt_build_001/source-code.tsx"
+    ticket_id = "tkt_closeout_rejects_project_doc_001"
+    node_id = "node_closeout_rejects_project_doc_001"
+    project_document_ref = f"art://workspace/{workflow_id}/10-project/ARCHITECTURE.md"
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -1236,7 +1285,130 @@ def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(cli
             **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
             "output_schema_ref": "delivery_closeout_package",
             "allowed_write_set": [f"20-evidence/closeout/{ticket_id}/*"],
-            "input_artifact_refs": [known_final_artifact_ref],
+            "input_artifact_refs": [project_document_ref],
+            "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:closeout-project-doc-final-ref",
+        },
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            final_artifact_refs=[project_document_ref],
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert "final_artifact_refs" in str(ticket["last_failure_message"])
+
+
+def test_closeout_ticket_accepts_source_delivery_and_verification_evidence_refs(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout accepts source delivery evidence"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    source_ticket_id = "tkt_closeout_source_evidence_build_001"
+    source_node_id = "node_closeout_source_evidence_build_001"
+    closeout_ticket_id = "tkt_closeout_source_evidence_001"
+    closeout_node_id = "node_closeout_source_evidence_001"
+    source_file_ref, verification_ref = _complete_source_code_delivery_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=closeout_ticket_id,
+                node_id=closeout_node_id,
+            ),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{closeout_ticket_id}/*"],
+            "input_artifact_refs": [f"art://workspace/{workflow_id}/10-project/ARCHITECTURE.md"],
+            "input_process_asset_refs": [
+                build_source_code_delivery_process_asset_ref(source_ticket_id),
+            ],
+            "idempotency_key": (
+                f"ticket-create:{workflow_id}:{closeout_ticket_id}:closeout-source-delivery-evidence"
+            ),
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+            final_artifact_refs=[source_file_ref, verification_ref],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "COMPLETED"
+
+
+def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout workspace evidence demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    source_ticket_id = "tkt_closeout_workspace_evidence_build_001"
+    source_node_id = "node_closeout_workspace_evidence_build_001"
+    ticket_id = "tkt_closeout_workspace_evidence_001"
+    node_id = "node_closeout_workspace_evidence_001"
+    known_final_artifact_ref, _ = _complete_source_code_delivery_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{ticket_id}/*"],
+            "input_artifact_refs": [f"art://workspace/{workflow_id}/10-project/ARCHITECTURE.md"],
+            "input_process_asset_refs": [
+                build_source_code_delivery_process_asset_ref(source_ticket_id),
+            ],
             "idempotency_key": f"ticket-create:{workflow_id}:{ticket_id}:closeout-workspace-evidence",
         },
     )

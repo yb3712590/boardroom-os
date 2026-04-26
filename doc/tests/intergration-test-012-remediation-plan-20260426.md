@@ -79,7 +79,7 @@
 ### 1.3 未修复，仅被恢复机制覆盖的问题
 
 - [ ] provider bad JSON / invalid content。
-- [ ] closeout package 曾把非 delivery evidence artifact 放入 `payload.final_artifact_refs`。
+- [x] closeout package 曾把非 delivery evidence artifact 放入 `payload.final_artifact_refs`。
 - [ ] provider schema compliance 不稳定。
 - [ ] 最终历史里仍保留 failed tickets，必须进入 audit summary，而不是从成功结论中消失。
 
@@ -418,7 +418,7 @@ py -3 -m pytest tests/test_live_library_management_runner.py -k "source_delivery
 
 **实施清单：**
 
-- [ ] 新增 helper：`_is_delivery_evidence_artifact_ref()`
+- [x] 新增 helper：`_is_delivery_evidence_artifact_ref()`
   - 位置：`backend/app/core/ticket_handlers.py`
   - 允许的 artifact ref 来源：
     - source delivery `payload.source_file_refs`
@@ -431,30 +431,30 @@ py -3 -m pytest tests/test_live_library_management_runner.py -k "source_delivery
     - `10-project/ARCHITECTURE.md`
     - project notes、README、非 ticket terminal payload 的裸文档 ref
 
-- [ ] 修改 `_closeout_known_final_artifact_refs()`。
+- [x] 修改 `_closeout_known_final_artifact_refs()`。
   - 当前从 `created_spec.input_artifact_refs`、parent terminal payload、source-code-delivery process asset terminal payload 里收集 known refs。
   - 改为先收集候选，再按 `_is_delivery_evidence_artifact_ref()` 或 terminal payload 上下文过滤。
-  - source delivery 的 `artifact_refs` 和 `verification_evidence_refs` 可进入。
+  - source delivery 的 `source_file_refs` 和 `verification_evidence_refs` 可进入。
   - 普通 input artifact refs 不因“被 closeout ticket 读取过”而自动成为 final evidence。
 
-- [ ] 修改 runtime closeout fallback。
+- [x] 修改 runtime closeout fallback。
   - `_build_runtime_success_payload()` closeout branch 不能直接把 `execution_package.execution.input_artifact_refs` 全量作为 `final_artifact_refs`。
   - 应优先使用当前 delivery chain 中的 source/evidence refs。
   - 如果没有可用 delivery evidence，生成的 payload 应让 validator fail-closed，而不是塞普通文档 ref。
 
-- [ ] 新增 failing test：`test_closeout_ticket_rejects_project_document_as_final_artifact_ref`
+- [x] 新增 failing test：`test_closeout_ticket_rejects_project_document_as_final_artifact_ref`
   - 位置：`backend/tests/test_project_workspace_hooks.py`
   - 场景：closeout created spec `input_artifact_refs` 包含 `art://workspace/.../10-project/ARCHITECTURE.md` 或等价普通文档 ref。
   - payload `final_artifact_refs` 只包含该普通文档 ref。
   - 断言：ticket-result-submit 被拒绝，错误包含 `known delivery evidence` 或 `final_artifact_refs`。
 
-- [ ] 新增 passing test：`test_closeout_ticket_accepts_source_delivery_and_verification_evidence_refs`
+- [x] 新增 passing test：`test_closeout_ticket_accepts_source_delivery_and_verification_evidence_refs`
   - 位置：`backend/tests/test_project_workspace_hooks.py`
   - 场景：上游 source delivery completed，terminal payload 有 source ref 与 verification ref。
   - closeout `final_artifact_refs` 引用这些 refs。
   - 断言：ticket-result-submit accepted。
 
-- [ ] 新增 runtime regression：`test_delivery_closeout_runtime_payload_filters_non_delivery_input_artifact_refs`
+- [x] 新增 runtime regression：`test_delivery_closeout_runtime_payload_filters_non_delivery_input_artifact_refs`
   - 位置：`backend/tests/test_runtime_fallback_payload.py`
   - 场景：execution package closeout input refs 同时包含普通 docs ref 与 source/evidence ref。
   - 断言：runtime fallback payload 的 `final_artifact_refs` 只包含 source/evidence ref。
@@ -677,7 +677,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 - [x] Round 1 regression：completed ticket 兜底只有在 lineage / supersession / evidence 有效时开放下游。
 - [x] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
 - [x] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
-- [ ] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
+- [x] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
 - [ ] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。
 - [ ] Round 6 confirmation：`.tmp/library_preview_server.py` 未被误纳入产品架构或整改提交。
 
