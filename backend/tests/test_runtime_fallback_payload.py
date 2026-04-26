@@ -1,11 +1,11 @@
 from types import SimpleNamespace
 
-from app.core.runtime import _build_runtime_success_payload
+from app.core.runtime import _build_runtime_success_payload, _normalize_source_code_delivery_payload
 
 
 def _fake_execution_package(*, ticket_id: str, output_schema_ref: str, process_asset_refs: list[str]):
     return SimpleNamespace(
-        meta=SimpleNamespace(ticket_id=ticket_id),
+        meta=SimpleNamespace(ticket_id=ticket_id, attempt_no=1),
         compiled_role=SimpleNamespace(
             employee_role_type="frontend_engineer",
             role_profile_ref="frontend_engineer_primary",
@@ -120,3 +120,49 @@ def test_source_code_delivery_runtime_payload_includes_source_files_and_verifica
             "failures": [],
         }
     ]
+
+
+def test_source_code_delivery_normalization_versions_verification_paths_by_attempt():
+    execution_package = _fake_execution_package(
+        ticket_id="tkt_source_delivery_retry",
+        output_schema_ref="source_code_delivery",
+        process_asset_refs=[],
+    )
+    execution_package.meta.attempt_no = 4
+
+    payload = _normalize_source_code_delivery_payload(
+        execution_package,
+        {
+            "summary": "Retry delivery.",
+            "source_file_refs": ["art://workspace/tkt_source_delivery_retry/source.js"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_source_delivery_retry/source.js",
+                    "path": "10-project/src/actions.js",
+                    "content": "export const actionsReady = true;\n",
+                }
+            ],
+            "verification_runs": [
+                {
+                    "artifact_ref": "art://workspace/tkt_source_delivery_retry/report.json",
+                    "path": "20-evidence/tests/report.json",
+                    "runner": "node",
+                    "command": "node test.js",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "duration_sec": 0.4,
+                    "stdout": "1 passed\n",
+                    "stderr": "",
+                    "discovered_count": 1,
+                    "passed_count": 1,
+                    "failed_count": 0,
+                    "skipped_count": 0,
+                    "failures": [],
+                }
+            ],
+        },
+    )
+
+    assert payload["verification_runs"][0]["path"] == (
+        "20-evidence/tests/tkt_source_delivery_retry/attempt-4/report.json"
+    )

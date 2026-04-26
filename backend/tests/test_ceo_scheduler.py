@@ -531,6 +531,56 @@ def _create_and_fail_ticket(
         )
 
 
+def _seed_failed_ticket_projection_for_existing_node(
+    client,
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    updated_at: str = "2026-04-25T10:45:00+08:00",
+) -> None:
+    repository = client.app.state.repository
+    ticket_payload = _ticket_create_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        retry_budget=0,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_CREATED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=ticket_payload,
+            occurred_at=datetime.fromisoformat(updated_at),
+        )
+        repository.refresh_projections(connection)
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET status = ?,
+                last_failure_kind = ?,
+                last_failure_message = ?,
+                updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            (
+                "FAILED",
+                "WORKSPACE_HOOK_VALIDATION_ERROR",
+                "Synthetic failed retry after a completed attempt.",
+                updated_at,
+                ticket_id,
+            ),
+        )
+
+
 def _seed_board_approved_employee(
     client,
     *,
@@ -3988,6 +4038,13 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
         "backend_engineer_primary",
         "database_engineer_primary",
     ]
+    assert [
+        item["ticket_payload"]["workflow_id"]
+        for item in snapshot["capability_plan"]["followup_ticket_plans"]
+    ] == [
+        workflow_id,
+        workflow_id,
+    ]
     assert snapshot["capability_plan"]["followup_ticket_plans"][0]["blocked_by_plan_keys"] == []
     assert snapshot["capability_plan"]["followup_ticket_plans"][1]["blocked_by_plan_keys"] == ["BR-BE-01"]
 
@@ -4889,6 +4946,149 @@ def test_backlog_followup_batch_builds_retry_ticket_for_retryable_existing_ticke
         "node_id": "node_backlog_followup_br_be_retryable",
         "reason": "Continue approved backlog follow-up by retrying the existing ticket instead of creating a parallel ticket.",
     }
+
+
+def test_backlog_followup_batch_returns_none_when_all_planned_tickets_already_exist(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_all_existing",
+        "Backlog follow-up should not incident when all planned tickets already exist.",
+    )
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_existing_followup_done",
+        node_id="node_backlog_followup_br_done",
+    )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_backlog_followup_batch(
+        client.app.state.repository,
+        {
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-DONE",
+                            "existing_ticket_id": "tkt_existing_followup_done",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_done",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-DONE completed backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent_done",
+                            },
+                        }
+                    ]
+                }
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    assert batch is None
+
+
+def test_backlog_followup_batch_uses_completed_attempt_when_latest_existing_ticket_failed(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_followup_completed_before_failed_retry",
+        "Backlog follow-up should continue from completed attempt when latest retry failed.",
+    )
+    node_id = "node_backlog_followup_br_done_then_failed"
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_completed_attempt",
+        node_id=node_id,
+    )
+    _seed_failed_ticket_projection_for_existing_node(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_followup_failed_retry",
+        node_id=node_id,
+    )
+
+    from app.core import ceo_proposer
+
+    batch = ceo_proposer._build_backlog_followup_batch(
+        client.app.state.repository,
+        {
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "capability_plan": {
+                    "followup_ticket_plans": [
+                        {
+                            "ticket_key": "BR-DONE-THEN-FAILED",
+                            "existing_ticket_id": "tkt_followup_failed_retry",
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": node_id,
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-DONE-THEN-FAILED completed backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent_done_then_failed",
+                            },
+                        },
+                        {
+                            "ticket_key": "BR-NEXT",
+                            "existing_ticket_id": None,
+                            "blocked_by_plan_keys": ["BR-DONE-THEN-FAILED"],
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_backlog_followup_br_next",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="frontend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_frontend_2",
+                                    "selection_reason": "Translate the approved backlog item into implementation work.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-NEXT dependent backlog follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent_done_then_failed",
+                            },
+                        },
+                    ]
+                }
+            },
+        },
+        "Continue the approved backlog fanout.",
+    )
+
+    assert batch is not None
+    action = batch.model_dump(mode="json")["actions"][0]
+    assert action["action_type"] == "CREATE_TICKET"
+    assert action["payload"]["node_id"] == "node_backlog_followup_br_next"
+    assert action["payload"]["dispatch_intent"]["dependency_gate_refs"] == ["tkt_followup_completed_attempt"]
 
 
 def test_backlog_followup_batch_raises_structured_restore_needed_for_existing_ticket_without_direct_retry(

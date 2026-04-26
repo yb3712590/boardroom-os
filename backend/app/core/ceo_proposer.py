@@ -623,6 +623,52 @@ def _build_existing_backlog_followup_retry_action(
     return None
 
 
+def _latest_completed_ticket_id_for_node(
+    connection,
+    *,
+    workflow_id: str,
+    node_id: str,
+) -> str | None:
+    row = connection.execute(
+        """
+        SELECT ticket_id
+        FROM ticket_projection
+        WHERE workflow_id = ?
+          AND node_id = ?
+          AND status = 'COMPLETED'
+        ORDER BY updated_at DESC, ticket_id DESC
+        LIMIT 1
+        """,
+        (workflow_id, node_id),
+    ).fetchone()
+    return None if row is None else str(row["ticket_id"])
+
+
+def _prefer_completed_ticket_when_existing_terminal_failed(
+    repository: ControlPlaneRepository,
+    *,
+    connection,
+    workflow_id: str,
+    existing_ticket_ids_by_node_id: dict[str, str],
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for node_id, existing_ticket_id in existing_ticket_ids_by_node_id.items():
+        current_ticket = repository.get_current_ticket_projection(existing_ticket_id, connection=connection)
+        if current_ticket is None:
+            resolved[node_id] = existing_ticket_id
+            continue
+        if str(current_ticket.get("status") or "").strip() not in {"FAILED", "TIMED_OUT"}:
+            resolved[node_id] = existing_ticket_id
+            continue
+        completed_ticket_id = _latest_completed_ticket_id_for_node(
+            connection,
+            workflow_id=workflow_id,
+            node_id=node_id,
+        )
+        resolved[node_id] = completed_ticket_id or existing_ticket_id
+    return resolved
+
+
 def _build_backlog_followup_batch(
     repository: ControlPlaneRepository,
     snapshot: dict,
@@ -657,6 +703,12 @@ def _build_backlog_followup_batch(
     }
 
     with repository.connection() as connection:
+        existing_ticket_ids_by_node_id = _prefer_completed_ticket_when_existing_terminal_failed(
+            repository,
+            connection=connection,
+            workflow_id=workflow_id,
+            existing_ticket_ids_by_node_id=existing_ticket_ids_by_node_id,
+        )
         for index, followup_plan in enumerate(followup_ticket_plans):
             if not isinstance(followup_plan, dict):
                 _raise_proposal_contract_error(
@@ -756,12 +808,7 @@ def _build_backlog_followup_batch(
         )
 
     if not actions:
-        _raise_proposal_contract_error(
-            source_component="deterministic_fallback.backlog_followup",
-            reason_code="no_actions_built",
-            message="Controller requested CREATE_TICKET for backlog fanout, but no followup ticket could be built.",
-            details={"followup_ticket_plan_count": len(followup_ticket_plans)},
-        )
+        return None
 
     return CEOActionBatch.model_validate(
         {
@@ -1089,6 +1136,12 @@ def build_deterministic_fallback_batch(
             backlog_followup_batch = _build_backlog_followup_batch(repository, snapshot, reason)
             if backlog_followup_batch is not None:
                 return backlog_followup_batch
+            closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
+            if closeout_batch is not None:
+                return closeout_batch
+            return build_no_action_batch(
+                "All currently eligible backlog follow-up plans are already materialized or waiting on graph reduction."
+            )
         if _should_fallback_to_project_init_kickoff(snapshot):
             return _build_project_init_kickoff_batch(snapshot, reason)
         _raise_proposal_contract_error(

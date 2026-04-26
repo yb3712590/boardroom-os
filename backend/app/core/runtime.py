@@ -4,6 +4,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -576,6 +577,21 @@ def _default_source_code_delivery_verification_runs(
     ]
 
 
+def _normalize_source_code_delivery_verification_path(
+    execution_package: CompiledExecutionPackage,
+    path: str,
+    *,
+    index: int,
+) -> str:
+    normalized_path = str(path or "").strip().replace("\\", "/")
+    if "/attempt-" in normalized_path:
+        return normalized_path
+    ticket_id = execution_package.meta.ticket_id
+    attempt_no = int(getattr(execution_package.meta, "attempt_no", 1) or 1)
+    filename = Path(normalized_path).name or f"verification-{index}.json"
+    return f"20-evidence/tests/{ticket_id}/attempt-{attempt_no}/{filename}"
+
+
 def _default_source_code_delivery_source_files(
     execution_package: CompiledExecutionPackage,
     source_file_refs: list[str],
@@ -693,10 +709,15 @@ def _normalize_source_code_delivery_payload(
     normalized_verification_runs: list[dict[str, Any]] = []
     for index, run in enumerate(verification_runs, start=1):
         artifact_ref = str(run.get("artifact_ref") or "").strip()
-        path = str(run.get("path") or "").strip()
+        path = _normalize_source_code_delivery_verification_path(
+            execution_package,
+            str(run.get("path") or "").strip(),
+            index=index,
+        )
         normalized_verification_runs.append(
             {
                 **run,
+                "path": path,
                 "artifact_ref": _source_code_delivery_artifact_ref(
                     execution_package,
                     path=path,

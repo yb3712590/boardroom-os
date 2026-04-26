@@ -21,7 +21,7 @@ from app.main import create_app
 from app.scheduler_runner import run_scheduler_once
 from app.core.time import now_local
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
-from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
+from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
 
 DEFAULT_SCENARIO_SEED = 17
 DEFAULT_MAX_TICKS = 180
@@ -387,6 +387,15 @@ def _validate_source_delivery_payload(ticket_id: str, payload: dict[str, Any]) -
     if not verification_evidence_refs:
         raise AssertionError(f"{ticket_id} is missing verification_evidence_refs in terminal payload.")
     if not verification_runs:
+        evidence_ref_set = {str(item).strip() for item in verification_evidence_refs if str(item).strip()}
+        verification_runs = [
+            dict(item.get("content_json") or {})
+            for item in written_artifacts
+            if isinstance(item, dict)
+            and str(item.get("artifact_ref") or "").strip() in evidence_ref_set
+            and isinstance(item.get("content_json"), dict)
+        ]
+    if not verification_runs:
         raise AssertionError(f"{ticket_id} compact source delivery payload is missing raw verification output.")
     for run in verification_runs:
         if not isinstance(run, dict):
@@ -436,6 +445,21 @@ def _collect_source_delivery_payload_audit(
         "failed_retry_entries": failed_retry_entries,
         "failed_retry_count": len(failed_retry_entries),
     }
+
+
+def _collect_source_delivery_payload_audit_for_snapshot(
+    created_specs: dict[str, dict[str, Any]],
+    terminals: dict[str, dict[str, Any] | None],
+) -> dict[str, Any]:
+    try:
+        return _collect_source_delivery_payload_audit(created_specs, terminals)
+    except AssertionError as exc:
+        return {
+            "completed_ticket_ids": [],
+            "failed_retry_entries": [],
+            "failed_retry_count": 0,
+            "audit_error": str(exc),
+        }
 
 
 def _assert_source_delivery_payload_quality(
@@ -1204,7 +1228,7 @@ def _build_audit_snapshot(
     if hasattr(repository, "connection"):
         created_specs = workflow_created_specs(repository, workflow_id)
         terminals = workflow_terminal_events(repository, workflow_id)
-        source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
+        source_delivery_payload_audit = _collect_source_delivery_payload_audit_for_snapshot(created_specs, terminals)
         staffing_gap_audit = _collect_staffing_gap_audit(repository, workflow_id)
     else:
         source_delivery_payload_audit = {
@@ -1617,6 +1641,7 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
     source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
     source_delivery_ticket_ids = list(source_delivery_payload_audit.get("completed_ticket_ids") or [])
 
+    ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)
     if not artifact_exists(repository, f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"):
         raise AssertionError("Workflow chain report artifact is missing.")
     if sorted(compiled_ids) != archived_ids:

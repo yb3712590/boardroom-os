@@ -566,6 +566,7 @@ def _recommended_hire_for_role_profile(role_profile_ref: str) -> dict[str, Any] 
 
 def _build_followup_ticket_plans(
     *,
+    workflow_id: str,
     backlog_ticket_id: str,
     backlog_created_spec: dict[str, Any],
     backlog_payload: dict[str, Any],
@@ -643,7 +644,7 @@ def _build_followup_ticket_plans(
                 "existing_ticket_id": existing_ticket_ids_by_node_id.get(node_id),
                 "blocked_by_plan_keys": dependency_ticket_keys,
                 "ticket_payload": _build_ceo_create_ticket_payload(
-                    workflow_id=backlog_created_spec.get("workflow_id") or backlog_created_spec.get("workflow_ref") or "",
+                    workflow_id=workflow_id,
                     node_id=node_id,
                     role_profile_ref=role_profile_ref,
                     output_schema_ref=output_schema_ref,
@@ -1074,6 +1075,7 @@ def build_workflow_controller_view(
         coordination_mode = "document_chain"
     elif backlog_ticket_id and isinstance(backlog_payload, dict):
         followup_ticket_plans = _build_followup_ticket_plans(
+            workflow_id=workflow_id,
             backlog_ticket_id=backlog_ticket_id,
             backlog_created_spec=backlog_created_spec,
             backlog_payload=backlog_payload,
