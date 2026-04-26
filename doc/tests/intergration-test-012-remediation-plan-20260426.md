@@ -86,7 +86,7 @@
 ### 1.4 临时动作，不纳入产品架构
 
 - [ ] 多次停止旧 live runner 并 clean 重启：属于测试推进操作，不是 runtime 修复。
-- [ ] `.tmp/library_preview_server.py`：仅用于本地查看产物的临时预览服务，不作为业务代码修复。
+- [x] `.tmp/library_preview_server.py`：仅用于本地查看产物的临时预览服务，不作为业务代码修复。
 
 ---
 
@@ -590,7 +590,7 @@ py -3 -m pytest tests/test_runtime_fallback_payload.py -q
 
 **实施清单：**
 
-- [ ] 检查 `.tmp/library_preview_server.py` 是否仍存在。
+- [x] 检查 `.tmp/library_preview_server.py` 是否仍存在。
   - 命令：
 
 ```powershell
@@ -598,7 +598,7 @@ cd D:\Projects\boardroom-os
 Test-Path .tmp\library_preview_server.py
 ```
 
-- [ ] 检查 `.tmp/` 是否被 git ignore。
+- [x] 检查 `.tmp/` 是否被 git ignore。
   - 命令：
 
 ```powershell
@@ -607,13 +607,13 @@ git status --short .tmp
 git check-ignore -v .tmp/library_preview_server.py
 ```
 
-- [ ] 若 `.tmp/library_preview_server.py` 未被跟踪且 `.tmp/` 已被 ignore，保持现状，不做代码修改。
+- [x] 若 `.tmp/library_preview_server.py` 未被跟踪且 `.tmp/` 已被 ignore，保持现状，不做代码修改。
 
 - [ ] 若 `.tmp/library_preview_server.py` 出现在 `git status --short` 中，删除或忽略前先确认它不是用户需要保留的手工工具。
   - 本轮默认不删除文件，除非用户明确要求清理。
   - 如需正式产品化 preview harness，应另开设计，不并入 012 remediation。
 
-- [ ] 在最终实施回复中明确：
+- [x] 在最终实施回复中明确：
   - P09 不属于业务产物缺陷。
   - preview API server 是本地人工查看补丁。
   - 后续 live harness 不应依赖 `.tmp` 预览脚本作为成功证据。
@@ -679,7 +679,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 - [x] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
 - [x] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
 - [x] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。
-- [ ] Round 6 confirmation：`.tmp/library_preview_server.py` 未被误纳入产品架构或整改提交。
+- [x] Round 6 confirmation：`.tmp/library_preview_server.py` 未被误纳入产品架构或整改提交。
 
 可选 live clean run：
 
