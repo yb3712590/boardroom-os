@@ -20,7 +20,7 @@ force_requirement_elicitation = false
 
 [runtime]
 seed = 17
-max_ticks = 180
+max_ticks = 900
 timeout_sec = 7200
 maintenance_interval_sec = 1
 scheduler_max_dispatches = 20

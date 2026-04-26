@@ -17,7 +17,7 @@ constraints = [
 
 [runtime]
 seed = 17
-max_ticks = 180
+max_ticks = 900
 timeout_sec = 7200
 
 [provider]
@@ -48,37 +48,37 @@ reasoning_effort_override = "xhigh"
 [[provider.role_bindings]]
 target_ref = "role_profile:frontend_engineer_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [[provider.role_bindings]]
 target_ref = "role_profile:checker_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [[provider.role_bindings]]
 target_ref = "role_profile:backend_engineer_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [[provider.role_bindings]]
 target_ref = "role_profile:database_engineer_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [[provider.role_bindings]]
 target_ref = "role_profile:platform_sre_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [[provider.role_bindings]]
 target_ref = "role_profile:cto_primary"
 provider_model_entry_refs = ["prov_openai_compat_integration::gpt-5.4"]
-max_context_window_override = 220000
+max_context_window_override = 270000
 reasoning_effort_override = "high"
 
 [workspace_paths]
