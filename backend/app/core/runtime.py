@@ -184,6 +184,26 @@ def _build_result_submit_idempotency_key(ticket: dict[str, Any], result_status: 
     return f"runtime-result-submit:{ticket['workflow_id']}:{ticket['ticket_id']}:{result_status}"
 
 
+def _source_code_delivery_attempt_no(execution_package: CompiledExecutionPackage) -> int:
+    raw_attempt_no = getattr(execution_package.meta, "attempt_no", 1)
+    try:
+        attempt_no = int(raw_attempt_no or 1)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, attempt_no)
+
+
+def _source_code_delivery_path_assumptions(
+    execution_package: CompiledExecutionPackage,
+) -> list[str]:
+    if execution_package.execution.output_schema_ref != SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        return []
+    return [
+        "source_delivery_paths_normalized_to_attempt="
+        f"{_source_code_delivery_attempt_no(execution_package)}"
+    ]
+
+
 def _build_runtime_developer_inspector_refs(ticket_id: str) -> DeveloperInspectorRefs:
     return DeveloperInspectorRefs(
         compiled_context_bundle_ref=f"ctx://compile/{ticket_id}",
@@ -212,6 +232,7 @@ def _build_provider_selection_assumptions(
         f"adapter_kind={selection.provider.adapter_kind}",
         f"provider_response_id={provider_response_id or 'unknown'}",
         f"provider_attempt_count={provider_attempt_count}",
+        *_source_code_delivery_path_assumptions(execution_package),
     ]
 
 
@@ -536,8 +557,9 @@ def _default_source_code_delivery_verification_runs(
     execution_package: CompiledExecutionPackage,
 ) -> list[dict[str, Any]]:
     ticket_id = execution_package.meta.ticket_id
+    attempt_no = _source_code_delivery_attempt_no(execution_package)
     artifact_ref = f"art://workspace/{quote(ticket_id, safe='')}/test-report.json"
-    path = f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json"
+    path = f"20-evidence/tests/{ticket_id}/attempt-{attempt_no}/test-report.json"
     if execution_package.compiled_role.role_profile_ref == "frontend_engineer_primary":
         return [
             {
@@ -584,10 +606,13 @@ def _normalize_source_code_delivery_verification_path(
     index: int,
 ) -> str:
     normalized_path = str(path or "").strip().replace("\\", "/")
-    if "/attempt-" in normalized_path:
-        return normalized_path
     ticket_id = execution_package.meta.ticket_id
-    attempt_no = int(getattr(execution_package.meta, "attempt_no", 1) or 1)
+    attempt_no = _source_code_delivery_attempt_no(execution_package)
+    path_parts = normalized_path.split("/") if normalized_path else []
+    for part_index, part in enumerate(path_parts):
+        if re.fullmatch(r"attempt-\d+", part):
+            path_parts[part_index] = f"attempt-{attempt_no}"
+            return "/".join(path_parts)
     filename = Path(normalized_path).name or f"verification-{index}.json"
     return f"20-evidence/tests/{ticket_id}/attempt-{attempt_no}/{filename}"
 
@@ -795,13 +820,14 @@ def _build_source_code_delivery_default_artifacts(
         if isinstance(item, dict)
     ] or _default_source_code_delivery_verification_runs(execution_package)
     if evidence_pattern is not None:
+        attempt_no = _source_code_delivery_attempt_no(execution_package)
         for run in verification_runs:
             verification_evidence_ref = str(run.get("artifact_ref") or "").strip()
             verification_path = str(run.get("path") or "").strip()
             if not verification_path:
                 verification_path = _resolve_runtime_write_path(
                     evidence_pattern,
-                    f"{execution_package.meta.ticket_id}/attempt-1/test-report.json",
+                    f"{execution_package.meta.ticket_id}/attempt-{attempt_no}/test-report.json",
                 )
             if not verification_evidence_ref:
                 verification_evidence_ref = (
@@ -821,10 +847,11 @@ def _build_source_code_delivery_default_artifacts(
             )
 
     if git_pattern is not None:
+        attempt_no = _source_code_delivery_attempt_no(execution_package)
         git_commit_ref = f"art://workspace/{quote(execution_package.meta.ticket_id, safe='')}/git-commit.json"
         git_path = _resolve_runtime_write_path(
             git_pattern,
-            f"{execution_package.meta.ticket_id}/attempt-1/git-closeout.json",
+            f"{execution_package.meta.ticket_id}/attempt-{attempt_no}/git-closeout.json",
         )
         written_artifacts.append(
             {
@@ -2898,6 +2925,7 @@ def _execute_compiled_execution_package(
         assumptions=[
             f"compiler_version={execution_package.meta.compiler_version}",
             f"compile_request_id={execution_package.meta.compile_request_id}",
+            *_source_code_delivery_path_assumptions(execution_package),
         ],
         issues=[],
         confidence=0.7,

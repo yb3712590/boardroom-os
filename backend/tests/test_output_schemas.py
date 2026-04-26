@@ -25,8 +25,34 @@ def _iter_object_schemas(schema: object, *, path: str = "$"):
             yield from _iter_object_schemas(item, path=f"{path}[{index}]")
 
 
-def _governance_document_payload(document_kind_ref: str) -> dict[str, object]:
+def _backlog_recommendation_implementation_handoff() -> dict[str, object]:
     return {
+        "tickets": [
+            {
+                "ticket_id": "BR-T01",
+                "name": "Implement the scoped delivery foundation",
+                "summary": "Build the smallest implementation slice that satisfies the approved scope.",
+                "scope": ["workspace source update", "direct validation evidence"],
+                "target_role": "frontend_engineer",
+            },
+            {
+                "ticket_id": "BR-T02",
+                "name": "Close the delivery evidence loop",
+                "summary": "Verify the implementation and preserve the evidence chain for closeout.",
+                "scope": ["verification report", "handoff evidence"],
+                "target_role": "frontend_engineer",
+            },
+        ],
+        "dependency_graph": [
+            {"ticket_id": "BR-T01", "depends_on": []},
+            {"ticket_id": "BR-T02", "depends_on": ["BR-T01"]},
+        ],
+        "recommended_sequence": ["BR-T01", "BR-T02"],
+    }
+
+
+def _governance_document_payload(document_kind_ref: str) -> dict[str, object]:
+    payload = {
         "title": f"{document_kind_ref} for Boardroom OS",
         "summary": f"{document_kind_ref} keeps the next delivery slice aligned.",
         "document_kind_ref": document_kind_ref,
@@ -57,6 +83,9 @@ def _governance_document_payload(document_kind_ref: str) -> dict[str, object]:
             }
         ],
     }
+    if document_kind_ref == "backlog_recommendation":
+        payload["implementation_handoff"] = _backlog_recommendation_implementation_handoff()
+    return payload
 
 
 def test_output_schema_registry_exposes_consensus_document_schema() -> None:
@@ -453,6 +482,43 @@ def test_output_schema_registry_accepts_valid_source_code_delivery_payload() -> 
     )
 
 
+def test_output_schema_registry_accepts_source_code_delivery_with_stderr_raw_output() -> None:
+    validate_output_payload(
+        schema_ref="source_code_delivery",
+        schema_version=1,
+        submitted_schema_version="source_code_delivery_v1",
+        payload={
+            "summary": "Backend source code delivery captured a failing regression trace.",
+            "source_file_refs": ["art://workspace/tkt_impl_001/source.py"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_impl_001/source.py",
+                    "path": "10-project/src/tkt_impl_001.py",
+                    "content": "def build_ready():\n    return True\n",
+                }
+            ],
+            "verification_runs": [
+                {
+                    "artifact_ref": "art://workspace/tkt_impl_001/test-report.json",
+                    "path": "20-evidence/tests/tkt_impl_001/attempt-2/test-report.json",
+                    "runner": "pytest",
+                    "command": "pytest -q",
+                    "status": "failed",
+                    "exit_code": 1,
+                    "duration_sec": 0.5,
+                    "stdout": "",
+                    "stderr": "AssertionError: regression failed\n",
+                    "discovered_count": 1,
+                    "passed_count": 0,
+                    "failed_count": 1,
+                    "skipped_count": 0,
+                    "failures": [],
+                }
+            ],
+        },
+    )
+
+
 def test_output_schema_registry_rejects_source_code_delivery_without_source_files() -> None:
     with pytest.raises(ValueError, match="source_file_refs"):
         validate_output_payload(
@@ -592,7 +658,7 @@ def test_output_schema_registry_rejects_source_code_delivery_with_minimal_verifi
                 ],
             },
         )
-    assert getattr(exc_info.value, "field_path", None) == "verification_runs[0].stdout"
+    assert getattr(exc_info.value, "field_path", None) == "verification_runs[0].raw_output"
 
 
 def test_output_schema_registry_exposes_delivery_check_report_schema() -> None:

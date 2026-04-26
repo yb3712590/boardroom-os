@@ -312,24 +312,24 @@ py -3 -m pytest tests/test_workflow_autopilot.py::test_workflow_chain_report_ens
 
 **实施清单：**
 
-- [ ] 修改 `_default_source_code_delivery_verification_runs()`。
+- [x] 修改 `_default_source_code_delivery_verification_runs()`。
   - 当前默认 path 使用 `attempt-1`。
   - 改为使用 `execution_package.meta.attempt_no`。
   - artifact ref 如需区分 attempt，也应包含 attempt 或保持由后续 `_source_code_delivery_artifact_ref()` 生成唯一 ref。
 
-- [ ] 修改 `_build_runtime_default_artifacts()`。
+- [x] 修改 `_build_runtime_default_artifacts()`。
   - verification evidence fallback path 不能硬编码 `attempt-1`。
   - git evidence fallback path 不能硬编码 `attempt-1`。
   - 默认文件名分别保持：
     - `test-report.json`
     - `git-closeout.json`
 
-- [ ] 强化 `_normalize_source_code_delivery_verification_path()`。
+- [x] 强化 `_normalize_source_code_delivery_verification_path()`。
   - 如果 provider path 不含 `/attempt-`，改写到当前 attempt。
   - 如果 provider path 含 `/attempt-<n>/` 且 `<n>` 不等于当前 `execution_package.meta.attempt_no`，改写到当前 attempt 或 fail-closed。
   - 本轮建议选择“改写到当前 attempt”，因为这是 runtime normalization；同时在 audit assumptions 中记录 normalization。
 
-- [ ] 抽出可复用审计 helper。
+- [x] 抽出可复用审计 helper。
   - 建议位置：`backend/tests/live/_autopilot_live_harness.py` 内部 helper，后续可迁移到 production audit module。
   - helper 名：`_source_delivery_verification_runs_from_terminal_payload()`
   - 输入：`ticket_id`, `payload`
@@ -342,28 +342,28 @@ py -3 -m pytest tests/test_workflow_autopilot.py::test_workflow_chain_report_ens
     - refs 必须指向 `written_artifacts[*].artifact_ref`。
     - 对应 `written_artifacts[*].content_json` 必须包含 raw output。
 
-- [ ] 保持 failure snapshot best-effort。
+- [x] 保持 failure snapshot best-effort。
   - `_collect_source_delivery_payload_audit_for_snapshot()` 捕获 audit error 并写入 `audit_error`。
   - `_collect_source_delivery_payload_audit()` 和 `collect_common_outcome()` 仍严格抛错。
 
-- [ ] 新增 failing test：`test_source_code_delivery_default_evidence_paths_use_current_attempt`
+- [x] 新增 failing test：`test_source_code_delivery_default_evidence_paths_use_current_attempt`
   - 位置：`backend/tests/test_runtime_fallback_payload.py`
   - 场景：fake execution package `attempt_no = 4`，调用 `_build_runtime_success_payload()` 或 `_normalize_source_code_delivery_payload()`。
   - 断言：
     - verification path 为 `20-evidence/tests/<ticket_id>/attempt-4/test-report.json`。
     - git written artifact path 为 `20-evidence/git/<ticket_id>/attempt-4/git-closeout.json`，如果测试覆盖 default artifacts。
 
-- [ ] 新增 failing test：`test_source_code_delivery_normalization_rewrites_wrong_attempt_path_to_current_attempt`
+- [x] 新增 failing test：`test_source_code_delivery_normalization_rewrites_wrong_attempt_path_to_current_attempt`
   - 位置：`backend/tests/test_runtime_fallback_payload.py`
   - 场景：provider payload path 为 `20-evidence/tests/tkt_x/attempt-1/report.json`，execution package attempt 为 4。
   - 断言：normalized path 为 `20-evidence/tests/tkt_x/attempt-4/report.json`。
 
-- [ ] 新增 hook regression：`test_workspace_source_delivery_accepts_current_attempt_normalized_paths`
+- [x] 新增 hook regression：`test_workspace_source_delivery_accepts_current_attempt_normalized_paths`
   - 位置：`backend/tests/test_project_workspace_hooks.py`
   - 场景：runtime normalized payload 进入 ticket-result-submit。
   - 断言：hook accepted；`verification_evidence_refs` 与 `payload.verification_runs[*].artifact_ref` 对齐。
 
-- [ ] 新增 harness regression：`test_source_delivery_compact_payload_requires_evidence_ref_content_json_raw_output`
+- [x] 新增 harness regression：`test_source_delivery_compact_payload_requires_evidence_ref_content_json_raw_output`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：
     - compact payload 有 `verification_evidence_refs`。
@@ -676,7 +676,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 
 - [x] Round 1 regression：completed ticket 兜底只有在 lineage / supersession / evidence 有效时开放下游。
 - [x] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
-- [ ] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
+- [x] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
 - [ ] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
 - [ ] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。
 - [ ] Round 6 confirmation：`.tmp/library_preview_server.py` 未被误纳入产品架构或整改提交。

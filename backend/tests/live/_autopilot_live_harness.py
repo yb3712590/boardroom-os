@@ -368,40 +368,56 @@ def _source_delivery_ticket_ids(created_specs: dict[str, dict[str, Any]]) -> lis
     ]
 
 
-def _validate_source_delivery_payload(ticket_id: str, payload: dict[str, Any]) -> None:
+def _source_delivery_verification_runs_from_terminal_payload(
+    ticket_id: str,
+    payload: dict[str, Any],
+) -> list[Any]:
     source_files = list(payload.get("source_files") or [])
     verification_runs = list(payload.get("verification_runs") or [])
     written_artifacts = list(payload.get("written_artifacts") or [])
     verification_evidence_refs = list(payload.get("verification_evidence_refs") or [])
+    if verification_runs:
+        return list(verification_runs)
     if source_files:
-        if not verification_runs:
-            raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
-        for run in verification_runs:
-            if not isinstance(run, dict):
-                raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
-            if not str(run.get("stdout") or "").strip():
-                raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
-        return
+        raise AssertionError(f"{ticket_id} is missing verification_runs in terminal payload.")
     if not written_artifacts:
         raise AssertionError(f"{ticket_id} is missing written_artifacts in terminal payload.")
     if not verification_evidence_refs:
         raise AssertionError(f"{ticket_id} is missing verification_evidence_refs in terminal payload.")
-    if not verification_runs:
-        evidence_ref_set = {str(item).strip() for item in verification_evidence_refs if str(item).strip()}
-        verification_runs = [
-            dict(item.get("content_json") or {})
-            for item in written_artifacts
-            if isinstance(item, dict)
-            and str(item.get("artifact_ref") or "").strip() in evidence_ref_set
-            and isinstance(item.get("content_json"), dict)
-        ]
+
+    evidence_refs = [str(item).strip() for item in verification_evidence_refs if str(item).strip()]
+    written_artifacts_by_ref = {
+        str(item.get("artifact_ref") or "").strip(): item
+        for item in written_artifacts
+        if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
+    }
+    verification_runs = []
+    for evidence_ref in evidence_refs:
+        written_artifact = written_artifacts_by_ref.get(evidence_ref)
+        if written_artifact is None:
+            raise AssertionError(
+                f"{ticket_id} verification_evidence_refs includes non-materialized artifact_ref {evidence_ref}."
+            )
+        content_json = written_artifact.get("content_json")
+        if not isinstance(content_json, dict):
+            raise AssertionError(
+                f"{ticket_id} compact source delivery payload is missing content_json raw verification output."
+            )
+        verification_runs.append(dict(content_json))
     if not verification_runs:
         raise AssertionError(f"{ticket_id} compact source delivery payload is missing raw verification output.")
+    return verification_runs
+
+
+def _validate_source_delivery_payload(ticket_id: str, payload: dict[str, Any]) -> None:
+    verification_runs = _source_delivery_verification_runs_from_terminal_payload(ticket_id, payload)
     for run in verification_runs:
         if not isinstance(run, dict):
             raise AssertionError(f"{ticket_id} contains invalid verification_runs payload.")
-        if not str(run.get("stdout") or "").strip():
-            raise AssertionError(f"{ticket_id} is missing raw verification stdout.")
+        if not str(run.get("command") or "").strip():
+            raise AssertionError(f"{ticket_id} is missing verification command.")
+        if not str(run.get("stdout") or "").strip() and not str(run.get("stderr") or "").strip():
+            raise AssertionError(f"{ticket_id} is missing raw verification output.")
 
 
 def _collect_source_delivery_payload_audit(

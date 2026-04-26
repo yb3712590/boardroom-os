@@ -14,6 +14,10 @@ from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
 )
+from app.core.runtime import (
+    _build_runtime_default_artifacts,
+    _normalize_source_code_delivery_payload,
+)
 
 
 def _project_init_payload(goal: str) -> dict[str, object]:
@@ -29,13 +33,19 @@ def _project_init_payload(goal: str) -> dict[str, object]:
     }
 
 
-def _ticket_create_payload(*, workflow_id: str, ticket_id: str, node_id: str) -> dict[str, object]:
+def _ticket_create_payload(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    attempt_no: int = 1,
+) -> dict[str, object]:
     return {
         "ticket_id": ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
         "parent_ticket_id": None,
-        "attempt_no": 1,
+        "attempt_no": attempt_no,
         "role_profile_ref": "frontend_engineer_primary",
         "constraints_ref": "global_constraints_v3",
         "input_artifact_refs": ["art://inputs/brief.md"],
@@ -661,6 +671,110 @@ def test_source_code_delivery_writes_postrun_and_git_receipts(client) -> None:
     assert git_commit_record["commit_sha"] != "abc1234"
     assert git_commit_record["commit_sha"] == _git_output(checkout_path, "rev-parse", "HEAD")
     assert _git_output(checkout_path, "status", "--short") == ""
+
+
+def test_workspace_source_delivery_accepts_current_attempt_normalized_paths(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code normalized attempt demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_attempt_normalized_001"
+    node_id = "node_code_attempt_normalized_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            attempt_no=4,
+        ),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    execution_package = compile_and_persist_execution_artifacts(repository, ticket).compiled_execution_package
+
+    provider_payload = {
+        "summary": f"Source code delivery prepared for {ticket_id}.",
+        "source_file_refs": [f"art://workspace/{ticket_id}/source.ts"],
+        "source_files": [
+            {
+                "artifact_ref": f"art://workspace/{ticket_id}/source.ts",
+                "path": f"10-project/src/{ticket_id}.ts",
+                "content": "export const currentAttemptDeliveryReady = true;\n",
+            }
+        ],
+        "verification_runs": [
+            {
+                "artifact_ref": f"art://workspace/{ticket_id}/test-report.json",
+                "path": f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json",
+                "runner": "pytest",
+                "command": "pytest tests/test_project_workspace_hooks.py -q",
+                "status": "passed",
+                "exit_code": 0,
+                "duration_sec": 1.2,
+                "stdout": "collected 1 item\n\n1 passed in 0.12s\n",
+                "stderr": "",
+                "discovered_count": 1,
+                "passed_count": 1,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "failures": [],
+            }
+        ],
+        "implementation_notes": ["Implementation stayed inside the approved scope lock."],
+    }
+    normalized_payload = _normalize_source_code_delivery_payload(execution_package, provider_payload)
+    assert normalized_payload["verification_runs"][0]["path"] == (
+        f"20-evidence/tests/{ticket_id}/attempt-4/test-report.json"
+    )
+
+    artifact_refs, written_artifacts = _build_runtime_default_artifacts(
+        execution_package,
+        normalized_payload,
+    )
+    verification_evidence_refs = [
+        str(item["artifact_ref"]) for item in normalized_payload["verification_runs"]
+    ]
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_2",
+            "result_status": "completed",
+            "schema_version": "source_code_delivery_v1",
+            "payload": normalized_payload,
+            "artifact_refs": artifact_refs,
+            "written_artifacts": written_artifacts,
+            "verification_evidence_refs": verification_evidence_refs,
+            "assumptions": ["source_delivery_paths_normalized_to_attempt=4"],
+            "issues": [],
+            "confidence": 0.91,
+            "needs_escalation": False,
+            "summary": "Structured source code delivery submitted.",
+            "failure_kind": None,
+            "failure_message": None,
+            "failure_detail": None,
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{ticket_id}:source-code-delivery",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    completed_ticket = repository.get_current_ticket_projection(ticket_id)
+    assert completed_ticket is not None
+    assert completed_ticket["status"] == "COMPLETED"
+    assert verification_evidence_refs == [
+        normalized_payload["verification_runs"][0]["artifact_ref"]
+    ]
 
 
 def test_source_code_delivery_ticket_start_updates_active_worktree_index(client) -> None:

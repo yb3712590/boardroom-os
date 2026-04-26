@@ -484,12 +484,16 @@ def _validate_source_code_delivery_verification_runs(payload: dict[str, Any]) ->
                 message="Each verification_runs item requires failures array.",
             )
         stdout = str(item.get("stdout") or "")
-        if not stdout.strip():
+        stderr = str(item.get("stderr") or "")
+        if not stdout.strip() and not stderr.strip():
             _raise_schema_validation_error(
-                field_path=f"{field_prefix}.stdout",
-                expected="non-empty string",
-                actual_value=item.get("stdout", _MISSING),
-                message="Each verification_runs item requires raw stdout output.",
+                field_path=f"{field_prefix}.raw_output",
+                expected="non-empty stdout or stderr string",
+                actual_value={
+                    "stdout": item.get("stdout", _MISSING),
+                    "stderr": item.get("stderr", _MISSING),
+                },
+                message="Each verification_runs item requires raw stdout or stderr output.",
             )
         if discovered_count <= 0 or passed_count + failed_count > discovered_count:
             _raise_schema_validation_error(
@@ -508,7 +512,7 @@ def _validate_source_code_delivery_verification_runs(payload: dict[str, Any]) ->
                 "exit_code": int(item["exit_code"]),
                 "duration_sec": float(item["duration_sec"]),
                 "stdout": stdout,
-                "stderr": str(item["stderr"]),
+                "stderr": stderr,
                 "discovered_count": discovered_count,
                 "passed_count": passed_count,
                 "failed_count": failed_count,
@@ -1273,8 +1277,9 @@ def _source_code_delivery_schema_body() -> dict[str, Any]:
             "verification_runs": {
                 "type": "array",
                 "description": (
-                    "Raw verification evidence. Workspace-managed verification artifacts belong "
-                    "under 20-evidence/tests/ and are referenced by verification_evidence_refs."
+                    "Raw verification evidence. Each run must include raw stdout or stderr output. "
+                    "Workspace-managed verification artifacts belong under 20-evidence/tests/ "
+                    "and are referenced by verification_evidence_refs."
                 ),
                 "minItems": 1,
                 "items": {

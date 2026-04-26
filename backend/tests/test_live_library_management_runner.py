@@ -1110,7 +1110,7 @@ def test_assert_source_delivery_payload_quality_requires_raw_verification_output
         }
     }
 
-    with pytest.raises(AssertionError, match="raw verification stdout"):
+    with pytest.raises(AssertionError, match="raw verification output"):
         _assert_source_delivery_payload_quality(created_specs, terminals)
 
 
@@ -1135,7 +1135,7 @@ def test_snapshot_source_delivery_payload_audit_records_quality_error_without_ra
 
     assert audit["completed_ticket_ids"] == []
     assert audit["failed_retry_count"] == 0
-    assert "missing raw verification output" in audit["audit_error"]
+    assert "non-materialized artifact_ref" in audit["audit_error"]
 
 
 def test_source_delivery_payload_quality_accepts_compact_evidence_artifact_raw_output() -> None:
@@ -1165,6 +1165,78 @@ def test_source_delivery_payload_quality_accepts_compact_evidence_artifact_raw_o
                             "discovered_count": 1,
                             "passed_count": 1,
                             "failed_count": 0,
+                            "skipped_count": 0,
+                            "failures": [],
+                        },
+                    }
+                ],
+                "verification_evidence_refs": ["art://workspace/tkt_build_001/tests/report.json"],
+            },
+        }
+    }
+
+    assert _assert_source_delivery_payload_quality(created_specs, terminals) == ["tkt_build_001"]
+
+
+def test_source_delivery_compact_payload_requires_evidence_ref_content_json_raw_output() -> None:
+    created_specs = {
+        "tkt_build_001": {
+            "output_schema_ref": "source_code_delivery",
+        }
+    }
+    terminals = {
+        "tkt_build_001": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {
+                "written_artifacts": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_build_001/tests/report.json",
+                        "path": "20-evidence/tests/tkt_build_001/attempt-1/report.json",
+                        "content_json": {
+                            "artifact_ref": "art://workspace/tkt_build_001/tests/report.json",
+                            "path": "20-evidence/tests/tkt_build_001/attempt-1/report.json",
+                            "command": "pytest -q",
+                            "stdout": "",
+                            "stderr": "",
+                        },
+                    }
+                ],
+                "verification_evidence_refs": ["art://workspace/tkt_build_001/tests/report.json"],
+            },
+        }
+    }
+
+    with pytest.raises(AssertionError, match="raw verification output"):
+        _assert_source_delivery_payload_quality(created_specs, terminals)
+
+
+def test_source_delivery_payload_quality_accepts_compact_stderr_raw_output() -> None:
+    created_specs = {
+        "tkt_build_001": {
+            "output_schema_ref": "source_code_delivery",
+        }
+    }
+    terminals = {
+        "tkt_build_001": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {
+                "written_artifacts": [
+                    {
+                        "artifact_ref": "art://workspace/tkt_build_001/tests/report.json",
+                        "path": "20-evidence/tests/tkt_build_001/attempt-1/report.json",
+                        "content_json": {
+                            "artifact_ref": "art://workspace/tkt_build_001/tests/report.json",
+                            "path": "20-evidence/tests/tkt_build_001/attempt-1/report.json",
+                            "runner": "pytest",
+                            "command": "pytest -q",
+                            "status": "failed",
+                            "exit_code": 1,
+                            "duration_sec": 0.3,
+                            "stdout": "",
+                            "stderr": "AssertionError: regression failed\n",
+                            "discovered_count": 1,
+                            "passed_count": 0,
+                            "failed_count": 1,
                             "skipped_count": 0,
                             "failures": [],
                         },

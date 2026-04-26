@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from app.core.runtime import _build_runtime_success_payload, _normalize_source_code_delivery_payload
+from app.core.runtime import (
+    _build_runtime_default_artifacts,
+    _build_runtime_success_payload,
+    _normalize_source_code_delivery_payload,
+)
 
 
 def _fake_execution_package(*, ticket_id: str, output_schema_ref: str, process_asset_refs: list[str]):
@@ -122,6 +126,46 @@ def test_source_code_delivery_runtime_payload_includes_source_files_and_verifica
     ]
 
 
+def test_source_code_delivery_default_evidence_paths_use_current_attempt():
+    execution_package = _fake_execution_package(
+        ticket_id="tkt_source_delivery_attempt_004",
+        output_schema_ref="source_code_delivery",
+        process_asset_refs=[],
+    )
+    execution_package.meta.attempt_no = 4
+
+    payload = _normalize_source_code_delivery_payload(
+        execution_package,
+        {
+            "summary": "Retry delivery.",
+            "source_file_refs": ["art://workspace/tkt_source_delivery_attempt_004/source.tsx"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_source_delivery_attempt_004/source.tsx",
+                    "path": "10-project/src/tkt_source_delivery_attempt_004.tsx",
+                    "content": "export const attemptFourReady = true;\n",
+                }
+            ],
+        },
+    )
+
+    assert payload["verification_runs"][0]["path"] == (
+        "20-evidence/tests/tkt_source_delivery_attempt_004/attempt-4/test-report.json"
+    )
+
+    _, written_artifacts = _build_runtime_default_artifacts(execution_package, payload)
+    written_paths = {item["path"] for item in written_artifacts}
+    assert (
+        "20-evidence/tests/tkt_source_delivery_attempt_004/attempt-4/test-report.json"
+        in written_paths
+    )
+    assert (
+        "20-evidence/git/tkt_source_delivery_attempt_004/attempt-4/git-closeout.json"
+        in written_paths
+    )
+    assert all("/attempt-1/" not in path for path in written_paths)
+
+
 def test_source_code_delivery_normalization_versions_verification_paths_by_attempt():
     execution_package = _fake_execution_package(
         ticket_id="tkt_source_delivery_retry",
@@ -165,4 +209,50 @@ def test_source_code_delivery_normalization_versions_verification_paths_by_attem
 
     assert payload["verification_runs"][0]["path"] == (
         "20-evidence/tests/tkt_source_delivery_retry/attempt-4/report.json"
+    )
+
+
+def test_source_code_delivery_normalization_rewrites_wrong_attempt_path_to_current_attempt():
+    execution_package = _fake_execution_package(
+        ticket_id="tkt_source_delivery_retry_wrong_attempt",
+        output_schema_ref="source_code_delivery",
+        process_asset_refs=[],
+    )
+    execution_package.meta.attempt_no = 4
+
+    payload = _normalize_source_code_delivery_payload(
+        execution_package,
+        {
+            "summary": "Retry delivery.",
+            "source_file_refs": ["art://workspace/tkt_source_delivery_retry_wrong_attempt/source.js"],
+            "source_files": [
+                {
+                    "artifact_ref": "art://workspace/tkt_source_delivery_retry_wrong_attempt/source.js",
+                    "path": "10-project/src/actions.js",
+                    "content": "export const actionsReady = true;\n",
+                }
+            ],
+            "verification_runs": [
+                {
+                    "artifact_ref": "art://workspace/tkt_source_delivery_retry_wrong_attempt/report.json",
+                    "path": "20-evidence/tests/tkt_source_delivery_retry_wrong_attempt/attempt-1/report.json",
+                    "runner": "node",
+                    "command": "node test.js",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "duration_sec": 0.4,
+                    "stdout": "1 passed\n",
+                    "stderr": "",
+                    "discovered_count": 1,
+                    "passed_count": 1,
+                    "failed_count": 0,
+                    "skipped_count": 0,
+                    "failures": [],
+                }
+            ],
+        },
+    )
+
+    assert payload["verification_runs"][0]["path"] == (
+        "20-evidence/tests/tkt_source_delivery_retry_wrong_attempt/attempt-4/report.json"
     )
