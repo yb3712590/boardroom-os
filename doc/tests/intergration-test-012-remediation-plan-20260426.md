@@ -222,20 +222,20 @@ py -3 -m pytest tests/test_ceo_scheduler.py -k "backlog_followup and completed" 
 
 **实施清单：**
 
-- [ ] 审计 `workflow_auto_advance.py` 中所有 workflow closeout completion path。
+- [x] 审计 `workflow_auto_advance.py` 中所有 workflow closeout completion path。
   - 找到实际把 workflow projection 变成 `COMPLETED / closeout` 的位置。
   - 确认该路径是否已经调用 `_maybe_write_autopilot_chain_report()` 或 `ensure_workflow_atomic_chain_report()`。
 
-- [ ] 在 production closeout path 增加 hard ensure。
+- [x] 在 production closeout path 增加 hard ensure。
   - workflow 标记 `COMPLETED / closeout` 前调用 `ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)`。
   - 如果 artifact store 不可用或 report 无法生成，不应把 workflow 静默标成 full completed。
   - 若当前设计必须允许 closeout 完成但 chain report 延迟物化，则要写结构化 warning / incident，并让 final collection 明确显示 `completion_mode="completed_pending_chain_report"`。
 
-- [ ] 保留 `collect_common_outcome()` 里的 ensure。
+- [x] 保留 `collect_common_outcome()` 里的 ensure。
   - 它只作为 replay / harness 幂等补救。
   - 测试不能只证明 harness replay 可以补齐。
 
-- [ ] 新增 failing test：`test_workflow_completion_materializes_chain_report_before_completed_projection`
+- [x] 新增 failing test：`test_workflow_completion_materializes_chain_report_before_completed_projection`
   - 位置：`backend/tests/test_workflow_autopilot.py`
   - 场景：
     - seed autopilot workflow。
@@ -247,7 +247,7 @@ py -3 -m pytest tests/test_ceo_scheduler.py -k "backlog_followup and completed" 
     - `artifact_exists(repository, workflow_chain_report_artifact_ref(workflow_id))` 为 true。
     - artifact `ticket_id` 指向 closeout ticket。
 
-- [ ] 新增 idempotency regression：`test_workflow_chain_report_ensure_is_idempotent_across_auto_advance_and_harness_replay`
+- [x] 新增 idempotency regression：`test_workflow_chain_report_ensure_is_idempotent_across_auto_advance_and_harness_replay`
   - 位置：`backend/tests/test_workflow_autopilot.py`
   - 场景：
     - production auto-advance 已生成 chain report。
@@ -675,7 +675,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 六轮都完成后，至少要有这些证据：
 
 - [x] Round 1 regression：completed ticket 兜底只有在 lineage / supersession / evidence 有效时开放下游。
-- [ ] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
+- [x] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
 - [ ] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
 - [ ] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
 - [ ] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。

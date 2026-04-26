@@ -222,7 +222,11 @@ from app.core.ticket_artifacts import (
 )
 from app.core.ticket_context_archive import latest_provider_audit_for_ticket, write_ticket_context_markdown
 from app.core.time import now_local
-from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
+from app.core.workflow_autopilot import (
+    WorkflowChainReportUnavailableError,
+    ensure_workflow_atomic_chain_report,
+    workflow_uses_ceo_board_delegate,
+)
 from app.core.workflow_scope import resolve_workflow_scope
 from app.core.workspace_path_contracts import (
     is_workspace_managed_write_set,
@@ -1269,6 +1273,7 @@ DEPENDENCY_GATE_INVALID_FAILURE_KIND = "DEPENDENCY_GATE_INVALID"
 DEPENDENCY_GATE_UNHEALTHY_FAILURE_KIND = "DEPENDENCY_GATE_UNHEALTHY"
 UPSTREAM_DEPENDENCY_UNHEALTHY_FAILURE_KIND = "UPSTREAM_DEPENDENCY_UNHEALTHY"
 WORKSPACE_HOOK_VALIDATION_FAILURE_KIND = "WORKSPACE_HOOK_VALIDATION_ERROR"
+WORKFLOW_CHAIN_REPORT_UNAVAILABLE_FAILURE_KIND = "WORKFLOW_CHAIN_REPORT_UNAVAILABLE"
 DECOMPOSITION_RECOVERY_FAILURE_KINDS = {
     "REQUEST_TOO_LARGE",
     "CONTEXT_TOO_LARGE",
@@ -7427,6 +7432,27 @@ def handle_ticket_result_submit(
                 developer_inspector_store=developer_inspector_store,
                 persisted_artifacts=persisted_inspector_artifacts,
             )
+    except WorkflowChainReportUnavailableError as exc:
+        cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
+        if developer_inspector_store is not None:
+            for artifact in persisted_inspector_artifacts:
+                developer_inspector_store.delete_ref(artifact.ref)
+        return handle_ticket_fail(
+            repository,
+            TicketFailCommand(
+                workflow_id=payload.workflow_id,
+                ticket_id=payload.ticket_id,
+                node_id=payload.node_id,
+                failed_by=payload.submitted_by,
+                failure_kind=WORKFLOW_CHAIN_REPORT_UNAVAILABLE_FAILURE_KIND,
+                failure_message=str(exc),
+                failure_detail={
+                    "workflow_id": exc.workflow_id,
+                    "reason_code": exc.reason_code,
+                },
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
     except ValueError as exc:
         cleanup_materialized_artifacts(resolved_artifact_store, materialized_artifacts)
         if developer_inspector_store is not None:
@@ -7555,6 +7581,27 @@ def handle_ticket_result_submit(
         received_at=received_at,
         reason=None,
         causation_hint=causation_hint,
+    )
+
+
+def _ensure_completed_autopilot_workflow_chain_report(
+    repository: ControlPlaneRepository,
+    *,
+    connection,
+    workflow_id: str,
+) -> None:
+    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
+    if not workflow_uses_ceo_board_delegate(workflow):
+        return
+    if str((workflow or {}).get("status") or "") != TICKET_STATUS_COMPLETED:
+        return
+    if str((workflow or {}).get("current_stage") or "") != "closeout":
+        return
+    ensure_workflow_atomic_chain_report(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+        required=True,
     )
 
 
@@ -7916,6 +7963,11 @@ def _complete_ticket_locked(
         completed_ticket_id=payload.ticket_id,
     )
     repository.refresh_projections(connection)
+    _ensure_completed_autopilot_workflow_chain_report(
+        repository,
+        connection=connection,
+        workflow_id=payload.workflow_id,
+    )
     return causation_hint
 
 
@@ -7950,6 +8002,8 @@ def handle_ticket_completed(
                     developer_inspector_store=developer_inspector_store,
                     persisted_artifacts=persisted_artifacts,
                 )
+            except WorkflowChainReportUnavailableError:
+                raise
             except RuntimeError as exc:
                 return _rejected_ack(
                     command_id=command_id,
@@ -7958,6 +8012,14 @@ def handle_ticket_completed(
                     ticket_id=payload.ticket_id,
                     reason=str(exc),
                 )
+    except WorkflowChainReportUnavailableError as exc:
+        return _rejected_ack(
+            command_id=command_id,
+            idempotency_key=payload.idempotency_key,
+            received_at=received_at,
+            ticket_id=payload.ticket_id,
+            reason=str(exc),
+        )
     except Exception:
         if developer_inspector_store is not None:
             for artifact in persisted_artifacts:

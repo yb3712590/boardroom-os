@@ -12,6 +12,13 @@ CEO_AUTOPILOT_FINE_GRAINED_WORKFLOW_PROFILE = "CEO_AUTOPILOT_FINE_GRAINED"
 WORKFLOW_CHAIN_REPORT_NODE_ID = "node_workflow_chain_report"
 
 
+class WorkflowChainReportUnavailableError(RuntimeError):
+    def __init__(self, *, workflow_id: str, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.workflow_id = workflow_id
+        self.reason_code = reason_code
+
+
 def workflow_uses_ceo_board_delegate(workflow: dict[str, object] | None) -> bool:
     if workflow is None:
         return False
@@ -173,98 +180,110 @@ def _workflow_closeout_state(
     return completion.closeout_ticket, completion.closeout_terminal_event
 
 
-def build_human_readable_workflow_report(repository, *, workflow_id: str) -> dict[str, Any] | None:
+def build_human_readable_workflow_report(
+    repository,
+    *,
+    workflow_id: str,
+    connection=None,
+) -> dict[str, Any] | None:
     repository.initialize()
-    workflow = repository.get_workflow_projection(workflow_id)
+    if connection is None:
+        with repository.connection() as owned_connection:
+            return build_human_readable_workflow_report(
+                repository,
+                workflow_id=workflow_id,
+                connection=owned_connection,
+            )
+
+    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
     if workflow is None:
         return None
 
-    with repository.connection() as connection:
-        closeout_state = _workflow_closeout_state(
-            repository,
-            workflow_id=workflow_id,
-            connection=connection,
-        )
-        if closeout_state is None:
-            return None
-        closeout_ticket, closeout_terminal_event = closeout_state
+    closeout_state = _workflow_closeout_state(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    if closeout_state is None:
+        return None
+    closeout_ticket, closeout_terminal_event = closeout_state
 
-        ticket_rows = connection.execute(
-            """
-            SELECT * FROM ticket_projection
-            WHERE workflow_id = ?
-            ORDER BY updated_at ASC, ticket_id ASC
-            """,
-            (workflow_id,),
-        ).fetchall()
-        approval_rows = connection.execute(
-            """
-            SELECT * FROM approval_projection
-            WHERE workflow_id = ?
-            ORDER BY created_at ASC, approval_id ASC
-            """,
-            (workflow_id,),
-        ).fetchall()
-        tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
-        approvals = [repository._convert_approval_row(row) for row in approval_rows]
+    ticket_rows = connection.execute(
+        """
+        SELECT * FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at ASC, ticket_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    approval_rows = connection.execute(
+        """
+        SELECT * FROM approval_projection
+        WHERE workflow_id = ?
+        ORDER BY created_at ASC, approval_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
+    approvals = [repository._convert_approval_row(row) for row in approval_rows]
 
-        governance_chain: list[dict[str, Any]] = []
-        atomic_tasks: list[dict[str, Any]] = []
-        for ticket in tickets:
-            ticket_id = str(ticket["ticket_id"])
-            created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
-            if not created_spec:
-                continue
+    governance_chain: list[dict[str, Any]] = []
+    atomic_tasks: list[dict[str, Any]] = []
+    for ticket in tickets:
+        ticket_id = str(ticket["ticket_id"])
+        created_spec = repository.get_latest_ticket_created_payload(connection, ticket_id) or {}
+        if not created_spec:
+            continue
 
-            output_schema_ref = str(created_spec.get("output_schema_ref") or "")
-            delivery_stage = str(created_spec.get("delivery_stage") or "")
-            dispatch_intent = created_spec.get("dispatch_intent") or {}
-            artifact_refs = [
-                str(artifact.get("artifact_ref") or "")
-                for artifact in repository.list_ticket_artifacts(ticket_id, connection=connection)
-                if str(artifact.get("artifact_ref") or "").strip()
-            ]
-            terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id) or {}
-            completion_payload = terminal_event.get("payload") or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "")
+        delivery_stage = str(created_spec.get("delivery_stage") or "")
+        dispatch_intent = created_spec.get("dispatch_intent") or {}
+        artifact_refs = [
+            str(artifact.get("artifact_ref") or "")
+            for artifact in repository.list_ticket_artifacts(ticket_id, connection=connection)
+            if str(artifact.get("artifact_ref") or "").strip()
+        ]
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id) or {}
+        completion_payload = terminal_event.get("payload") or {}
 
-            if output_schema_ref in {
-                "architecture_brief",
-                "technology_decision",
-                "milestone_plan",
-                "detailed_design",
-                "backlog_recommendation",
-                "consensus_document",
-            }:
-                governance_chain.append(
-                    {
-                        "ticket_id": ticket_id,
-                        "node_id": str(ticket["node_id"]),
-                        "document_kind_ref": output_schema_ref,
-                        "status": str(ticket["status"]),
-                        "summary": str(created_spec.get("summary") or ""),
-                    }
-                )
+        if output_schema_ref in {
+            "architecture_brief",
+            "technology_decision",
+            "milestone_plan",
+            "detailed_design",
+            "backlog_recommendation",
+            "consensus_document",
+        }:
+            governance_chain.append(
+                {
+                    "ticket_id": ticket_id,
+                    "node_id": str(ticket["node_id"]),
+                    "document_kind_ref": output_schema_ref,
+                    "status": str(ticket["status"]),
+                    "summary": str(created_spec.get("summary") or ""),
+                }
+            )
 
-            if delivery_stage or dispatch_intent:
-                atomic_tasks.append(
-                    {
-                        "ticket_id": ticket_id,
-                        "node_id": str(ticket["node_id"]),
-                        "task_title": _extract_atomic_task_title(created_spec),
-                        "summary": str(created_spec.get("summary") or ""),
-                        "delivery_stage": delivery_stage,
-                        "role_profile_ref": str(created_spec.get("role_profile_ref") or ""),
-                        "assignee_employee_id": str(dispatch_intent.get("assignee_employee_id") or ""),
-                        "dependency_gate_refs": [
-                            str(item)
-                            for item in list(dispatch_intent.get("dependency_gate_refs") or [])
-                            if str(item).strip()
-                        ],
-                        "status": str(ticket["status"]),
-                        "artifact_refs": artifact_refs,
-                        "completion_summary": str(completion_payload.get("completion_summary") or ""),
-                    }
-                )
+        if delivery_stage or dispatch_intent:
+            atomic_tasks.append(
+                {
+                    "ticket_id": ticket_id,
+                    "node_id": str(ticket["node_id"]),
+                    "task_title": _extract_atomic_task_title(created_spec),
+                    "summary": str(created_spec.get("summary") or ""),
+                    "delivery_stage": delivery_stage,
+                    "role_profile_ref": str(created_spec.get("role_profile_ref") or ""),
+                    "assignee_employee_id": str(dispatch_intent.get("assignee_employee_id") or ""),
+                    "dependency_gate_refs": [
+                        str(item)
+                        for item in list(dispatch_intent.get("dependency_gate_refs") or [])
+                        if str(item).strip()
+                    ],
+                    "status": str(ticket["status"]),
+                    "artifact_refs": artifact_refs,
+                    "completion_summary": str(completion_payload.get("completion_summary") or ""),
+                }
+            )
 
     closeout_payload = closeout_terminal_event.get("payload") or {}
     closeout_artifact_refs = list(closeout_payload.get("artifact_refs") or [])
@@ -338,22 +357,44 @@ def build_human_readable_workflow_report(repository, *, workflow_id: str) -> dic
     }
 
 
-def ensure_workflow_atomic_chain_report(repository, *, workflow_id: str) -> str | None:
+def ensure_workflow_atomic_chain_report(
+    repository,
+    *,
+    workflow_id: str,
+    connection=None,
+    required: bool = False,
+) -> str | None:
     repository.initialize()
-    workflow = repository.get_workflow_projection(workflow_id)
+    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
     if not workflow_uses_ceo_board_delegate(workflow):
         return None
 
     artifact_ref = workflow_chain_report_artifact_ref(workflow_id)
-    if repository.get_artifact_by_ref(artifact_ref) is not None:
+    if repository.get_artifact_by_ref(artifact_ref, connection=connection) is not None:
         return artifact_ref
 
-    report = build_human_readable_workflow_report(repository, workflow_id=workflow_id)
+    report = build_human_readable_workflow_report(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
     if report is None:
+        if required:
+            raise WorkflowChainReportUnavailableError(
+                workflow_id=workflow_id,
+                reason_code="workflow_chain_report_not_ready",
+                message=f"Workflow chain report cannot be generated for workflow {workflow_id}.",
+            )
         return None
 
     artifact_store = repository.artifact_store
     if artifact_store is None:
+        if required:
+            raise WorkflowChainReportUnavailableError(
+                workflow_id=workflow_id,
+                reason_code="workflow_chain_report_artifact_store_unavailable",
+                message="Artifact store is required to materialize workflow chain report.",
+            )
         return None
 
     logical_path = workflow_chain_report_logical_path(workflow_id)
@@ -365,9 +406,39 @@ def ensure_workflow_atomic_chain_report(repository, *, workflow_id: str) -> str 
         artifact_ref=artifact_ref,
     )
     created_at = datetime.fromisoformat(str(report["generated_at"])) if report.get("generated_at") else datetime.now()
-    with repository.transaction() as connection:
+    if connection is not None:
         repository.save_artifact_record(
             connection,
+            artifact_ref=artifact_ref,
+            workflow_id=workflow_id,
+            ticket_id=str(report["final_delivery"]["closeout_ticket_id"]),
+            node_id=WORKFLOW_CHAIN_REPORT_NODE_ID,
+            logical_path=logical_path,
+            kind="JSON",
+            media_type="application/json",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_backend=materialized.storage_backend,
+            storage_relpath=materialized.storage_relpath,
+            storage_object_key=materialized.storage_object_key,
+            storage_delete_status=materialized.storage_delete_status,
+            storage_delete_error=None,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            retention_class_source="explicit",
+            retention_ttl_sec=None,
+            retention_policy_source="explicit_class",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=created_at,
+        )
+        return artifact_ref
+    with repository.transaction() as owned_connection:
+        repository.save_artifact_record(
+            owned_connection,
             artifact_ref=artifact_ref,
             workflow_id=workflow_id,
             ticket_id=str(report["final_delivery"]["closeout_ticket_id"]),

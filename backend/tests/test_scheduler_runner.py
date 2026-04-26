@@ -2480,6 +2480,128 @@ def test_deterministic_scope_delivery_chain_reaches_closeout_completion(client, 
     assert repository.list_open_incidents() == []
 
 
+def test_scheduler_runner_closeout_materializes_chain_report_for_autopilot_workflow(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    monkeypatch.setattr("app.scheduler_runner._recover_ceo_delegate_blockers", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.scheduler_runner.run_due_ceo_maintenance", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    workflow_id = "wf_scheduler_closeout_chain_report"
+    build_ticket_id = "tkt_scheduler_chain_report_build"
+    closeout_ticket_id = "tkt_scheduler_chain_report_closeout"
+    repository = client.app.state.repository
+
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Scheduler closeout chain report contract",
+    )
+    api_test_helpers._persist_workflow_profile(repository, workflow_id, "CEO_AUTOPILOT_FINE_GRAINED")
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=build_ticket_id,
+        node_id="node_scheduler_chain_report_build",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{build_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved delivery slice.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    with api_test_helpers._suppress_ceo_shadow_side_effects():
+        build_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=api_test_helpers._source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=build_ticket_id,
+                node_id="node_scheduler_chain_report_build",
+            ),
+        )
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=closeout_ticket_id,
+        node_id="node_ceo_delivery_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="delivery_closeout_package",
+        delivery_stage="CLOSEOUT",
+        allowed_write_set=[f"20-evidence/closeout/{closeout_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the final delivery evidence.",
+            "Must produce a structured closeout package.",
+        ],
+        parent_ticket_id=build_ticket_id,
+        input_artifact_refs=[f"art://runtime/{build_ticket_id}/source-code.tsx"],
+    )
+
+    def _fake_execute(_repository, ticket, _execution_package, _created_spec):
+        assert str(ticket["ticket_id"]) == closeout_ticket_id
+        closeout_ref = f"art://runtime/{closeout_ticket_id}/delivery-closeout-package.json"
+        closeout_payload = {
+            "summary": "Scheduler runtime produced the closeout package.",
+            "final_artifact_refs": [f"art://runtime/{build_ticket_id}/source-code.tsx"],
+            "handoff_notes": [
+                "Final evidence remains linked to the source delivery ticket.",
+            ],
+            "documentation_updates": [],
+        }
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Scheduler runtime produced the closeout package.",
+            artifact_refs=[closeout_ref],
+            result_payload=closeout_payload,
+            written_artifacts=[
+                {
+                    "path": f"20-evidence/closeout/{closeout_ticket_id}/delivery-closeout-package.json",
+                    "artifact_ref": closeout_ref,
+                    "kind": "JSON",
+                    "content_json": closeout_payload,
+                }
+            ],
+            assumptions=["Scheduler runtime used a deterministic closeout payload."],
+            issues=[],
+            confidence=0.82,
+        )
+
+    monkeypatch.setattr(runtime_module, "_execute_runtime_with_provider_if_configured", _fake_execute)
+
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-closeout-chain-report",
+        max_dispatches=10,
+    )
+
+    artifact_ref = f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+    completion_summary = dashboard_response.json()["data"]["completion_summary"]
+    workflow = repository.get_workflow_projection(workflow_id)
+    closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    artifact = repository.get_artifact_by_ref(artifact_ref)
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert dashboard_response.status_code == 200
+    assert closeout_ticket is not None
+    assert closeout_ticket["status"] == "COMPLETED"
+    assert workflow is not None
+    assert workflow["status"] == "COMPLETED"
+    assert workflow["current_stage"] == "closeout"
+    assert completion_summary is not None
+    assert completion_summary["workflow_chain_report_artifact_ref"] == artifact_ref
+    assert artifact is not None
+    assert artifact["ticket_id"] == closeout_ticket_id
+
+
 def test_scheduler_runner_triggers_idle_ceo_maintenance_for_pending_workflow(
     client,
     monkeypatch,

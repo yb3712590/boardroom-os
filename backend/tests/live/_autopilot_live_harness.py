@@ -1641,8 +1641,12 @@ def collect_common_outcome(paths: ScenarioPaths, repository, workflow_id: str) -
     source_delivery_payload_audit = _collect_source_delivery_payload_audit(created_specs, terminals)
     source_delivery_ticket_ids = list(source_delivery_payload_audit.get("completed_ticket_ids") or [])
 
+    chain_report_artifact_ref = f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
+    if not artifact_exists(repository, chain_report_artifact_ref):
+        ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)
+        raise AssertionError("Workflow chain report was not materialized by production completion path.")
     ensure_workflow_atomic_chain_report(repository, workflow_id=workflow_id)
-    if not artifact_exists(repository, f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"):
+    if not artifact_exists(repository, chain_report_artifact_ref):
         raise AssertionError("Workflow chain report artifact is missing.")
     if sorted(compiled_ids) != archived_ids:
         raise AssertionError(
