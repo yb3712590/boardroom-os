@@ -37,6 +37,7 @@ from app.core.runtime_provider_config import (
     ROLE_BINDING_FRONTEND_ENGINEER,
     RuntimeProviderConfigEntry,
     RuntimeProviderRoleBinding,
+    RuntimeProviderSelection,
     RuntimeProviderStoredConfig,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
@@ -74,6 +75,62 @@ def test_provider_failure_detail_marks_missing_selection_without_default_provide
     assert detail["provider_id"] is None
     assert detail["selection_missing"] is True
     assert detail["provider_id"] != OPENAI_COMPAT_PROVIDER_ID
+
+
+def test_provider_failure_detail_includes_stable_failure_fingerprint() -> None:
+    provider = RuntimeProviderConfigEntry(
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        label="OpenAI Compat",
+        enabled=True,
+        base_url="https://api.example.test/v1",
+        api_key="sk-test",
+        model="gpt-5.4",
+        retry_backoff_schedule_sec=[1.0, 2.0],
+    )
+    selection = RuntimeProviderSelection(
+        provider=provider,
+        provider_model_entry_ref=f"{OPENAI_COMPAT_PROVIDER_ID}::gpt-5.4",
+        preferred_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        preferred_model="gpt-5.4",
+        actual_model="gpt-5.4",
+        selection_reason="role_binding",
+    )
+
+    first_detail = runtime_module._normalize_provider_failure_detail(
+        {
+            "provider_response_id": "resp_first",
+            "request_id": "req_first",
+            "parse_stage": "json_object_sequence",
+        },
+        selection=selection,
+        attempt_count=1,
+        fallback_applied=False,
+        failure_kind="NO_JSON_OBJECT",
+    )
+    second_detail = runtime_module._normalize_provider_failure_detail(
+        {
+            "provider_response_id": "resp_second",
+            "request_id": "req_second",
+            "parse_stage": "json_object_sequence",
+        },
+        selection=selection,
+        attempt_count=2,
+        fallback_applied=False,
+        failure_kind="NO_JSON_OBJECT",
+    )
+
+    assert first_detail["failure_kind"] == "NO_JSON_OBJECT"
+    assert first_detail["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert first_detail["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert first_detail["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert first_detail["preferred_model"] == "gpt-5.4"
+    assert first_detail["actual_model"] == "gpt-5.4"
+    assert first_detail["attempt_count"] == 1
+    assert first_detail["fallback_applied"] is False
+    assert first_detail["fingerprint"] == second_detail["fingerprint"]
+    assert "resp_first" not in first_detail["fingerprint"]
+    assert "req_first" not in first_detail["fingerprint"]
+    assert ":1" not in first_detail["fingerprint"]
 
 
 def test_live_strict_provider_selection_does_not_use_implicit_fallbacks(monkeypatch) -> None:

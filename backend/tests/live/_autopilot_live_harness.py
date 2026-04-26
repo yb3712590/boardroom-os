@@ -36,6 +36,41 @@ PROVIDER_AUDIT_EVENT_TYPES = {
     "PROVIDER_ATTEMPT_FINISHED",
     "PROVIDER_FAILOVER_SELECTED",
 }
+RECOVERED_FAILURE_FAMILY_ORDER = (
+    "Provider JSON / Bad Response",
+    "Workspace Hook Validation",
+    "Closeout Contract Violation",
+    "Runtime Schema Validation",
+    "Other",
+)
+PROVIDER_JSON_FAILURE_KINDS = {
+    "PROVIDER_MALFORMED_JSON",
+    "NO_JSON_OBJECT",
+    "PROVIDER_BAD_RESPONSE",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_AUTH_FAILED",
+    "UPSTREAM_UNAVAILABLE",
+    "FIRST_TOKEN_TIMEOUT",
+    "STREAM_IDLE_TIMEOUT",
+    "REQUEST_TOTAL_TIMEOUT",
+}
+WORKSPACE_HOOK_FAILURE_KINDS = {
+    "WORKSPACE_HOOK_VALIDATION_ERROR",
+    "REQUIRED_HOOK_GATE_BLOCKED",
+}
+CLOSEOUT_CONTRACT_FAILURE_KINDS = {
+    "ARTIFACT_VALIDATION_ERROR",
+    "ARTIFACT_PERSIST_ERROR",
+    "WRITE_SET_VIOLATION",
+    "WORKFLOW_CHAIN_REPORT_UNAVAILABLE",
+    "CLOSEOUT_CONTRACT_VIOLATION",
+    "FINAL_ARTIFACT_REF_INVALID",
+}
+RUNTIME_SCHEMA_FAILURE_KINDS = {
+    "SCHEMA_VALIDATION_FAILED",
+    "SCHEMA_ERROR",
+    "RUNTIME_SCHEMA_VALIDATION_FAILED",
+}
 GOVERNANCE_DOCUMENT_SCHEMA_REFS = {
     "architecture_brief",
     "technology_decision",
@@ -478,6 +513,257 @@ def _collect_source_delivery_payload_audit_for_snapshot(
         }
 
 
+def _empty_recovered_failure_audit() -> dict[str, Any]:
+    return {
+        "total_count": 0,
+        "groups": {
+            family: {
+                "count": 0,
+                "entries": [],
+            }
+            for family in RECOVERED_FAILURE_FAMILY_ORDER
+        },
+        "repeated_fingerprints": [],
+    }
+
+
+def _failure_family(failure_kind: str) -> str:
+    normalized = str(failure_kind or "").strip().upper()
+    if normalized in PROVIDER_JSON_FAILURE_KINDS:
+        return "Provider JSON / Bad Response"
+    if normalized in WORKSPACE_HOOK_FAILURE_KINDS:
+        return "Workspace Hook Validation"
+    if normalized in CLOSEOUT_CONTRACT_FAILURE_KINDS:
+        return "Closeout Contract Violation"
+    if normalized in RUNTIME_SCHEMA_FAILURE_KINDS:
+        return "Runtime Schema Validation"
+    return "Other"
+
+
+def _is_completed_ticket(ticket: dict[str, Any], terminal_event: dict[str, Any] | None) -> bool:
+    if str(ticket.get("status") or "").upper() == "COMPLETED":
+        return True
+    return str((terminal_event or {}).get("event_type") or "").upper() == "TICKET_COMPLETED"
+
+
+def _failure_payload_detail(payload: dict[str, Any]) -> dict[str, Any]:
+    detail = payload.get("failure_detail")
+    return dict(detail) if isinstance(detail, dict) else {}
+
+
+def _stable_failure_fingerprint(
+    *,
+    family: str,
+    failure_kind: str,
+    payload: dict[str, Any],
+    detail: dict[str, Any],
+) -> str:
+    explicit = (
+        detail.get("fingerprint")
+        or payload.get("fingerprint")
+        or detail.get("failure_fingerprint")
+        or payload.get("failure_fingerprint")
+    )
+    if explicit:
+        return str(explicit)
+    if family == "Provider JSON / Bad Response":
+        provider_id = str(
+            detail.get("provider_id")
+            or payload.get("provider_id")
+            or detail.get("actual_provider_id")
+            or payload.get("actual_provider_id")
+            or "unknown-provider"
+        )
+        model = str(
+            detail.get("actual_model")
+            or payload.get("actual_model")
+            or detail.get("preferred_model")
+            or payload.get("preferred_model")
+            or "unknown-model"
+        )
+        discriminator = str(
+            detail.get("parse_stage")
+            or payload.get("parse_stage")
+            or detail.get("response_error_type")
+            or payload.get("response_error_type")
+            or detail.get("timeout_phase")
+            or payload.get("timeout_phase")
+            or detail.get("schema_validation_error")
+            or payload.get("schema_validation_error")
+            or "provider_failure"
+        )
+        return f"provider:{provider_id}:{model}:{failure_kind}:{discriminator}"
+    if family == "Workspace Hook Validation":
+        hook_id = str(detail.get("hook_id") or payload.get("hook_id") or "unknown-hook")
+        return f"hook:{hook_id}:{failure_kind}"
+    return f"{family}:{failure_kind}"
+
+
+def _find_recovered_by_ticket_id(
+    *,
+    tickets: list[dict[str, Any]],
+    terminals: dict[str, dict[str, Any] | None],
+    ticket_id: str,
+    node_id: str,
+    ticket_index: int,
+) -> str | None:
+    current_ticket = tickets[ticket_index] if 0 <= ticket_index < len(tickets) else {}
+    if _is_completed_ticket(current_ticket, terminals.get(ticket_id)):
+        return ticket_id
+    if not node_id:
+        return None
+    for candidate in tickets[max(ticket_index + 1, 0):]:
+        candidate_id = str(candidate.get("ticket_id") or "").strip()
+        if not candidate_id:
+            continue
+        if str(candidate.get("node_id") or "").strip() != node_id:
+            continue
+        if _is_completed_ticket(candidate, terminals.get(candidate_id)):
+            return candidate_id
+    return None
+
+
+def _collect_recovered_failure_audit(
+    *,
+    tickets: list[dict[str, Any]],
+    terminals: dict[str, dict[str, Any] | None],
+    provider_audit_by_ticket: dict[str, list[dict[str, Any]]],
+    incidents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    audit = _empty_recovered_failure_audit()
+    ticket_index_by_id = {
+        str(ticket.get("ticket_id") or "").strip(): index
+        for index, ticket in enumerate(tickets)
+        if str(ticket.get("ticket_id") or "").strip()
+    }
+    tickets_by_id = {
+        str(ticket.get("ticket_id") or "").strip(): ticket
+        for ticket in tickets
+        if str(ticket.get("ticket_id") or "").strip()
+    }
+    seen_entries: set[tuple[str, str, str, str, int]] = set()
+
+    def _add_entry(
+        *,
+        ticket_id: str,
+        node_id: str,
+        failure_kind: str,
+        payload: dict[str, Any],
+        source: str,
+        attempt_no: int = 0,
+    ) -> None:
+        if not ticket_id or not failure_kind:
+            return
+        detail = _failure_payload_detail(payload)
+        family = _failure_family(failure_kind)
+        fingerprint = _stable_failure_fingerprint(
+            family=family,
+            failure_kind=failure_kind,
+            payload=payload,
+            detail=detail,
+        )
+        entry_key = (ticket_id, failure_kind, fingerprint, source, attempt_no)
+        if entry_key in seen_entries:
+            return
+        seen_entries.add(entry_key)
+        ticket_index = ticket_index_by_id.get(ticket_id, -1)
+        recovered_by_ticket_id = _find_recovered_by_ticket_id(
+            tickets=tickets,
+            terminals=terminals,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            ticket_index=ticket_index,
+        )
+        entry = {
+            "ticket_id": ticket_id,
+            "node_id": node_id or str(payload.get("node_id") or ""),
+            "failure_kind": failure_kind,
+            "family": family,
+            "fingerprint": fingerprint,
+            "recovered_by_ticket_id": recovered_by_ticket_id,
+            "source": source,
+            "attempt_no": attempt_no,
+        }
+        group = audit["groups"][family]
+        group["entries"].append(entry)
+        group["count"] = len(group["entries"])
+        audit["total_count"] = int(audit["total_count"]) + 1
+
+    for ticket in tickets:
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if not ticket_id:
+            continue
+        terminal_event = terminals.get(ticket_id) or {}
+        if str(terminal_event.get("event_type") or "").upper() != "TICKET_FAILED":
+            continue
+        payload = dict(terminal_event.get("payload") or {})
+        failure_kind = str(payload.get("failure_kind") or "").strip()
+        if not failure_kind:
+            detail = _failure_payload_detail(payload)
+            failure_kind = str(detail.get("kind") or "").strip()
+        _add_entry(
+            ticket_id=ticket_id,
+            node_id=str(ticket.get("node_id") or payload.get("node_id") or "").strip(),
+            failure_kind=failure_kind,
+            payload=payload,
+            source="terminal_event",
+        )
+
+    for ticket_id, events in provider_audit_by_ticket.items():
+        ticket = tickets_by_id.get(str(ticket_id) or "", {})
+        for event in events:
+            if str(event.get("event_type") or "") != "PROVIDER_ATTEMPT_FINISHED":
+                continue
+            payload = dict(event.get("payload") or {})
+            if str(payload.get("status") or "").upper() != "FAILED":
+                continue
+            failure_kind = str(payload.get("failure_kind") or "").strip()
+            if not failure_kind:
+                continue
+            _add_entry(
+                ticket_id=str(ticket_id),
+                node_id=str(ticket.get("node_id") or payload.get("node_id") or "").strip(),
+                failure_kind=failure_kind,
+                payload=payload,
+                source="provider_attempt",
+                attempt_no=int(payload.get("attempt_no") or 0),
+            )
+
+    fingerprint_counts: dict[str, int] = {}
+    for group in audit["groups"].values():
+        for entry in group["entries"]:
+            fingerprint = str(entry.get("fingerprint") or "").strip()
+            if fingerprint:
+                fingerprint_counts[fingerprint] = fingerprint_counts.get(fingerprint, 0) + 1
+
+    incident_refs_by_fingerprint: dict[str, list[str]] = {}
+    for incident in incidents or []:
+        payload = dict(incident.get("payload") or {})
+        incident_fingerprint = str(
+            payload.get("fingerprint")
+            or payload.get("latest_failure_fingerprint")
+            or incident.get("fingerprint")
+            or ""
+        ).strip()
+        if not incident_fingerprint:
+            continue
+        incident_id = str(payload.get("incident_id") or incident.get("incident_id") or "").strip()
+        if incident_id:
+            incident_refs_by_fingerprint.setdefault(incident_fingerprint, []).append(incident_id)
+
+    audit["repeated_fingerprints"] = [
+        {
+            "fingerprint": fingerprint,
+            "count": count,
+            "incident_ids": incident_refs_by_fingerprint.get(fingerprint, []),
+            "residual_risk": not bool(incident_refs_by_fingerprint.get(fingerprint)),
+        }
+        for fingerprint, count in sorted(fingerprint_counts.items())
+        if count >= 3
+    ]
+    return audit
+
+
 def _assert_source_delivery_payload_quality(
     created_specs: dict[str, dict[str, Any]],
     terminals: dict[str, dict[str, Any] | None],
@@ -794,9 +1080,13 @@ def _provider_snapshot_from_audit_events(events: list[dict[str, Any]]) -> dict[s
         if event_type == "PROVIDER_ATTEMPT_FINISHED":
             current["status"] = str(payload.get("status") or "UNKNOWN")
             current["failure_kind"] = payload.get("failure_kind")
+            if payload.get("fingerprint"):
+                current["fingerprint"] = payload.get("fingerprint")
         elif event_type == "PROVIDER_RETRY_SCHEDULED":
             current["status"] = "RETRY_WAITING"
             current["failure_kind"] = payload.get("failure_kind")
+            if payload.get("fingerprint"):
+                current["fingerprint"] = payload.get("fingerprint")
         else:
             current["status"] = "IN_PROGRESS"
 
@@ -1244,8 +1534,15 @@ def _build_audit_snapshot(
     if hasattr(repository, "connection"):
         created_specs = workflow_created_specs(repository, workflow_id)
         terminals = workflow_terminal_events(repository, workflow_id)
+        provider_audit_by_ticket = workflow_provider_audit_events(repository, workflow_id)
         source_delivery_payload_audit = _collect_source_delivery_payload_audit_for_snapshot(created_specs, terminals)
         staffing_gap_audit = _collect_staffing_gap_audit(repository, workflow_id)
+        recovered_failure_audit = _collect_recovered_failure_audit(
+            tickets=tickets,
+            terminals=terminals,
+            provider_audit_by_ticket=provider_audit_by_ticket,
+            incidents=incidents,
+        )
     else:
         source_delivery_payload_audit = {
             "completed_ticket_ids": [],
@@ -1256,6 +1553,7 @@ def _build_audit_snapshot(
             "gaps": [],
             "hire_actions": [],
         }
+        recovered_failure_audit = _empty_recovered_failure_audit()
     return {
         "workflow": workflow,
         "tickets": tickets[-20:],
@@ -1284,6 +1582,7 @@ def _build_audit_snapshot(
         "runtime_execution_summary": runtime_execution_summary,
         "source_delivery_payload_audit": source_delivery_payload_audit,
         "staffing_gap_audit": staffing_gap_audit,
+        "recovered_failure_audit": recovered_failure_audit,
         **provider_snapshot,
     }
 
@@ -1386,6 +1685,9 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     staffing_gaps = list(staffing_gap_audit.get("gaps") or [])
     staffing_hire_actions = list(staffing_gap_audit.get("hire_actions") or [])
     failed_source_delivery_retries = list(source_delivery_payload_audit.get("failed_retry_entries") or [])
+    recovered_failure_audit = dict(snapshot.get("recovered_failure_audit") or _empty_recovered_failure_audit())
+    recovered_failure_groups = dict(recovered_failure_audit.get("groups") or {})
+    repeated_failure_fingerprints = list(recovered_failure_audit.get("repeated_fingerprints") or [])
     lines = [
         "# Audit Summary",
         f"- Scenario: `{report.get('scenario_slug') or 'unknown'}`",
@@ -1465,6 +1767,47 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
             )
     else:
         lines.append("- failed retry: `none`")
+    lines.extend(
+        [
+            "",
+            "## Recovered Failure Audit",
+            f"- Total recovered / historical failures: `{int(recovered_failure_audit.get('total_count') or 0)}`",
+        ]
+    )
+    has_recovered_entries = False
+    for family in RECOVERED_FAILURE_FAMILY_ORDER:
+        group = dict(recovered_failure_groups.get(family) or {})
+        entries = list(group.get("entries") or [])
+        if not entries:
+            continue
+        has_recovered_entries = True
+        lines.append(f"- family: `{family}` count `{len(entries)}`")
+        for item in entries:
+            recovered_by = item.get("recovered_by_ticket_id") or "none"
+            lines.append(
+                "- recovered failure: "
+                f"`{item.get('ticket_id') or 'unknown-ticket'}` "
+                f"`{item.get('node_id') or 'unknown-node'}` "
+                f"`{item.get('failure_kind') or 'UNKNOWN'}` "
+                f"fingerprint `{item.get('fingerprint') or 'unknown-fingerprint'}` "
+                f"recovered by `{recovered_by}`"
+            )
+    if not has_recovered_entries:
+        lines.append("- recovered failure: `none`")
+    if repeated_failure_fingerprints:
+        lines.append("- repeated fingerprints:")
+        for item in repeated_failure_fingerprints:
+            incident_ids = ", ".join(str(value) for value in list(item.get("incident_ids") or []))
+            residual_risk = "yes" if item.get("residual_risk") else "no"
+            lines.append(
+                "- repeated fingerprint: "
+                f"`{item.get('fingerprint') or 'unknown-fingerprint'}` "
+                f"count `{item.get('count') or 0}` "
+                f"incidents `{incident_ids or 'none'}` "
+                f"residual risk `{residual_risk}`"
+            )
+    else:
+        lines.append("- repeated fingerprint: `none`")
     lines.extend(
         [
             "",

@@ -1315,6 +1315,175 @@ def test_failed_retry_history_is_reported_in_audit_summary_without_blocking_fina
     assert "WORKSPACE_HOOK_VALIDATION_ERROR" in body
 
 
+def test_write_audit_summary_groups_recovered_provider_failures(tmp_path: Path) -> None:
+    tickets = [
+        {
+            "ticket_id": "tkt_provider_json_failed",
+            "node_id": "node_build_001",
+            "status": "FAILED",
+        },
+        {
+            "ticket_id": "tkt_provider_json_completed",
+            "node_id": "node_build_001",
+            "status": "COMPLETED",
+        },
+    ]
+    terminals = {
+        "tkt_provider_json_failed": {
+            "event_type": "TICKET_FAILED",
+            "payload": {
+                "ticket_id": "tkt_provider_json_failed",
+                "failure_kind": "PROVIDER_MALFORMED_JSON",
+                "failure_detail": {
+                    "provider_id": "prov_primary",
+                    "actual_model": "gpt-5.4",
+                    "fingerprint": "provider:prov_primary:gpt-5.4:PROVIDER_MALFORMED_JSON:repair_parse",
+                },
+            },
+        },
+        "tkt_provider_json_completed": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {"ticket_id": "tkt_provider_json_completed"},
+        },
+    }
+
+    recovered_audit = live_harness._collect_recovered_failure_audit(
+        tickets=tickets,
+        terminals=terminals,
+        provider_audit_by_ticket={},
+        incidents=[],
+    )
+
+    assert recovered_audit["total_count"] == 1
+    provider_group = recovered_audit["groups"]["Provider JSON / Bad Response"]
+    assert provider_group["count"] == 1
+    assert provider_group["entries"][0]["ticket_id"] == "tkt_provider_json_failed"
+    assert provider_group["entries"][0]["node_id"] == "node_build_001"
+    assert provider_group["entries"][0]["failure_kind"] == "PROVIDER_MALFORMED_JSON"
+    assert provider_group["entries"][0]["recovered_by_ticket_id"] == "tkt_provider_json_completed"
+
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": True,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "full",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "COMPLETED",
+                "current_stage": "closeout",
+            },
+            "tickets": tickets,
+            "recovered_failure_audit": recovered_audit,
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "## Recovered Failure Audit" in body
+    assert "Provider JSON / Bad Response" in body
+    assert "tkt_provider_json_failed" in body
+    assert "PROVIDER_MALFORMED_JSON" in body
+    assert "recovered by `tkt_provider_json_completed`" in body
+
+
+def test_failed_retry_history_distinguishes_provider_and_hook_failures(tmp_path: Path) -> None:
+    tickets = [
+        {
+            "ticket_id": "tkt_provider_no_json",
+            "node_id": "node_build_001",
+            "status": "FAILED",
+        },
+        {
+            "ticket_id": "tkt_hook_validation",
+            "node_id": "node_build_001",
+            "status": "FAILED",
+        },
+        {
+            "ticket_id": "tkt_build_completed",
+            "node_id": "node_build_001",
+            "status": "COMPLETED",
+        },
+    ]
+    terminals = {
+        "tkt_provider_no_json": {
+            "event_type": "TICKET_FAILED",
+            "payload": {
+                "ticket_id": "tkt_provider_no_json",
+                "failure_kind": "NO_JSON_OBJECT",
+                "failure_detail": {
+                    "provider_id": "prov_primary",
+                    "actual_model": "gpt-5.4",
+                    "fingerprint": "provider:prov_primary:gpt-5.4:NO_JSON_OBJECT:missing_json",
+                },
+            },
+        },
+        "tkt_hook_validation": {
+            "event_type": "TICKET_FAILED",
+            "payload": {
+                "ticket_id": "tkt_hook_validation",
+                "failure_kind": "WORKSPACE_HOOK_VALIDATION_ERROR",
+                "failure_detail": {
+                    "hook_id": "source_code_delivery.required_evidence",
+                    "fingerprint": "hook:source_code_delivery.required_evidence",
+                },
+            },
+        },
+        "tkt_build_completed": {
+            "event_type": "TICKET_COMPLETED",
+            "payload": {"ticket_id": "tkt_build_completed"},
+        },
+    }
+
+    recovered_audit = live_harness._collect_recovered_failure_audit(
+        tickets=tickets,
+        terminals=terminals,
+        provider_audit_by_ticket={},
+        incidents=[],
+    )
+
+    assert recovered_audit["groups"]["Provider JSON / Bad Response"]["count"] == 1
+    assert recovered_audit["groups"]["Workspace Hook Validation"]["count"] == 1
+    assert recovered_audit["groups"]["Provider JSON / Bad Response"]["entries"][0]["failure_kind"] == "NO_JSON_OBJECT"
+    assert (
+        recovered_audit["groups"]["Workspace Hook Validation"]["entries"][0]["failure_kind"]
+        == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    )
+
+    paths = build_scenario_paths(tmp_path / "library_management_autopilot_live")
+    reset_scenario_root(paths, clean=True)
+    target_path = write_audit_summary(
+        paths,
+        report={
+            "success": True,
+            "scenario_slug": "library_management_autopilot_live",
+            "workflow_id": "wf_library_live",
+            "completion_mode": "full",
+        },
+        snapshot={
+            "workflow": {
+                "workflow_id": "wf_library_live",
+                "status": "COMPLETED",
+                "current_stage": "closeout",
+            },
+            "tickets": tickets,
+            "recovered_failure_audit": recovered_audit,
+        },
+    )
+
+    body = target_path.read_text(encoding="utf-8")
+    assert "Provider JSON / Bad Response" in body
+    assert "Workspace Hook Validation" in body
+    assert "tkt_provider_no_json" in body
+    assert "tkt_hook_validation" in body
+    assert "NO_JSON_OBJECT" in body
+    assert "WORKSPACE_HOOK_VALIDATION_ERROR" in body
+
+
 def test_assert_unique_source_delivery_evidence_paths_rejects_duplicate_paths() -> None:
     with pytest.raises(AssertionError, match="duplicate source delivery evidence paths"):
         _assert_unique_source_delivery_evidence_paths(

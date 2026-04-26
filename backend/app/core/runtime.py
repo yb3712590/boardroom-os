@@ -172,6 +172,42 @@ PROVIDER_AUTO_PAUSE_FAILURE_KINDS: set[str] = set()
 _sleep = time.sleep
 
 
+def _provider_failure_fingerprint(
+    normalized: dict[str, Any],
+    *,
+    failure_kind: str | None,
+) -> str:
+    provider_id = str(
+        normalized.get("provider_id")
+        or normalized.get("actual_provider_id")
+        or "unknown-provider"
+    )
+    model = str(
+        normalized.get("actual_model")
+        or normalized.get("preferred_model")
+        or "unknown-model"
+    )
+    discriminator = str(
+        normalized.get("parse_stage")
+        or normalized.get("response_error_type")
+        or normalized.get("response_error_code")
+        or normalized.get("timeout_phase")
+        or normalized.get("schema_validation_error")
+        or normalized.get("provider_transport_error")
+        or normalized.get("provider_status_code")
+        or "provider_failure"
+    )
+    return ":".join(
+        [
+            "provider",
+            provider_id,
+            model,
+            str(failure_kind or normalized.get("failure_kind") or "PROVIDER_FAILURE"),
+            discriminator,
+        ]
+    )
+
+
 def _runtime_sort_key(ticket: dict[str, Any]) -> tuple:
     return ticket["updated_at"], ticket["ticket_id"]
 
@@ -1885,6 +1921,7 @@ def _normalize_provider_failure_detail(
     selection: RuntimeProviderSelection | None,
     attempt_count: int,
     fallback_applied: bool,
+    failure_kind: str | None = None,
     fallback_mode: str | None = None,
     fallback_reason: str | None = None,
     incident_id: str | None = None,
@@ -1906,8 +1943,14 @@ def _normalize_provider_failure_detail(
     else:
         normalized.setdefault("provider_id", None)
         normalized.setdefault("selection_missing", True)
+    if failure_kind is not None:
+        normalized["failure_kind"] = failure_kind
     normalized["attempt_count"] = attempt_count
     normalized["fallback_applied"] = fallback_applied
+    normalized["fingerprint"] = _provider_failure_fingerprint(
+        normalized,
+        failure_kind=failure_kind or normalized.get("failure_kind"),
+    )
     if fallback_mode is not None:
         normalized["fallback_mode"] = fallback_mode
     if fallback_reason is not None:
@@ -2082,6 +2125,7 @@ def _build_provider_required_unavailable_result(
         selection=selection,
         attempt_count=(provider_attempt_log[-1]["attempt_count"] if provider_attempt_log else 0),
         fallback_applied=False,
+        failure_kind=failure_kind,
     )
     if selection is None:
         failure_detail.pop("provider_id", None)
@@ -2290,6 +2334,7 @@ def _execute_openai_compat_provider(
                 selection=selection,
                 attempt_count=attempt_no,
                 fallback_applied=False,
+                failure_kind=failure_kind,
             )
             if _provider_failure_is_retryable(failure_kind) and attempt_no < PROVIDER_MAX_ATTEMPTS:
                 retry_delay_sec = _provider_retry_delay_sec(selection, failure_kind, last_failure_detail, attempt_no)
@@ -2309,6 +2354,7 @@ def _execute_openai_compat_provider(
                         "response_error_code": last_failure_detail.get("response_error_code"),
                         "parse_stage": last_failure_detail.get("parse_stage"),
                         "repair_steps": list(last_failure_detail.get("repair_steps") or []),
+                        "fingerprint": last_failure_detail.get("fingerprint"),
                     },
                 )
                 _record_if_enabled(
@@ -2341,6 +2387,7 @@ def _execute_openai_compat_provider(
                         "response_error_code": last_failure_detail.get("response_error_code"),
                         "parse_stage": last_failure_detail.get("parse_stage"),
                         "repair_steps": list(last_failure_detail.get("repair_steps") or []),
+                        "fingerprint": last_failure_detail.get("fingerprint"),
                     },
                 )
             return RuntimeExecutionResult(
@@ -2467,6 +2514,7 @@ def _execute_claude_code_provider(
                 selection=selection,
                 attempt_count=1,
                 fallback_applied=False,
+                failure_kind=(exc.failure_kind if isinstance(exc, ClaudeCodeProviderError) else "PROVIDER_BAD_RESPONSE"),
             ),
         )
         _record_if_enabled(
@@ -2479,6 +2527,7 @@ def _execute_claude_code_provider(
                 "failure_message": result.failure_message,
                 "response_id": None,
                 "timeout_phase": (result.failure_detail or {}).get("timeout_phase"),
+                "fingerprint": (result.failure_detail or {}).get("fingerprint"),
             },
         )
         return result

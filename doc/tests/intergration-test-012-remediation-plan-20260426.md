@@ -78,10 +78,10 @@
 
 ### 1.3 未修复，仅被恢复机制覆盖的问题
 
-- [ ] provider bad JSON / invalid content。
+- [x] provider bad JSON / invalid content。
 - [x] closeout package 曾把非 delivery evidence artifact 放入 `payload.final_artifact_refs`。
-- [ ] provider schema compliance 不稳定。
-- [ ] 最终历史里仍保留 failed tickets，必须进入 audit summary，而不是从成功结论中消失。
+- [x] provider schema compliance 不稳定。
+- [x] 最终历史里仍保留 failed tickets，必须进入 audit summary，而不是从成功结论中消失。
 
 ### 1.4 临时动作，不纳入产品架构
 
@@ -508,14 +508,14 @@ py -3 -m pytest tests/test_runtime_fallback_payload.py -k "closeout" -q
 
 **实施清单：**
 
-- [ ] 确认 provider malformed JSON / no JSON / schema validation failed 都有稳定 failure kind。
+- [x] 确认 provider malformed JSON / no JSON / schema validation failed 都有稳定 failure kind。
   - 必须覆盖：
     - `PROVIDER_MALFORMED_JSON`
     - `NO_JSON_OBJECT`
     - `SCHEMA_VALIDATION_FAILED`
     - provider bad response / invalid content 对应现有 failure kind
 
-- [ ] 强化 provider failure detail。
+- [x] 强化 provider failure detail。
   - `_normalize_provider_failure_detail()` 输出中至少包含：
     - `provider_id`
     - `preferred_provider_id`
@@ -527,7 +527,7 @@ py -3 -m pytest tests/test_runtime_fallback_payload.py -k "closeout" -q
     - `failure_kind`
     - `fingerprint` 或可稳定派生 fingerprint 的字段
 
-- [ ] 在 live audit summary 中增加 `Recovered Failure Audit` 段。
+- [x] 在 live audit summary 中增加 `Recovered Failure Audit` 段。
   - 列出最终 workflow 中 historical failed tickets。
   - 按 failure family 分类：
     - provider JSON / bad response
@@ -540,16 +540,16 @@ py -3 -m pytest tests/test_runtime_fallback_payload.py -k "closeout" -q
     - failure kind
     - 是否有后续 completed replacement / retry
 
-- [ ] 对同 fingerprint 超阈值的 provider failure 给出显式审计。
+- [x] 对同 fingerprint 超阈值的 provider failure 给出显式审计。
   - 如果 runtime 已有 circuit breaker / provider pause，则 audit summary 引用相关事件。
   - 如果没有触发 circuit，本轮不强行新增 circuit breaker，只在 audit 中显示 retry count 和 residual risk。
 
-- [ ] 新增 failing test：`test_write_audit_summary_groups_recovered_provider_failures`
+- [x] 新增 failing test：`test_write_audit_summary_groups_recovered_provider_failures`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：snapshot 中 tickets 有 failed provider malformed JSON，后续同 node completed。
   - 断言：audit summary 包含 `Recovered Failure Audit`、failure kind、ticket id、recovered by completed ticket。
 
-- [ ] 新增 regression：`test_failed_retry_history_distinguishes_provider_and_hook_failures`
+- [x] 新增 regression：`test_failed_retry_history_distinguishes_provider_and_hook_failures`
   - 位置：`backend/tests/test_live_library_management_runner.py`
   - 场景：一个 provider failure，一个 workspace hook validation failure，一个 completed retry。
   - 断言：summary 按 failure family 分组，不只输出总数。
@@ -678,7 +678,7 @@ py -3 -m pytest --basetemp .tmp\pytest-012-roundN <本轮测试> -q
 - [x] Round 2 regression：production closeout 完成前或完成同时物化 workflow chain report。
 - [x] Round 3 regression：source delivery compact/full payload 都要求 raw verification output，且 attempt path 与当前 attempt 一致。
 - [x] Round 4 regression：closeout `final_artifact_refs` 只能引用真实 delivery evidence。
-- [ ] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。
+- [x] Round 5 regression：历史 provider / hook / schema failures 在 audit summary 中分组呈现，并显示 recovery 结果。
 - [ ] Round 6 confirmation：`.tmp/library_preview_server.py` 未被误纳入产品架构或整改提交。
 
 可选 live clean run：
