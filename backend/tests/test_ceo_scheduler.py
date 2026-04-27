@@ -2234,6 +2234,12 @@ def test_ceo_validator_rejects_high_overlap_hire_when_same_role_template_is_alre
     assert result["accepted_actions"] == []
     assert result["rejected_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     assert "too similar" in result["rejected_actions"][0]["reason"].lower()
+    assert result["rejected_actions"][0]["details"] == {
+        "reason_code": "ROLE_ALREADY_COVERED",
+        "reuse_candidate_employee_id": "emp_frontend_polish",
+        "role_type": "frontend_engineer",
+        "role_profile_refs": ["frontend_engineer_primary"],
+    }
 
 
 def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_enabled(
@@ -2295,6 +2301,48 @@ def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_en
 
     assert result["rejected_actions"] == []
     assert result["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+
+
+def test_ceo_validator_rejects_hire_overlap_when_employee_hint_differs_from_reuse_candidate(client):
+    _set_deterministic_mode(client)
+    workflow_id = _project_init(client, "CEO validator CTO reuse")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_custom_cto_governance",
+        role_type="governance_cto",
+        role_profile_refs=["cto_primary"],
+    )
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Hire a second CTO governance role.",
+                "actions": [
+                    {
+                        "action_type": "HIRE_EMPLOYEE",
+                        "payload": {
+                            "workflow_id": workflow_id,
+                            "role_type": "governance_cto",
+                            "role_profile_refs": ["cto_primary"],
+                            "request_summary": "Hire another CTO governance worker.",
+                            "employee_id_hint": "emp_cto_shadow",
+                            "provider_id": "prov_openai_compat",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert result["rejected_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert result["rejected_actions"][0]["details"] == {
+        "reason_code": "ROLE_ALREADY_COVERED",
+        "reuse_candidate_employee_id": "emp_custom_cto_governance",
+        "role_type": "governance_cto",
+        "role_profile_refs": ["cto_primary"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -4201,6 +4249,162 @@ def test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile(client):
     assert action["payload"]["role_profile_refs"] == ["database_engineer_primary"]
     assert "request_summary" in action["payload"]
     assert "role_profile_ref" not in action["payload"]
+
+
+def test_ceo_hire_fallback_rejects_when_role_profile_is_already_covered(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_cto_hire_reuse_guard",
+        "CEO fallback should reuse an existing CTO instead of hiring another.",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_existing_cto_any_id",
+        role_type="governance_cto",
+        role_profile_refs=["cto_primary"],
+    )
+    snapshot = {
+        "workflow": {"workflow_id": workflow_id},
+        "replan_focus": {
+            "controller_state": {
+                "state": "STAFFING_REQUIRED",
+                "recommended_action": "HIRE_EMPLOYEE",
+            },
+            "capability_plan": {
+                "recommended_hire": {
+                    "role_type": "governance_cto",
+                    "role_profile_refs": ["cto_primary"],
+                    "request_summary": "Hire a CTO governance worker.",
+                }
+            },
+        },
+    }
+
+    from app.core.ceo_proposer import CEOProposalContractError, build_deterministic_fallback_batch
+
+    with pytest.raises(CEOProposalContractError) as exc_info:
+        build_deterministic_fallback_batch(
+            client.app.state.repository,
+            snapshot,
+            "Hire the missing CTO role.",
+        )
+
+    assert exc_info.value.reason_code == "ROLE_ALREADY_COVERED"
+    assert exc_info.value.details == {
+        "reason_code": "ROLE_ALREADY_COVERED",
+        "reuse_candidate_employee_id": "emp_existing_cto_any_id",
+        "role_type": "governance_cto",
+        "role_profile_refs": ["cto_primary"],
+    }
+
+
+def test_ceo_shadow_snapshot_suppresses_repeated_hire_after_role_already_covered_rejection(client):
+    busy_workflow_id = _seed_workflow(client, "wf_reuse_guard_busy_backend", "Busy backend worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_reuse_guard_busy",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_backend_reuse_guard_busy_existing",
+            node_id="node_backend_reuse_guard_busy_existing",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_backend_reuse_guard_busy_existing",
+            node_id="node_backend_reuse_guard_busy_existing",
+            leased_by="emp_backend_reuse_guard_busy",
+            idempotency_key="ticket-lease:wf_reuse_guard_busy_backend:tkt_backend_reuse_guard_busy_existing",
+        )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_reuse_guard_repeated_backend_hire",
+        "Repeated backend hire should be suppressed after covered-role rejection.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_reuse_guard_backend_ready",
+            node_id="node_reuse_guard_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    repository = client.app.state.repository
+    rejection_details = {
+        "reason_code": "ROLE_ALREADY_COVERED",
+        "reuse_candidate_employee_id": "emp_backend_reuse_guard_busy",
+        "role_type": "backend_engineer",
+        "role_profile_refs": ["backend_engineer_primary"],
+    }
+    with repository.transaction() as connection:
+        repository.append_ceo_shadow_run(
+            connection,
+            workflow_id=workflow_id,
+            trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+            trigger_ref="scheduler-runner:test-reuse-guard-previous",
+            occurred_at=datetime.fromisoformat("2026-04-08T09:00:00+08:00"),
+            effective_mode="DETERMINISTIC",
+            provider_health_summary="OK",
+            model=None,
+            preferred_provider_id=None,
+            preferred_model=None,
+            actual_provider_id=None,
+            actual_model=None,
+            selection_reason=None,
+            policy_reason=None,
+            prompt_version=CEO_SHADOW_PROMPT_VERSION,
+            provider_response_id=None,
+            fallback_reason=None,
+            snapshot={},
+            proposed_action_batch={},
+            accepted_actions=[],
+            rejected_actions=[
+                {
+                    "action_type": "HIRE_EMPLOYEE",
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "role_type": "backend_engineer",
+                        "role_profile_refs": ["backend_engineer_primary"],
+                    },
+                    "reason": "Role already covered.",
+                    "details": rejection_details,
+                }
+            ],
+            executed_actions=[],
+            execution_summary={},
+            deterministic_fallback_used=False,
+            deterministic_fallback_reason=None,
+            comparison={},
+        )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-reuse-guard-current",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert "emp_backend_reuse_guard_busy" in snapshot["capability_plan"]["reuse_candidate_employee_ids"]
 
 
 def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(client, monkeypatch):

@@ -38,6 +38,7 @@ from app.core.execution_targets import (
     employee_supports_execution_contract,
     infer_execution_contract_payload,
 )
+from app.core.employee_reuse import build_role_already_covered_details, find_reuse_candidate_employee
 from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
@@ -1222,7 +1223,11 @@ def _build_required_governance_ticket_batch(
     )
 
 
-def _build_capability_hire_batch(snapshot: dict, reason: str) -> CEOActionBatch | None:
+def _build_capability_hire_batch(
+    repository: ControlPlaneRepository,
+    snapshot: dict,
+    reason: str,
+) -> CEOActionBatch | None:
     workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "").strip()
     capability_plan = capability_plan_view(snapshot)
     recommended_hire = capability_plan.get("recommended_hire")
@@ -1258,6 +1263,29 @@ def _build_capability_hire_batch(snapshot: dict, reason: str) -> CEOActionBatch 
             reason_code="recommended_hire_incomplete",
             message="recommended_hire is incomplete.",
             details={"missing_fields": missing_fields},
+        )
+    reuse_candidate = find_reuse_candidate_employee(
+        role_type=role_type,
+        role_profile_refs=role_profile_refs,
+        employees=repository.list_employee_projections(
+            states=["ACTIVE"],
+            board_approved_only=True,
+        ),
+    )
+    if role_type == "governance_cto" and reuse_candidate is not None:
+        details = build_role_already_covered_details(
+            role_type=role_type,
+            role_profile_refs=role_profile_refs,
+            reuse_candidate_employee_id=str(reuse_candidate["employee_id"]),
+        )
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.capability_hire",
+            reason_code="ROLE_ALREADY_COVERED",
+            message=(
+                "Controller requested HIRE_EMPLOYEE, but the role profile is already covered by "
+                f"active board-approved worker {reuse_candidate['employee_id']}."
+            ),
+            details=details,
         )
     return CEOActionBatch(
         summary=reason,
@@ -1464,7 +1492,7 @@ def build_deterministic_fallback_batch(
     recommended_action = str(controller_state.get("recommended_action") or "").strip()
     capability_plan = capability_plan_view(snapshot)
     if recommended_action == "HIRE_EMPLOYEE":
-        return _build_capability_hire_batch(snapshot, reason)
+        return _build_capability_hire_batch(repository, snapshot, reason)
     if recommended_action == "REQUEST_MEETING":
         eligible_meeting_candidates = _eligible_meeting_candidates(snapshot)
         if len(eligible_meeting_candidates) != 1:

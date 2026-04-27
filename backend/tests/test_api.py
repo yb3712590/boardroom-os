@@ -15489,6 +15489,10 @@ def test_employee_hire_request_rejects_high_overlap_same_role_profile(client):
     assert response.status_code == 200
     assert response.json()["status"] == "REJECTED"
     assert "too similar" in response.json()["reason"].lower()
+    assert response.json()["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
+    assert response.json()["details"]["reuse_candidate_employee_id"] == "emp_frontend_2"
+    assert response.json()["details"]["role_type"] == "frontend_engineer"
+    assert response.json()["details"]["role_profile_refs"] == ["frontend_engineer_primary"]
 
 
 def test_employee_hire_request_rejects_unsupported_mainline_staffing_combo(client):
@@ -15530,6 +15534,64 @@ def test_employee_hire_request_accepts_governance_cto_on_board_workforce_path(cl
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
+
+
+def test_employee_hire_request_rejects_governance_cto_when_role_profile_is_already_covered(client):
+    workflow_response = client.post("/api/v1/commands/project-init", json=_project_init_payload("Staff workflow"))
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    first_response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_cto_existing_any_id",
+            role_type="governance_cto",
+            role_profile_refs=["cto_primary"],
+            skill_profile={"primary_domain": "architecture"},
+            personality_profile={"risk_posture": "guarded"},
+            aesthetic_profile={"surface_preference": "clarifying"},
+            request_summary="Hire a CTO governance role for architecture direction.",
+        ),
+    )
+    repository = client.app.state.repository
+    approval = repository.list_open_approvals()[0]
+    option_id = approval["payload"]["review_pack"]["options"][0]["option_id"]
+    client.post(
+        "/api/v1/commands/board-approve",
+        json={
+            "review_pack_id": approval["review_pack_id"],
+            "review_pack_version": approval["review_pack_version"],
+            "command_target_version": approval["command_target_version"],
+            "approval_id": approval["approval_id"],
+            "selected_option_id": option_id,
+            "board_comment": "Approve the first CTO governance role.",
+            "idempotency_key": f"board-approve:{approval['approval_id']}:hire-cto-existing",
+        },
+    )
+
+    response = client.post(
+        "/api/v1/commands/employee-hire-request",
+        json=_employee_hire_request_payload(
+            workflow_id,
+            employee_id="emp_cto_duplicate_hint",
+            role_type="governance_cto",
+            role_profile_refs=["cto_primary"],
+            skill_profile={"primary_domain": "architecture"},
+            personality_profile={"risk_posture": "guarded"},
+            aesthetic_profile={"surface_preference": "clarifying"},
+            request_summary="Hire another CTO governance role for architecture direction.",
+        ),
+    )
+
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "ACCEPTED"
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+    assert response.json()["details"] == {
+        "reason_code": "ROLE_ALREADY_COVERED",
+        "reuse_candidate_employee_id": "emp_cto_existing_any_id",
+        "role_type": "governance_cto",
+        "role_profile_refs": ["cto_primary"],
+    }
 
 
 def test_employee_replace_request_rejects_role_profile_mismatch_for_supported_role(client):

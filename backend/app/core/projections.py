@@ -1525,6 +1525,11 @@ def build_ceo_shadow_projection(
                             action_type=str(item["action_type"]),
                             payload=dict(item.get("payload") or {}),
                             reason=str(item["reason"]),
+                            details=(
+                                dict(item["details"])
+                                if isinstance(item.get("details"), dict)
+                                else None
+                            ),
                         )
                         for item in run.get("accepted_actions") or []
                     ],
@@ -1533,6 +1538,11 @@ def build_ceo_shadow_projection(
                             action_type=str(item["action_type"]),
                             payload=dict(item.get("payload") or {}),
                             reason=str(item["reason"]),
+                            details=(
+                                dict(item["details"])
+                                if isinstance(item.get("details"), dict)
+                                else None
+                            ),
                         )
                         for item in run.get("rejected_actions") or []
                     ],

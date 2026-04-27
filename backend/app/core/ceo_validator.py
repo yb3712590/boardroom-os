@@ -19,6 +19,7 @@ from app.core.execution_targets import (
     infer_execution_contract_payload,
     employee_supports_execution_contract,
 )
+from app.core.employee_reuse import build_role_already_covered_details
 from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY, SOURCE_CODE_DELIVERY_SCHEMA_REF
 from app.core.persona_profiles import (
     build_seeded_persona_variant,
@@ -38,13 +39,16 @@ from app.core.runtime_node_lifecycle import (
 from app.db.repository import ControlPlaneRepository
 
 
-def _action_entry(action, reason: str) -> dict[str, Any]:
+def _action_entry(action, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
-    return {
+    entry = {
         "action_type": action_type,
         "payload": action.payload.model_dump(mode="json"),
         "reason": reason,
     }
+    if details is not None:
+        entry["details"] = details
+    return entry
 
 
 def validate_ceo_action_batch(
@@ -125,6 +129,11 @@ def validate_ceo_action_batch(
                 ),
             )
             if conflict is not None:
+                details = build_role_already_covered_details(
+                    role_type=action.payload.role_type,
+                    role_profile_refs=action.payload.role_profile_refs,
+                    reuse_candidate_employee_id=str(conflict["employee_id"]),
+                )
                 rejected_actions.append(
                     _action_entry(
                         action,
@@ -132,6 +141,7 @@ def validate_ceo_action_batch(
                             role_type=action.payload.role_type,
                             conflict=conflict,
                         ),
+                        details,
                     )
                 )
                 continue

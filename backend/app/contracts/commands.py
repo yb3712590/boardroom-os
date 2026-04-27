@@ -766,3 +766,4 @@ class CommandAckEnvelope(StrictModel):
     received_at: datetime
     reason: str | None = None
     causation_hint: str | None = None
+    details: dict[str, JsonValue] | None = None

@@ -19,6 +19,7 @@ from app.core.constants import (
     EVENT_EMPLOYEE_RESTORED,
 )
 from app.core.ids import new_prefixed_id
+from app.core.employee_reuse import build_role_already_covered_details
 from app.core.persona_profiles import (
     build_high_overlap_rejection_reason,
     find_same_role_high_overlap_conflict,
@@ -43,6 +44,7 @@ def _rejected_ack(
     received_at,
     reason: str,
     causation_hint: str | None = None,
+    details: dict[str, Any] | None = None,
 ) -> CommandAckEnvelope:
     return CommandAckEnvelope(
         command_id=command_id,
@@ -51,6 +53,7 @@ def _rejected_ack(
         received_at=received_at,
         reason=reason,
         causation_hint=causation_hint,
+        details=details,
     )
 
 
@@ -247,6 +250,11 @@ def _resolve_employee_hire_request(
         ),
     )
     if conflict is not None:
+        details = build_role_already_covered_details(
+            role_type=payload.role_type,
+            role_profile_refs=payload.role_profile_refs,
+            reuse_candidate_employee_id=str(conflict["employee_id"]),
+        )
         return None, _rejected_ack(
             command_id=command_id,
             idempotency_key=payload.idempotency_key,
@@ -255,6 +263,7 @@ def _resolve_employee_hire_request(
                 role_type=payload.role_type,
                 conflict=conflict,
             ),
+            details=details,
         )
 
     return {"normalized_profiles": normalized_profiles}, None

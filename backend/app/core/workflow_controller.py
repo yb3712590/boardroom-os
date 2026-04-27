@@ -7,6 +7,11 @@ from app.contracts.ticket_graph import TicketGraphSnapshot
 from app.core.ceo_snapshot_contracts import controller_state_view
 from app.core.ceo_execution_presets import PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
+from app.core.employee_reuse import (
+    ROLE_ALREADY_COVERED_REASON_CODE,
+    find_reuse_candidate_employee,
+    normalize_role_profile_refs,
+)
 from app.core.execution_targets import infer_execution_contract_payload, employee_supports_execution_contract
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -633,6 +638,53 @@ def _recommended_hire_for_role_profile(role_profile_ref: str) -> dict[str, Any] 
         "role_profile_refs": [normalized_role_profile_ref],
         "request_summary": request_summary,
     }
+
+
+def _recent_role_already_covered_hire_rejection(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    recommended_hire: dict[str, Any],
+    employees: list[dict[str, Any]],
+    connection,
+) -> dict[str, Any] | None:
+    role_type = str(recommended_hire.get("role_type") or "").strip()
+    role_profile_refs = normalize_role_profile_refs(recommended_hire.get("role_profile_refs") or [])
+    if not role_type or not role_profile_refs:
+        return None
+
+    reuse_candidate = find_reuse_candidate_employee(
+        role_type=role_type,
+        role_profile_refs=role_profile_refs,
+        employees=employees,
+    )
+    if reuse_candidate is None:
+        return None
+
+    for run in repository.list_ceo_shadow_runs(workflow_id, limit=5, connection=connection):
+        for rejected_action in list(run.get("rejected_actions") or []):
+            if str(rejected_action.get("action_type") or "").strip() != "HIRE_EMPLOYEE":
+                continue
+            payload = rejected_action.get("payload") or {}
+            details = rejected_action.get("details") or {}
+            if not isinstance(payload, dict) or not isinstance(details, dict):
+                continue
+            if str(details.get("reason_code") or "").strip() != ROLE_ALREADY_COVERED_REASON_CODE:
+                continue
+            rejected_role_type = str(details.get("role_type") or payload.get("role_type") or "").strip()
+            rejected_role_profile_refs = normalize_role_profile_refs(
+                details.get("role_profile_refs") or payload.get("role_profile_refs") or []
+            )
+            if rejected_role_type != role_type or rejected_role_profile_refs != role_profile_refs:
+                continue
+            return {
+                "reason_code": ROLE_ALREADY_COVERED_REASON_CODE,
+                "reuse_candidate_employee_id": str(reuse_candidate["employee_id"]),
+                "role_type": role_type,
+                "role_profile_refs": role_profile_refs,
+                "source_ceo_shadow_run_id": str(run.get("run_id") or ""),
+            }
+    return None
 
 
 def _build_followup_ticket_plans(
@@ -1643,6 +1695,30 @@ def build_workflow_controller_view(
                 "role_profile_refs": [first_gap],
                 "request_summary": f"Hire {first_gap} so implementation fanout can continue.",
             }
+        if isinstance(capability_plan.get("recommended_hire"), dict):
+            repeated_rejection = _recent_role_already_covered_hire_rejection(
+                repository,
+                workflow_id=workflow_id,
+                recommended_hire=dict(capability_plan["recommended_hire"]),
+                employees=employees,
+                connection=connection,
+            )
+            if repeated_rejection is not None:
+                capability_plan.pop("recommended_hire", None)
+                reuse_candidate_employee_ids = sorted(
+                    set(capability_plan.get("reuse_candidate_employee_ids") or [])
+                    | {str(repeated_rejection["reuse_candidate_employee_id"])}
+                )
+                capability_plan["reuse_candidate_employee_ids"] = reuse_candidate_employee_ids
+                capability_plan.setdefault("staffing_wait_reasons", []).append(repeated_rejection)
+                controller_state = {
+                    "state": "STAFFING_WAIT",
+                    "recommended_action": "NO_ACTION",
+                    "blocking_reason": (
+                        "A recent CEO hire proposal was rejected because the requested role profile is already "
+                        f"covered by {repeated_rejection['reuse_candidate_employee_id']}."
+                    ),
+                }
 
     return {
         "task_sensemaking": task_sensemaking,

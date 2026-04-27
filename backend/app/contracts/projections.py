@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.contracts.common import ProjectionEnvelopeBase, StrictModel
+from app.contracts.common import JsonValue, ProjectionEnvelopeBase, StrictModel
 from app.contracts.commands import ElicitationAnswer
 from app.contracts.runtime import RenderedExecutionPayloadSummary
 from app.contracts.events import EventSeverity
@@ -249,6 +249,7 @@ class CEOShadowValidatedActionProjection(StrictModel):
     action_type: str
     payload: dict[str, object]
     reason: str
+    details: dict[str, JsonValue] | None = None
 
 
 class CEOShadowExecutedActionProjection(StrictModel):
