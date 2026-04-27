@@ -841,6 +841,7 @@ def _should_autopilot_converge_maker_checker_rework(
         workflow_uses_ceo_board_delegate(workflow)
         and review_request is not None
         and _is_internal_only_review_request(review_request)
+        and review_request.review_type.value != "INTERNAL_CLOSEOUT_REVIEW"
         and rework_cycle_count >= _resolve_repeat_failure_threshold(created_spec)
     )
 
@@ -1515,6 +1516,11 @@ def _closeout_known_final_artifact_refs(
     known_artifact_refs: set[str] = set()
     _add_closeout_delivery_evidence_refs(
         known_artifact_refs,
+        list(created_spec.get("input_artifact_refs") or []),
+        source_context="closeout_package_artifact_refs",
+    )
+    _add_closeout_delivery_evidence_refs(
+        known_artifact_refs,
         list(closeout_artifact_refs or []),
         source_context="closeout_package_artifact_refs",
     )
@@ -1547,6 +1553,13 @@ def _closeout_known_final_artifact_refs(
             try:
                 kind, ticket_id = parse_process_asset_ref(str(process_asset_ref))
             except ValueError:
+                continue
+            if kind == "artifact":
+                _add_closeout_delivery_evidence_refs(
+                    known_artifact_refs,
+                    [ticket_id],
+                    source_context="closeout_package_artifact_refs",
+                )
                 continue
             if kind != "source-code-delivery":
                 continue

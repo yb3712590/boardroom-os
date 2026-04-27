@@ -43,7 +43,10 @@ from app.core.workflow_progression import (
     resolve_workflow_progression_adapter,
     select_governance_role_and_assignee,
 )
-from app.core.workflow_completion import resolve_workflow_closeout_completion
+from app.core.workflow_completion import (
+    evaluate_workflow_closeout_gate_issue,
+    resolve_workflow_closeout_completion,
+)
 from app.db.repository import ControlPlaneRepository
 
 _APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
@@ -1352,6 +1355,11 @@ def build_workflow_controller_view(
         created_specs_by_ticket=created_specs_by_ticket,
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
     )
+    closeout_gate_issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
     backlog_ticket_id, backlog_created_spec, backlog_payload = _latest_completed_backlog_ticket(
         repository,
         workflow_id=workflow_id,
@@ -1455,6 +1463,20 @@ def build_workflow_controller_view(
             "state": "GRAPH_HEALTH_WAIT",
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Critical graph health recommends pausing new fanout until recovery is confirmed.",
+        }
+    elif closeout_gate_issue:
+        controller_state = {
+            "state": (
+                "CHECK_FAILED"
+                if str(closeout_gate_issue.get("reason_code") or "").strip()
+                in {"delivery_check_failed", "delivery_check_blocking_findings"}
+                else "CLOSEOUT_GATE_BLOCKED"
+            ),
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": (
+                "Closeout gate is blocked by "
+                f"{closeout_gate_issue.get('reason_code')}."
+            ),
         }
     elif contract_issues:
         first_issue = contract_issues[0]
@@ -1643,6 +1665,8 @@ def build_workflow_controller_view(
         "staffing_wait_reasons": staffing_wait_reasons,
         "progression_adapter_id": progression_adapter_id,
     }
+    if closeout_gate_issue is not None:
+        capability_plan["closeout_gate_issue"] = closeout_gate_issue
     if ceo_hire_loop_summary is not None:
         capability_plan["ceo_hire_loop_summary"] = ceo_hire_loop_summary
     if required_governance_ticket_plan is not None:

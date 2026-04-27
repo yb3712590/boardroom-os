@@ -23,6 +23,7 @@ from tests.test_api import (
     _artifact_storage_path,
     _create_lease_and_start_ticket,
     _delivery_closeout_package_result_submit_payload,
+    _delivery_check_report_result_submit_payload,
     _ensure_scoped_workflow,
     _source_code_delivery_result_submit_payload,
     _maker_checker_result_submit_payload,
@@ -1511,6 +1512,213 @@ def test_autopilot_closeout_without_visual_milestone_still_writes_chain_report_a
     assert workflow is not None
     assert workflow["status"] == "COMPLETED"
     assert workflow["current_stage"] == "closeout"
+
+
+def test_autopilot_closeout_batch_blocks_failed_delivery_check_report(client):
+    from app.core import ceo_proposer
+
+    workflow_id = "wf_autopilot_failed_check_blocks_closeout"
+    repository = client.app.state.repository
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot closeout must respect failed delivery checks",
+    )
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_failed_check_build",
+        node_id="node_failed_check_build",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_failed_check_build/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved delivery slice.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    with _suppress_ceo_shadow_side_effects():
+        build_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_failed_check_build",
+                node_id="node_failed_check_build",
+            ),
+        )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_failed_check_report",
+        node_id="node_failed_check_report",
+        leased_by="emp_checker_1",
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        allowed_write_set=["reports/check/tkt_failed_check_report/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must check final delivery evidence.",
+            "Must fail closed when evidence is missing.",
+        ],
+        delivery_stage="CHECK",
+        parent_ticket_id="tkt_failed_check_build",
+    )
+    with _suppress_ceo_shadow_side_effects():
+        check_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_delivery_check_report_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_failed_check_report",
+                node_id="node_failed_check_report",
+                status="FAIL",
+                findings=[
+                    {
+                        "finding_id": "finding_missing_runtime_evidence",
+                        "summary": "Runtime, QA, and documentation evidence are missing.",
+                        "blocking": True,
+                    }
+                ],
+            ),
+        )
+
+    batch = ceo_proposer._build_autopilot_closeout_batch(
+        repository,
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Close out only after passing checks.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 0},
+            "nodes": [
+                {"node_id": "node_failed_check_build", "status": "COMPLETED"},
+                {"node_id": "node_failed_check_report", "status": "COMPLETED"},
+            ],
+            "employees": [
+                {
+                    "employee_id": "emp_frontend_2",
+                    "state": "ACTIVE",
+                    "role_profile_refs": ["frontend_engineer_primary"],
+                }
+            ],
+        },
+        "Create closeout only after gate passes.",
+    )
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert check_response.status_code == 200
+    assert check_response.json()["status"] == "ACCEPTED"
+    assert batch is None
+
+
+def test_autopilot_closeout_fail_closed_payload_does_not_complete_workflow(client):
+    workflow_id = "wf_autopilot_fail_closed_closeout"
+    repository = client.app.state.repository
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot closeout must not complete fail-closed packages",
+    )
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_fail_closed_build",
+        node_id="node_fail_closed_build",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_fail_closed_build/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved delivery slice.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    with _suppress_ceo_shadow_side_effects():
+        build_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_fail_closed_build",
+                node_id="node_fail_closed_build",
+            ),
+        )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_fail_closed_closeout",
+        node_id="node_ceo_delivery_closeout",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="delivery_closeout_package",
+        delivery_stage="CLOSEOUT",
+        allowed_write_set=["20-evidence/closeout/tkt_fail_closed_closeout/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must capture the final delivery evidence.",
+            "Must produce a structured closeout package.",
+        ],
+        parent_ticket_id="tkt_fail_closed_build",
+        input_artifact_refs=["art://runtime/tkt_fail_closed_build/source-code.tsx"],
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_fail_closed_closeout",
+            node_id="node_ceo_delivery_closeout",
+            leased_by="emp_frontend_2",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_fail_closed_closeout",
+            node_id="node_ceo_delivery_closeout",
+            started_by="emp_frontend_2",
+        ),
+    )
+    closeout_payload = _delivery_closeout_package_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id="tkt_fail_closed_closeout",
+        node_id="node_ceo_delivery_closeout",
+        final_artifact_refs=["art://runtime/tkt_fail_closed_build/source-code.tsx"],
+        idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_fail_closed_closeout:closeout",
+    )
+    closeout_payload["payload"]["summary"] = "FAIL_CLOSED: delivery is not approved for completion."
+    closeout_payload["payload"]["handoff_notes"] = [
+        "FAIL_CLOSED",
+        "This package is not approved for completion.",
+    ]
+    closeout_payload["written_artifacts"][0]["content_json"] = closeout_payload["payload"]
+    with _suppress_ceo_shadow_side_effects():
+        closeout_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=closeout_payload,
+        )
+
+    workflow = repository.get_workflow_projection(workflow_id)
+    artifact_ref = f"art://workflow-chain/{workflow_id}/workflow-chain-report.json"
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert closeout_response.status_code == 200
+    assert closeout_response.json()["status"] == "ACCEPTED"
+    assert workflow is not None
+    assert workflow["status"] != "COMPLETED"
+    assert workflow["current_stage"] != "closeout"
+    assert repository.get_artifact_by_ref(artifact_ref) is None
 
 
 def test_workflow_completion_materializes_chain_report_before_completed_projection(client):

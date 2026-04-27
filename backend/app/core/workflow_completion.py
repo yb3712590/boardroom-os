@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
     MAKER_CHECKER_VERDICT_SCHEMA_REF,
@@ -24,7 +25,15 @@ ACTIVE_TICKET_STATUSES = {
 DELIVERY_MAINLINE_STAGES = {"BUILD", "CHECK", "REVIEW"}
 DELIVERY_MAINLINE_OUTPUT_SCHEMA_STAGE = {
     SOURCE_CODE_DELIVERY_SCHEMA_REF: "BUILD",
+    DELIVERY_CHECK_REPORT_SCHEMA_REF: "CHECK",
     UI_MILESTONE_REVIEW_SCHEMA_REF: "REVIEW",
+}
+PASSING_DELIVERY_CHECK_STATUSES = {"PASS", "PASS_WITH_NOTES"}
+APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
+BLOCKING_REVIEW_STATUSES = {"CHANGES_REQUIRED", "ESCALATED"}
+FAIL_CLOSED_MARKERS = {
+    "FAIL_CLOSED",
+    "NOT APPROVED FOR COMPLETION",
 }
 
 
@@ -191,6 +200,340 @@ def workflow_has_delivery_mainline_evidence(
     )
 
 
+def _closeout_gate_issue(
+    *,
+    reason_code: str,
+    ticket_id: str | None = None,
+    output_schema_ref: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    issue: dict[str, Any] = {"reason_code": reason_code}
+    if ticket_id:
+        issue["ticket_id"] = ticket_id
+    if output_schema_ref:
+        issue["output_schema_ref"] = output_schema_ref
+    if details:
+        issue["details"] = details
+    return issue
+
+
+def _terminal_payload(terminal_event: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(terminal_event, dict):
+        return {}
+    payload = terminal_event.get("payload") or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _ticket_sort_key(ticket: dict[str, Any]) -> tuple[datetime, str]:
+    updated_at = ticket.get("updated_at")
+    if not isinstance(updated_at, datetime):
+        updated_at = datetime.min
+    return updated_at, str(ticket.get("ticket_id") or "")
+
+
+def _latest_ticket_ids_by_node(tickets: list[dict[str, Any]]) -> set[str]:
+    latest_by_node: dict[str, dict[str, Any]] = {}
+    for ticket in tickets:
+        node_id = str(ticket.get("node_id") or "").strip()
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if not node_id or not ticket_id:
+            continue
+        previous = latest_by_node.get(node_id)
+        if previous is None or _ticket_sort_key(previous) <= _ticket_sort_key(ticket):
+            latest_by_node[node_id] = ticket
+    return {str(ticket.get("ticket_id") or "") for ticket in latest_by_node.values()}
+
+
+def _payload_review_status(payload: dict[str, Any]) -> str:
+    maker_checker_summary = payload.get("maker_checker_summary")
+    if isinstance(maker_checker_summary, dict):
+        nested_status = str(maker_checker_summary.get("review_status") or "").strip()
+        if nested_status:
+            return nested_status
+    return str(payload.get("review_status") or "").strip()
+
+
+def _blocking_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return []
+    return [
+        finding
+        for finding in findings
+        if isinstance(finding, dict) and bool(finding.get("blocking"))
+    ]
+
+
+def _delivery_check_issue(
+    *,
+    ticket_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    for candidate_payload in _payload_dicts_from_terminal_payload(payload):
+        status = str(candidate_payload.get("status") or "").strip()
+        blocking_findings = _blocking_findings(candidate_payload)
+        if status and status not in PASSING_DELIVERY_CHECK_STATUSES:
+            return _closeout_gate_issue(
+                reason_code="delivery_check_failed",
+                ticket_id=ticket_id,
+                output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+                details={"status": status, "blocking_finding_count": len(blocking_findings)},
+            )
+        if _payload_contains_fail_closed_marker(candidate_payload):
+            return _closeout_gate_issue(
+                reason_code="delivery_check_failed",
+                ticket_id=ticket_id,
+                output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+                details={
+                    "status": status,
+                    "blocking_finding_count": len(blocking_findings),
+                    "fail_closed_marker": True,
+                },
+            )
+        if blocking_findings:
+            return _closeout_gate_issue(
+                reason_code="delivery_check_blocking_findings",
+                ticket_id=ticket_id,
+                output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+                details={"status": status, "blocking_finding_count": len(blocking_findings)},
+            )
+    return None
+
+
+def _maker_checker_issue(
+    *,
+    ticket_id: str,
+    payload: dict[str, Any],
+    maker_output_schema_ref: str,
+) -> dict[str, Any] | None:
+    review_status = _payload_review_status(payload)
+    blocking_findings = _blocking_findings(payload)
+    if review_status in BLOCKING_REVIEW_STATUSES or blocking_findings:
+        return _closeout_gate_issue(
+            reason_code="delivery_check_blocking_findings",
+            ticket_id=ticket_id,
+            output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+            details={
+                "review_status": review_status,
+                "maker_output_schema_ref": maker_output_schema_ref,
+                "blocking_finding_count": len(blocking_findings),
+            },
+        )
+    return None
+
+
+def _collect_artifact_refs_from_terminal_payload(payload: dict[str, Any]) -> set[str]:
+    refs: set[str] = {
+        str(ref).strip()
+        for ref in list(payload.get("artifact_refs") or [])
+        if str(ref).strip()
+    }
+    refs.update(
+        str(ref).strip()
+        for ref in list(payload.get("verification_evidence_refs") or [])
+        if str(ref).strip()
+    )
+    for written_artifact in list(payload.get("written_artifacts") or []):
+        if not isinstance(written_artifact, dict):
+            continue
+        artifact_ref = str(written_artifact.get("artifact_ref") or "").strip()
+        if artifact_ref:
+            refs.add(artifact_ref)
+    for produced_asset in list(payload.get("produced_process_assets") or []):
+        if not isinstance(produced_asset, dict):
+            continue
+        source_metadata = produced_asset.get("source_metadata")
+        if not isinstance(source_metadata, dict):
+            continue
+        for field_name in (
+            "artifact_ref",
+            "source_artifact_ref",
+        ):
+            artifact_ref = str(source_metadata.get(field_name) or "").strip()
+            if artifact_ref:
+                refs.add(artifact_ref)
+        for field_name in (
+            "source_file_refs",
+            "written_artifact_refs",
+            "verification_evidence_refs",
+        ):
+            refs.update(
+                str(ref).strip()
+                for ref in list(source_metadata.get(field_name) or [])
+                if str(ref).strip()
+            )
+    return refs
+
+
+def _collect_schema_artifact_refs(
+    *,
+    output_schema_ref: str,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+) -> set[str]:
+    refs: set[str] = set()
+    for ticket_id, created_spec in created_specs_by_ticket.items():
+        if str(created_spec.get("output_schema_ref") or "").strip() != output_schema_ref:
+            continue
+        refs.update(
+            _collect_artifact_refs_from_terminal_payload(
+                _terminal_payload(ticket_terminal_events_by_ticket.get(ticket_id))
+            )
+        )
+    return refs
+
+
+def _payload_dicts_from_terminal_payload(terminal_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads = [terminal_payload]
+    for written_artifact in list(terminal_payload.get("written_artifacts") or []):
+        if not isinstance(written_artifact, dict):
+            continue
+        content_json = written_artifact.get("content_json")
+        if isinstance(content_json, dict):
+            payloads.append(content_json)
+    return payloads
+
+
+def _payload_contains_fail_closed_marker(value: Any) -> bool:
+    if isinstance(value, str):
+        normalized = value.upper()
+        return any(marker in normalized for marker in FAIL_CLOSED_MARKERS)
+    if isinstance(value, dict):
+        return any(_payload_contains_fail_closed_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_payload_contains_fail_closed_marker(item) for item in value)
+    return False
+
+
+def _collect_closeout_final_artifact_refs(payloads: list[dict[str, Any]]) -> set[str]:
+    refs: set[str] = set()
+    for payload in payloads:
+        refs.update(
+            str(ref).strip()
+            for ref in list(payload.get("final_artifact_refs") or [])
+            if str(ref).strip()
+        )
+    return refs
+
+
+def _has_documentation_evidence(payloads: list[dict[str, Any]]) -> bool:
+    for payload in payloads:
+        documentation_updates = payload.get("documentation_updates")
+        if isinstance(documentation_updates, list) and documentation_updates:
+            return True
+    return False
+
+
+def _closeout_payload_issue(
+    *,
+    closeout_ticket_id: str,
+    closeout_terminal_payload: dict[str, Any],
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    closeout_payloads = _payload_dicts_from_terminal_payload(closeout_terminal_payload)
+    if any(_payload_contains_fail_closed_marker(payload) for payload in closeout_payloads):
+        return _closeout_gate_issue(
+            reason_code="closeout_payload_fail_closed",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        )
+
+    final_artifact_refs = _collect_closeout_final_artifact_refs(closeout_payloads)
+    source_delivery_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if str(created_spec.get("output_schema_ref") or "").strip() == SOURCE_CODE_DELIVERY_SCHEMA_REF
+    }
+    source_delivery_refs = _collect_schema_artifact_refs(
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
+    if source_delivery_ticket_ids and (not source_delivery_refs or not final_artifact_refs.intersection(source_delivery_refs)):
+        return _closeout_gate_issue(
+            reason_code="closeout_missing_source_delivery_evidence",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={"source_delivery_ticket_ids": sorted(source_delivery_ticket_ids)},
+        )
+
+    delivery_check_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CHECK_REPORT_SCHEMA_REF
+    }
+    delivery_check_refs = _collect_schema_artifact_refs(
+        output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
+    if delivery_check_ticket_ids and (not delivery_check_refs or not final_artifact_refs.intersection(delivery_check_refs)):
+        return _closeout_gate_issue(
+            reason_code="closeout_missing_qa_evidence",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={"delivery_check_ticket_ids": sorted(delivery_check_ticket_ids)},
+        )
+
+    if not _has_documentation_evidence(closeout_payloads):
+        return _closeout_gate_issue(
+            reason_code="closeout_missing_documentation_evidence",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        )
+    return None
+
+
+def evaluate_workflow_closeout_gate_issue(
+    *,
+    tickets: list[dict[str, Any]],
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+    closeout_ticket: dict[str, Any] | None = None,
+    closeout_terminal_event: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    latest_ticket_ids = _latest_ticket_ids_by_node(tickets)
+    for ticket_id in sorted(latest_ticket_ids):
+        created_spec = created_specs_by_ticket.get(ticket_id) or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+        terminal_payload = _terminal_payload(ticket_terminal_events_by_ticket.get(ticket_id))
+        if output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF:
+            issue = _delivery_check_issue(ticket_id=ticket_id, payload=terminal_payload)
+            if issue is not None:
+                return issue
+            continue
+        if output_schema_ref != MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            continue
+        maker_ticket_spec = _resolved_maker_ticket_spec(created_spec, created_specs_by_ticket) or {}
+        maker_output_schema_ref = str(maker_ticket_spec.get("output_schema_ref") or "").strip()
+        maker_ticket_id = str((created_spec.get("maker_checker_context") or {}).get("maker_ticket_id") or "").strip()
+        if maker_output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF and maker_ticket_id:
+            issue = _delivery_check_issue(
+                ticket_id=maker_ticket_id,
+                payload=_terminal_payload(ticket_terminal_events_by_ticket.get(maker_ticket_id)),
+            )
+            if issue is not None:
+                return issue
+        issue = _maker_checker_issue(
+            ticket_id=ticket_id,
+            payload=terminal_payload,
+            maker_output_schema_ref=maker_output_schema_ref,
+        )
+        if issue is not None:
+            return issue
+
+    if closeout_ticket is None or closeout_terminal_event is None:
+        return None
+    closeout_ticket_id = str(closeout_ticket.get("ticket_id") or "").strip()
+    return _closeout_payload_issue(
+        closeout_ticket_id=closeout_ticket_id,
+        closeout_terminal_payload=_terminal_payload(closeout_terminal_event),
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
+
+
 def infer_workflow_current_stage(
     *,
     nodes: list[dict[str, Any]],
@@ -283,6 +626,14 @@ def resolve_workflow_closeout_completion(
         for ticket in tickets
         if str(ticket.get("status") or "") in ACTIVE_TICKET_STATUSES
     ):
+        return None
+    if evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        closeout_ticket=closeout_ticket,
+        closeout_terminal_event=closeout_terminal_event,
+    ) is not None:
         return None
     return WorkflowCloseoutCompletion(
         closeout_ticket=closeout_ticket,

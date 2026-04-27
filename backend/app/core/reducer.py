@@ -555,6 +555,7 @@ def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
         ticket_terminal_events_by_ticket[ticket_id] = {
             "event_type": event_type,
             "occurred_at": event["occurred_at"],
+            "payload": payload,
         }
 
     for workflow_id, projection in projections.items():

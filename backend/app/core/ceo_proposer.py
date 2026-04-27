@@ -60,7 +60,11 @@ from app.core.runtime_node_views import (
 from app.core.runtime_node_lifecycle import (
     resolve_runtime_node_lifecycle,
 )
-from app.core.workflow_completion import ticket_has_delivery_mainline_evidence, ticket_lineage_ticket_ids
+from app.core.workflow_completion import (
+    evaluate_workflow_closeout_gate_issue,
+    ticket_has_delivery_mainline_evidence,
+    ticket_lineage_ticket_ids,
+)
 from app.core.workflow_progression import (
     build_project_init_kickoff_spec,
 )
@@ -1402,6 +1406,37 @@ def _workflow_has_existing_closeout_ticket(
     return False
 
 
+def _workflow_closeout_gate_issue(
+    repository: ControlPlaneRepository,
+    *,
+    workflow_id: str,
+    connection,
+) -> dict[str, Any] | None:
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at ASC, ticket_id ASC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    tickets = [repository._convert_ticket_projection_row(row) for row in rows]
+    created_specs_by_ticket = {
+        str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+        for ticket in tickets
+    }
+    ticket_terminal_events_by_ticket = {
+        str(ticket["ticket_id"]): repository.get_latest_ticket_terminal_event(connection, str(ticket["ticket_id"]))
+        for ticket in tickets
+    }
+    return evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
+
+
 def _build_autopilot_closeout_batch(
     repository: ControlPlaneRepository,
     snapshot: dict,
@@ -1423,6 +1458,19 @@ def _build_autopilot_closeout_batch(
 
     workflow_id = str(workflow.get("workflow_id") or "").strip()
     if not workflow_id:
+        return None
+    replan_focus = snapshot.get("replan_focus")
+    capability_plan = (
+        replan_focus.get("capability_plan")
+        if isinstance(replan_focus, dict)
+        else {}
+    )
+    snapshot_closeout_gate_issue = (
+        capability_plan.get("closeout_gate_issue")
+        if isinstance(capability_plan, dict)
+        else None
+    )
+    if isinstance(snapshot_closeout_gate_issue, dict) and snapshot_closeout_gate_issue:
         return None
 
     closeout_node_id = "node_ceo_delivery_closeout"
@@ -1453,6 +1501,12 @@ def _build_autopilot_closeout_batch(
             workflow_id=workflow_id,
             connection=connection,
         )
+        if _workflow_closeout_gate_issue(
+            repository,
+            workflow_id=workflow_id,
+            connection=connection,
+        ) is not None:
+            return None
     if parent_ticket_id is None:
         return None
 

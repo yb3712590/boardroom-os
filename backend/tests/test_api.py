@@ -15,10 +15,12 @@ from fastapi.testclient import TestClient
 
 import app.core.approval_handlers as approval_handlers_module
 import app.core.ticket_handlers as ticket_handlers_module
+from app.contracts.ceo_actions import CEOActionBatch
 from app.config import get_settings
-from app.contracts.commands import TicketCreateCommand
+from app.contracts.commands import TicketBoardReviewRequest, TicketCreateCommand
 from app.contracts.advisory import GraphPatchProposal
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
+from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_ARCHITECTURE_SEGMENT_IDS,
     build_project_init_architecture_segment_ticket_id,
@@ -17610,6 +17612,86 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
         "INTERNAL_CLOSEOUT_REVIEW"
     )
     assert dashboard_response.json()["data"]["completion_summary"] is None
+
+
+def test_closeout_internal_checker_does_not_apply_autopilot_convergence_on_repeat_failure(client):
+    review_request = TicketBoardReviewRequest.model_validate(_internal_closeout_review_request())
+
+    assert ticket_handlers_module._should_autopilot_converge_maker_checker_rework(
+        workflow={"workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+        review_request=review_request,
+        created_spec={"escalation_policy": {"repeat_failure_threshold": 2}},
+        rework_cycle_count=2,
+    ) is False
+
+
+def test_ceo_validator_rejects_closeout_create_ticket_when_gate_is_blocked(client):
+    workflow_id = "wf_closeout_gate_validator"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Validator should reject closeout while gate is blocked",
+    )
+    _seed_worker(
+        client,
+        employee_id="emp_closeout_validator",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    action_batch = CEOActionBatch.model_validate(
+        {
+            "summary": "Try to close out despite a blocked checker gate.",
+            "actions": [
+                {
+                    "action_type": "CREATE_TICKET",
+                    "payload": {
+                        "workflow_id": workflow_id,
+                        "node_id": "node_ceo_delivery_closeout",
+                        "role_profile_ref": "frontend_engineer_primary",
+                        "output_schema_ref": "delivery_closeout_package",
+                        "execution_contract": infer_execution_contract_payload(
+                            role_profile_ref="frontend_engineer_primary",
+                            output_schema_ref="delivery_closeout_package",
+                        ),
+                        "dispatch_intent": {
+                            "assignee_employee_id": "emp_closeout_validator",
+                            "selection_reason": "Invalid closeout gate bypass attempt.",
+                            "dependency_gate_refs": [],
+                        },
+                        "summary": "Prepare closeout despite blocked checker gate.",
+                        "parent_ticket_id": "tkt_failed_check_report",
+                    },
+                }
+            ],
+        }
+    )
+
+    validation = validate_ceo_action_batch(
+        client.app.state.repository,
+        action_batch=action_batch,
+        snapshot={
+            "workflow": {"workflow_id": workflow_id},
+            "replan_focus": {
+                "controller_state": {
+                    "state": "CLOSEOUT_GATE_BLOCKED",
+                    "recommended_action": "NO_ACTION",
+                    "blocking_reason": "Latest delivery check failed.",
+                },
+                "capability_plan": {
+                    "closeout_gate_issue": {
+                        "reason_code": "delivery_check_failed",
+                        "ticket_id": "tkt_failed_check_report",
+                    }
+                },
+            },
+        },
+    )
+
+    assert validation["accepted_actions"] == []
+    assert validation["rejected_actions"]
+    assert "closeout gate" in validation["rejected_actions"][0]["reason"].lower()
 
 
 def test_board_reject_command_resolves_open_approval(client):

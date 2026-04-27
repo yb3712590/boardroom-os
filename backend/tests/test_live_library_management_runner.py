@@ -13,6 +13,10 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.core.runtime_liveness import build_runtime_liveness_report
+from app.core.workflow_completion import (
+    evaluate_workflow_closeout_gate_issue,
+    resolve_workflow_closeout_completion,
+)
 from app.core.workspace_path_contracts import DEFAULT_WORKSPACE_PATH_TEMPLATES
 
 from tests.live.architecture_governance_autopilot_live import SCENARIO as ARCHITECTURE_SCENARIO
@@ -2123,6 +2127,133 @@ def test_non_clean_resume_does_not_report_existing_completed_workflow_as_new_suc
             )
 
         assert live_harness._latest_resumable_workflow_id(repository) is None
+
+
+def test_library_replay_fail_closed_check_does_not_resolve_full_success() -> None:
+    tickets = [
+        {
+            "ticket_id": "BR-BUILD-001",
+            "status": "COMPLETED",
+            "node_id": "node_br_build_001",
+            "updated_at": datetime.fromisoformat("2026-04-20T21:00:00+08:00"),
+        },
+        {
+            "ticket_id": "BR-CHECK-001",
+            "status": "COMPLETED",
+            "node_id": "node_br_check_001",
+            "updated_at": datetime.fromisoformat("2026-04-20T21:10:00+08:00"),
+        },
+        {
+            "ticket_id": "BR-CLOSEOUT-001",
+            "status": "COMPLETED",
+            "node_id": "node_br_closeout_001",
+            "updated_at": datetime.fromisoformat("2026-04-20T21:20:00+08:00"),
+        },
+    ]
+    nodes = [
+        {"node_id": "node_br_build_001", "status": "COMPLETED"},
+        {"node_id": "node_br_check_001", "status": "COMPLETED"},
+        {"node_id": "node_br_closeout_001", "status": "COMPLETED"},
+    ]
+    created_specs = {
+        "BR-BUILD-001": {
+            "ticket_id": "BR-BUILD-001",
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        "BR-CHECK-001": {
+            "ticket_id": "BR-CHECK-001",
+            "output_schema_ref": "delivery_check_report",
+            "delivery_stage": "CHECK",
+            "parent_ticket_id": "BR-BUILD-001",
+        },
+        "BR-CLOSEOUT-001": {
+            "ticket_id": "BR-CLOSEOUT-001",
+            "output_schema_ref": "delivery_closeout_package",
+            "delivery_stage": "CLOSEOUT",
+            "parent_ticket_id": "BR-CHECK-001",
+        },
+    }
+    terminals = {
+        "BR-BUILD-001": {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-04-20T21:00:00+08:00"),
+            "payload": {
+                "artifact_refs": ["art://runtime/BR-BUILD-001/source.py"],
+                "written_artifacts": [
+                    {"artifact_ref": "art://runtime/BR-BUILD-001/source.py"}
+                ],
+            },
+        },
+        "BR-CHECK-001": {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-04-20T21:10:00+08:00"),
+            "payload": {
+                "artifact_refs": ["art://runtime/BR-CHECK-001/delivery-check-report.json"],
+                "written_artifacts": [
+                    {
+                        "artifact_ref": "art://runtime/BR-CHECK-001/delivery-check-report.json",
+                        "content_json": {
+                            "status": "FAIL_CLOSED",
+                            "summary": "BR-CHECK-001 FAIL_CLOSED: not approved for completion.",
+                            "findings": [
+                                {
+                                    "finding_id": "missing_runtime_evidence",
+                                    "summary": "Runtime and QA evidence are missing.",
+                                    "blocking": True,
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        },
+        "BR-CLOSEOUT-001": {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-04-20T21:20:00+08:00"),
+            "payload": {
+                "artifact_refs": ["art://runtime/BR-CLOSEOUT-001/delivery-closeout-package.json"],
+                "written_artifacts": [
+                    {
+                        "artifact_ref": "art://runtime/BR-CLOSEOUT-001/delivery-closeout-package.json",
+                        "content_json": {
+                            "summary": "FAIL_CLOSED: not approved for completion.",
+                            "final_artifact_refs": ["art://runtime/BR-BUILD-001/source.py"],
+                            "handoff_notes": ["not approved for completion"],
+                            "documentation_updates": [
+                                {
+                                    "doc_ref": "README.md",
+                                    "status": "NO_CHANGE_REQUIRED",
+                                    "summary": "No successful delivery evidence was produced.",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminals,
+        closeout_ticket=tickets[-1],
+        closeout_terminal_event=terminals["BR-CLOSEOUT-001"],
+    )
+    completion = resolve_workflow_closeout_completion(
+        tickets=tickets,
+        nodes=nodes,
+        has_open_approval=False,
+        has_open_incident=False,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminals,
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "delivery_check_failed"
+    assert issue["ticket_id"] == "BR-CHECK-001"
+    assert completion is None
 
 
 def test_runtime_liveness_ignores_workflow_level_core_hire_board_review_blocker(

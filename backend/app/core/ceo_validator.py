@@ -20,7 +20,11 @@ from app.core.execution_targets import (
     employee_supports_execution_contract,
 )
 from app.core.employee_reuse import build_role_already_covered_details
-from app.core.output_schemas import OUTPUT_SCHEMA_REGISTRY, SOURCE_CODE_DELIVERY_SCHEMA_REF
+from app.core.output_schemas import (
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    OUTPUT_SCHEMA_REGISTRY,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+)
 from app.core.persona_profiles import (
     build_seeded_persona_variant,
     build_high_overlap_rejection_reason,
@@ -246,6 +250,17 @@ def validate_ceo_action_batch(
             continue
 
         if action.action_type == CEOActionType.CREATE_TICKET:
+            if snapshot is not None and action.payload.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+                closeout_gate_issue = capability_plan_view(snapshot).get("closeout_gate_issue")
+                if isinstance(closeout_gate_issue, dict) and closeout_gate_issue:
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            "CREATE_TICKET is blocked because the closeout gate is not satisfied.",
+                            details={"closeout_gate_issue": closeout_gate_issue},
+                        )
+                    )
+                    continue
             if (action.payload.output_schema_ref, 1) not in OUTPUT_SCHEMA_REGISTRY:
                 rejected_actions.append(_action_entry(action, "output_schema_ref is not registered."))
                 continue
