@@ -2750,6 +2750,93 @@ def test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_ga
     assert idle_run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
 
 
+def test_auto_advance_keeps_duplicate_hire_loop_incident_open(client, set_ticket_time):
+    from tests.test_ceo_scheduler import (
+        _persist_workflow_directive_details,
+        _seed_workflow,
+        _set_deterministic_mode,
+    )
+
+    set_ticket_time("2026-04-08T10:00:00+08:00")
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_auto_advance_duplicate_hire_loop", "Duplicate hire loop")
+    repository = client.app.state.repository
+    _persist_workflow_directive_details(
+        repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="INCIDENT_OPENED",
+            actor_type="system",
+            actor_id="ceo-hire-loop-detector",
+            workflow_id=workflow_id,
+            idempotency_key="incident-opened:wf_auto_advance_duplicate_hire_loop:hire-loop",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_auto_advance_duplicate_hire_loop",
+                "incident_type": "CEO_HIRE_LOOP_DETECTED",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_auto_advance_duplicate_hire_loop:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+                "loop_fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_auto_advance_duplicate_hire_loop:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+                "reuse_candidate_employee_id": "emp_backend_auto_advance_loop",
+                "role_type": "backend_engineer",
+                "role_profile_refs": ["backend_engineer_primary"],
+                "suggested_recovery_action": "REUSE_EXISTING_EMPLOYEE_OR_REPLAN_CONTRACT",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-08T10:00:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type="CIRCUIT_BREAKER_OPENED",
+            actor_type="system",
+            actor_id="ceo-hire-loop-detector",
+            workflow_id=workflow_id,
+            idempotency_key="breaker-opened:wf_auto_advance_duplicate_hire_loop:hire-loop",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_auto_advance_duplicate_hire_loop",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_auto_advance_duplicate_hire_loop:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-08T10:00:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    workflow_auto_advance_module.auto_advance_workflow_to_next_stop(
+        repository,
+        workflow_id=workflow_id,
+        idempotency_key_prefix="auto-advance:duplicate-hire-loop",
+        max_steps=1,
+    )
+    incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+    ]
+
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == "CEO_HIRE_LOOP_DETECTED"
+    assert incidents[0]["status"] == "OPEN"
+
+
 def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_ticket_for_controller_gate(
     client,
     monkeypatch,

@@ -196,7 +196,8 @@ def _maybe_raise_mainline_deterministic_fallback_blocked(
     if (
         str(trigger.get("trigger_type") or "").strip() == "SCHEDULER_IDLE_MAINTENANCE"
         and set(blocked_action_types) == {CEOActionType.HIRE_EMPLOYEE.value}
-        and str(controller_state_view(snapshot).get("state") or "").strip() == "STAFFING_REQUIRED"
+        and str(controller_state_view(snapshot).get("state") or "").strip()
+        in {"ARCHITECT_REQUIRED", "STAFFING_REQUIRED"}
     ):
         return
     _raise_proposal_contract_error(

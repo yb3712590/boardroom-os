@@ -17,6 +17,7 @@ from app.core.graph_patch_reducer import GraphPatchReducerUnavailableError
 from app.core.ceo_prompts import CEO_SHADOW_PROMPT_VERSION
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_snapshot_contracts import controller_state_view
+from app.core.ceo_hire_loop import detect_consecutive_hire_loop, open_ceo_hire_loop_incident
 from app.core.ceo_validator import validate_ceo_action_batch
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED
 from app.core.runtime_provider_config import RuntimeProviderConfigStore
@@ -325,7 +326,12 @@ def run_ceo_shadow_for_trigger(
             rejected_actions=rejected_actions,
         )
         with repository.transaction() as connection:
-            return repository.append_ceo_shadow_run(
+            previous_runs = repository.list_ceo_shadow_runs(
+                workflow_id,
+                limit=1,
+                connection=connection,
+            )
+            run = repository.append_ceo_shadow_run(
                 connection,
                 workflow_id=workflow_id,
                 trigger_type=trigger_type,
@@ -353,6 +359,23 @@ def run_ceo_shadow_for_trigger(
                 deterministic_fallback_reason=deterministic_reason,
                 comparison=comparison,
             )
+            loop_detection = detect_consecutive_hire_loop(
+                workflow_id=workflow_id,
+                snapshot=snapshot,
+                rejected_actions=rejected_actions,
+                previous_run=previous_runs[0] if previous_runs else None,
+            )
+            if loop_detection is not None:
+                open_ceo_hire_loop_incident(
+                    repository,
+                    connection=connection,
+                    workflow_id=workflow_id,
+                    detection=loop_detection,
+                    occurred_at=occurred_at,
+                    idempotency_key_base=f"ceo-shadow-run:{run['run_id']}:hire-loop",
+                    causation_id=str(run["run_id"]),
+                )
+            return run
 
     def _raise_pipeline_error(source_stage: str, exc: Exception) -> None:
         is_existing_error = isinstance(exc, CeoShadowPipelineError)

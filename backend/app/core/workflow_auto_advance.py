@@ -6,6 +6,7 @@ from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER, is_ticket
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.constants import (
     EVENT_TICKET_FAILED,
+    INCIDENT_TYPE_CEO_HIRE_LOOP_DETECTED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
@@ -150,6 +151,7 @@ def _maybe_auto_resolve_open_incident(
     if incident is None:
         return False
     if str(incident.get("incident_type") or "") in {
+        INCIDENT_TYPE_CEO_HIRE_LOOP_DETECTED,
         INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE,
         INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     }:

@@ -4407,6 +4407,238 @@ def test_ceo_shadow_snapshot_suppresses_repeated_hire_after_role_already_covered
     assert "emp_backend_reuse_guard_busy" in snapshot["capability_plan"]["reuse_candidate_employee_ids"]
 
 
+def test_duplicate_hire_loop_opens_incident_after_second_rejection(client, monkeypatch):
+    _set_live_provider(client)
+    busy_workflow_id = _seed_workflow(client, "wf_duplicate_loop_busy_backend", "Busy backend worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_duplicate_loop_busy",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_duplicate_loop_backend_busy_existing",
+            node_id="node_duplicate_loop_backend_busy_existing",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_duplicate_loop_backend_busy_existing",
+            node_id="node_duplicate_loop_backend_busy_existing",
+            leased_by="emp_backend_duplicate_loop_busy",
+            idempotency_key=(
+                "ticket-lease:wf_duplicate_loop_busy_backend:"
+                "tkt_duplicate_loop_backend_busy_existing"
+            ),
+        )
+    _set_live_provider(client)
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_duplicate_loop_repeated_backend_hire",
+        "Repeated backend hire opens a loop incident.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_duplicate_loop_backend_ready",
+            node_id="node_duplicate_loop_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    repository = client.app.state.repository
+    stale_snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-duplicate-loop-stale",
+    )
+
+    import app.core.ceo_proposer as ceo_proposer
+    import app.core.ceo_scheduler as ceo_scheduler
+
+    def _fake_snapshot(*args, **kwargs):
+        return json.loads(json.dumps(stale_snapshot))
+
+    def _fake_invoke(_config, rendered_payload):
+        snapshot = rendered_payload.messages[2].content_payload
+        recommended_hire = snapshot["capability_plan"]["recommended_hire"]
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Hire backend capacity again.",
+                    "actions": [
+                        {
+                            "action_type": "HIRE_EMPLOYEE",
+                            "payload": {
+                                "workflow_id": workflow_id,
+                                "role_type": recommended_hire["role_type"],
+                                "role_profile_refs": recommended_hire["role_profile_refs"],
+                                "request_summary": recommended_hire["request_summary"],
+                                "employee_id_hint": "emp_backend_duplicate_loop_new",
+                            },
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_duplicate_hire_loop",
+        )
+
+    monkeypatch.setattr(ceo_scheduler, "build_ceo_shadow_snapshot", _fake_snapshot)
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_invoke)
+
+    first_run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-duplicate-loop-first",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+    assert first_run["rejected_actions"][0]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
+    assert [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+    ] == []
+
+    second_run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-duplicate-loop-second",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+    incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["workflow_id"] == workflow_id
+    ]
+
+    assert second_run["rejected_actions"][0]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
+    assert len(incidents) == 1
+    assert incidents[0]["incident_type"] == "CEO_HIRE_LOOP_DETECTED"
+    assert incidents[0]["payload"]["reuse_candidate_employee_id"] == "emp_backend_duplicate_loop_busy"
+    assert incidents[0]["payload"]["rejected_action"]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
+    assert incidents[0]["payload"]["recommended_hire"]["role_profile_refs"] == [
+        "backend_engineer_primary"
+    ]
+
+
+def test_duplicate_hire_loop_summary_suppresses_same_recommended_hire(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_duplicate_loop_open_incident",
+        "Open duplicate hire loop incident should block more hiring.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_duplicate_loop_open_backend_ready",
+            node_id="node_duplicate_loop_open_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="ceo-hire-loop-detector",
+            workflow_id=workflow_id,
+            idempotency_key="incident-opened:wf_duplicate_loop_open_incident:hire-loop",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_duplicate_loop_open",
+                "incident_type": "CEO_HIRE_LOOP_DETECTED",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_duplicate_loop_open_incident:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+                "loop_fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_duplicate_loop_open_incident:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+                "reuse_candidate_employee_id": "emp_backend_loop_reuse",
+                "role_type": "backend_engineer",
+                "role_profile_refs": ["backend_engineer_primary"],
+                "suggested_recovery_action": "REUSE_EXISTING_EMPLOYEE_OR_REPLAN_CONTRACT",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-08T10:00:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="ceo-hire-loop-detector",
+            workflow_id=workflow_id,
+            idempotency_key="breaker-opened:wf_duplicate_loop_open_incident:hire-loop",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": "inc_duplicate_loop_open",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": (
+                    "ceo-hire-loop:"
+                    "wf_duplicate_loop_open_incident:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+                    "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+                ),
+            },
+            occurred_at=datetime.fromisoformat("2026-04-08T10:00:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-open-duplicate-loop",
+    )
+
+    assert snapshot["controller_state"]["state"] == "WAIT_FOR_INCIDENT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["ceo_hire_loop_summary"] == {
+        "has_open_loop_incident": True,
+        "incident_id": "inc_duplicate_loop_open",
+        "fingerprint": (
+            "ceo-hire-loop:"
+            "wf_duplicate_loop_open_incident:STAFFING_REQUIRED:HIRE_EMPLOYEE:"
+            "backend_engineer:backend_engineer_primary:ROLE_ALREADY_COVERED"
+        ),
+        "reuse_candidate_employee_id": "emp_backend_loop_reuse",
+        "role_type": "backend_engineer",
+        "role_profile_refs": ["backend_engineer_primary"],
+        "suggested_recovery_action": "REUSE_EXISTING_EMPLOYEE_OR_REPLAN_CONTRACT",
+    }
+
+
 def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(client, monkeypatch):
     _set_deterministic_mode(client)
     workflow_id = _seed_workflow(client, "wf_backlog_capability_plan", "Capability-driven backlog fanout")

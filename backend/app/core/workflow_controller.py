@@ -5,6 +5,7 @@ from typing import Any
 
 from app.contracts.ticket_graph import TicketGraphSnapshot
 from app.core.ceo_snapshot_contracts import controller_state_view
+from app.core.ceo_hire_loop import ceo_hire_loop_summary_from_incidents
 from app.core.ceo_execution_presets import PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID
 from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
 from app.core.employee_reuse import (
@@ -1616,6 +1617,7 @@ def build_workflow_controller_view(
         "hard_constraints": hard_constraints,
         "progression_adapter_id": progression_adapter_id,
     }
+    ceo_hire_loop_summary = ceo_hire_loop_summary_from_incidents(incidents)
     capability_plan = {
         "required_capabilities": sorted(
             {
@@ -1641,6 +1643,8 @@ def build_workflow_controller_view(
         "staffing_wait_reasons": staffing_wait_reasons,
         "progression_adapter_id": progression_adapter_id,
     }
+    if ceo_hire_loop_summary is not None:
+        capability_plan["ceo_hire_loop_summary"] = ceo_hire_loop_summary
     if required_governance_ticket_plan is not None:
         capability_plan["required_capabilities"] = sorted(
             set(capability_plan["required_capabilities"])
