@@ -3878,7 +3878,7 @@ def test_mainline_deterministic_fallback_blocks_request_meeting_on_ticket_comple
     assert "request_meeting" in str(runs[0]["fallback_reason"] or "").lower()
 
 
-def test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker(client):
+def test_controller_ready_ticket_staffing_recommends_hire_when_no_active_role_worker(client):
     workflow_id = _seed_workflow(
         client,
         "wf_ready_ticket_staffing_required",
@@ -3916,6 +3916,246 @@ def test_controller_recommends_hire_when_ready_ticket_has_no_eligible_worker(cli
     assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"][0]["ticket_id"] == (
         "tkt_ready_backend_staffing_required"
     )
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"][0]["reason_code"] == "NO_ACTIVE_ROLE_WORKER"
+    assert snapshot["capability_plan"]["contract_issues"] == []
+
+
+def test_controller_classifies_ready_ticket_role_schema_mismatch_without_hire(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_contract_mismatch",
+        "Ready ticket contract mismatch should not trigger hiring.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    repository = client.app.state.repository
+    payload = _ticket_create_payload(
+        workflow_id=workflow_id,
+        ticket_id="tkt_ready_cto_source_mismatch",
+        node_id="node_ready_cto_source_mismatch",
+        role_profile_ref="cto_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="TICKET_CREATED",
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key="test-seed-ticket-created:wf_ready_ticket_contract_mismatch:mismatch",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=payload,
+            occurred_at=datetime.fromisoformat("2026-04-05T10:10:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-contract-mismatch",
+    )
+
+    assert snapshot["controller_state"]["state"] == "CONTRACT_REPLAN_REQUIRED"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"] == []
+    assert snapshot["capability_plan"]["contract_issues"][0]["reason_code"] == "ROLE_SCHEMA_UNSUPPORTED"
+    assert snapshot["capability_plan"]["contract_issues"][0]["ticket_id"] == "tkt_ready_cto_source_mismatch"
+
+
+def test_controller_worker_busy_recommends_capacity_hire_for_ready_ticket(client):
+    busy_workflow_id = _seed_workflow(client, "wf_busy_backend_worker", "Busy backend worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_busy",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_backend_busy_existing",
+            node_id="node_backend_busy_existing",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_backend_busy_existing",
+            node_id="node_backend_busy_existing",
+            leased_by="emp_backend_busy",
+            idempotency_key="ticket-lease:wf_busy_backend_worker:tkt_backend_busy_existing",
+        )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_worker_busy",
+        "Ready ticket should hire more capacity when matching worker is busy.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ready_backend_worker_busy",
+            node_id="node_ready_backend_worker_busy",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-worker-busy",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_REQUIRED"
+    assert snapshot["controller_state"]["recommended_action"] == "HIRE_EMPLOYEE"
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"][0]["reason_code"] == "WORKER_BUSY"
+    assert snapshot["capability_plan"]["recommended_hire"]["role_profile_refs"] == ["backend_engineer_primary"]
+    assert "capacity" in snapshot["capability_plan"]["recommended_hire"]["request_summary"].lower()
+
+
+def test_controller_worker_excluded_waits_for_ready_ticket_recovery(client):
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_worker_excluded",
+        "Ready ticket excluded worker should wait for recovery.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_excluded",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    payload = _ticket_create_payload(
+        workflow_id=workflow_id,
+        ticket_id="tkt_ready_backend_worker_excluded",
+        node_id="node_ready_backend_worker_excluded",
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    payload["excluded_employee_ids"] = ["emp_backend_excluded"]
+    _create_ticket_for_test(client, payload)
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-worker-excluded",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"] == []
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["reason_code"] == "WORKER_EXCLUDED"
+
+
+def test_controller_provider_paused_waits_for_ready_ticket_recovery(client):
+    paused_workflow_id = _seed_workflow(client, "wf_paused_backend_provider", "Paused backend provider")
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=paused_workflow_id,
+            idempotency_key="incident-opened:wf_paused_backend_provider:provider",
+            causation_id=None,
+            correlation_id=paused_workflow_id,
+            payload={
+                "incident_id": "inc_paused_backend_provider",
+                "incident_type": "RUNTIME_PROVIDER_FAILURE",
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": "provider:prov_openai_compat:paused",
+                "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-05T10:10:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=paused_workflow_id,
+            idempotency_key="breaker-opened:wf_paused_backend_provider:provider",
+            causation_id=None,
+            correlation_id=paused_workflow_id,
+            payload={
+                "incident_id": "inc_paused_backend_provider",
+                "incident_type": "RUNTIME_PROVIDER_FAILURE",
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": "provider:prov_openai_compat:paused",
+                "provider_id": OPENAI_COMPAT_PROVIDER_ID,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-05T10:10:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_provider_paused",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_ready_ticket_provider_paused",
+        "Ready ticket provider pause should wait for recovery.",
+    )
+    _persist_workflow_directive_details(
+        repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_ready_backend_provider_paused",
+            node_id="node_ready_backend_provider_paused",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-ready-provider-paused",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"] == []
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["reason_code"] == "PROVIDER_PAUSED"
 
 
 def test_ceo_hire_fallback_uses_missing_ready_ticket_role_profile(client):
@@ -5577,12 +5817,12 @@ def test_ceo_shadow_snapshot_keeps_existing_governance_ticket_plan_when_node_pro
                     workflow_id=workflow_id,
                     ticket_id="tkt_pending_technology_decision",
                     node_id="node_ceo_technology_decision",
+                    role_profile_ref="frontend_engineer_primary",
+                    output_schema_ref=TECHNOLOGY_DECISION_SCHEMA_REF,
                     retry_budget=0,
                 ),
-                "role_profile_ref": "frontend_engineer_primary",
-                "output_schema_ref": TECHNOLOGY_DECISION_SCHEMA_REF,
                 "allowed_write_set": ["reports/governance/tkt_pending_technology_decision/*"],
-        },
+            },
     )
     with repository.transaction() as connection:
         connection.execute(
