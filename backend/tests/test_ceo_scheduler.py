@@ -5884,7 +5884,12 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
     assert followup_run["executed_actions"][0]["execution_status"] == "EXECUTED"
 
 
-def test_ceo_shadow_snapshot_uses_existing_cto_for_backlog_governance_followup(client, monkeypatch):
+@pytest.mark.parametrize("target_role", ["cto", "governance_cto", "cto_primary"])
+def test_ceo_shadow_snapshot_uses_existing_cto_for_backlog_governance_followup(
+    client,
+    monkeypatch,
+    target_role,
+):
     workflow_id = _seed_workflow(client, "wf_backlog_cto_existing_staff", "Reuse existing CTO")
     _persist_workflow_directive_details(
         client.app.state.repository,
@@ -5914,7 +5919,7 @@ def test_ceo_shadow_snapshot_uses_existing_cto_for_backlog_governance_followup(c
                 "ticket_id": "BR-GOV-001",
                 "name": "Governance fanout and traceability setup",
                 "priority": "P0",
-                "target_role": "cto",
+                "target_role": target_role,
                 "scope": ["Record PRD traceability and handoff IDs without implementation code."],
             }
         ],
@@ -5940,7 +5945,72 @@ def test_ceo_shadow_snapshot_uses_existing_cto_for_backlog_governance_followup(c
     ticket_payload = followup_plan["ticket_payload"]
     assert ticket_payload["role_profile_ref"] == "cto_primary"
     assert ticket_payload["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+    assert ticket_payload["execution_contract"]["execution_target_ref"] == "execution_target:cto_governance_document"
     assert ticket_payload["dispatch_intent"]["assignee_employee_id"] == "emp_cto_governance"
+
+
+@pytest.mark.parametrize("target_role", ["cto", "governance_cto", "cto_primary"])
+def test_backlog_followup_execution_plan_resolves_cto_governance_contract(target_role):
+    from app.core import workflow_controller
+
+    result = workflow_controller._resolve_backlog_followup_execution_plan(
+        {"ticket_id": "BR-GOV-001", "target_role": target_role}
+    )
+
+    assert result["ok"] is True
+    assert result["role_profile_ref"] == "cto_primary"
+    assert result["output_schema_ref"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+    assert result["execution_contract"]["execution_target_ref"] == "execution_target:cto_governance_document"
+    assert result["execution_target_ref"] == "execution_target:cto_governance_document"
+    assert result["deliverable_kind"] == BACKLOG_RECOMMENDATION_SCHEMA_REF
+
+
+def test_backlog_followup_execution_plan_rejects_unsupported_target_role():
+    from app.core import workflow_controller
+
+    result = workflow_controller._resolve_backlog_followup_execution_plan(
+        {"ticket_id": "BR-PM-001", "target_role": "product_manager"}
+    )
+
+    assert result == {
+        "ok": False,
+        "reason_code": "unsupported_target_role",
+        "target_role": "product_manager",
+        "role_profile_ref": "",
+        "output_schema_ref": "",
+    }
+
+
+def test_backlog_followup_execution_plan_rejects_role_schema_mismatch():
+    from app.core import workflow_controller
+
+    result = workflow_controller._resolve_backlog_followup_execution_plan(
+        {
+            "ticket_id": "BR-GOV-001",
+            "target_role": "cto",
+            "output_schema_ref": "source_code_delivery",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "unsupported_role_schema_combo"
+    assert result["role_profile_ref"] == "cto_primary"
+    assert result["output_schema_ref"] == "source_code_delivery"
+
+
+def test_backlog_followup_execution_plan_rejects_missing_execution_contract(monkeypatch):
+    from app.core import workflow_controller
+
+    monkeypatch.setattr(workflow_controller, "infer_execution_contract_payload", lambda **_kwargs: None)
+
+    result = workflow_controller._resolve_backlog_followup_execution_plan(
+        {"ticket_id": "BR-BE-001", "target_role": "backend_engineer"}
+    )
+
+    assert result["ok"] is False
+    assert result["reason_code"] == "execution_contract_missing"
+    assert result["role_profile_ref"] == "backend_engineer_primary"
+    assert result["output_schema_ref"] == "source_code_delivery"
 
 
 def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_followup_when_doc_is_missing(

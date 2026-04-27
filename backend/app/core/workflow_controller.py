@@ -73,6 +73,23 @@ _ROLE_TYPE_BY_ROLE_PROFILE = {
     "architect_primary": "governance_architect",
     "cto_primary": "governance_cto",
 }
+_BACKLOG_FOLLOWUP_DEFAULT_OUTPUT_SCHEMA_BY_ROLE_PROFILE = {
+    "frontend_engineer_primary": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    "backend_engineer_primary": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    "database_engineer_primary": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    "platform_sre_primary": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    "architect_primary": ARCHITECTURE_BRIEF_SCHEMA_REF,
+    "cto_primary": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    "checker_primary": DELIVERY_CHECK_REPORT_SCHEMA_REF,
+}
+_BACKLOG_FOLLOWUP_ALLOWED_OUTPUT_SCHEMAS_BY_ROLE_PROFILE = {
+    role_profile_ref: {output_schema_ref}
+    for role_profile_ref, output_schema_ref in _BACKLOG_FOLLOWUP_DEFAULT_OUTPUT_SCHEMA_BY_ROLE_PROFILE.items()
+}
+_BACKLOG_FOLLOWUP_ALLOWED_OUTPUT_SCHEMAS_BY_ROLE_PROFILE["checker_primary"] = {
+    DELIVERY_CHECK_REPORT_SCHEMA_REF,
+    MAKER_CHECKER_VERDICT_SCHEMA_REF,
+}
 _MEETING_REQUIRED_HINTS = (
     "技术决策会议",
     "technical decision meeting",
@@ -310,13 +327,61 @@ def _resolve_target_role_profile(raw_ticket: dict[str, Any]) -> str:
 
 
 def _resolve_followup_output_schema_ref(role_profile_ref: str) -> str:
-    if role_profile_ref == "architect_primary":
-        return ARCHITECTURE_BRIEF_SCHEMA_REF
-    if role_profile_ref == "cto_primary":
-        return BACKLOG_RECOMMENDATION_SCHEMA_REF
-    if role_profile_ref == "checker_primary":
-        return DELIVERY_CHECK_REPORT_SCHEMA_REF
-    return SOURCE_CODE_DELIVERY_SCHEMA_REF
+    return _BACKLOG_FOLLOWUP_DEFAULT_OUTPUT_SCHEMA_BY_ROLE_PROFILE.get(
+        role_profile_ref,
+        SOURCE_CODE_DELIVERY_SCHEMA_REF,
+    )
+
+
+def _resolve_backlog_followup_execution_plan(raw_ticket: dict[str, Any]) -> dict[str, Any]:
+    target_role = str(raw_ticket.get("target_role") or "").strip().lower()
+    role_profile_ref = _ROLE_PROFILE_BY_TARGET_ROLE.get(target_role)
+    if role_profile_ref is None:
+        return {
+            "ok": False,
+            "reason_code": "unsupported_target_role",
+            "target_role": target_role,
+            "role_profile_ref": "",
+            "output_schema_ref": "",
+        }
+
+    default_output_schema_ref = _resolve_followup_output_schema_ref(role_profile_ref)
+    output_schema_ref = str(raw_ticket.get("output_schema_ref") or default_output_schema_ref).strip()
+    allowed_output_schema_refs = _BACKLOG_FOLLOWUP_ALLOWED_OUTPUT_SCHEMAS_BY_ROLE_PROFILE.get(
+        role_profile_ref,
+        {default_output_schema_ref},
+    )
+    if output_schema_ref not in allowed_output_schema_refs:
+        return {
+            "ok": False,
+            "reason_code": "unsupported_role_schema_combo",
+            "target_role": target_role,
+            "role_profile_ref": role_profile_ref,
+            "output_schema_ref": output_schema_ref,
+        }
+
+    execution_contract = infer_execution_contract_payload(
+        role_profile_ref=role_profile_ref,
+        output_schema_ref=output_schema_ref,
+    )
+    if execution_contract is None:
+        return {
+            "ok": False,
+            "reason_code": "execution_contract_missing",
+            "target_role": target_role,
+            "role_profile_ref": role_profile_ref,
+            "output_schema_ref": output_schema_ref,
+        }
+
+    return {
+        "ok": True,
+        "target_role": target_role,
+        "role_profile_ref": role_profile_ref,
+        "output_schema_ref": output_schema_ref,
+        "execution_contract": execution_contract,
+        "execution_target_ref": str(execution_contract["execution_target_ref"]),
+        "deliverable_kind": output_schema_ref,
+    }
 
 
 def _build_ceo_create_ticket_payload(
@@ -330,8 +395,9 @@ def _build_ceo_create_ticket_payload(
     dependency_gate_refs: list[str] | None,
     summary: str,
     parent_ticket_id: str | None,
+    execution_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    execution_contract = infer_execution_contract_payload(
+    resolved_execution_contract = execution_contract or infer_execution_contract_payload(
         role_profile_ref=role_profile_ref,
         output_schema_ref=output_schema_ref,
     ) or {}
@@ -340,7 +406,7 @@ def _build_ceo_create_ticket_payload(
         "node_id": node_id,
         "role_profile_ref": role_profile_ref,
         "output_schema_ref": output_schema_ref,
-        "execution_contract": execution_contract,
+        "execution_contract": resolved_execution_contract,
         "dispatch_intent": {
             "assignee_employee_id": assignee_employee_id or "",
             "selection_reason": selection_reason,
@@ -624,13 +690,20 @@ def _build_followup_ticket_plans(
         if not isinstance(raw_ticket, dict):
             continue
         node_id = backlog_followup_key_to_node_id(ticket_key)
-        role_profile_ref = _resolve_target_role_profile(raw_ticket)
+        execution_plan = _resolve_backlog_followup_execution_plan(raw_ticket)
+        if not execution_plan.get("ok"):
+            raise BacklogRecommendationContractError(
+                "Backlog follow-up ticket has no valid execution contract: "
+                f"{execution_plan.get('reason_code')}"
+            )
+        role_profile_ref = str(execution_plan["role_profile_ref"])
+        output_schema_ref = str(execution_plan["output_schema_ref"])
+        execution_contract = dict(execution_plan["execution_contract"])
         task_scope = [
             str(item).strip()
             for item in list(raw_ticket.get("scope") or [])
             if str(item).strip()
         ]
-        output_schema_ref = _resolve_followup_output_schema_ref(role_profile_ref)
         assignee_employee_id = _select_default_assignee(
             employees,
             role_profile_ref=role_profile_ref,
@@ -654,6 +727,7 @@ def _build_followup_ticket_plans(
                     node_id=node_id,
                     role_profile_ref=role_profile_ref,
                     output_schema_ref=output_schema_ref,
+                    execution_contract=execution_contract,
                     assignee_employee_id=assignee_employee_id,
                     selection_reason=(
                         "Follow the current capability plan and translate the approved backlog recommendation into an auditable implementation ticket."
@@ -666,6 +740,7 @@ def _build_followup_ticket_plans(
                     ),
                     parent_ticket_id=backlog_ticket_id,
                 ),
+                "execution_plan": execution_plan,
             }
         )
     return followup_ticket_plans
