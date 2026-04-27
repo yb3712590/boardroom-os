@@ -114,28 +114,37 @@ def build_governance_followup_summary(output_schema_ref: str) -> str:
     return f"Prepare the {label} before implementation fanout continues."
 
 
+def _resolve_governance_execution_plan(output_schema_ref: str) -> dict[str, Any] | None:
+    for role_profile_ref in _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA.get(output_schema_ref, ()):
+        if not supports_ceo_create_ticket_preset(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        ):
+            continue
+        execution_contract = infer_execution_contract_payload(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        )
+        if execution_contract is None:
+            continue
+        return {
+            "role_profile_ref": role_profile_ref,
+            "output_schema_ref": output_schema_ref,
+            "execution_contract": execution_contract,
+        }
+    return None
+
+
 def select_governance_role_and_assignee(
     employees: list[dict[str, Any]],
     *,
     output_schema_ref: str,
 ) -> tuple[str | None, str | None]:
-    role_priority = _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA.get(output_schema_ref, ())
-    if not role_priority:
+    execution_plan = _resolve_governance_execution_plan(output_schema_ref)
+    if execution_plan is None:
         return None, None
-
-    role_profile_ref = role_priority[0]
-    if not supports_ceo_create_ticket_preset(
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=output_schema_ref,
-    ):
-        return None, None
-
-    execution_contract = infer_execution_contract_payload(
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=output_schema_ref,
-    )
-    if execution_contract is None:
-        return None, None
+    role_profile_ref = str(execution_plan["role_profile_ref"])
+    execution_contract = dict(execution_plan["execution_contract"])
 
     for employee in sorted(employees, key=lambda item: str(item.get("employee_id") or "")):
         if str(employee.get("state") or "") != "ACTIVE":

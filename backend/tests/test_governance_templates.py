@@ -123,6 +123,38 @@ def test_role_template_catalog_exposes_live_reserved_and_governance_templates():
     assert templates[7]["mainline_boundary"] == templates[6]["mainline_boundary"]
 
 
+def test_role_template_catalog_exposes_staffing_and_runtime_contract_matrix():
+    templates = {
+        template["canonical_role_ref"]: template
+        for template in list_role_template_catalog_entries()
+    }
+
+    cto_template = templates["cto_primary"]
+    assert cto_template["template_id"] == "cto_governance"
+    assert cto_template["staffing_hire_template_id"] == "cto_governance_backup"
+    assert cto_template["supported_output_schema_refs"] == [
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "backlog_recommendation",
+    ]
+    assert "source_code_delivery" not in cto_template["supported_output_schema_refs"]
+    assert cto_template["supported_execution_target_refs"] == [
+        "execution_target:cto_governance_document",
+    ]
+
+    checker_template = templates["checker_primary"]
+    assert checker_template["staffing_hire_template_id"] == "checker_backup"
+    assert checker_template["supported_output_schema_refs"] == [
+        "delivery_check_report",
+        "maker_checker_verdict",
+    ]
+    assert checker_template["supported_execution_target_refs"] == [
+        "execution_target:checker_delivery_check",
+        "execution_target:checker_maker_checker",
+    ]
+
+
 def test_role_template_document_kinds_expose_expected_metadata_refs():
     document_kinds = list_role_template_document_kinds()
 

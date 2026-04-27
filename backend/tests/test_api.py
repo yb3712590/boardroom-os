@@ -15778,6 +15778,8 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         "architect_governance_backup",
         "cto_governance_backup",
     ]
+    assert all("supported_output_schema_refs" not in template for template in body["hire_templates"])
+    assert all("supported_execution_target_refs" not in template for template in body["hire_templates"])
     assert [template["template_id"] for template in body["role_templates_catalog"]["role_templates"]] == [
         "scope_consensus_primary",
         "frontend_delivery_primary",
@@ -15809,6 +15811,28 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
     assert body["role_templates_catalog"]["role_templates"][0]["status"] == "LIVE"
     assert body["role_templates_catalog"]["role_templates"][0]["canonical_role_ref"] == "ui_designer_primary"
     assert body["role_templates_catalog"]["role_templates"][3]["provider_target_ref"] == "role_profile:backend_engineer_primary"
+    assert body["role_templates_catalog"]["role_templates"][2]["staffing_hire_template_id"] == "checker_backup"
+    assert body["role_templates_catalog"]["role_templates"][2]["supported_output_schema_refs"] == [
+        "delivery_check_report",
+        "maker_checker_verdict",
+    ]
+    assert body["role_templates_catalog"]["role_templates"][2]["supported_execution_target_refs"] == [
+        "execution_target:checker_delivery_check",
+        "execution_target:checker_maker_checker",
+    ]
+    assert body["role_templates_catalog"]["role_templates"][7]["staffing_hire_template_id"] == "cto_governance_backup"
+    assert body["role_templates_catalog"]["role_templates"][7]["supported_output_schema_refs"] == [
+        "architecture_brief",
+        "technology_decision",
+        "milestone_plan",
+        "backlog_recommendation",
+    ]
+    assert "source_code_delivery" not in body["role_templates_catalog"]["role_templates"][7][
+        "supported_output_schema_refs"
+    ]
+    assert body["role_templates_catalog"]["role_templates"][7]["supported_execution_target_refs"] == [
+        "execution_target:cto_governance_document",
+    ]
     assert body["role_templates_catalog"]["role_templates"][0]["mainline_boundary"] == {
         "boundary_status": "LIVE_ON_MAINLINE",
         "active_path_refs": [

@@ -152,6 +152,20 @@ def board_workforce_staffing_template_id_for_role(role_type: str) -> str | None:
     return str(template["template_id"])
 
 
+def board_workforce_staffing_template_id_for_role_profile(role_profile_ref: str) -> str | None:
+    normalized_role_profile_ref = str(role_profile_ref or "").strip()
+    if not normalized_role_profile_ref:
+        return None
+    for template in _BOARD_WORKFORCE_STAFFING_HIRE_TEMPLATES:
+        if normalized_role_profile_ref in {
+            str(value).strip()
+            for value in template.get("role_profile_refs") or []
+            if str(value).strip()
+        }:
+            return str(template["template_id"])
+    return None
+
+
 def resolve_board_workforce_staffing_combo(
     role_type: str,
     role_profile_refs: list[str] | tuple[str, ...],

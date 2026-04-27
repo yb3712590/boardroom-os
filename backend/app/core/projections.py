@@ -424,6 +424,9 @@ def _build_role_templates_catalog_projection() -> dict[str, Any]:
                 "execution_boundary": str(template["execution_boundary"]),
                 "status": str(template["status"]),
                 "default_document_kind_refs": list(template.get("default_document_kind_refs") or []),
+                "staffing_hire_template_id": template.get("staffing_hire_template_id"),
+                "supported_output_schema_refs": list(template.get("supported_output_schema_refs") or []),
+                "supported_execution_target_refs": list(template.get("supported_execution_target_refs") or []),
                 "responsibility_summary": str(template["responsibility_summary"]),
                 "summary": str(template["summary"]),
                 "composition": {
@@ -544,6 +547,21 @@ def _build_workforce_available_actions(employee: dict[str, Any]) -> list[Workfor
             template_id=template_id,
         ),
     ]
+
+
+def _role_template_source_for_employee(employee: dict[str, Any]) -> dict[str, Any] | None:
+    role_type = str(employee.get("role_type") or "unknown")
+    for role_profile_ref in employee.get("role_profile_refs") or []:
+        source_template = role_template_source_for_worker(
+            role_type=None,
+            role_profile_ref=str(role_profile_ref),
+        )
+        if source_template is not None:
+            return source_template
+    return role_template_source_for_worker(
+        role_type=role_type,
+        role_profile_ref=None,
+    )
 
 
 def _build_dashboard_completion_summary(
@@ -1428,10 +1446,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
         else:
             activity_state = "EXECUTING"
             lane["active_count"] += 1
-        source_template = role_template_source_for_worker(
-            role_type=role_type,
-            role_profile_ref=str(ticket.get("role_profile_ref") or "") if ticket is not None else None,
-        )
+        source_template = _role_template_source_for_employee(employee)
 
         lane["workers"].append(
             WorkforceWorkerProjection(

@@ -191,6 +191,9 @@ class RoleTemplateProjection(StrictModel):
     execution_boundary: str
     status: str
     default_document_kind_refs: list[str] = Field(default_factory=list)
+    staffing_hire_template_id: str | None = None
+    supported_output_schema_refs: list[str] = Field(default_factory=list)
+    supported_execution_target_refs: list[str] = Field(default_factory=list)
     responsibility_summary: str
     summary: str
     composition: RoleTemplateCompositionProjection = Field(default_factory=RoleTemplateCompositionProjection)

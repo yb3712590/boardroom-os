@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.execution_targets import EXECUTION_TARGET_DEFINITIONS
+from app.core.staffing_catalog import board_workforce_staffing_template_id_for_role_profile
+
 
 ROLE_TEMPLATE_STATUS_LIVE = "LIVE"
 ROLE_TEMPLATE_STATUS_NOT_ENABLED = "NOT_ENABLED"
@@ -452,9 +455,32 @@ def _clone_fragment(fragment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _runtime_contract_matrix_for_role_profile(role_profile_ref: str) -> dict[str, Any]:
+    normalized_role_profile_ref = str(role_profile_ref or "").strip()
+    supported_output_schema_refs: list[str] = []
+    supported_execution_target_refs: list[str] = []
+    for definition in EXECUTION_TARGET_DEFINITIONS:
+        if definition.role_profile_ref != normalized_role_profile_ref:
+            continue
+        if definition.output_schema_ref not in supported_output_schema_refs:
+            supported_output_schema_refs.append(definition.output_schema_ref)
+        if definition.execution_target_ref not in supported_execution_target_refs:
+            supported_execution_target_refs.append(definition.execution_target_ref)
+    return {
+        "staffing_hire_template_id": board_workforce_staffing_template_id_for_role_profile(
+            normalized_role_profile_ref
+        ),
+        "supported_output_schema_refs": supported_output_schema_refs,
+        "supported_execution_target_refs": supported_execution_target_refs,
+    }
+
+
 def _clone_role_template(template: dict[str, Any]) -> dict[str, Any]:
+    canonical_role_ref = str(template["canonical_role_ref"])
+    runtime_matrix = _runtime_contract_matrix_for_role_profile(canonical_role_ref)
     return {
         **template,
+        **runtime_matrix,
         "alias_role_profile_refs": list(template.get("alias_role_profile_refs") or []),
         "default_document_kind_refs": list(template.get("default_document_kind_refs") or []),
         "composition": {
