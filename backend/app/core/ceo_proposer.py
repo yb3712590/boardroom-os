@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -104,6 +104,10 @@ class CEOProposalResult:
     policy_reason: str | None = None
     provider_response_id: str | None = None
     fallback_reason: str | None = None
+    provider_policy_ref: str | None = None
+    provider_attempt_id: str | None = None
+    provider_timeout_policy: dict[str, Any] = field(default_factory=dict)
+    provider_failure_detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -127,6 +131,89 @@ MAINLINE_MUTATING_DETERMINISTIC_ACTIONS = {
     CEOActionType.HIRE_EMPLOYEE.value,
     CEOActionType.REQUEST_MEETING.value,
 }
+
+
+def _ceo_provider_policy_ref(selection) -> str:
+    model = str(selection.actual_model or selection.provider.model or "unknown-model")
+    reasoning = str(selection.effective_reasoning_effort or "unknown-reasoning")
+    return (
+        f"provider-policy:{selection.provider.provider_id}:"
+        f"{model}:{reasoning}:{selection.provider.adapter_kind}"
+    )
+
+
+def _ceo_provider_attempt_id(snapshot: dict[str, Any], selection, attempt_no: int = 1) -> str:
+    workflow_id = str((snapshot.get("workflow") or {}).get("workflow_id") or "unknown-workflow")
+    trigger_type = str((snapshot.get("trigger") or {}).get("trigger_type") or "unknown-trigger")
+    return f"attempt:ceo-shadow:{workflow_id}:{trigger_type}:{selection.provider.provider_id}:{attempt_no}"
+
+
+def _ceo_provider_timeout_policy(selection) -> dict[str, float | None]:
+    provider = selection.provider
+    if provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        return {
+            "connect_timeout_sec": float(provider.connect_timeout_sec or provider.timeout_sec),
+            "write_timeout_sec": float(provider.write_timeout_sec or provider.timeout_sec),
+            "first_token_timeout_sec": float(provider.first_token_timeout_sec or provider.timeout_sec),
+            "stream_idle_timeout_sec": float(provider.stream_idle_timeout_sec or provider.timeout_sec),
+            "request_total_timeout_sec": (
+                float(provider.request_total_timeout_sec)
+                if provider.request_total_timeout_sec is not None
+                else None
+            ),
+        }
+    return {
+        "connect_timeout_sec": None,
+        "write_timeout_sec": None,
+        "first_token_timeout_sec": None,
+        "stream_idle_timeout_sec": None,
+        "request_total_timeout_sec": float(provider.timeout_sec),
+    }
+
+
+def _ceo_provider_attempt_metadata(snapshot: dict[str, Any], selection) -> dict[str, Any]:
+    return {
+        "provider_policy_ref": _ceo_provider_policy_ref(selection),
+        "provider_attempt_id": _ceo_provider_attempt_id(snapshot, selection),
+        "provider_timeout_policy": _ceo_provider_timeout_policy(selection),
+    }
+
+
+def _ceo_openai_compat_config(selection, *, schema_entry: dict[str, Any]) -> OpenAICompatProviderConfig:
+    provider = selection.provider
+    timeout_policy = _ceo_provider_timeout_policy(selection)
+    return OpenAICompatProviderConfig(
+        base_url=str(provider.base_url or ""),
+        api_key=str(provider.api_key or ""),
+        model=str(selection.actual_model or provider.model or ""),
+        timeout_sec=float(provider.timeout_sec),
+        connect_timeout_sec=timeout_policy["connect_timeout_sec"],
+        write_timeout_sec=timeout_policy["write_timeout_sec"],
+        first_token_timeout_sec=timeout_policy["first_token_timeout_sec"],
+        stream_idle_timeout_sec=timeout_policy["stream_idle_timeout_sec"],
+        request_total_timeout_sec=timeout_policy["request_total_timeout_sec"],
+        reasoning_effort=selection.effective_reasoning_effort,
+        schema_name=CEO_ACTION_BATCH_SCHEMA_REF,
+        schema_body=schema_entry["body"](),
+        strict=False,
+    )
+
+
+def _attach_provider_failure_metadata(exc: Exception, metadata: dict[str, Any]) -> None:
+    if isinstance(exc, OpenAICompatProviderError):
+        exc.failure_detail = {
+            **dict(exc.failure_detail),
+            "attempt_id": metadata["provider_attempt_id"],
+            "provider_policy_ref": metadata["provider_policy_ref"],
+            "provider_timeout_policy": dict(metadata["provider_timeout_policy"]),
+        }
+    elif isinstance(exc, ClaudeCodeProviderError):
+        exc.failure_detail = {
+            **dict(exc.failure_detail),
+            "attempt_id": metadata["provider_attempt_id"],
+            "provider_policy_ref": metadata["provider_policy_ref"],
+            "provider_timeout_policy": dict(metadata["provider_timeout_policy"]),
+        }
 
 
 class CEOProposalContractError(ValueError):
@@ -1678,43 +1765,53 @@ def propose_ceo_action_batch(
     def _invoke_selection(current_selection):
         rendered_payload = build_ceo_shadow_rendered_payload(snapshot)
         schema_entry = OUTPUT_SCHEMA_REGISTRY[(CEO_ACTION_BATCH_SCHEMA_REF, CEO_ACTION_BATCH_SCHEMA_VERSION)]
+        metadata = _ceo_provider_attempt_metadata(snapshot, current_selection)
         if current_selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
-            provider_result = invoke_openai_compat_response(
-                OpenAICompatProviderConfig(
-                    base_url=str(current_selection.provider.base_url or ""),
-                    api_key=str(current_selection.provider.api_key or ""),
-                    model=str(current_selection.actual_model or current_selection.provider.model or ""),
-                    timeout_sec=current_selection.provider.timeout_sec,
-                    reasoning_effort=current_selection.effective_reasoning_effort,
-                    schema_name=CEO_ACTION_BATCH_SCHEMA_REF,
-                    schema_body=schema_entry["body"](),
-                    strict=False,
-                ),
-                rendered_payload,
-            )
-            raw_payload = resolve_openai_compat_result_payload(
-                provider_result,
-                payload_resolver=_normalize_provider_action_batch_payload,
-            ).payload
+            try:
+                provider_result = invoke_openai_compat_response(
+                    _ceo_openai_compat_config(current_selection, schema_entry=schema_entry),
+                    rendered_payload,
+                )
+            except OpenAICompatProviderError as exc:
+                _attach_provider_failure_metadata(exc, metadata)
+                raise
+            try:
+                raw_payload = resolve_openai_compat_result_payload(provider_result).payload
+            except OpenAICompatProviderError as exc:
+                _attach_provider_failure_metadata(exc, metadata)
+                raise
+            except CEOProposalContractError as exc:
+                exc.details.setdefault("provider_response_id", provider_result.response_id)
+                exc.details.setdefault("attempt_id", metadata["provider_attempt_id"])
+                exc.details.setdefault("provider_policy_ref", metadata["provider_policy_ref"])
+                exc.details.setdefault("provider_timeout_policy", dict(metadata["provider_timeout_policy"]))
+                raise
         else:
-            provider_result = invoke_claude_code_response(
-                ClaudeCodeProviderConfig(
-                    command_path=str(current_selection.provider.command_path or ""),
-                    model=str(current_selection.actual_model or current_selection.provider.model or ""),
-                    timeout_sec=current_selection.provider.timeout_sec,
-                ),
-                rendered_payload,
-            )
+            try:
+                provider_result = invoke_claude_code_response(
+                    ClaudeCodeProviderConfig(
+                        command_path=str(current_selection.provider.command_path or ""),
+                        model=str(current_selection.actual_model or current_selection.provider.model or ""),
+                        timeout_sec=current_selection.provider.timeout_sec,
+                    ),
+                    rendered_payload,
+                )
+            except ClaudeCodeProviderError as exc:
+                _attach_provider_failure_metadata(exc, metadata)
+                raise
             raw_payload = json.loads(provider_result.output_text)
         try:
             payload = _normalize_provider_action_batch_payload(raw_payload)
-            return CEOActionBatch.model_validate(payload), provider_result
+            return CEOActionBatch.model_validate(payload), provider_result, metadata
         except CEOProposalContractError as exc:
             exc.details.setdefault("provider_response_id", provider_result.response_id)
+            exc.details.setdefault("attempt_id", metadata["provider_attempt_id"])
+            exc.details.setdefault("provider_policy_ref", metadata["provider_policy_ref"])
+            exc.details.setdefault("provider_timeout_policy", dict(metadata["provider_timeout_policy"]))
             raise
 
     try:
-        action_batch, provider_result = _invoke_selection(selection)
+        action_batch, provider_result, provider_metadata = _invoke_selection(selection)
         return CEOProposalResult(
             action_batch=action_batch,
             effective_mode=provider_mode,
@@ -1727,6 +1824,9 @@ def propose_ceo_action_batch(
             selection_reason=selection.selection_reason,
             policy_reason=selection.policy_reason,
             provider_response_id=provider_result.response_id,
+            provider_policy_ref=provider_metadata["provider_policy_ref"],
+            provider_attempt_id=provider_metadata["provider_attempt_id"],
+            provider_timeout_policy=dict(provider_metadata["provider_timeout_policy"]),
         )
     except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as exc:
         terminal_exception: Exception = exc
@@ -1742,7 +1842,7 @@ def propose_ceo_action_batch(
             ):
                 failover_mode, _ = provider_effective_mode(failover_selection.provider, repository)
                 try:
-                    action_batch, provider_result = _invoke_selection(failover_selection)
+                    action_batch, provider_result, provider_metadata = _invoke_selection(failover_selection)
                     return CEOProposalResult(
                         action_batch=action_batch,
                         effective_mode=failover_mode,
@@ -1755,6 +1855,9 @@ def propose_ceo_action_batch(
                         selection_reason=failover_selection.selection_reason,
                         policy_reason=failover_selection.policy_reason,
                         provider_response_id=provider_result.response_id,
+                        provider_policy_ref=provider_metadata["provider_policy_ref"],
+                        provider_attempt_id=provider_metadata["provider_attempt_id"],
+                        provider_timeout_policy=dict(provider_metadata["provider_timeout_policy"]),
                     )
                 except (OpenAICompatProviderError, ClaudeCodeProviderError, ValueError, TypeError, json.JSONDecodeError) as failover_exc:
                     terminal_exception = failover_exc

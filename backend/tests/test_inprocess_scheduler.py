@@ -5,6 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from app.core.constants import TICKET_STATUS_PENDING
+import tests.test_api as api_test_helpers
 
 
 def _ticket_create_payload(
@@ -132,6 +133,17 @@ def test_fastapi_inprocess_scheduler_completes_pending_ticket_when_enabled(
 
     set_ticket_time("2026-03-28T10:00:00+08:00")
     with TestClient(create_app()) as client:
+        api_test_helpers._ensure_scoped_workflow(
+            client,
+            workflow_id="wf_inprocess",
+            tenant_id="tenant_default",
+            workspace_id="ws_default",
+            goal="In-process scheduler workflow",
+        )
+        api_test_helpers._ensure_default_governance_profile(
+            client,
+            workflow_id="wf_inprocess",
+        )
         response = client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
         assert response.status_code == 200
 

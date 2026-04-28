@@ -28,7 +28,7 @@ from app.db.repository import ControlPlaneRepository
 SCHEDULER_IDLE_MAINTENANCE_TRIGGER = "SCHEDULER_IDLE_MAINTENANCE"
 
 
-@dataclass(frozen=True)
+@dataclass
 class CeoShadowPipelineError(RuntimeError):
     workflow_id: str
     trigger_type: str
@@ -315,6 +315,10 @@ def run_ceo_shadow_for_trigger(
         selection_reason: str | None,
         policy_reason: str | None,
         provider_response_id: str | None,
+        provider_policy_ref: str | None,
+        provider_attempt_id: str | None,
+        provider_timeout_policy: dict[str, Any] | None,
+        provider_failure_detail: dict[str, Any] | None,
         fallback_reason: str | None,
         deterministic_used: bool,
         deterministic_reason: str | None,
@@ -348,6 +352,10 @@ def run_ceo_shadow_for_trigger(
                 policy_reason=policy_reason,
                 prompt_version=CEO_SHADOW_PROMPT_VERSION,
                 provider_response_id=provider_response_id,
+                provider_policy_ref=provider_policy_ref,
+                provider_attempt_id=provider_attempt_id,
+                provider_timeout_policy=provider_timeout_policy,
+                provider_failure_detail=provider_failure_detail,
                 fallback_reason=fallback_reason,
                 snapshot=snapshot,
                 proposed_action_batch=proposed_action_batch,
@@ -380,6 +388,8 @@ def run_ceo_shadow_for_trigger(
     def _raise_pipeline_error(source_stage: str, exc: Exception) -> None:
         is_existing_error = isinstance(exc, CeoShadowPipelineError)
         exception_details = getattr(exc, "details", None)
+        if not isinstance(exception_details, dict):
+            exception_details = getattr(exc, "failure_detail", None)
         provider_response_id = (
             str(exception_details.get("provider_response_id") or "").strip()
             if isinstance(exception_details, dict)
@@ -408,6 +418,26 @@ def run_ceo_shadow_for_trigger(
             selection_reason=None,
             policy_reason=None,
             provider_response_id=provider_response_id,
+            provider_policy_ref=(
+                str(exception_details.get("provider_policy_ref") or "").strip()
+                if isinstance(exception_details, dict)
+                else None
+            ) or None,
+            provider_attempt_id=(
+                str(exception_details.get("attempt_id") or "").strip()
+                if isinstance(exception_details, dict)
+                else None
+            ) or None,
+            provider_timeout_policy=(
+                dict(exception_details.get("provider_timeout_policy") or {})
+                if isinstance(exception_details, dict)
+                else {}
+            ),
+            provider_failure_detail=(
+                dict(exception_details)
+                if isinstance(exception_details, dict)
+                else {}
+            ),
             fallback_reason=error.error_message,
             deterministic_used=False,
             deterministic_reason=None,
@@ -517,6 +547,10 @@ def run_ceo_shadow_for_trigger(
         selection_reason=proposal.selection_reason,
         policy_reason=proposal.policy_reason,
         provider_response_id=proposal.provider_response_id,
+        provider_policy_ref=proposal.provider_policy_ref,
+        provider_attempt_id=proposal.provider_attempt_id,
+        provider_timeout_policy=proposal.provider_timeout_policy,
+        provider_failure_detail=proposal.provider_failure_detail,
         fallback_reason=fallback_reason,
         deterministic_used=deterministic_fallback_used,
         deterministic_reason=deterministic_fallback_reason,

@@ -2252,6 +2252,14 @@ def _build_ticket_execution_precondition_fingerprint(
     return f"{ticket_id}:{reason_code}:{digest}"
 
 
+def _runtime_provider_config_is_empty(config: Any) -> bool:
+    return not (
+        getattr(config, "default_provider_id", None)
+        or list(getattr(config, "providers", []) or [])
+        or list(getattr(config, "role_bindings", []) or [])
+    )
+
+
 def _evaluate_ticket_execution_precondition(
     repository: ControlPlaneRepository,
     connection,
@@ -2284,6 +2292,11 @@ def _evaluate_ticket_execution_precondition(
         runtime_preference=(created_spec or {}).get("runtime_preference"),
     )
     if selection is None:
+        if (
+            _runtime_provider_config_is_empty(config)
+            and not (created_spec or {}).get("runtime_preference")
+        ):
+            return None
         unavailable_effective_mode = "PROVIDER_REQUIRED_UNAVAILABLE"
         provider_reason = "No live provider was available for runtime execution."
         provider_candidate_chain: list[str] = []

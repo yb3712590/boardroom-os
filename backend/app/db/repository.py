@@ -54,7 +54,9 @@ from app.core.constants import (
     EVENT_INCIDENT_OPENED,
     EVENT_SYSTEM_INITIALIZED,
     EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
     EVENT_PROVIDER_ATTEMPT_STARTED,
+    EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
     EVENT_PROVIDER_FAILOVER_SELECTED,
     EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
     EVENT_PROVIDER_RETRY_SCHEDULED,
@@ -100,6 +102,7 @@ from app.core.versioning import (
 )
 from app.core.reducer import (
     rebuild_employee_projections,
+    rebuild_execution_attempt_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
     rebuild_process_asset_index,
@@ -140,6 +143,7 @@ class ControlPlaneRepository:
             self._ensure_ticket_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
             self._ensure_runtime_node_projection_shape(connection)
+            self._ensure_execution_attempt_projection_shape(connection)
             self._ensure_planned_placeholder_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
@@ -482,6 +486,51 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_execution_attempt_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        self._ensure_execution_attempt_projection_shape(connection)
+        connection.execute("DELETE FROM execution_attempt_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO execution_attempt_projection (
+                    attempt_id,
+                    workflow_id,
+                    ticket_id,
+                    node_id,
+                    attempt_no,
+                    idempotency_key,
+                    provider_policy_ref,
+                    deadline_at,
+                    last_heartbeat_at,
+                    state,
+                    failure_kind,
+                    failure_fingerprint,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["attempt_id"],
+                    projection["workflow_id"],
+                    projection["ticket_id"],
+                    projection["node_id"],
+                    projection["attempt_no"],
+                    projection["idempotency_key"],
+                    projection["provider_policy_ref"],
+                    projection["deadline_at"],
+                    projection.get("last_heartbeat_at"),
+                    projection["state"],
+                    projection.get("failure_kind"),
+                    projection.get("failure_fingerprint"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def replace_planned_placeholder_projections(
         self,
         connection: sqlite3.Connection,
@@ -661,6 +710,7 @@ class ControlPlaneRepository:
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
         self.replace_runtime_node_projections(connection, rebuild_runtime_node_projections(events))
+        self.replace_execution_attempt_projections(connection, rebuild_execution_attempt_projections(events))
         self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
         self.replace_process_asset_index(connection, rebuild_process_asset_index(events))
@@ -998,6 +1048,50 @@ class ControlPlaneRepository:
         with self.connection() as owned_connection:
             rows = owned_connection.execute(query, params).fetchall()
             return [self._convert_runtime_node_projection_row(row) for row in rows]
+
+    def list_execution_attempt_projections(
+        self,
+        *,
+        ticket_id: str | None = None,
+        states: list[str] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if ticket_id is not None:
+            clauses.append("ticket_id = ?")
+            params.append(ticket_id)
+        if states:
+            placeholders = ", ".join("?" for _ in states)
+            clauses.append(f"state IN ({placeholders})")
+            params.extend(states)
+        query = "SELECT * FROM execution_attempt_projection"
+        if clauses:
+            query += f" WHERE {' AND '.join(clauses)}"
+        query += " ORDER BY updated_at ASC, attempt_id ASC"
+        if connection is not None:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_execution_attempt_projection_row(row) for row in rows]
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, tuple(params)).fetchall()
+            return [self._convert_execution_attempt_projection_row(row) for row in rows]
+
+    def list_execution_attempt_timeout_candidates(
+        self,
+        connection: sqlite3.Connection,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        attempts = self.list_execution_attempt_projections(
+            states=["CREATED", "LEASED", "PROVIDER_CONNECTING", "STREAMING"],
+            connection=connection,
+        )
+        return [
+            attempt
+            for attempt in attempts
+            if attempt.get("deadline_at") is not None and attempt["deadline_at"] <= now
+        ]
 
     def get_planned_placeholder_projection(
         self,
@@ -2631,6 +2725,10 @@ class ControlPlaneRepository:
         deterministic_fallback_used: bool,
         deterministic_fallback_reason: str | None,
         comparison: dict[str, Any],
+        provider_policy_ref: str | None = None,
+        provider_attempt_id: str | None = None,
+        provider_timeout_policy: dict[str, Any] | None = None,
+        provider_failure_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         run_id = new_prefixed_id("ceo")
         connection.execute(
@@ -2652,6 +2750,10 @@ class ControlPlaneRepository:
                 policy_reason,
                 prompt_version,
                 provider_response_id,
+                provider_policy_ref,
+                provider_attempt_id,
+                provider_timeout_policy_json,
+                provider_failure_detail_json,
                 fallback_reason,
                 snapshot_json,
                 proposed_action_batch_json,
@@ -2662,7 +2764,7 @@ class ControlPlaneRepository:
                 deterministic_fallback_used,
                 deterministic_fallback_reason,
                 comparison_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -2681,6 +2783,10 @@ class ControlPlaneRepository:
                 policy_reason,
                 prompt_version,
                 provider_response_id,
+                provider_policy_ref,
+                provider_attempt_id,
+                json.dumps(provider_timeout_policy or {}, sort_keys=True),
+                json.dumps(provider_failure_detail or {}, sort_keys=True),
                 fallback_reason,
                 json.dumps(snapshot, sort_keys=True),
                 json.dumps(proposed_action_batch, sort_keys=True),
@@ -6132,6 +6238,8 @@ class ControlPlaneRepository:
         converted["execution_summary"] = json.loads(converted.get("execution_summary_json") or "{}")
         converted["deterministic_fallback_used"] = bool(converted.get("deterministic_fallback_used"))
         converted["deterministic_fallback_reason"] = converted.get("deterministic_fallback_reason")
+        converted["provider_timeout_policy"] = json.loads(converted.get("provider_timeout_policy_json") or "{}")
+        converted["provider_failure_detail"] = json.loads(converted.get("provider_failure_detail_json") or "{}")
         converted["comparison"] = json.loads(converted["comparison_json"])
         return converted
 
@@ -6231,6 +6339,15 @@ class ControlPlaneRepository:
         converted = dict(row)
         if converted.get("updated_at"):
             converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
+    def _convert_execution_attempt_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("deadline_at", "last_heartbeat_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["attempt_no"] = int(converted.get("attempt_no") or 0)
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
@@ -6674,8 +6791,10 @@ class ControlPlaneRepository:
             EVENT_TICKET_TIMED_OUT,
             EVENT_PROVIDER_ATTEMPT_STARTED,
             EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
             EVENT_PROVIDER_RETRY_SCHEDULED,
             EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
             EVENT_PROVIDER_FAILOVER_SELECTED,
         }:
             return "ticket"
@@ -6719,8 +6838,10 @@ class ControlPlaneRepository:
             EVENT_TICKET_COMPLETED,
             EVENT_PROVIDER_ATTEMPT_STARTED,
             EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
             EVENT_PROVIDER_RETRY_SCHEDULED,
             EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
             EVENT_PROVIDER_FAILOVER_SELECTED,
             EVENT_BOARD_REVIEW_APPROVED,
             EVENT_INCIDENT_RECOVERY_STARTED,
@@ -6761,10 +6882,14 @@ class ControlPlaneRepository:
             return f"PROVIDER_ATTEMPT_STARTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_PROVIDER_FIRST_TOKEN_RECEIVED:
             return f"PROVIDER_FIRST_TOKEN_RECEIVED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED:
+            return f"PROVIDER_ATTEMPT_HEARTBEAT_RECORDED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_PROVIDER_RETRY_SCHEDULED:
             return f"PROVIDER_RETRY_SCHEDULED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_PROVIDER_ATTEMPT_FINISHED:
             return f"PROVIDER_ATTEMPT_FINISHED for {event.get('ticket_id') or event['workflow_id']}"
+        if event["event_type"] == EVENT_PROVIDER_ATTEMPT_TIMED_OUT:
+            return f"PROVIDER_ATTEMPT_TIMED_OUT for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_PROVIDER_FAILOVER_SELECTED:
             return f"PROVIDER_FAILOVER_SELECTED for {event.get('ticket_id') or event['workflow_id']}"
         if event["event_type"] == EVENT_TICKET_CANCEL_REQUESTED:
@@ -6886,8 +7011,10 @@ class ControlPlaneRepository:
         if event_type in {
             EVENT_PROVIDER_ATTEMPT_STARTED,
             EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
             EVENT_PROVIDER_RETRY_SCHEDULED,
             EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
             EVENT_PROVIDER_FAILOVER_SELECTED,
         }:
             return {
@@ -7171,6 +7298,59 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_runtime_node_projection_status ON runtime_node_projection(status)"
+        )
+
+    def _ensure_execution_attempt_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_attempt_projection (
+                attempt_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                attempt_no INTEGER NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                provider_policy_ref TEXT NOT NULL,
+                deadline_at TEXT NOT NULL,
+                last_heartbeat_at TEXT,
+                state TEXT NOT NULL,
+                failure_kind TEXT,
+                failure_fingerprint TEXT,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(execution_attempt_projection)").fetchall()
+        }
+        required_columns = {
+            "attempt_id": "TEXT",
+            "workflow_id": "TEXT",
+            "ticket_id": "TEXT",
+            "node_id": "TEXT",
+            "attempt_no": "INTEGER",
+            "idempotency_key": "TEXT",
+            "provider_policy_ref": "TEXT",
+            "deadline_at": "TEXT",
+            "last_heartbeat_at": "TEXT",
+            "state": "TEXT",
+            "failure_kind": "TEXT",
+            "failure_fingerprint": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE execution_attempt_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_execution_attempt_projection_ticket ON execution_attempt_projection(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_execution_attempt_projection_state ON execution_attempt_projection(state)"
         )
 
     def _ensure_planned_placeholder_projection_shape(self, connection: sqlite3.Connection) -> None:
@@ -8140,6 +8320,10 @@ class ControlPlaneRepository:
                 policy_reason TEXT,
                 prompt_version TEXT NOT NULL,
                 provider_response_id TEXT,
+                provider_policy_ref TEXT,
+                provider_attempt_id TEXT,
+                provider_timeout_policy_json TEXT NOT NULL DEFAULT '{}',
+                provider_failure_detail_json TEXT NOT NULL DEFAULT '{}',
                 fallback_reason TEXT,
                 snapshot_json TEXT NOT NULL,
                 proposed_action_batch_json TEXT NOT NULL,
@@ -8174,6 +8358,10 @@ class ControlPlaneRepository:
             "policy_reason": "TEXT",
             "prompt_version": "TEXT",
             "provider_response_id": "TEXT",
+            "provider_policy_ref": "TEXT",
+            "provider_attempt_id": "TEXT",
+            "provider_timeout_policy_json": "TEXT NOT NULL DEFAULT '{}'",
+            "provider_failure_detail_json": "TEXT NOT NULL DEFAULT '{}'",
             "fallback_reason": "TEXT",
             "snapshot_json": "TEXT",
             "proposed_action_batch_json": "TEXT",

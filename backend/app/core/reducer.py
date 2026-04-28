@@ -33,6 +33,11 @@ from app.core.constants import (
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
+    EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
+    EVENT_PROVIDER_ATTEMPT_STARTED,
+    EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
+    EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
     EVENT_TICKET_COMPLETED,
@@ -65,7 +70,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.persona_profiles import normalize_persona_profiles
-from app.core.graph_identity import resolve_ticket_graph_identity
+from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
 from app.core.versioning import build_graph_version
 from app.core.workflow_completion import (
     infer_workflow_current_stage,
@@ -147,6 +152,126 @@ def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) ->
         "closed_at": None,
         "payload": payload,
     }
+
+
+def _fallback_attempt_id(payload: dict[str, Any], workflow_id: str | None) -> str:
+    ticket_id = str(payload.get("ticket_id") or "unknown-ticket")
+    attempt_no = int(payload.get("attempt_no") or 1)
+    return f"attempt:{workflow_id or 'unknown-workflow'}:{ticket_id}:{attempt_no}"
+
+
+def _fallback_provider_policy_ref(payload: dict[str, Any]) -> str:
+    provider_id = str(payload.get("provider_id") or payload.get("actual_provider_id") or "unknown-provider")
+    model = str(payload.get("actual_model") or payload.get("preferred_model") or "unknown-model")
+    reasoning = str(payload.get("effective_reasoning_effort") or "unknown-reasoning")
+    adapter = str(payload.get("adapter_kind") or "unknown-adapter")
+    return f"provider-policy:{provider_id}:{model}:{reasoning}:{adapter}"
+
+
+def _attempt_id_from_payload(payload: dict[str, Any], workflow_id: str | None) -> str:
+    return str(payload.get("attempt_id") or _fallback_attempt_id(payload, workflow_id))
+
+
+def rebuild_execution_attempt_projections(events: Iterable[dict]) -> list[dict]:
+    projections: dict[str, dict[str, Any]] = {}
+    for event in events:
+        event_type = event["event_type"]
+        if event_type not in {
+            EVENT_PROVIDER_ATTEMPT_STARTED,
+            EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
+            EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
+            EVENT_PROVIDER_ATTEMPT_FINISHED,
+            EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
+        }:
+            continue
+
+        payload = _event_payload(event)
+        workflow_id = str(payload.get("workflow_id") or event.get("workflow_id") or "")
+        ticket_id = str(payload.get("ticket_id") or "")
+        node_id = str(payload.get("node_id") or "")
+        if not workflow_id or not ticket_id or not node_id:
+            continue
+        attempt_id = _attempt_id_from_payload(payload, workflow_id)
+        occurred_at = event["occurred_at"].isoformat()
+        version = event["sequence_no"]
+
+        if event_type == EVENT_PROVIDER_ATTEMPT_STARTED:
+            projections[attempt_id] = {
+                "attempt_id": attempt_id,
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "attempt_no": int(payload.get("attempt_no") or 1),
+                "idempotency_key": str(payload.get("attempt_idempotency_key") or payload.get("idempotency_key") or ""),
+                "provider_policy_ref": str(payload.get("provider_policy_ref") or _fallback_provider_policy_ref(payload)),
+                "deadline_at": str(payload.get("deadline_at") or occurred_at),
+                "last_heartbeat_at": str(payload.get("last_heartbeat_at") or occurred_at),
+                "state": str(payload.get("state") or "PROVIDER_CONNECTING"),
+                "failure_kind": None,
+                "failure_fingerprint": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        projection = projections.get(attempt_id)
+        if projection is None:
+            projection = {
+                "attempt_id": attempt_id,
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "attempt_no": int(payload.get("attempt_no") or 1),
+                "idempotency_key": str(payload.get("attempt_idempotency_key") or payload.get("idempotency_key") or ""),
+                "provider_policy_ref": str(payload.get("provider_policy_ref") or _fallback_provider_policy_ref(payload)),
+                "deadline_at": str(payload.get("deadline_at") or occurred_at),
+                "last_heartbeat_at": None,
+                "state": "CREATED",
+                "failure_kind": None,
+                "failure_fingerprint": None,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+
+        if event_type in {EVENT_PROVIDER_FIRST_TOKEN_RECEIVED, EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED}:
+            projection = {
+                **projection,
+                "state": "STREAMING",
+                "last_heartbeat_at": str(payload.get("last_heartbeat_at") or occurred_at),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+        elif event_type == EVENT_PROVIDER_ATTEMPT_FINISHED:
+            raw_state = str(payload.get("state") or "").strip()
+            status = str(payload.get("status") or "").strip().upper()
+            if raw_state:
+                state = raw_state
+            elif status == "COMPLETED":
+                state = "COMPLETED"
+            elif bool(payload.get("retryable")):
+                state = "FAILED_RETRYABLE"
+            else:
+                state = "FAILED_TERMINAL"
+            projection = {
+                **projection,
+                "state": state,
+                "failure_kind": payload.get("failure_kind"),
+                "failure_fingerprint": payload.get("fingerprint") or payload.get("failure_fingerprint"),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+        elif event_type == EVENT_PROVIDER_ATTEMPT_TIMED_OUT:
+            projection = {
+                **projection,
+                "state": "TIMED_OUT",
+                "failure_kind": payload.get("failure_kind"),
+                "failure_fingerprint": payload.get("fingerprint") or payload.get("failure_fingerprint"),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+        projections[attempt_id] = projection
+
+    return sorted(projections.values(), key=lambda item: (item["updated_at"], item["attempt_id"]))
 
 
 def _coerce_iso_datetime(value: Any) -> Any:
@@ -1376,11 +1501,14 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
         created_spec = created_specs_by_ticket_id.get(ticket_id)
         if not ticket_id or created_spec is None:
             continue
-        identity = resolve_ticket_graph_identity(
-            ticket_id=ticket_id,
-            created_spec=created_spec,
-            runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
-        )
+        try:
+            identity = resolve_ticket_graph_identity(
+                ticket_id=ticket_id,
+                created_spec=created_spec,
+                runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
+            )
+        except GraphIdentityResolutionError:
+            continue
         key = (workflow_id, identity.graph_node_id)
         base_projection = {
             "workflow_id": workflow_id,

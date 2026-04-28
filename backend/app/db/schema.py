@@ -99,6 +99,23 @@ CREATE TABLE IF NOT EXISTS runtime_node_projection (
     PRIMARY KEY (workflow_id, graph_node_id)
 );
 
+CREATE TABLE IF NOT EXISTS execution_attempt_projection (
+    attempt_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    attempt_no INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    provider_policy_ref TEXT NOT NULL,
+    deadline_at TEXT NOT NULL,
+    last_heartbeat_at TEXT,
+    state TEXT NOT NULL,
+    failure_kind TEXT,
+    failure_fingerprint TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS planned_placeholder_projection (
     workflow_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
@@ -347,6 +364,10 @@ CREATE TABLE IF NOT EXISTS ceo_shadow_run (
     policy_reason TEXT,
     prompt_version TEXT NOT NULL,
     provider_response_id TEXT,
+    provider_policy_ref TEXT,
+    provider_attempt_id TEXT,
+    provider_timeout_policy_json TEXT NOT NULL DEFAULT '{}',
+    provider_failure_detail_json TEXT NOT NULL DEFAULT '{}',
     fallback_reason TEXT,
     snapshot_json TEXT NOT NULL,
     proposed_action_batch_json TEXT NOT NULL,
@@ -449,6 +470,12 @@ ON incident_projection(provider_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_fingerprint
 ON incident_projection(fingerprint);
+
+CREATE INDEX IF NOT EXISTS idx_execution_attempt_projection_ticket
+ON execution_attempt_projection(ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_execution_attempt_projection_state
+ON execution_attempt_projection(state);
 
 CREATE INDEX IF NOT EXISTS idx_meeting_projection_workflow_id
 ON meeting_projection(workflow_id);

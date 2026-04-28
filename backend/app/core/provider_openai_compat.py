@@ -385,10 +385,21 @@ def _responses_url(base_url: str) -> str:
 
 
 def _stream_timeout(config: OpenAICompatProviderConfig) -> httpx.Timeout:
+    read_timeout_candidates = [
+        config.first_token_timeout_sec,
+        config.stream_idle_timeout_sec,
+        config.request_total_timeout_sec,
+        config.timeout_sec,
+    ]
+    read_timeout_sec = min(
+        float(item)
+        for item in read_timeout_candidates
+        if item is not None and float(item) > 0
+    )
     return httpx.Timeout(
         connect=float(config.connect_timeout_sec or config.timeout_sec),
         write=float(config.write_timeout_sec or config.timeout_sec),
-        read=None,
+        read=read_timeout_sec,
         pool=float(config.connect_timeout_sec or config.timeout_sec),
     )
 
@@ -474,12 +485,26 @@ class _ResponsesStreamAccumulator:
         self.first_token_elapsed_sec: float | None = None
 
     def check_timeout(self) -> None:
+        now = time.monotonic()
+        if self.config.request_total_timeout_sec is not None:
+            request_total_budget = float(self.config.request_total_timeout_sec)
+            if now - self.stream_started_at > request_total_budget:
+                raise OpenAICompatProviderUnavailableError(
+                    failure_kind="REQUEST_TOTAL_TIMEOUT",
+                    message="Provider stream exceeded the total request timeout.",
+                    failure_detail={
+                        "provider_response_id": self.response_id,
+                        "request_id": self.request_id,
+                        "timeout_phase": "request_total",
+                        "request_total_timeout_sec": request_total_budget,
+                    },
+                )
         anchor = self.last_output_at if self.last_output_at is not None else self.stream_started_at
         budget = float(
             (self.config.stream_idle_timeout_sec if self.last_output_at is not None else self.config.first_token_timeout_sec)
             or self.config.timeout_sec
         )
-        if time.monotonic() - anchor > budget:
+        if now - anchor > budget:
             phase = "stream_idle" if self.last_output_at is not None else "first_token"
             raise OpenAICompatProviderUnavailableError(
                 failure_kind="STREAM_IDLE_TIMEOUT" if self.last_output_at is not None else "FIRST_TOKEN_TIMEOUT",
@@ -939,13 +964,14 @@ def iter_openai_compat_result_json_objects(
 ) -> tuple[dict[str, Any], ...]:
     candidate_payloads: list[dict[str, Any]] = []
 
-    selected_payload = getattr(provider_result, "selected_payload", None)
-    if isinstance(selected_payload, dict):
-        candidate_payloads.append(dict(selected_payload))
-
-    for item in list(getattr(provider_result, "json_objects", ()) or ()):
+    json_objects = list(getattr(provider_result, "json_objects", ()) or ())
+    for item in json_objects:
         if isinstance(item, dict):
             candidate_payloads.append(dict(item))
+
+    selected_payload = getattr(provider_result, "selected_payload", None)
+    if isinstance(selected_payload, dict) and not json_objects:
+        candidate_payloads.append(dict(selected_payload))
 
     output_payload = getattr(provider_result, "output_payload", None)
     if isinstance(output_payload, dict):
@@ -1150,7 +1176,16 @@ def _responses_request_payload(
 def _sdk_timeout(config: OpenAICompatProviderConfig, *, streaming: bool) -> httpx.Timeout:
     read_timeout_sec: float | None = float(config.request_total_timeout_sec or config.timeout_sec)
     if streaming:
-        read_timeout_sec = None
+        read_timeout_sec = min(
+            float(item)
+            for item in (
+                config.first_token_timeout_sec,
+                config.stream_idle_timeout_sec,
+                config.request_total_timeout_sec,
+                config.timeout_sec,
+            )
+            if item is not None and float(item) > 0
+        )
     return httpx.Timeout(
         connect=float(config.connect_timeout_sec or config.timeout_sec),
         write=float(config.write_timeout_sec or config.timeout_sec),

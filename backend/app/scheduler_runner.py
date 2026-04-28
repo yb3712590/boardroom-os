@@ -11,7 +11,7 @@ from app.core.artifact_store import ArtifactStore
 from app.core.artifact_handlers import handle_artifact_cleanup
 from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED
 from app.core.ceo_scheduler import run_due_ceo_maintenance
-from app.core.runtime import run_leased_ticket_runtime
+from app.core.runtime import reap_timed_out_provider_attempts, run_leased_ticket_runtime
 from app.core.ticket_handlers import run_scheduler_tick
 from app.core.time import now_local
 from app.core.workflow_auto_advance import (
@@ -256,6 +256,7 @@ def run_scheduler_once(
         trigger_ref=runner_idempotency_key,
         interval_sec=settings.ceo_maintenance_interval_sec,
     )
+    reap_timed_out_provider_attempts(repository)
     scheduler_ack = run_scheduler_tick(
         repository,
         idempotency_key=runner_idempotency_key,
@@ -263,7 +264,10 @@ def run_scheduler_once(
     )
     runtime_outcomes = []
     if settings.runtime_execution_mode == "INPROCESS":
-        runtime_outcomes = run_leased_ticket_runtime(repository)
+        runtime_outcomes = run_leased_ticket_runtime(
+            repository,
+            nonblocking_provider_attempts=True,
+        )
     _record_orchestration_trace(
         repository,
         runner_idempotency_key=runner_idempotency_key,

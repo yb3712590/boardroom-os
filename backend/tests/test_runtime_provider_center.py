@@ -11,6 +11,7 @@ from app.core.runtime_provider_config import (
     RuntimeProviderConfigStore,
     RuntimeProviderStoredConfig,
     build_provider_model_entry_ref,
+    resolve_runtime_provider_config,
     resolve_provider_failover_selections,
     resolve_provider_selection,
     save_runtime_provider_command,
@@ -357,6 +358,24 @@ def test_runtime_provider_store_discards_legacy_fixed_registry_and_starts_empty(
         provider_model_entries=[],
         role_bindings=[],
     )
+
+
+def test_env_backed_provider_config_defaults_legacy_timeout_to_large_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_BASE_URL", "https://api.env.test/v1/")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_API_KEY", "sk-env-secret")
+    monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.4")
+    monkeypatch.delenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC", raising=False)
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+
+    loaded = resolve_runtime_provider_config(store)
+
+    assert loaded.providers[0].timeout_sec == 7200.0
+    assert loaded.providers[0].first_token_timeout_sec == 300.0
+    assert loaded.providers[0].stream_idle_timeout_sec == 300.0
+    assert loaded.providers[0].request_total_timeout_sec is None
 
 
 def test_save_runtime_provider_command_normalizes_alias_window_and_model_entry_ref(tmp_path: Path) -> None:

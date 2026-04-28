@@ -156,7 +156,7 @@ def get_settings() -> Settings:
             "low, medium, high, xhigh."
         )
     provider_openai_compat_timeout_sec = float(
-        os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC", "30")
+        os.environ.get("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC", "7200")
     )
     if provider_openai_compat_timeout_sec <= 0:
         raise ValueError("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_TIMEOUT_SEC must be greater than 0.")

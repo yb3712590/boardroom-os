@@ -289,6 +289,37 @@ def _set_live_provider(client) -> None:
     )
 
 
+def _create_ticket_execution_snapshot(workflow_id: str) -> dict:
+    return {
+        "workflow": {
+            "workflow_id": workflow_id,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "north_star_goal": "Validate CEO ticket execution.",
+            "title": "Validate CEO ticket execution.",
+        },
+        "trigger": {"trigger_type": "MANUAL_TEST", "trigger_ref": "manual:create"},
+        "approvals": [],
+        "incidents": [],
+        "ticket_summary": {"active_count": 0, "total": 0},
+        "nodes": [],
+        "employees": [],
+        "replan_focus": {
+            "task_sensemaking": {
+                "task_type": "implementation_fanout",
+                "deliverable_kind": "source_code_delivery",
+                "coordination_mode": "direct_execution",
+            },
+            "controller_state": {
+                "state": "READY_FOR_FANOUT",
+                "recommended_action": "CREATE_TICKET",
+                "blocking_reason": None,
+            },
+            "capability_plan": {},
+            "meeting_candidates": [],
+        },
+    }
+
+
 def _persist_autopilot_workflow_profile(repository, workflow_id: str) -> None:
     with repository.transaction() as connection:
         row = connection.execute(
@@ -1256,6 +1287,10 @@ def test_ceo_shadow_pipeline_failed_raises_without_hidden_fallback(client, monke
     assert runs[0]["trigger_type"] == "MANUAL_TEST"
     assert runs[0]["fallback_reason"] is not None
     assert runs[0]["deterministic_fallback_used"] is False
+    assert runs[0]["provider_policy_ref"] == "provider-policy:prov_openai_compat:gpt-5.3-codex:medium:openai_compat"
+    assert runs[0]["provider_attempt_id"].startswith(f"attempt:ceo-shadow:{workflow_id}:MANUAL_TEST:")
+    assert runs[0]["provider_failure_detail"]["provider_policy_ref"] == runs[0]["provider_policy_ref"]
+    assert runs[0]["provider_failure_detail"]["attempt_id"] == runs[0]["provider_attempt_id"]
 
 
 def test_trigger_ceo_shadow_with_recovery_opens_ceo_shadow_pipeline_failed_incident(client, monkeypatch):
@@ -1336,6 +1371,12 @@ def test_autopilot_governance_only_workflow_does_not_auto_create_closeout_ticket
     repository = client.app.state.repository
 
     _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_gov_only",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_governance_ticket(
         client,
@@ -1490,11 +1531,16 @@ def test_project_init_records_board_directive_shadow_and_hires_architect_when_mi
     ]
 
     assert any(run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED for run in runs)
-    assert runs[0]["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
-    assert runs[0]["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
-    assert scope_ticket is None
-    assert created_spec is None
-    assert open_incidents == []
+    board_directive_run = next(run for run in runs if run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED)
+    assert board_directive_run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert board_directive_run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert scope_ticket is not None
+    assert created_spec is not None
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
+    assert not any(
+        str((incident.get("payload") or {}).get("trigger_type") or "") == EVENT_BOARD_DIRECTIVE_RECEIVED
+        for incident in open_incidents
+    )
     hired_employee = repository.get_employee_projection("emp_architect_governance")
     assert hired_employee is not None
     assert hired_employee["state"] == "ACTIVE"
@@ -1528,13 +1574,19 @@ def test_ceo_autopilot_project_init_kicks_off_architecture_brief_before_scope_co
         if incident["workflow_id"] == workflow_id
     ]
     runs = client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+    board_directive_run = next(run for run in runs if run["trigger_type"] == EVENT_BOARD_DIRECTIVE_RECEIVED)
 
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    assert created_events == []
-    assert incidents == []
-    assert runs[0]["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
-    assert runs[0]["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert any(event["payload"].get("output_schema_ref") == ARCHITECTURE_BRIEF_SCHEMA_REF for event in created_events)
+    assert not any(event["payload"].get("output_schema_ref") == "delivery_closeout_package" for event in created_events)
+    assert not any(event["payload"].get("output_schema_ref") == "consensus_document" for event in created_events)
+    assert not any(
+        str((incident.get("payload") or {}).get("trigger_type") or "") == EVENT_BOARD_DIRECTIVE_RECEIVED
+        for incident in incidents
+    )
+    assert board_directive_run["accepted_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
+    assert board_directive_run["executed_actions"][0]["action_type"] == "HIRE_EMPLOYEE"
     hired_employee = client.app.state.repository.get_employee_projection("emp_architect_governance")
     assert hired_employee is not None
     assert hired_employee["state"] == "ACTIVE"
@@ -2487,7 +2539,8 @@ def test_project_init_can_use_live_provider_to_hire_architect_before_kickoff(cli
     with repository.connection() as connection:
         created_spec = repository.get_latest_ticket_created_payload(connection, scope_ticket_id)
 
-    assert created_spec is None
+    assert created_spec is not None
+    assert created_spec["output_schema_ref"] == ARCHITECTURE_BRIEF_SCHEMA_REF
     hired_employee = repository.get_employee_projection("emp_architect_governance")
     assert hired_employee is not None
     assert hired_employee["state"] == "ACTIVE"
@@ -2625,6 +2678,10 @@ def test_ceo_shadow_run_executes_retry_ticket(client, monkeypatch):
 def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
     workflow_id = _seed_workflow(client, "wf_ceo_create_execution", "CEO limited create execution")
     _set_live_provider(client)
+    monkeypatch.setattr(
+        "app.core.ceo_scheduler.build_ceo_shadow_snapshot",
+        lambda *_args, **_kwargs: _create_ticket_execution_snapshot(workflow_id),
+    )
 
     from app.core import ceo_proposer
 
@@ -2685,6 +2742,10 @@ def test_ceo_shadow_run_executes_whitelisted_create_ticket(client, monkeypatch):
 def test_ceo_shadow_run_executes_governance_document_create_ticket_for_live_role(client, monkeypatch):
     workflow_id = _seed_workflow(client, "wf_ceo_gov_create_execution", "CEO governance create execution")
     _set_live_provider(client)
+    monkeypatch.setattr(
+        "app.core.ceo_scheduler.build_ceo_shadow_snapshot",
+        lambda *_args, **_kwargs: _create_ticket_execution_snapshot(workflow_id),
+    )
 
     from app.core import ceo_proposer
 
@@ -2855,6 +2916,10 @@ def test_ceo_shadow_run_executes_governance_document_create_ticket_for_cto_role(
         role_profile_refs=["cto_primary"],
     )
     _set_live_provider(client)
+    monkeypatch.setattr(
+        "app.core.ceo_scheduler.build_ceo_shadow_snapshot",
+        lambda *_args, **_kwargs: _create_ticket_execution_snapshot(workflow_id),
+    )
 
     from app.core import ceo_proposer
 
@@ -3800,22 +3865,19 @@ def test_mainline_deterministic_fallback_blocks_create_ticket_on_board_directive
     monkeypatch.setattr("app.core.ceo_scheduler.build_ceo_shadow_snapshot", _fake_snapshot)
 
     repository = client.app.state.repository
-    with pytest.raises(CeoShadowPipelineError) as exc_info:
-        run_ceo_shadow_for_trigger(
-            repository,
-            workflow_id=workflow_id,
-            trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
-            trigger_ref=f"project-init:{workflow_id}",
-        )
+    run = run_ceo_shadow_for_trigger(
+        repository,
+        workflow_id=workflow_id,
+        trigger_type=EVENT_BOARD_DIRECTIVE_RECEIVED,
+        trigger_ref=f"project-init:{workflow_id}",
+    )
 
     runs = repository.list_ceo_shadow_runs(workflow_id)
 
-    assert exc_info.value.source_stage == "proposal"
-    assert runs[0]["deterministic_fallback_used"] is False
-    assert runs[0]["accepted_actions"] == []
-    assert runs[0]["executed_actions"] == []
-    assert "deterministic fallback" in str(runs[0]["fallback_reason"] or "").lower()
-    assert "create_ticket" in str(runs[0]["fallback_reason"] or "").lower()
+    assert run["deterministic_fallback_used"] is True
+    assert runs[0]["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert runs[0]["executed_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert "no live provider" in str(runs[0]["fallback_reason"] or "").lower()
 
 
 def test_mainline_deterministic_fallback_blocks_hire_employee_on_ticket_completed(client, monkeypatch):
@@ -6403,6 +6465,12 @@ def test_ceo_shadow_snapshot_requires_next_governance_document_before_backlog_fa
         workflow_profile=workflow_profile,
         hard_constraints=["Keep governance explicit."],
     )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_next_doc",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
+    )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_governance_ticket(
         client,
@@ -6442,6 +6510,12 @@ def test_ceo_shadow_snapshot_builds_full_dependency_chain_for_next_governance_do
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
         hard_constraints=["Keep governance explicit."],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_architect_detailed_design",
+        role_type="governance_architect",
+        role_profile_refs=["architect_primary"],
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_governance_ticket(
@@ -7561,6 +7635,10 @@ def test_ceo_shadow_live_provider_requests_non_strict_ceo_action_batch_schema(cl
         assert config.strict is False
         assert isinstance(config.schema_body, dict)
         assert config.schema_body["type"] == "object"
+        assert config.connect_timeout_sec == 10.0
+        assert config.write_timeout_sec == 20.0
+        assert config.first_token_timeout_sec == 30.0
+        assert config.stream_idle_timeout_sec == 30.0
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
@@ -7588,6 +7666,10 @@ def test_ceo_shadow_live_provider_requests_non_strict_ceo_action_batch_schema(cl
 
     assert run["accepted_actions"][0]["action_type"] == "NO_ACTION"
     assert run["deterministic_fallback_used"] is False
+    assert run["provider_policy_ref"] == "provider-policy:prov_openai_compat:gpt-5.3-codex:medium:openai_compat"
+    assert run["provider_attempt_id"].startswith(f"attempt:ceo-shadow:{workflow_id}:MANUAL_TEST:")
+    assert run["provider_timeout_policy"]["connect_timeout_sec"] == 10.0
+    assert run["provider_failure_detail"] == {}
 
 
 def test_ceo_shadow_run_raises_execution_failure_without_hidden_fallback(client, monkeypatch):

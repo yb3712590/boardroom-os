@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import Field
@@ -10,6 +11,33 @@ from app.contracts.scope import TenantWorkspaceScope
 from app.contracts.commands import TicketEscalationPolicy
 from app.contracts.governance import GovernanceModeSlice
 from app.contracts.process_assets import ProcessAssetKind
+
+
+class ExecutionAttemptState(StrEnum):
+    CREATED = "CREATED"
+    LEASED = "LEASED"
+    PROVIDER_CONNECTING = "PROVIDER_CONNECTING"
+    STREAMING = "STREAMING"
+    COMPLETED = "COMPLETED"
+    FAILED_RETRYABLE = "FAILED_RETRYABLE"
+    FAILED_TERMINAL = "FAILED_TERMINAL"
+    TIMED_OUT = "TIMED_OUT"
+    CANCELLED = "CANCELLED"
+
+
+class ExecutionAttempt(StrictModel):
+    attempt_id: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    ticket_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    attempt_no: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1)
+    provider_policy_ref: str = Field(min_length=1)
+    deadline_at: datetime
+    last_heartbeat_at: datetime | None = None
+    state: ExecutionAttemptState
+    failure_kind: str | None = None
+    failure_fingerprint: str | None = None
 
 
 class CompileRequestMeta(TenantWorkspaceScope):

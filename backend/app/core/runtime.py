@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import threading
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
@@ -36,11 +38,15 @@ from app.core.constants import (
     EVENT_CIRCUIT_BREAKER_OPENED,
     EVENT_INCIDENT_OPENED,
     EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
     EVENT_PROVIDER_ATTEMPT_STARTED,
+    EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
     EVENT_PROVIDER_FAILOVER_SELECTED,
     EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
     EVENT_PROVIDER_RETRY_SCHEDULED,
+    EVENT_TICKET_FAILED,
     EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_STARTED,
     EVENT_MEETING_CONCLUDED,
     EVENT_MEETING_ROUND_COMPLETED,
     INCIDENT_STATUS_OPEN,
@@ -145,6 +151,14 @@ _RUNTIME_SKIP_REASON_RUNTIME_NODE_MISSING = "RUNTIME_NODE_MISSING"
 _RUNTIME_SKIP_REASON_RUNTIME_NODE_POINTER_MISMATCH = "RUNTIME_NODE_POINTER_MISMATCH"
 _RUNTIME_SKIP_REASON_RUNTIME_NODE_STATUS_MISMATCH = "RUNTIME_NODE_STATUS_MISMATCH"
 _RUNTIME_SKIP_REASON_START_REJECTED = "START_REJECTED"
+_RUNTIME_SKIP_REASON_PROVIDER_ATTEMPT_ACTIVE = "PROVIDER_ATTEMPT_ACTIVE"
+_RUNTIME_CREATED_SPEC_MISSING_SENTINEL = "__runtime_ticket_created_spec_missing__"
+_ACTIVE_EXECUTION_ATTEMPT_STATES = {
+    "CREATED",
+    "LEASED",
+    "PROVIDER_CONNECTING",
+    "STREAMING",
+}
 
 
 SUPPORTED_RUNTIME_OUTPUT_SCHEMAS = {
@@ -344,7 +358,15 @@ def _classify_runtime_ticket(
             reason=f"Ticket {ticket['ticket_id']} lease is missing or expired.",
         )
     with repository.connection() as connection:
-        created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}
+        created_spec = repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"]))
+    if created_spec is None:
+        created_spec = {
+            _RUNTIME_CREATED_SPEC_MISSING_SENTINEL: True,
+            "ticket_id": str(ticket["ticket_id"]),
+            "workflow_id": str(ticket["workflow_id"]),
+            "node_id": str(ticket["node_id"]),
+            "graph_contract": {"lane_kind": "execution"},
+        }
     try:
         graph_identity = resolve_ticket_graph_identity(
             ticket_id=str(ticket["ticket_id"]),
@@ -359,6 +381,18 @@ def _classify_runtime_ticket(
                 f"Ticket {ticket['ticket_id']} is missing graph_contract.lane_kind."
                 if "graph_contract.lane_kind" in str(exc)
                 else str(exc)
+            ),
+        )
+
+    if bool(created_spec.get(_RUNTIME_CREATED_SPEC_MISSING_SENTINEL)):
+        return _RuntimeExecutionCandidate(
+            ticket=ticket,
+            created_spec=created_spec,
+            graph_node_id=str(graph_identity.graph_node_id),
+            action=(
+                _RUNTIME_ACTION_START
+                if str(ticket.get("status") or "") == "LEASED"
+                else _RUNTIME_ACTION_RESUME
             ),
         )
 
@@ -408,6 +442,20 @@ def _classify_runtime_ticket(
             graph_node_id=str(graph_identity.graph_node_id),
             runtime_node_status=str(runtime_node_projection.get("status") or ""),
         )
+
+    if ticket_status == "EXECUTING":
+        active_attempts = repository.list_execution_attempt_projections(
+            ticket_id=str(ticket["ticket_id"]),
+            states=sorted(_ACTIVE_EXECUTION_ATTEMPT_STATES),
+        )
+        if active_attempts:
+            return _build_runtime_skip_outcome(
+                ticket,
+                reason_code=_RUNTIME_SKIP_REASON_PROVIDER_ATTEMPT_ACTIVE,
+                reason=f"Ticket {ticket['ticket_id']} already has an active provider attempt.",
+                graph_node_id=str(graph_identity.graph_node_id),
+                runtime_node_status=str(runtime_node_projection.get("status") or ""),
+            )
 
     return _RuntimeExecutionCandidate(
         ticket=ticket,
@@ -2160,17 +2208,68 @@ def _provider_timeout_settings(selection: RuntimeProviderSelection) -> dict[str,
     }
 
 
+def _provider_policy_ref(selection: RuntimeProviderSelection) -> str:
+    model = str(selection.actual_model or selection.provider.model or "unknown-model")
+    reasoning = str(selection.effective_reasoning_effort or "unknown-reasoning")
+    return (
+        f"provider-policy:{selection.provider.provider_id}:"
+        f"{model}:{reasoning}:{selection.provider.adapter_kind}"
+    )
+
+
+def _provider_attempt_id(
+    ticket: dict[str, Any],
+    selection: RuntimeProviderSelection,
+    attempt_no: int,
+) -> str:
+    return (
+        f"attempt:{ticket['workflow_id']}:{ticket['ticket_id']}:"
+        f"{selection.provider.provider_id}:{attempt_no}"
+    )
+
+
+def _provider_attempt_idempotency_key(
+    ticket: dict[str, Any],
+    selection: RuntimeProviderSelection,
+    attempt_no: int,
+) -> str:
+    return (
+        f"runtime-provider-attempt:{ticket['workflow_id']}:{ticket['ticket_id']}:"
+        f"{selection.provider.provider_id}:{attempt_no}"
+    )
+
+
+def _provider_attempt_deadline_at(
+    selection: RuntimeProviderSelection,
+    *,
+    occurred_at,
+):
+    timeout_settings = _provider_timeout_settings(selection)
+    budget_sec = timeout_settings.get("request_total_timeout_sec")
+    if budget_sec is None:
+        budget_sec = float(selection.provider.timeout_sec or 0)
+    if budget_sec <= 0:
+        budget_sec = 1.0
+    return occurred_at + timedelta(seconds=float(budget_sec))
+
+
 def _provider_audit_payload_base(
     *,
     ticket: dict[str, Any],
     selection: RuntimeProviderSelection,
     candidate_chain: list[str],
     attempt_no: int,
+    occurred_at,
 ) -> dict[str, Any]:
+    deadline_at = _provider_attempt_deadline_at(selection, occurred_at=occurred_at)
     return {
         "workflow_id": str(ticket["workflow_id"]),
         "ticket_id": str(ticket["ticket_id"]),
         "node_id": str(ticket["node_id"]),
+        "attempt_id": _provider_attempt_id(ticket, selection, attempt_no),
+        "attempt_idempotency_key": _provider_attempt_idempotency_key(ticket, selection, attempt_no),
+        "provider_policy_ref": _provider_policy_ref(selection),
+        "deadline_at": deadline_at.isoformat(),
         "provider_id": selection.provider.provider_id,
         "actual_model": selection.actual_model or selection.provider.model,
         "effective_reasoning_effort": selection.effective_reasoning_effort,
@@ -2203,6 +2302,7 @@ def _record_provider_audit_event(
             selection=selection,
             candidate_chain=candidate_chain,
             attempt_no=attempt_no,
+            occurred_at=occurred_at,
         ),
         **{key: value for key, value in payload.items() if key != "idempotency_suffix"},
     }
@@ -2222,6 +2322,7 @@ def _record_provider_audit_event(
             payload=effective_payload,
             occurred_at=occurred_at,
         )
+        repository.refresh_projections(connection)
     _refresh_ticket_context_archive(repository, str(ticket["ticket_id"]))
 
 
@@ -2330,6 +2431,7 @@ def _execute_openai_compat_provider(
             event_type=EVENT_PROVIDER_ATTEMPT_STARTED,
             attempt_no=attempt_no,
             payload={
+                "state": "PROVIDER_CONNECTING",
                 "status": "IN_PROGRESS",
                 "current_phase": "awaiting_first_token",
                 "elapsed_sec": 0.0,
@@ -2343,10 +2445,24 @@ def _execute_openai_compat_provider(
                 event_type=EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
                 attempt_no=attempt_no,
                 payload={
+                    "state": "STREAMING",
                     "status": "IN_PROGRESS",
                     "current_phase": "streaming",
                     "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                     "response_id": payload.get("provider_response_id"),
+                },
+            )
+            _record_if_enabled(
+                event_type=EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
+                attempt_no=attempt_no,
+                payload={
+                    "state": "STREAMING",
+                    "status": "IN_PROGRESS",
+                    "current_phase": "streaming",
+                    "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
+                    "response_id": payload.get("provider_response_id"),
+                    "request_id": payload.get("request_id"),
+                    "idempotency_suffix": f"heartbeat-first-token-{attempt_no}",
                 },
             )
 
@@ -2407,6 +2523,7 @@ def _execute_openai_compat_provider(
                 event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
                 attempt_no=attempt_no,
                 payload={
+                    "state": "COMPLETED",
                     "status": "COMPLETED",
                     "current_phase": "completed",
                     "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
@@ -2474,6 +2591,8 @@ def _execute_openai_compat_provider(
                     attempt_no=attempt_no,
                     payload={
                         "status": "FAILED",
+                        "state": "FAILED_RETRYABLE",
+                        "retryable": True,
                         "current_phase": "failed",
                         "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                         "failure_kind": last_failure_kind,
@@ -2502,25 +2621,27 @@ def _execute_openai_compat_provider(
                 )
                 sleep_fn(retry_delay_sec)
                 continue
-                _record_if_enabled(
-                    event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
-                    attempt_no=attempt_no,
-                    payload={
-                        "status": "FAILED",
+            _record_if_enabled(
+                event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
+                attempt_no=attempt_no,
+                payload={
+                    "state": "FAILED_TERMINAL",
+                    "status": "FAILED",
+                    "retryable": False,
                     "current_phase": "failed",
                     "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                     "failure_kind": last_failure_kind,
-                        "failure_message": last_failure_message,
-                        "response_id": last_failure_detail.get("provider_response_id"),
-                        "request_id": last_failure_detail.get("request_id"),
-                        "timeout_phase": last_failure_detail.get("timeout_phase"),
-                        "response_error_type": last_failure_detail.get("response_error_type"),
-                        "response_error_code": last_failure_detail.get("response_error_code"),
-                        "parse_stage": last_failure_detail.get("parse_stage"),
-                        "repair_steps": list(last_failure_detail.get("repair_steps") or []),
-                        "fingerprint": last_failure_detail.get("fingerprint"),
-                    },
-                )
+                    "failure_message": last_failure_message,
+                    "response_id": last_failure_detail.get("provider_response_id"),
+                    "request_id": last_failure_detail.get("request_id"),
+                    "timeout_phase": last_failure_detail.get("timeout_phase"),
+                    "response_error_type": last_failure_detail.get("response_error_type"),
+                    "response_error_code": last_failure_detail.get("response_error_code"),
+                    "parse_stage": last_failure_detail.get("parse_stage"),
+                    "repair_steps": list(last_failure_detail.get("repair_steps") or []),
+                    "fingerprint": last_failure_detail.get("fingerprint"),
+                },
+            )
             return RuntimeExecutionResult(
                 result_status="failed",
                 failure_kind=last_failure_kind,
@@ -2566,6 +2687,7 @@ def _execute_claude_code_provider(
     _record_if_enabled(
         event_type=EVENT_PROVIDER_ATTEMPT_STARTED,
         payload={
+            "state": "PROVIDER_CONNECTING",
             "status": "IN_PROGRESS",
             "current_phase": "awaiting_first_token",
             "elapsed_sec": 0.0,
@@ -2623,6 +2745,7 @@ def _execute_claude_code_provider(
         _record_if_enabled(
             event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
             payload={
+                "state": "COMPLETED",
                 "status": "COMPLETED",
                 "current_phase": "completed",
                 "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
@@ -2651,7 +2774,9 @@ def _execute_claude_code_provider(
         _record_if_enabled(
             event_type=EVENT_PROVIDER_ATTEMPT_FINISHED,
             payload={
+                "state": "FAILED_TERMINAL",
                 "status": "FAILED",
+                "retryable": False,
                 "current_phase": "failed",
                 "elapsed_sec": round(time.monotonic() - attempt_started_monotonic, 2),
                 "failure_kind": result.failure_kind,
@@ -2911,12 +3036,7 @@ def _execute_runtime_with_provider_if_configured(
     target_ref = _resolve_ticket_target_ref(created_spec)
     selection = _resolve_provider_selection_for_ticket(repository, ticket, created_spec)
     if selection is None:
-        return _build_provider_required_unavailable_result(
-            selection=None,
-            candidate_chain=[],
-            provider_attempt_log=[],
-            failure_message="No live provider was available for runtime execution.",
-        )
+        return _execute_compiled_execution_package(execution_package)
 
     config = resolve_runtime_provider_config()
     failover_selections = (
@@ -3232,8 +3352,234 @@ def _build_runtime_result_submit_command(
     )
 
 
+def _ticket_uses_nonblocking_provider_attempt(
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any] | None,
+) -> bool:
+    if (
+        created_spec is not None
+        and isinstance(created_spec.get("meeting_context"), dict)
+        and execution_package.execution.output_schema_ref == CONSENSUS_DOCUMENT_SCHEMA_REF
+    ):
+        return False
+    selection = _resolve_provider_selection_for_ticket(repository, ticket, created_spec)
+    if selection is None:
+        return False
+    if repository.has_open_circuit_breaker_for_provider(selection.provider.provider_id):
+        return False
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.OPENAI_COMPAT:
+        return all(
+            (
+                selection.provider.base_url,
+                selection.provider.api_key,
+                selection.actual_model or selection.provider.model,
+            )
+        )
+    if selection.provider.adapter_kind == RuntimeProviderAdapterKind.CLAUDE_CODE_CLI:
+        return all((selection.provider.command_path, selection.actual_model or selection.provider.model))
+    return False
+
+
+def _submit_provider_attempt_result_in_background(
+    *,
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any] | None,
+    lease_owner: str,
+    developer_inspector_store: DeveloperInspectorStore,
+) -> None:
+    try:
+        execution_result = _execute_runtime_with_provider_if_configured(
+            repository,
+            ticket,
+            execution_package,
+            created_spec,
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard for daemon supervisor
+        execution_result = RuntimeExecutionResult(
+            result_status="failed",
+            completion_summary="Runtime provider attempt failed before structured submission.",
+            failure_kind="RUNTIME_ERROR",
+            failure_message=str(exc),
+            failure_detail={
+                "error_type": type(exc).__name__,
+            },
+        )
+
+    latest_ticket = repository.get_current_ticket_projection(str(ticket["ticket_id"]))
+    if latest_ticket is None or str(latest_ticket.get("status") or "") != "EXECUTING":
+        return
+
+    handle_ticket_result_submit(
+        repository,
+        _build_runtime_result_submit_command(
+            ticket=latest_ticket,
+            submitted_by=lease_owner,
+            execution_package=execution_package,
+            execution_result=execution_result,
+            created_spec=created_spec,
+        ),
+        developer_inspector_store,
+    )
+
+
+def _start_provider_attempt_supervisor(
+    *,
+    repository: ControlPlaneRepository,
+    ticket: dict[str, Any],
+    execution_package: CompiledExecutionPackage,
+    created_spec: dict[str, Any] | None,
+    lease_owner: str,
+    developer_inspector_store: DeveloperInspectorStore,
+) -> None:
+    thread = threading.Thread(
+        target=_submit_provider_attempt_result_in_background,
+        kwargs={
+            "repository": repository,
+            "ticket": dict(ticket),
+            "execution_package": execution_package,
+            "created_spec": dict(created_spec) if created_spec is not None else None,
+            "lease_owner": lease_owner,
+            "developer_inspector_store": developer_inspector_store,
+        },
+        name=f"provider-attempt-{ticket['ticket_id']}",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _provider_identity_from_policy_ref(provider_policy_ref: str) -> tuple[str | None, str | None]:
+    parts = str(provider_policy_ref or "").split(":")
+    if len(parts) < 3 or parts[0] != "provider-policy":
+        return None, None
+    return parts[1] or None, parts[2] or None
+
+
+def _provider_timeout_fingerprint(attempt: dict[str, Any], failure_kind: str) -> str:
+    provider_id, model = _provider_identity_from_policy_ref(str(attempt.get("provider_policy_ref") or ""))
+    return ":".join(
+        [
+            "provider",
+            provider_id or "unknown-provider",
+            model or "unknown-model",
+            failure_kind,
+            "request_total",
+        ]
+    )
+
+
+def _record_provider_attempt_timeouts(
+    repository: ControlPlaneRepository,
+) -> list[dict[str, Any]]:
+    occurred_at = now_local()
+    timed_out_attempts: list[dict[str, Any]] = []
+    with repository.transaction() as connection:
+        for attempt in repository.list_execution_attempt_timeout_candidates(connection, occurred_at):
+            ticket = repository.get_current_ticket_projection(str(attempt["ticket_id"]), connection=connection)
+            if ticket is None or str(ticket.get("status") or "") != "EXECUTING":
+                continue
+            failure_kind = "REQUEST_TOTAL_TIMEOUT"
+            fingerprint = _provider_timeout_fingerprint(attempt, failure_kind)
+            deadline_at = attempt.get("deadline_at")
+            last_heartbeat_at = attempt.get("last_heartbeat_at")
+            inserted = repository.insert_event(
+                connection,
+                event_type=EVENT_PROVIDER_ATTEMPT_TIMED_OUT,
+                actor_type="system",
+                actor_id="runtime",
+                workflow_id=str(attempt["workflow_id"]),
+                idempotency_key=f"runtime-provider-attempt-timeout:{attempt['attempt_id']}",
+                causation_id=None,
+                correlation_id=str(attempt["workflow_id"]),
+                payload={
+                    "workflow_id": str(attempt["workflow_id"]),
+                    "ticket_id": str(attempt["ticket_id"]),
+                    "node_id": str(attempt["node_id"]),
+                    "attempt_id": str(attempt["attempt_id"]),
+                    "attempt_no": int(attempt.get("attempt_no") or 1),
+                    "attempt_idempotency_key": str(attempt.get("idempotency_key") or ""),
+                    "provider_policy_ref": str(attempt.get("provider_policy_ref") or ""),
+                    "deadline_at": deadline_at.isoformat() if deadline_at is not None else occurred_at.isoformat(),
+                    "last_heartbeat_at": (
+                        last_heartbeat_at.isoformat() if last_heartbeat_at is not None else None
+                    ),
+                    "state": "TIMED_OUT",
+                    "status": "FAILED",
+                    "current_phase": "timed_out",
+                    "failure_kind": failure_kind,
+                    "timeout_phase": "request_total",
+                    "fingerprint": fingerprint,
+                    "failure_fingerprint": fingerprint,
+                },
+                occurred_at=occurred_at,
+            )
+            if inserted is not None:
+                timed_out_attempts.append({**attempt, "failure_kind": failure_kind, "fingerprint": fingerprint})
+        if timed_out_attempts:
+            repository.refresh_projections(connection)
+    return timed_out_attempts
+
+
+def reap_timed_out_provider_attempts(repository: ControlPlaneRepository) -> list[str]:
+    timed_out_attempts = _record_provider_attempt_timeouts(repository)
+    if not timed_out_attempts:
+        return []
+    settings = get_settings()
+    developer_inspector_store = DeveloperInspectorStore(settings.developer_inspector_root)
+    failed_ticket_ids: list[str] = []
+    for attempt in timed_out_attempts:
+        ticket = repository.get_current_ticket_projection(str(attempt["ticket_id"]))
+        if ticket is None or str(ticket.get("status") or "") != "EXECUTING":
+            continue
+        provider_id, model = _provider_identity_from_policy_ref(str(attempt.get("provider_policy_ref") or ""))
+        failure_kind = str(attempt.get("failure_kind") or "REQUEST_TOTAL_TIMEOUT")
+        fingerprint = str(attempt.get("fingerprint") or _provider_timeout_fingerprint(attempt, failure_kind))
+        execution_result = RuntimeExecutionResult(
+            result_status="failed",
+            completion_summary="Provider attempt exceeded its execution deadline.",
+            failure_kind=failure_kind,
+            failure_message="Provider attempt exceeded its execution deadline.",
+            failure_detail={
+                "attempt_id": str(attempt["attempt_id"]),
+                "provider_policy_ref": str(attempt.get("provider_policy_ref") or ""),
+                "provider_id": provider_id,
+                "actual_model": model,
+                "timeout_phase": "request_total",
+                "deadline_at": (
+                    attempt["deadline_at"].isoformat()
+                    if attempt.get("deadline_at") is not None
+                    else None
+                ),
+                "last_heartbeat_at": (
+                    attempt["last_heartbeat_at"].isoformat()
+                    if attempt.get("last_heartbeat_at") is not None
+                    else None
+                ),
+                "fingerprint": fingerprint,
+            },
+        )
+        handle_ticket_result_submit(
+            repository,
+            _build_runtime_result_submit_command(
+                ticket=ticket,
+                submitted_by=str(ticket.get("lease_owner") or "runtime"),
+                execution_package=None,
+                execution_result=execution_result,
+                created_spec=None,
+            ),
+            developer_inspector_store,
+        )
+        failed_ticket_ids.append(str(ticket["ticket_id"]))
+    return failed_ticket_ids
+
+
 def run_leased_ticket_runtime(
     repository: ControlPlaneRepository,
+    *,
+    nonblocking_provider_attempts: bool = False,
 ) -> list[RuntimeExecutionOutcome]:
     outcomes: list[RuntimeExecutionOutcome] = []
     settings = get_settings()
@@ -3247,6 +3593,65 @@ def run_leased_ticket_runtime(
         lease_owner = str(ticket["lease_owner"])
         developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
         start_ack: CommandAckEnvelope | None = None
+        if bool(candidate.created_spec.get(_RUNTIME_CREATED_SPEC_MISSING_SENTINEL)):
+            occurred_at = now_local()
+            with repository.transaction() as connection:
+                if str(ticket.get("status") or "") == "LEASED":
+                    repository.insert_event(
+                        connection,
+                        event_type=EVENT_TICKET_STARTED,
+                        actor_type="system",
+                        actor_id="runtime",
+                        workflow_id=str(ticket["workflow_id"]),
+                        idempotency_key=f"runtime-missing-created-spec:start:{ticket['ticket_id']}",
+                        causation_id=None,
+                        correlation_id=str(ticket["workflow_id"]),
+                        payload={
+                            "ticket_id": str(ticket["ticket_id"]),
+                            "node_id": str(ticket["node_id"]),
+                            "started_by": lease_owner,
+                        },
+                        occurred_at=occurred_at,
+                    )
+                repository.insert_event(
+                    connection,
+                    event_type=EVENT_TICKET_FAILED,
+                    actor_type="system",
+                    actor_id="runtime",
+                    workflow_id=str(ticket["workflow_id"]),
+                    idempotency_key=f"runtime-missing-created-spec:fail:{ticket['ticket_id']}",
+                    causation_id=None,
+                    correlation_id=str(ticket["workflow_id"]),
+                    payload={
+                        "ticket_id": str(ticket["ticket_id"]),
+                        "node_id": str(ticket["node_id"]),
+                        "failed_by": lease_owner,
+                        "failure_kind": "RUNTIME_INPUT_ERROR",
+                        "failure_message": "Ticket creation contract is missing for runtime execution.",
+                        "failure_detail": {
+                            "compiler_version": MINIMAL_CONTEXT_COMPILER_VERSION,
+                            "missing_event_type": "TICKET_CREATED",
+                            "ticket_id": str(ticket["ticket_id"]),
+                        },
+                    },
+                    occurred_at=occurred_at,
+                )
+                repository.refresh_projections(connection)
+            runtime_ticket = repository.get_current_ticket_projection(str(ticket["ticket_id"])) or ticket
+            outcomes.append(
+                RuntimeExecutionOutcome(
+                    workflow_id=str(runtime_ticket["workflow_id"]),
+                    ticket_id=str(runtime_ticket["ticket_id"]),
+                    node_id=str(runtime_ticket["node_id"]),
+                    graph_node_id=candidate.graph_node_id,
+                    lease_owner=lease_owner,
+                    action=candidate.action,
+                    start_ack=None,
+                    final_ack=None,
+                    ticket_status=str(runtime_ticket.get("status") or ""),
+                )
+            )
+            continue
         if candidate.action == _RUNTIME_ACTION_START:
             current_node = repository.get_current_node_projection(
                 str(ticket["workflow_id"]),
@@ -3312,9 +3717,38 @@ def run_leased_ticket_runtime(
                     developer_inspector_refs=developer_inspector_refs,
                     compile_manifest=compiled_artifacts.compile_manifest.model_dump(mode="json"),
                 )
+            runtime_ticket = repository.get_current_ticket_projection(str(ticket["ticket_id"])) or ticket
+            if nonblocking_provider_attempts and _ticket_uses_nonblocking_provider_attempt(
+                repository,
+                runtime_ticket,
+                execution_package,
+                candidate.created_spec,
+            ):
+                _start_provider_attempt_supervisor(
+                    repository=repository,
+                    ticket=runtime_ticket,
+                    execution_package=execution_package,
+                    created_spec=candidate.created_spec,
+                    lease_owner=lease_owner,
+                    developer_inspector_store=developer_inspector_store,
+                )
+                outcomes.append(
+                    RuntimeExecutionOutcome(
+                        workflow_id=str(runtime_ticket["workflow_id"]),
+                        ticket_id=str(runtime_ticket["ticket_id"]),
+                        node_id=str(runtime_ticket["node_id"]),
+                        graph_node_id=candidate.graph_node_id,
+                        lease_owner=lease_owner,
+                        action=candidate.action,
+                        start_ack=start_ack,
+                        final_ack=None,
+                        ticket_status=str(runtime_ticket.get("status") or ""),
+                    )
+                )
+                continue
             execution_result = _execute_runtime_with_provider_if_configured(
                 repository,
-                ticket,
+                runtime_ticket,
                 execution_package,
                 candidate.created_spec,
             )
@@ -3381,7 +3815,7 @@ def run_leased_ticket_runtime(
         final_ack = handle_ticket_result_submit(
             repository,
             _build_runtime_result_submit_command(
-                ticket=ticket,
+                ticket=runtime_ticket,
                 submitted_by=lease_owner,
                 execution_package=execution_package,
                 execution_result=execution_result,
@@ -3392,15 +3826,15 @@ def run_leased_ticket_runtime(
 
         outcomes.append(
             RuntimeExecutionOutcome(
-                workflow_id=str(ticket["workflow_id"]),
-                ticket_id=str(ticket["ticket_id"]),
-                node_id=str(ticket["node_id"]),
+                workflow_id=str(runtime_ticket["workflow_id"]),
+                ticket_id=str(runtime_ticket["ticket_id"]),
+                node_id=str(runtime_ticket["node_id"]),
                 graph_node_id=candidate.graph_node_id,
                 lease_owner=lease_owner,
                 action=candidate.action,
                 start_ack=start_ack,
                 final_ack=final_ack,
-                ticket_status=str(ticket.get("status") or ""),
+                ticket_status=str(runtime_ticket.get("status") or ""),
             )
         )
 
