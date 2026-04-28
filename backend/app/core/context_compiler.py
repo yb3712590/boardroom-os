@@ -202,8 +202,56 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _stable_compile_request_id(idempotency_key: str) -> str:
+    return f"creq_{_stable_hash(idempotency_key)[:12]}"
+
+
 def _estimate_tokens(value: Any) -> int:
     return max(1, (len(_canonical_json(value)) + 3) // 4)
+
+
+def _build_compile_asset_digest(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    node_id: str,
+    graph_version: str,
+    governance_profile_ref: str,
+    created_spec: dict[str, Any],
+    explicit_sources: list[CompileRequestExplicitSource],
+) -> str:
+    return _stable_hash(
+        {
+            "workflow_id": workflow_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "graph_version": graph_version,
+            "governance_profile_ref": governance_profile_ref,
+            "ticket_contract": {
+                "attempt_no": created_spec.get("attempt_no"),
+                "role_profile_ref": created_spec.get("role_profile_ref"),
+                "constraints_ref": created_spec.get("constraints_ref"),
+                "output_schema_ref": created_spec.get("output_schema_ref"),
+                "output_schema_version": created_spec.get("output_schema_version"),
+                "acceptance_criteria": list(created_spec.get("acceptance_criteria") or []),
+                "allowed_tools": list(created_spec.get("allowed_tools") or []),
+                "allowed_write_set": list(created_spec.get("allowed_write_set") or []),
+                "delivery_stage": created_spec.get("delivery_stage"),
+                "deliverable_kind": created_spec.get("deliverable_kind"),
+                "doc_update_requirements": list(created_spec.get("doc_update_requirements") or []),
+            },
+            "assets": [
+                {
+                    "source_ref": source.source_ref,
+                    "process_asset_kind": source.process_asset_kind,
+                    "producer_ticket_id": source.producer_ticket_id,
+                    "source_metadata": source.source_metadata,
+                    "fallback_reason_code": source.inline_fallback_reason_code,
+                }
+                for source in explicit_sources
+            ],
+        }
+    )
 
 
 def _normalize_retrieval_terms(*values: str) -> list[str]:
@@ -680,6 +728,9 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         node_id=compile_request.meta.node_id,
         attempt_no=compile_request.meta.attempt_no,
         governance_profile_ref=compile_request.meta.governance_profile_ref,
+        graph_version=compile_request.meta.graph_version,
+        asset_digest=compile_request.meta.asset_digest,
+        idempotency_key=compile_request.meta.idempotency_key,
         lease_owner=compile_request.worker_binding.lease_owner,
         tenant_id=compile_request.meta.tenant_id,
         workspace_id=compile_request.meta.workspace_id,
@@ -1862,6 +1913,15 @@ def build_compile_request(
     _, source_projection_version = repository.get_cursor_and_version(connection=connection)
     if source_projection_version <= 0:
         raise ValueError("Source projection version is missing for runtime compilation.")
+    graph_version = str((runtime_node_projection or {}).get("graph_version") or "").strip()
+    if not graph_version:
+        raise RuntimeNodeLifecycleError(
+            workflow_id=str(ticket["workflow_id"]),
+            node_id=str(ticket["node_id"]),
+            reason_code=REASON_CODE_RUNTIME_NODE_TRUTH_CONFLICT,
+            operation="runtime compilation",
+            detail="runtime_node_projection.graph_version is missing for runtime compilation.",
+        )
     tenant_id = str(ticket.get("tenant_id") or created_spec.get("tenant_id") or DEFAULT_TENANT_ID)
     workspace_id = str(
         ticket.get("workspace_id") or created_spec.get("workspace_id") or DEFAULT_WORKSPACE_ID
@@ -1916,6 +1976,8 @@ def build_compile_request(
                         "canonical_ref": resolved_asset.canonical_ref,
                         "version_int": resolved_asset.version_int,
                         "supersedes_ref": resolved_asset.supersedes_ref,
+                        "content_hash": resolved_asset.content_hash,
+                        "visibility_status": resolved_asset.visibility_status,
                     }
                 ),
                 is_mandatory=True,
@@ -1939,6 +2001,19 @@ def build_compile_request(
             )
         )
 
+    asset_digest = _build_compile_asset_digest(
+        workflow_id=str(ticket["workflow_id"]),
+        ticket_id=str(ticket["ticket_id"]),
+        node_id=str(ticket["node_id"]),
+        graph_version=graph_version,
+        governance_profile_ref=governance_profile.profile_id,
+        created_spec=created_spec,
+        explicit_sources=explicit_sources,
+    )
+    compile_idempotency_key = (
+        f"compile:{ticket['workflow_id']}:{ticket['ticket_id']}:{graph_version}:{asset_digest}"
+    )
+
     normalized_profiles = normalize_persona_profiles(
         str(employee.get("role_type") or "unknown"),
         skill_profile=employee.get("skill_profile_json"),
@@ -1960,12 +2035,15 @@ def build_compile_request(
     )
     return CompileRequest(
         meta=CompileRequestMeta(
-            compile_request_id=new_prefixed_id("creq"),
+            compile_request_id=_stable_compile_request_id(compile_idempotency_key),
             ticket_id=ticket["ticket_id"],
             workflow_id=ticket["workflow_id"],
             node_id=ticket["node_id"],
             attempt_no=attempt_no,
             governance_profile_ref=governance_profile.profile_id,
+            graph_version=graph_version,
+            asset_digest=asset_digest,
+            idempotency_key=compile_idempotency_key,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             ticket_projection_version=int(ticket["version"]),
@@ -2468,6 +2546,29 @@ def compile_and_persist_execution_artifacts(
 ) -> CompiledAuditArtifacts:
     with repository.transaction() as connection:
         compile_request = build_compile_request(repository, ticket, connection=connection)
+        existing_bundle = repository.get_compiled_context_bundle_by_compile_request_id(
+            compile_request.meta.compile_request_id,
+            connection=connection,
+        )
+        existing_manifest = repository.get_compile_manifest_by_compile_request_id(
+            compile_request.meta.compile_request_id,
+            connection=connection,
+        )
+        existing_package = repository.get_compiled_execution_package(
+            compile_request.meta.compile_request_id,
+            connection=connection,
+        )
+        if existing_bundle is not None and existing_manifest is not None and existing_package is not None:
+            _validate_matching_compiled_audit_artifacts(
+                existing_bundle,
+                existing_manifest,
+                existing_package,
+            )
+            return CompiledAuditArtifacts(
+                compiled_context_bundle=CompiledContextBundle.model_validate(existing_bundle["payload"]),
+                compile_manifest=CompileManifest.model_validate(existing_manifest["payload"]),
+                compiled_execution_package=CompiledExecutionPackage.model_validate(existing_package["payload"]),
+            )
         artifacts = compile_audit_artifacts(compile_request)
         repository.save_compiled_context_bundle(connection, artifacts.compiled_context_bundle)
         repository.save_compile_manifest(connection, artifacts.compile_manifest)

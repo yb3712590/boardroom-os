@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import time
 from dataclasses import dataclass, field
@@ -30,13 +31,22 @@ from app.core.context_compiler import (
     export_latest_compile_artifacts_to_developer_inspector,
 )
 from app.core.constants import (
+    BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+    CIRCUIT_BREAKER_STATE_OPEN,
+    EVENT_CIRCUIT_BREAKER_OPENED,
+    EVENT_INCIDENT_OPENED,
     EVENT_PROVIDER_ATTEMPT_FINISHED,
     EVENT_PROVIDER_ATTEMPT_STARTED,
     EVENT_PROVIDER_FAILOVER_SELECTED,
     EVENT_PROVIDER_FIRST_TOKEN_RECEIVED,
     EVENT_PROVIDER_RETRY_SCHEDULED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
     EVENT_MEETING_CONCLUDED,
     EVENT_MEETING_ROUND_COMPLETED,
+    INCIDENT_STATUS_OPEN,
+    INCIDENT_TYPE_COMPILER_FAILURE,
+    INCIDENT_TYPE_EVIDENCE_GAP,
+    INCIDENT_TYPE_PACKAGE_STALE,
     PROVIDER_PAUSE_FAILURE_KINDS,
 )
 from app.core.developer_inspector import DeveloperInspectorStore
@@ -73,6 +83,7 @@ from app.core.runtime_provider_config import (
 )
 from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
 from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
+from app.core.runtime_node_lifecycle import RuntimeNodeLifecycleError
 from app.core.ticket_context_archive import write_ticket_context_markdown
 from app.core.ticket_handlers import (
     _open_provider_incident,
@@ -430,6 +441,125 @@ def _build_compiled_execution_artifacts(
     ticket: dict[str, Any],
 ) -> CompiledAuditArtifacts:
     return compile_and_persist_execution_artifacts(repository, ticket)
+
+
+_CONTEXT_COMPILATION_INCIDENT_TYPES = {
+    "EVIDENCE_GAP": INCIDENT_TYPE_EVIDENCE_GAP,
+    "COMPILER_FAILURE": INCIDENT_TYPE_COMPILER_FAILURE,
+    "EVIDENCE_LINEAGE_BREAK": INCIDENT_TYPE_COMPILER_FAILURE,
+    "PACKAGE_STALE": INCIDENT_TYPE_PACKAGE_STALE,
+}
+
+
+def _context_compilation_failure_code(exc: Exception) -> str | None:
+    if isinstance(exc, RuntimeNodeLifecycleError):
+        return "COMPILER_FAILURE"
+    message = str(exc)
+    reason_code = message.split(":", 1)[0].strip()
+    return reason_code if reason_code in _CONTEXT_COMPILATION_INCIDENT_TYPES else None
+
+
+def _block_ticket_for_context_compilation_failure(
+    repository: ControlPlaneRepository,
+    *,
+    command_id: str,
+    ticket: dict[str, Any],
+    graph_node_id: str | None,
+    lease_owner: str,
+    exc: Exception,
+) -> None:
+    reason_code = _context_compilation_failure_code(exc)
+    if reason_code is None:
+        return
+    workflow_id = str(ticket["workflow_id"])
+    ticket_id = str(ticket["ticket_id"])
+    node_id = str(ticket["node_id"])
+    failure_message = str(exc)
+    fingerprint = (
+        f"{workflow_id}:{node_id}:context-compilation:{reason_code}:"
+        f"{hashlib.sha256(failure_message.encode('utf-8')).hexdigest()[:12]}"
+    )
+    occurred_at = now_local()
+
+    with repository.transaction() as connection:
+        existing_incident = repository.get_open_incident_for_node(
+            workflow_id,
+            node_id,
+            connection=connection,
+        )
+        incident_id = (
+            str(existing_incident["incident_id"])
+            if existing_incident is not None
+            else new_prefixed_id("inc")
+        )
+        incident_payload = {
+            "incident_id": incident_id,
+            "ticket_id": ticket_id,
+            "node_id": node_id,
+            "graph_node_id": graph_node_id,
+            "incident_type": _CONTEXT_COMPILATION_INCIDENT_TYPES[reason_code],
+            "status": INCIDENT_STATUS_OPEN,
+            "severity": "high",
+            "fingerprint": fingerprint,
+            "latest_failure_kind": "RUNTIME_INPUT_ERROR",
+            "latest_failure_message": failure_message,
+            "latest_failure_fingerprint": fingerprint,
+            "compiler_reason_code": reason_code,
+            "recovery_priority": ["RECOMPILE_CONTEXT"],
+        }
+        if existing_incident is None:
+            repository.insert_event(
+                connection,
+                event_type=EVENT_INCIDENT_OPENED,
+                actor_type="system",
+                actor_id="context-compiler",
+                workflow_id=workflow_id,
+                idempotency_key=f"context-compile:{workflow_id}:{ticket_id}:{reason_code}:incident-opened",
+                causation_id=command_id,
+                correlation_id=workflow_id,
+                payload=incident_payload,
+                occurred_at=occurred_at,
+            )
+            repository.insert_event(
+                connection,
+                event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+                actor_type="system",
+                actor_id="context-compiler",
+                workflow_id=workflow_id,
+                idempotency_key=f"context-compile:{workflow_id}:{ticket_id}:{reason_code}:breaker-opened",
+                causation_id=command_id,
+                correlation_id=workflow_id,
+                payload={
+                    **incident_payload,
+                    "circuit_breaker_state": CIRCUIT_BREAKER_STATE_OPEN,
+                },
+                occurred_at=occurred_at,
+            )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+            actor_type="system",
+            actor_id="context-compiler",
+            workflow_id=workflow_id,
+            idempotency_key=(
+                f"ticket-precondition-blocked:{workflow_id}:{ticket_id}:"
+                f"{BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED}:{fingerprint}"
+            ),
+            causation_id=command_id,
+            correlation_id=workflow_id,
+            payload={
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "reason_code": BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+                "compiler_reason_code": reason_code,
+                "failure_message": failure_message,
+                "incident_id": incident_id,
+                "fingerprint": fingerprint,
+                "blocked_by": lease_owner,
+            },
+            occurred_at=occurred_at,
+        )
+        repository.refresh_projections(connection)
 
 
 def _resolve_runtime_write_path(allowed_write_pattern: str, filename: str) -> str:
@@ -3188,7 +3318,32 @@ def run_leased_ticket_runtime(
                 execution_package,
                 candidate.created_spec,
             )
-        except (ValidationError, ValueError) as exc:
+        except (ValidationError, ValueError, RuntimeNodeLifecycleError) as exc:
+            if _context_compilation_failure_code(exc) is not None:
+                _block_ticket_for_context_compilation_failure(
+                    repository,
+                    command_id=new_prefixed_id("cmd"),
+                    ticket=ticket,
+                    graph_node_id=candidate.graph_node_id,
+                    lease_owner=lease_owner,
+                    exc=exc,
+                )
+                outcomes.append(
+                    RuntimeExecutionOutcome(
+                        workflow_id=str(ticket["workflow_id"]),
+                        ticket_id=str(ticket["ticket_id"]),
+                        node_id=str(ticket["node_id"]),
+                        graph_node_id=candidate.graph_node_id,
+                        lease_owner=lease_owner,
+                        action=candidate.action,
+                        start_ack=start_ack,
+                        final_ack=None,
+                        ticket_status=str(ticket.get("status") or ""),
+                        reason_code=BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+                        reason=str(exc),
+                    )
+                )
+                continue
             final_ack = handle_ticket_result_submit(
                 repository,
                 _build_runtime_result_submit_command(

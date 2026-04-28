@@ -2683,13 +2683,17 @@ def test_compile_and_persist_execution_artifacts_versions_compiled_execution_pac
 
     assert first.compiled_execution_package.meta.version_int == 1
     assert first.compiled_execution_package.meta.supersedes_ref is None
-    assert second.compiled_execution_package.meta.version_int == 2
-    assert second.compiled_execution_package.meta.supersedes_ref == (
+    assert second.compiled_execution_package.meta.version_int == 1
+    assert second.compiled_execution_package.meta.supersedes_ref is None
+    assert second.compiled_execution_package.meta.compile_request_id == (
+        first.compiled_execution_package.meta.compile_request_id
+    )
+    assert second.compiled_execution_package.meta.version_ref == (
         first.compiled_execution_package.meta.version_ref
     )
     assert latest_execution_package is not None
-    assert latest_execution_package["version_int"] == 2
-    assert latest_execution_package["supersedes_ref"] == first.compiled_execution_package.meta.version_ref
+    assert latest_execution_package["version_int"] == 1
+    assert latest_execution_package["supersedes_ref"] is None
     assert latest_execution_package["payload"]["meta"]["version_ref"] == (
         second.compiled_execution_package.meta.version_ref
     )
@@ -2705,6 +2709,140 @@ def test_compile_and_persist_execution_artifacts_versions_compiled_execution_pac
     assert latest_execution_package["payload"]["meta"]["version_ref"] == (
         second.compiled_execution_package.meta.version_ref
     )
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET graph_version = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("gv_changed_for_version_test", "wf_compile", ticket["node_id"]),
+        )
+    third = compile_and_persist_execution_artifacts(repository, ticket)
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket("tkt_compile_001")
+
+    assert third.compiled_execution_package.meta.version_int == 2
+    assert third.compiled_execution_package.meta.supersedes_ref == (
+        first.compiled_execution_package.meta.version_ref
+    )
+    assert third.compiled_execution_package.meta.compile_request_id != (
+        first.compiled_execution_package.meta.compile_request_id
+    )
+    assert latest_execution_package["version_int"] == 2
+    assert latest_execution_package["payload"]["meta"]["version_ref"] == (
+        third.compiled_execution_package.meta.version_ref
+    )
+
+
+def test_compile_and_persist_execution_artifacts_reuses_same_package_for_same_inputs(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
+
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection("tkt_compile_001")
+
+    first = compile_and_persist_execution_artifacts(repository, ticket)
+    set_ticket_time("2026-03-28T10:05:00+08:00")
+    second = compile_and_persist_execution_artifacts(repository, ticket)
+    package_rows = [
+        row
+        for row in repository.list_events_for_testing()
+        if row["event_type"] == "COMPILED_EXECUTION_PACKAGE_WRITTEN"
+    ]
+    latest_execution_package = repository.get_latest_compiled_execution_package_by_ticket("tkt_compile_001")
+
+    assert first.compiled_execution_package.meta.compile_request_id == (
+        second.compiled_execution_package.meta.compile_request_id
+    )
+    assert first.compiled_execution_package.meta.version_ref == second.compiled_execution_package.meta.version_ref
+    assert first.compiled_execution_package.meta.asset_digest == second.compiled_execution_package.meta.asset_digest
+    assert first.compiled_execution_package.meta.idempotency_key.startswith(
+        "compile:wf_compile:tkt_compile_001:"
+    )
+    assert latest_execution_package["version_int"] == 1
+    assert package_rows == []
+
+
+def test_compiled_execution_package_guard_rejects_superseded_asset(client, set_ticket_time):
+    set_ticket_time("2026-04-28T11:00:00+08:00")
+    workflow_id = "wf_compile_guard_superseded"
+    node_id = "node_compile_guard_superseded"
+    source_ticket_id = "tkt_compile_guard_source"
+    checker_ticket_id = "tkt_compile_guard_checker"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Guard should reject stale checker packages.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{source_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+    source_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert source_response.status_code == 200
+    assert source_response.json()["status"] == "ACCEPTED"
+
+    source_asset_ref = build_source_code_delivery_process_asset_ref(source_ticket_id, version_int=1)
+    api_test_helpers._seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=checker_ticket_id,
+        node_id=node_id,
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        input_artifact_refs=[],
+        input_process_asset_refs=[source_asset_ref],
+    )
+    _seed_governance_profile(repository=client.app.state.repository, workflow_id=workflow_id)
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+        ),
+    )
+    repository = client.app.state.repository
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    compiled = compile_and_persist_execution_artifacts(repository, checker_ticket).compiled_execution_package
+
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE process_asset_index
+            SET visibility_status = 'SUPERSEDED', version = version + 1
+            WHERE process_asset_ref = ?
+            """,
+            (source_asset_ref,),
+        )
+
+    with repository.connection() as connection:
+        guard_reason = repository.validate_compiled_execution_package_guard(
+            connection,
+            ticket_id=checker_ticket_id,
+            compile_request_id=compiled.meta.compile_request_id,
+            compiled_execution_package_version_ref=compiled.meta.version_ref,
+        )
+
+    assert guard_reason is not None
+    assert "PACKAGE_STALE" in guard_reason
 
 
 def test_build_compile_request_captures_projection_versions(client, set_ticket_time):
@@ -2863,7 +3001,7 @@ def test_build_compile_request_accepts_legacy_process_asset_ref_but_resolves_ver
     ]
     assert compile_request.explicit_sources[0].source_ref == build_process_asset_canonical_ref(
         build_compiled_execution_package_process_asset_ref("tkt_compile_001"),
-        2,
+        1,
     )
-    assert compile_request.explicit_sources[0].source_metadata["version_int"] == 2
-    assert compile_request.explicit_sources[0].source_metadata["supersedes_ref"] == "pa://compiled-execution-package/tkt_compile_001@1"
+    assert compile_request.explicit_sources[0].source_metadata["version_int"] == 1
+    assert compile_request.explicit_sources[0].source_metadata["supersedes_ref"] is None

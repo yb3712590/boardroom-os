@@ -106,6 +106,9 @@ from app.core.constants import (
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED,
+    INCIDENT_TYPE_COMPILER_FAILURE,
+    INCIDENT_TYPE_EVIDENCE_GAP,
+    INCIDENT_TYPE_PACKAGE_STALE,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
@@ -2519,6 +2522,16 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
         recommended_followup_action = IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value
+    elif incident_type in {
+        INCIDENT_TYPE_EVIDENCE_GAP,
+        INCIDENT_TYPE_COMPILER_FAILURE,
+        INCIDENT_TYPE_PACKAGE_STALE,
+    }:
+        available_followup_actions = [
+            IncidentFollowupAction.RECOMPILE_CONTEXT.value,
+            IncidentFollowupAction.RESTORE_ONLY.value,
+        ]
+        recommended_followup_action = IncidentFollowupAction.RECOMPILE_CONTEXT.value
     elif incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value

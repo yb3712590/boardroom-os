@@ -446,6 +446,7 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         projections: list[dict[str, Any]],
     ) -> None:
+        self._ensure_runtime_node_projection_shape(connection)
         connection.execute("DELETE FROM runtime_node_projection")
         for projection in projections:
             connection.execute(
@@ -458,9 +459,10 @@ class ControlPlaneRepository:
                     latest_ticket_id,
                     status,
                     blocking_reason_code,
+                    graph_version,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["workflow_id"],
@@ -470,6 +472,11 @@ class ControlPlaneRepository:
                     projection["latest_ticket_id"],
                     projection["status"],
                     projection.get("blocking_reason_code"),
+                    projection.get("graph_version") or resolve_workflow_graph_version(
+                        self,
+                        str(projection["workflow_id"]),
+                        connection=connection,
+                    ),
                     projection["updated_at"],
                     projection["version"],
                 ),
@@ -2863,6 +2870,15 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         bundle: CompiledContextBundle,
     ) -> None:
+        existing = self.get_compiled_context_bundle_by_compile_request_id(
+            bundle.meta.compile_request_id,
+            connection=connection,
+        )
+        if existing is not None:
+            bundle.meta.version_ref = existing.get("version_ref")
+            bundle.meta.version_int = existing.get("version_int")
+            bundle.meta.supersedes_ref = existing.get("supersedes_ref")
+            return
         version_int = self._next_version_int(
             connection,
             table_name="compiled_context_bundle",
@@ -2925,6 +2941,15 @@ class ControlPlaneRepository:
         connection: sqlite3.Connection,
         manifest: CompileManifest,
     ) -> None:
+        existing = self.get_compile_manifest_by_compile_request_id(
+            manifest.compile_meta.compile_request_id,
+            connection=connection,
+        )
+        if existing is not None:
+            manifest.compile_meta.version_ref = existing.get("version_ref")
+            manifest.compile_meta.version_int = existing.get("version_int")
+            manifest.compile_meta.supersedes_ref = existing.get("supersedes_ref")
+            return
         version_int = self._next_version_int(
             connection,
             table_name="compile_manifest",
@@ -2991,6 +3016,15 @@ class ControlPlaneRepository:
         *,
         compiled_at: datetime,
     ) -> None:
+        existing = self.get_compiled_execution_package(
+            execution_package.meta.compile_request_id,
+            connection=connection,
+        )
+        if existing is not None:
+            execution_package.meta.version_ref = existing.get("version_ref")
+            execution_package.meta.version_int = existing.get("version_int")
+            execution_package.meta.supersedes_ref = existing.get("supersedes_ref")
+            return
         version_int = self._next_version_int(
             connection,
             table_name="compiled_execution_package",
@@ -3070,6 +3104,26 @@ class ControlPlaneRepository:
                 return None
             return self._convert_compiled_context_bundle_row(row)
 
+    def get_compiled_context_bundle_by_compile_request_id(
+        self,
+        compile_request_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compiled_context_bundle
+            WHERE compile_request_id = ?
+            ORDER BY version_int DESC, compiled_at DESC, bundle_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (compile_request_id,)).fetchone()
+            return None if row is None else self._convert_compiled_context_bundle_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (compile_request_id,)).fetchone()
+            return None if row is None else self._convert_compiled_context_bundle_row(row)
+
     def get_latest_compiled_context_bundle_by_ticket(
         self,
         ticket_id: str,
@@ -3117,6 +3171,26 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_compile_manifest_row(row)
+
+    def get_compile_manifest_by_compile_request_id(
+        self,
+        compile_request_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        query = """
+            SELECT * FROM compile_manifest
+            WHERE compile_request_id = ?
+            ORDER BY version_int DESC, compiled_at DESC, compile_id DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, (compile_request_id,)).fetchone()
+            return None if row is None else self._convert_compile_manifest_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, (compile_request_id,)).fetchone()
+            return None if row is None else self._convert_compile_manifest_row(row)
 
     def get_compiled_execution_package(
         self,
@@ -4217,6 +4291,55 @@ class ControlPlaneRepository:
                     "Compiled execution package is outdated. Reload runtime state before retrying "
                     f"(runtime node version {current_runtime_node['version']} != expected "
                     f"{expected_runtime_node_version})."
+                )
+            expected_graph_version = str(latest_meta.get("graph_version") or "").strip()
+            current_graph_version = str(current_runtime_node.get("graph_version") or "").strip()
+            if expected_graph_version and current_graph_version and current_graph_version != expected_graph_version:
+                return (
+                    "PACKAGE_STALE: Compiled execution package graph version is outdated. "
+                    f"Reload runtime state before retrying (graph version {current_graph_version} "
+                    f"!= expected {expected_graph_version})."
+                )
+        indexed_guard_asset_kinds = {
+            "SOURCE_CODE_DELIVERY",
+            "EVIDENCE_PACK",
+            "GOVERNANCE_DOCUMENT",
+            "MEETING_DECISION_RECORD",
+            "CLOSEOUT_SUMMARY",
+        }
+        for block in list(
+            ((latest_payload.get("atomic_context_bundle") or {}).get("context_blocks") or [])
+        ):
+            if not isinstance(block, dict) or block.get("source_kind") != "PROCESS_ASSET":
+                continue
+            content_payload = block.get("content_payload") or {}
+            if not isinstance(content_payload, dict):
+                content_payload = {}
+            process_asset_kind = str(content_payload.get("process_asset_kind") or "").strip()
+            if process_asset_kind not in indexed_guard_asset_kinds:
+                continue
+            source_ref = str(content_payload.get("process_asset_ref") or block.get("source_ref") or "").strip()
+            if not source_ref:
+                continue
+            index_entry = self.get_process_asset_index_entry(source_ref, connection=connection)
+            if index_entry is None:
+                return f"EVIDENCE_GAP: Process asset {source_ref} is missing from process_asset_index."
+            visibility_status = str(index_entry.get("visibility_status") or "").strip()
+            if visibility_status != "CONSUMABLE":
+                reason_code = "PACKAGE_STALE" if visibility_status == "SUPERSEDED" else "EVIDENCE_LINEAGE_BREAK"
+                return (
+                    f"{reason_code}: Process asset {source_ref} is {visibility_status} "
+                    "and cannot be consumed by this compiled execution package."
+                )
+            source_metadata = content_payload.get("source_metadata") or {}
+            if not isinstance(source_metadata, dict):
+                source_metadata = {}
+            expected_content_hash = str(source_metadata.get("content_hash") or "").strip()
+            current_content_hash = str(index_entry.get("content_hash") or "").strip()
+            if expected_content_hash and current_content_hash and current_content_hash != expected_content_hash:
+                return (
+                    f"PACKAGE_STALE: Process asset {source_ref} content hash changed "
+                    f"({current_content_hash} != expected {expected_content_hash})."
                 )
         return None
 
@@ -6983,6 +7106,7 @@ class ControlPlaneRepository:
             "latest_ticket_id": "TEXT",
             "status": "TEXT",
             "blocking_reason_code": "TEXT",
+            "graph_version": "TEXT",
             "updated_at": "TEXT",
             "version": "INTEGER",
         }
@@ -7009,6 +7133,7 @@ class ControlPlaneRepository:
                 latest_ticket_id TEXT NOT NULL,
                 status TEXT NOT NULL,
                 blocking_reason_code TEXT,
+                graph_version TEXT,
                 updated_at TEXT NOT NULL,
                 version INTEGER NOT NULL,
                 PRIMARY KEY (workflow_id, graph_node_id)

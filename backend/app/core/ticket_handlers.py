@@ -65,12 +65,15 @@ from app.core.constants import (
     FAILURE_KIND_PROVIDER_RATE_LIMITED,
     FAILURE_KIND_UPSTREAM_UNAVAILABLE,
     INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED,
+    INCIDENT_TYPE_COMPILER_FAILURE,
     INCIDENT_TYPE_DECOMPOSITION_RECOVERY,
+    INCIDENT_TYPE_EVIDENCE_GAP,
     INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION,
     INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
+    INCIDENT_TYPE_PACKAGE_STALE,
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
     INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED,
@@ -100,9 +103,14 @@ from app.core.constants import (
     TICKET_STATUS_REWORK_REQUIRED,
     TICKET_STATUS_TIMED_OUT,
     TIMEOUT_FAMILY_RUNTIME,
+    BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
     BLOCKING_REASON_PROVIDER_REQUIRED,
 )
-from app.core.context_compiler import export_latest_compile_artifacts_to_developer_inspector
+from app.core.context_compiler import (
+    build_compile_request,
+    compile_audit_artifacts,
+    export_latest_compile_artifacts_to_developer_inspector,
+)
 from app.core.board_advisory_analysis import (
     create_board_advisory_analysis_run,
     run_board_advisory_analysis,
@@ -5338,6 +5346,7 @@ def handle_incident_resolve(
         replay_result = None
         rerun_context: dict[str, Any] | None = None
         advisory_rerun_context: dict[str, Any] | None = None
+        recompile_context: dict[str, Any] | None = None
         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT:
             source_ticket_context = resolve_ceo_shadow_source_ticket_context(
                 repository,
@@ -5485,6 +5494,79 @@ def handle_incident_resolve(
                     incident_id=payload.incident_id,
                     reason=str(exc),
                 )
+        elif payload.followup_action == IncidentFollowupAction.RECOMPILE_CONTEXT:
+            if incident["incident_type"] not in {
+                INCIDENT_TYPE_EVIDENCE_GAP,
+                INCIDENT_TYPE_COMPILER_FAILURE,
+                INCIDENT_TYPE_PACKAGE_STALE,
+            }:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Incident {payload.incident_id} does not support context recompilation.",
+                )
+            incident_ticket_id = str(incident.get("ticket_id") or "").strip()
+            if not incident_ticket_id:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason="Context compilation incident is missing its source ticket.",
+                )
+            source_ticket = repository.get_current_ticket_projection(
+                incident_ticket_id,
+                connection=connection,
+            )
+            if source_ticket is None:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Context recompilation source ticket {incident_ticket_id} is missing.",
+                )
+            try:
+                compile_request = build_compile_request(repository, source_ticket, connection=connection)
+                existing_bundle = repository.get_compiled_context_bundle_by_compile_request_id(
+                    compile_request.meta.compile_request_id,
+                    connection=connection,
+                )
+                existing_manifest = repository.get_compile_manifest_by_compile_request_id(
+                    compile_request.meta.compile_request_id,
+                    connection=connection,
+                )
+                existing_package = repository.get_compiled_execution_package(
+                    compile_request.meta.compile_request_id,
+                    connection=connection,
+                )
+                if existing_bundle is None or existing_manifest is None or existing_package is None:
+                    artifacts = compile_audit_artifacts(compile_request)
+                    repository.save_compiled_context_bundle(connection, artifacts.compiled_context_bundle)
+                    repository.save_compile_manifest(connection, artifacts.compile_manifest)
+                    repository.save_compiled_execution_package(
+                        connection,
+                        artifacts.compiled_execution_package,
+                        compiled_at=artifacts.compile_manifest.compile_meta.compiled_at,
+                    )
+                    compiled_execution_package_ref = artifacts.compiled_execution_package.meta.version_ref
+                else:
+                    compiled_execution_package_ref = str(existing_package["version_ref"])
+            except Exception as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=f"Context recompilation failed: {exc}",
+                )
+            recompile_context = {
+                "ticket_id": incident_ticket_id,
+                "node_id": source_ticket["node_id"],
+                "compiled_execution_package_ref": compiled_execution_package_ref,
+            }
         elif payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
             if incident["incident_type"] != INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
                 return _incident_rejected_ack(
@@ -5625,6 +5707,10 @@ def handle_incident_resolve(
             }
             if payload.followup_action == IncidentFollowupAction.REPLAY_REQUIRED_HOOKS:
                 resolution_payload["replayed_hook_ids"] = list(replay_result.replayed_hook_ids)
+            if payload.followup_action == IncidentFollowupAction.RECOMPILE_CONTEXT and recompile_context is not None:
+                resolution_payload["compiled_execution_package_ref"] = recompile_context[
+                    "compiled_execution_package_ref"
+                ]
 
             breaker_closed_event = repository.insert_event(
                 connection,
@@ -5707,6 +5793,25 @@ def handle_incident_resolve(
                         idempotency_key_base=f"{payload.idempotency_key}:followup-descendants",
                     )
                 resolution_payload["followup_ticket_id"] = followup_ticket_id
+
+            if payload.followup_action == IncidentFollowupAction.RECOMPILE_CONTEXT and recompile_context is not None:
+                repository.insert_event(
+                    connection,
+                    event_type=EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
+                    actor_type="operator",
+                    actor_id=payload.resolved_by,
+                    workflow_id=workflow_id,
+                    idempotency_key=f"{payload.idempotency_key}:context-precondition-cleared",
+                    causation_id=command_id,
+                    correlation_id=workflow_id,
+                    payload={
+                        "ticket_id": recompile_context["ticket_id"],
+                        "node_id": recompile_context["node_id"],
+                        "reason_code": BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+                        "incident_id": payload.incident_id,
+                    },
+                    occurred_at=received_at,
+                )
 
             incident_recovery_event = repository.insert_event(
                 connection,

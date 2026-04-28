@@ -65,7 +65,8 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.persona_profiles import normalize_persona_profiles
-from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
+from app.core.graph_identity import resolve_ticket_graph_identity
+from app.core.versioning import build_graph_version
 from app.core.workflow_completion import (
     infer_workflow_current_stage,
     resolve_workflow_closeout_completion,
@@ -1334,6 +1335,20 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
 def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
     created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
     projections: dict[tuple[str, str], dict[str, Any]] = {}
+    graph_version_int_by_workflow: dict[str, int] = {}
+    graph_mutation_events = {
+        EVENT_WORKFLOW_CREATED,
+        EVENT_TICKET_CREATED,
+        EVENT_TICKET_COMPLETED,
+        EVENT_TICKET_CANCELLED,
+        EVENT_BOARD_REVIEW_REQUIRED,
+        EVENT_BOARD_REVIEW_APPROVED,
+        EVENT_BOARD_REVIEW_REJECTED,
+        "GRAPH_PATCH_APPLIED",
+        "MEETING_REQUESTED",
+        "MEETING_STARTED",
+        "MEETING_CONCLUDED",
+    }
 
     for event in events:
         payload = _event_payload(event)
@@ -1353,19 +1368,19 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
 
         if workflow_id is None:
             continue
+        if event_type in graph_mutation_events:
+            graph_version_int_by_workflow[workflow_id] = graph_version_int_by_workflow.get(workflow_id, 0) + 1
+        graph_version = build_graph_version(max(graph_version_int_by_workflow.get(workflow_id, 0), 1))
 
         ticket_id = str(payload.get("ticket_id") or "").strip()
         created_spec = created_specs_by_ticket_id.get(ticket_id)
         if not ticket_id or created_spec is None:
             continue
-        try:
-            identity = resolve_ticket_graph_identity(
-                ticket_id=ticket_id,
-                created_spec=created_spec,
-                runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
-            )
-        except GraphIdentityResolutionError:
-            continue
+        identity = resolve_ticket_graph_identity(
+            ticket_id=ticket_id,
+            created_spec=created_spec,
+            runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
+        )
         key = (workflow_id, identity.graph_node_id)
         base_projection = {
             "workflow_id": workflow_id,
@@ -1374,6 +1389,7 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
             "runtime_node_id": identity.runtime_node_id,
             "latest_ticket_id": ticket_id,
             "blocking_reason_code": None,
+            "graph_version": graph_version,
         }
 
         if event_type == EVENT_TICKET_CREATED:

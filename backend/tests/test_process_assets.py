@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from unittest.mock import patch
 
 import app.core.process_assets as process_assets_module
 import tests.test_api as api_test_helpers
 from app.contracts.runtime import CompiledExecutionPackage
 from app.core.constants import EVENT_INCIDENT_OPENED, EVENT_TICKET_COMPLETED
+from app.core.provider_openai_compat import OpenAICompatProviderResult
 from app.core.process_assets import (
     build_compiled_execution_package_process_asset_ref,
+    build_graph_patch_proposal_process_asset_ref,
     build_result_process_assets,
     resolve_process_asset,
 )
+from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.versioning import build_process_asset_canonical_ref
 from app.db.repository import ControlPlaneRepository
 
@@ -139,6 +144,8 @@ def test_build_result_process_assets_adds_governance_document_asset() -> None:
             "version_int": 1,
             "process_asset_kind": "GOVERNANCE_DOCUMENT",
             "producer_ticket_id": "tkt_gov_doc_source",
+            "visibility_status": "CONSUMABLE",
+            "linked_process_asset_refs": [],
             "summary": "Keep the next slice aligned to the MVP boundary.",
             "consumable_by": ["context_compiler", "followup_ticket", "review"],
             "source_metadata": {
@@ -501,6 +508,9 @@ def test_resolve_process_asset_accepts_legacy_short_ref_and_returns_canonical_ve
                             "workspace_id": "ws_default",
                             "lease_owner": "emp_frontend_2",
                             "governance_profile_ref": "gp_compile_runtime",
+                            "graph_version": "gv_compile_001",
+                            "asset_digest": "digest_compile_001",
+                            "idempotency_key": "compile:wf_compile:tkt_compile_001:gv_compile_001:digest_compile_001",
                             "compiler_version": "context-compiler.min.v1",
                         },
                     "compiled_role": {
@@ -655,6 +665,9 @@ def test_resolve_process_asset_accepts_legacy_short_ref_and_returns_canonical_ve
                             "workspace_id": "ws_default",
                             "lease_owner": "emp_frontend_2",
                             "governance_profile_ref": "gp_compile_runtime",
+                            "graph_version": "gv_compile_002",
+                            "asset_digest": "digest_compile_002",
+                            "idempotency_key": "compile:wf_compile:tkt_compile_001:gv_compile_002:digest_compile_002",
                             "compiler_version": "context-compiler.min.v1",
                         },
                     "compiled_role": {
@@ -841,14 +854,33 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
-
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
-            "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:process-assets",
-        },
-    )
+    proposal_payload = {
+        "proposal_ref": build_graph_patch_proposal_process_asset_ref(advisory_session["session_id"]),
+        "workflow_id": workflow_id,
+        "session_id": advisory_session["session_id"],
+        "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+        "proposal_summary": "Freeze the execution lane while the board reviews the constraint patch.",
+        "impact_summary": "The patch should keep the current node frozen for follow-up review.",
+        "freeze_node_ids": ["node_homepage_visual"],
+        "focus_node_ids": ["node_homepage_visual"],
+        "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+        "proposal_hash": "hash-process-asset-advisory-patch",
+    }
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal_payload),
+            response_id="resp_process_asset_advisory_patch",
+            selected_payload=proposal_payload,
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:process-assets",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
@@ -866,9 +898,10 @@ def test_resolve_board_advisory_graph_patch_assets(client) -> None:
             (advisory_session["session_id"],),
         )
     resolved_proposal = resolve_process_asset(repository, proposal_ref)
+    canonical_proposal_ref = build_process_asset_canonical_ref(proposal_ref, 1)
 
     assert resolved_proposal.process_asset_kind == "GRAPH_PATCH_PROPOSAL"
-    assert resolved_proposal.process_asset_ref == proposal_ref
+    assert resolved_proposal.process_asset_ref == canonical_proposal_ref
     assert resolved_proposal.json_content["proposal_ref"] == proposal_ref
     assert resolved_proposal.json_content["freeze_node_ids"] == ["node_homepage_visual"]
     assert resolved_proposal.json_content["focus_node_ids"] == ["node_homepage_visual"]

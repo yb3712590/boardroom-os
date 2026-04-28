@@ -19,6 +19,9 @@ class CompileRequestMeta(TenantWorkspaceScope):
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
     governance_profile_ref: str = Field(min_length=1)
+    graph_version: str = Field(min_length=1)
+    asset_digest: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
     ticket_projection_version: int | None = Field(default=None, ge=1)
     node_projection_version: int | None = Field(default=None, ge=1)
     runtime_node_projection_version: int | None = Field(default=None, ge=1)
@@ -393,6 +396,9 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     node_id: str = Field(min_length=1)
     attempt_no: int = Field(ge=1)
     governance_profile_ref: str = Field(min_length=1)
+    graph_version: str = Field(min_length=1)
+    asset_digest: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1)
     version_ref: str | None = None
     version_int: int | None = Field(default=None, ge=1)
     supersedes_ref: str | None = None

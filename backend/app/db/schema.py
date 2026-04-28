@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS runtime_node_projection (
     latest_ticket_id TEXT NOT NULL,
     status TEXT NOT NULL,
     blocking_reason_code TEXT,
+    graph_version TEXT,
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL,
     PRIMARY KEY (workflow_id, graph_node_id)

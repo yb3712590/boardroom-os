@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
@@ -496,14 +497,33 @@ def _build_board_advisory_analysis_compile_request(
         employee_role_type=executor.role_type,
         connection=connection,
     )
+    graph_version = str(session.get("source_version") or "gv_0")
+    asset_digest = hashlib.sha256(
+        _stable_json_hash(
+            {
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "graph_version": graph_version,
+                "process_asset_refs": process_asset_refs,
+                "output_schema_ref": GRAPH_PATCH_PROPOSAL_SCHEMA_REF,
+                "output_schema_version": GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
+                "governance_profile_ref": str(current_profile.get("profile_id") or ""),
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    compile_idempotency_key = f"compile:{workflow_id}:{ticket_id}:{graph_version}:{asset_digest}"
     return CompileRequest(
         meta=CompileRequestMeta(
-            compile_request_id=new_prefixed_id("creq"),
+            compile_request_id=f"creq_{hashlib.sha256(compile_idempotency_key.encode('utf-8')).hexdigest()[:12]}",
             ticket_id=ticket_id,
             workflow_id=workflow_id,
             node_id=node_id,
             attempt_no=1,
             governance_profile_ref=str(current_profile.get("profile_id") or ""),
+            graph_version=graph_version,
+            asset_digest=asset_digest,
+            idempotency_key=compile_idempotency_key,
             tenant_id=str(workflow.get("tenant_id") or DEFAULT_TENANT_ID),
             workspace_id=str(workflow.get("workspace_id") or DEFAULT_WORKSPACE_ID),
             ticket_projection_version=1,

@@ -14,7 +14,12 @@ import pytest
 import tests.test_api as api_test_helpers
 from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
-from app.core.constants import EVENT_SCHEDULER_ORCHESTRATION_RECORDED, EVENT_TICKET_CREATED
+from app.core.constants import (
+    BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+    EVENT_INCIDENT_OPENED,
+    EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
+    EVENT_TICKET_CREATED,
+)
 from app.core.execution_targets import infer_execution_contract_payload
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
@@ -1575,6 +1580,7 @@ def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, s
 def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_maker_completion(
     client,
     set_ticket_time,
+    monkeypatch,
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
@@ -1586,7 +1592,16 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
             role_profile_ref="ui_designer_primary",
         ),
     )
-    client.post(
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    api_test_helpers._ensure_default_governance_profile(
+        client,
+        workflow_id="wf_runner_checker_chain",
+    )
+    lease_response = client.post(
         "/api/v1/commands/ticket-lease",
         json={
             "workflow_id": "wf_runner_checker_chain",
@@ -1597,7 +1612,8 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
             "idempotency_key": "ticket-lease:wf_runner_checker_chain:tkt_runner_maker:emp_frontend_2",
         },
     )
-    client.post(
+    assert lease_response.json()["status"] == "ACCEPTED", lease_response.text
+    start_response = client.post(
         "/api/v1/commands/ticket-start",
         json={
             "workflow_id": "wf_runner_checker_chain",
@@ -1607,6 +1623,7 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
             "idempotency_key": "ticket-start:wf_runner_checker_chain:tkt_runner_maker",
         },
     )
+    assert start_response.json()["status"] == "ACCEPTED", start_response.text
     maker_submit = client.post(
         "/api/v1/commands/ticket-result-submit",
         json={
@@ -1695,6 +1712,29 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
     assert node_before_runner is not None
     checker_ticket_id = node_before_runner["latest_ticket_id"]
     approvals_before_runner = repository.list_open_approvals()
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="checker_primary",
+        output_schema_ref="maker_checker_verdict",
+    )
+
+    def _fake_checker_runtime(_repository, _ticket, _execution_package, _created_spec):
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Checker approved the submitted deliverable.",
+            result_payload={
+                "summary": "Checker approved the submitted deliverable.",
+                "review_status": "APPROVED",
+                "findings": [],
+            },
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_runtime_with_provider_if_configured",
+        _fake_checker_runtime,
+    )
 
     set_ticket_time("2026-03-28T10:01:00+08:00")
     ack = run_scheduler_once(
@@ -1707,12 +1747,129 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
     inbox_items = client.get("/api/v1/projections/inbox").json()["data"]["items"]
 
     assert maker_submit.status_code == 200
-    assert maker_submit.json()["status"] == "ACCEPTED"
+    assert maker_submit.json()["status"] == "ACCEPTED", maker_submit.text
     assert checker_ticket_id != "tkt_runner_maker"
     assert approvals_before_runner == []
     assert ack.status.value == "ACCEPTED"
     assert len(approvals) == 1
     assert inbox_items[0]["route_target"]["view"] == "review_room"
+
+
+def test_scheduler_runner_freezes_checker_on_missing_process_asset_without_replacement(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-04-28T12:00:00+08:00")
+    workflow_id = "wf_runner_checker_missing_asset"
+    node_id = "node_runner_checker_missing_asset"
+    source_ticket_id = "tkt_runner_checker_missing_asset_source"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Checker context compilation should fail closed on missing evidence.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{source_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+    source_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=node_id,
+            include_review_request=True,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{source_ticket_id}:source",
+        ),
+    )
+    assert source_response.status_code == 200
+    assert source_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(connection, checker_ticket_id)
+    missing_ref = next(
+        ref
+        for ref in checker_created_spec["input_process_asset_refs"]
+        if "/evidence-pack/" in ref
+    )
+    ticket_count_before = len(
+        [event for event in repository.list_events_for_testing() if event["event_type"] == EVENT_TICKET_CREATED]
+    )
+
+    def _fail_fast_if_compile_succeeds(*_args, **_kwargs):
+        raise AssertionError("Context compilation should fail before runtime execution.")
+
+    monkeypatch.setattr(runtime_module, "_execute_runtime_with_provider_if_configured", _fail_fast_if_compile_succeeds)
+    lease_response = client.post(
+        "/api/v1/commands/ticket-lease",
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    assert lease_response.status_code == 200
+    assert lease_response.json()["status"] == "ACCEPTED"
+    start_response = client.post(
+        "/api/v1/commands/ticket-start",
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    assert start_response.status_code == 200
+    assert start_response.json()["status"] == "ACCEPTED"
+    missing_entry = repository.get_process_asset_index_entry(missing_ref)
+    assert missing_entry is not None
+    with repository.transaction() as connection:
+        connection.execute(
+            "DELETE FROM process_asset_index WHERE process_asset_ref = ?",
+            (missing_entry["process_asset_ref"],),
+        )
+    assert repository.get_process_asset_index_entry(missing_ref) is None
+    run_leased_ticket_runtime(repository)
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id)
+    checker_node = repository.get_current_node_projection(workflow_id, node_id)
+    events = repository.list_events_for_testing()
+    incidents = [
+        event
+        for event in events
+        if event["event_type"] == EVENT_INCIDENT_OPENED
+        and event["payload"].get("incident_type") == "EVIDENCE_GAP"
+    ]
+    failed_checker_events = [
+        event
+        for event in events
+        if event["event_type"] == "TICKET_FAILED"
+        and event["payload"].get("ticket_id") == checker_ticket_id
+    ]
+    ticket_count_after = len(
+        [event for event in events if event["event_type"] == EVENT_TICKET_CREATED]
+    )
+
+    assert checker_ticket["status"] == "PENDING"
+    assert checker_ticket["blocking_reason_code"] == BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED
+    assert checker_node["latest_ticket_id"] == checker_ticket_id
+    assert checker_node["blocking_reason_code"] == BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED
+    assert incidents
+    assert incidents[-1]["payload"]["recovery_priority"] == ["RECOMPILE_CONTEXT"]
+    assert failed_checker_events == []
+    assert ticket_count_after == ticket_count_before
 
 
 def test_scheduler_runner_auto_runs_artifact_cleanup_once_per_interval_bucket(
@@ -2106,22 +2263,91 @@ def test_runtime_completes_governance_document_ticket_on_live_role(client, set_t
     ]
 
 
-def test_runtime_governance_document_completion_routes_to_internal_governance_checker(client, set_ticket_time):
+def test_runtime_governance_document_completion_routes_to_internal_governance_checker(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-04-07T19:05:00+08:00")
     repository = client.app.state.repository
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id="wf_runtime_governance_gate",
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Governance document completion should route to an internal checker.",
+    )
 
+    create_payload = _ticket_create_payload(
+        workflow_id="wf_runtime_governance_gate",
+        ticket_id="tkt_runtime_governance_gate",
+        node_id="node_runtime_governance_gate",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        allowed_tools=["read_artifact", "write_artifact"],
+        allowed_write_set=["reports/governance/tkt_runtime_governance_gate/*"],
+        acceptance_criteria=["Must produce a structured architecture_brief governance document."],
+    )
+    create_payload["auto_review_request"] = {
+        "review_type": "INTERNAL_GOVERNANCE_REVIEW",
+        "priority": "high",
+        "title": "Check architecture brief",
+        "subtitle": "Internal checker should validate the governance document.",
+        "blocking_scope": "NODE_ONLY",
+        "trigger_reason": "Governance document reached the internal checker gate.",
+        "why_now": "Downstream work should only consume checked governance.",
+        "recommended_action": "APPROVE",
+        "recommended_option_id": "internal_governance_ok",
+        "recommendation_summary": "Architecture brief is ready for internal governance review.",
+        "options": [
+            {
+                "option_id": "internal_governance_ok",
+                "label": "Pass governance document",
+                "summary": "Architecture brief is ready for the next governance step.",
+                "artifact_refs": [],
+            }
+        ],
+        "evidence_summary": [],
+        "available_actions": ["APPROVE", "REJECT", "MODIFY_CONSTRAINTS"],
+        "draft_selected_option_id": "internal_governance_ok",
+        "comment_template": "",
+        "inbox_title": "Check architecture brief",
+        "inbox_summary": "Internal governance review is ready.",
+        "badges": ["governance", "internal_check"],
+    }
     client.post(
         "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id="wf_runtime_governance_gate",
-            ticket_id="tkt_runtime_governance_gate",
-            node_id="node_runtime_governance_gate",
-            role_profile_ref="frontend_engineer_primary",
-            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
-            allowed_tools=["read_artifact", "write_artifact"],
-            allowed_write_set=["reports/governance/tkt_runtime_governance_gate/*"],
-            acceptance_criteria=["Must produce a structured architecture_brief governance document."],
-        ),
+        json=create_payload,
+    )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+    )
+    api_test_helpers._ensure_default_governance_profile(
+        client,
+        workflow_id="wf_runtime_governance_gate",
+    )
+    def _fake_governance_runtime(_repository, ticket, _execution_package, _created_spec):
+        ticket_id = str(ticket["ticket_id"])
+        artifact_ref = f"art://runtime/{ticket_id}/architecture_brief.json"
+        return RuntimeExecutionResult(
+            result_status="completed",
+            completion_summary="Governance document completed.",
+            artifact_refs=[artifact_ref],
+            written_artifacts=[
+                {
+                    "path": f"reports/governance/{ticket_id}/architecture_brief.json",
+                    "artifact_ref": artifact_ref,
+                    "kind": "JSON",
+                    "content_json": _mock_provider_payload_for_schema(ARCHITECTURE_BRIEF_SCHEMA_REF),
+                }
+            ],
+            result_payload=_mock_provider_payload_for_schema(ARCHITECTURE_BRIEF_SCHEMA_REF)
+            | {"linked_artifact_refs": [artifact_ref]},
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_execute_runtime_with_provider_if_configured",
+        _fake_governance_runtime,
     )
     client.post(
         "/api/v1/commands/ticket-lease",
@@ -2137,7 +2363,7 @@ def test_runtime_governance_document_completion_routes_to_internal_governance_ch
 
     outcomes = run_leased_ticket_runtime(repository)
 
-    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runtime_governance_gate"]
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runtime_governance_gate"], outcomes
     current_node = repository.get_current_node_projection("wf_runtime_governance_gate", "node_runtime_governance_gate")
     assert current_node is not None
     assert current_node["latest_ticket_id"] != "tkt_runtime_governance_gate"
