@@ -9,7 +9,11 @@ from app.config import get_settings
 from app.core.ceo_execution_presets import build_ceo_create_ticket_command
 from app.core.persona_profiles import build_seeded_persona_variant
 from app.core.runtime_provider_config import resolve_runtime_provider_config
-from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
+from app.core.staffing_catalog import (
+    STAFFING_CAPACITY_HIRE_ALLOWED_REASON_CODE,
+    resolve_available_staffing_employee_id,
+    resolve_limited_ceo_staffing_combo,
+)
 from app.db.repository import ControlPlaneRepository
 
 
@@ -59,7 +63,8 @@ def execute_ceo_action_batch(
     for action in action_batch.actions:
         action_type = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
         payload = action.payload.model_dump(mode="json")
-        if _action_key(action_type=action_type, payload=payload) not in accepted_keys:
+        accepted_item = accepted_keys.get(_action_key(action_type=action_type, payload=payload))
+        if accepted_item is None:
             continue
 
         if action.action_type == CEOActionType.NO_ACTION:
@@ -156,7 +161,19 @@ def execute_ceo_action_batch(
                     )
                 )
                 continue
-            employee_id = action.payload.employee_id_hint or str(template["employee_id_hint"])
+            accepted_details = dict(accepted_item.get("details") or {})
+            employee_id = str(accepted_details.get("resolved_employee_id") or "").strip()
+            if not employee_id and action.payload.employee_id_hint:
+                employee_id = action.payload.employee_id_hint
+            if not employee_id:
+                employee_id = resolve_available_staffing_employee_id(
+                    employee_id_hint=None,
+                    template=template,
+                    existing_employee_ids=[
+                        employee["employee_id"]
+                        for employee in repository.list_employee_projections()
+                    ],
+                )
             variant_seed = get_settings().ceo_staffing_variant_seed
             resolved_profiles = (
                 build_seeded_persona_variant(
@@ -191,6 +208,10 @@ def execute_ceo_action_batch(
                     ),
                     request_summary=action.payload.request_summary,
                     idempotency_key=f"ceo-hire-request:{action.payload.workflow_id}:{employee_id}",
+                ),
+                allow_high_overlap=(
+                    str(accepted_details.get("reason_code") or "").strip()
+                    == STAFFING_CAPACITY_HIRE_ALLOWED_REASON_CODE
                 ),
             )
             executed_actions.append(

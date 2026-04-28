@@ -32,7 +32,15 @@ from app.core.persona_profiles import (
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.config import get_settings
-from app.core.staffing_catalog import resolve_limited_ceo_staffing_combo
+from app.core.staffing_catalog import (
+    STAFFING_CAPACITY_HIRE_ALLOWED_REASON_CODE,
+    STAFFING_CAP_REACHED_REASON_CODE,
+    build_staffing_capacity_details,
+    count_active_board_approved_staffing_matches,
+    resolve_available_staffing_employee_id,
+    resolve_limited_ceo_staffing_combo,
+    staffing_capacity_is_available,
+)
 from app.core.runtime_node_views import (
     MATERIALIZATION_STATE_MATERIALIZED,
     build_runtime_graph_node_views,
@@ -53,6 +61,45 @@ def _action_entry(action, reason: str, details: dict[str, Any] | None = None) ->
     if details is not None:
         entry["details"] = details
     return entry
+
+
+def _snapshot_allows_capacity_hire(
+    snapshot: dict[str, Any] | None,
+    *,
+    role_type: str,
+    role_profile_refs: list[str],
+    capacity_details: dict[str, Any],
+) -> bool:
+    if snapshot is None or not staffing_capacity_is_available(capacity_details):
+        return False
+    controller_state = controller_state_view(snapshot)
+    if str(controller_state.get("recommended_action") or "").strip() != "HIRE_EMPLOYEE":
+        return False
+    capability_plan = capability_plan_view(snapshot)
+    recommended_hire = capability_plan.get("recommended_hire")
+    if not isinstance(recommended_hire, dict):
+        return False
+    normalized_refs = sorted(str(item).strip() for item in role_profile_refs if str(item).strip())
+    recommended_refs = sorted(
+        str(item).strip()
+        for item in list(recommended_hire.get("role_profile_refs") or [])
+        if str(item).strip()
+    )
+    if str(recommended_hire.get("role_type") or "").strip() != str(role_type or "").strip():
+        return False
+    if recommended_refs != normalized_refs:
+        return False
+    for gap in list(capability_plan.get("ready_ticket_staffing_gaps") or []):
+        if not isinstance(gap, dict):
+            continue
+        if str(gap.get("reason_code") or "").strip() not in {"NO_ACTIVE_ROLE_WORKER", "WORKER_BUSY"}:
+            continue
+        if str(gap.get("role_type") or "").strip() != str(role_type or "").strip():
+            continue
+        gap_ref = str(gap.get("required_role_profile_ref") or "").strip()
+        if gap_ref and gap_ref in normalized_refs:
+            return True
+    return False
 
 
 def validate_ceo_action_batch(
@@ -96,6 +143,13 @@ def validate_ceo_action_batch(
             if staffing_reason is not None:
                 rejected_actions.append(_action_entry(action, staffing_reason))
                 continue
+            all_employees = repository.list_employee_projections()
+            active_matching_count = count_active_board_approved_staffing_matches(
+                role_type=action.payload.role_type,
+                role_profile_refs=action.payload.role_profile_refs,
+                employees=all_employees,
+            )
+            max_active_count = int(template["max_active_count"])
             if (
                 action.payload.employee_id_hint
                 and repository.get_employee_projection(action.payload.employee_id_hint) is not None
@@ -104,7 +158,11 @@ def validate_ceo_action_batch(
                     _action_entry(action, "Suggested employee_id_hint already exists in the current roster.")
                 )
                 continue
-            employee_id = action.payload.employee_id_hint or str(template["employee_id_hint"])
+            employee_id = resolve_available_staffing_employee_id(
+                employee_id_hint=action.payload.employee_id_hint,
+                template=template,
+                existing_employee_ids=[employee["employee_id"] for employee in all_employees],
+            )
             variant_seed = get_settings().ceo_staffing_variant_seed
             resolved_profiles = (
                 build_seeded_persona_variant(
@@ -122,6 +180,21 @@ def validate_ceo_action_batch(
                     "aesthetic_profile": dict(template.get("aesthetic_profile") or {}),
                 }
             )
+            capacity_details = build_staffing_capacity_details(
+                reason_code=STAFFING_CAPACITY_HIRE_ALLOWED_REASON_CODE,
+                role_type=action.payload.role_type,
+                role_profile_refs=action.payload.role_profile_refs,
+                active_matching_count=active_matching_count,
+                max_active_count=max_active_count,
+                template_id=str(template["template_id"]),
+                resolved_employee_id=employee_id,
+            )
+            capacity_hire_allowed = _snapshot_allows_capacity_hire(
+                snapshot,
+                role_type=action.payload.role_type,
+                role_profile_refs=action.payload.role_profile_refs,
+                capacity_details=capacity_details,
+            )
             conflict = find_same_role_high_overlap_conflict(
                 role_type=action.payload.role_type,
                 skill_profile=resolved_profiles.get("skill_profile") or {},
@@ -132,7 +205,7 @@ def validate_ceo_action_batch(
                     board_approved_only=True,
                 ),
             )
-            if conflict is not None:
+            if conflict is not None and not capacity_hire_allowed:
                 details = build_role_already_covered_details(
                     role_type=action.payload.role_type,
                     role_profile_refs=action.payload.role_profile_refs,
@@ -149,10 +222,31 @@ def validate_ceo_action_batch(
                     )
                 )
                 continue
+            if active_matching_count >= max_active_count:
+                details = build_staffing_capacity_details(
+                    reason_code=STAFFING_CAP_REACHED_REASON_CODE,
+                    role_type=action.payload.role_type,
+                    role_profile_refs=action.payload.role_profile_refs,
+                    active_matching_count=active_matching_count,
+                    max_active_count=max_active_count,
+                    template_id=str(template["template_id"]),
+                )
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        (
+                            "Staffing capacity cap is reached for "
+                            f"{action.payload.role_type} on the current limited CEO staffing path."
+                        ),
+                        details,
+                    )
+                )
+                continue
             accepted_actions.append(
                 _action_entry(
                     action,
                     f"Mainline staffing template {template['template_id']} is valid for shadow hire.",
+                    capacity_details if capacity_hire_allowed else None,
                 )
             )
             continue

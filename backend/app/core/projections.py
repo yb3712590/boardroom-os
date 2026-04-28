@@ -397,6 +397,7 @@ def _build_workforce_hire_templates() -> list[StaffingHireTemplateProjection]:
             label=str(template["label"]),
             role_type=str(template["role_type"]),
             role_profile_refs=list(template.get("role_profile_refs") or []),
+            max_active_count=int(template["max_active_count"]),
             employee_id_hint=str(template["employee_id_hint"]),
             provider_id=template.get("provider_id"),
             request_summary=str(template["request_summary"]),

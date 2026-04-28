@@ -146,6 +146,7 @@ class StaffingHireTemplateProjection(StrictModel):
     label: str
     role_type: str
     role_profile_refs: list[str]
+    max_active_count: int
     employee_id_hint: str
     provider_id: str | None = None
     request_summary: str

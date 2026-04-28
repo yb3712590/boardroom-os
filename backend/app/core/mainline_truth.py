@@ -38,6 +38,17 @@ class RuntimeSupportRow:
 
 
 @dataclass(frozen=True)
+class StaffingCapacityTruth:
+    role_type: str
+    role_profile_refs: tuple[str, ...]
+    max_active_count: int
+    busy_worker_policy: str
+    cap_reached_policy: str
+    public_hire_overlap_policy: str
+    notes: str
+
+
+@dataclass(frozen=True)
 class FrozenCapabilityBoundary:
     slug: str
     label: str
@@ -203,6 +214,73 @@ MAINLINE_RUNTIME_SUPPORT_MATRIX: tuple[RuntimeSupportRow, ...] = (
         output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
         supported_modes=("OPENAI_COMPAT_LIVE",),
         notes="所有主线 maker-checker verdict 当前都由 checker_primary 产出。",
+    ),
+)
+
+
+MAINLINE_STAFFING_CAPACITY_TRUTH: tuple[StaffingCapacityTruth, ...] = (
+    StaffingCapacityTruth(
+        role_type="frontend_engineer",
+        role_profile_refs=("frontend_engineer_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="CEO 自动招聘可在 active frontend worker 忙碌且未达 cap 时补容量；手工招聘仍走严格重复画像护栏。",
+    ),
+    StaffingCapacityTruth(
+        role_type="checker",
+        role_profile_refs=("checker_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="checker 可按容量补到 2 名 active board-approved 员工；provider paused / worker excluded 不触发扩招。",
+    ),
+    StaffingCapacityTruth(
+        role_type="backend_engineer",
+        role_profile_refs=("backend_engineer_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="backend ready ticket 遇到现有 worker busy 时允许补容量；达到 2 人后进入 STAFFING_CAP_REACHED 等待。",
+    ),
+    StaffingCapacityTruth(
+        role_type="database_engineer",
+        role_profile_refs=("database_engineer_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="database worker 的自动扩容语义与 backend 一致，只统计 active board-approved 且覆盖 role_profile 的员工。",
+    ),
+    StaffingCapacityTruth(
+        role_type="platform_sre",
+        role_profile_refs=("platform_sre_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="platform worker 的自动扩容语义与 backend 一致；冻结、替换和未审批员工不计入 cap。",
+    ),
+    StaffingCapacityTruth(
+        role_type="governance_architect",
+        role_profile_refs=("architect_primary",),
+        max_active_count=2,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="architect governance 可补一名容量 worker，但仍只服务治理文档主线，不进入 staged BUILD/CHECK/REVIEW owner_role。",
+    ),
+    StaffingCapacityTruth(
+        role_type="governance_cto",
+        role_profile_refs=("cto_primary",),
+        max_active_count=1,
+        busy_worker_policy="HIRE_WHEN_BELOW_CAP",
+        cap_reached_policy="STAFFING_WAIT",
+        public_hire_overlap_policy="STRICT_ROLE_ALREADY_COVERED",
+        notes="CTO governance 是 singleton capacity；已有 active cto 时即使 busy 也等待，不再补第二名 CTO。",
     ),
 )
 

@@ -203,6 +203,7 @@ def _resolve_employee_hire_request(
     command_id: str,
     received_at,
     staffing_combo_resolver: Callable[[str, list[str] | tuple[str, ...]], tuple[dict[str, Any] | None, str | None]],
+    allow_high_overlap: bool = False,
 ) -> tuple[dict[str, Any] | None, CommandAckEnvelope | None]:
     workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
     if workflow is None:
@@ -249,7 +250,7 @@ def _resolve_employee_hire_request(
             board_approved_only=True,
         ),
     )
-    if conflict is not None:
+    if conflict is not None and not allow_high_overlap:
         details = build_role_already_covered_details(
             role_type=payload.role_type,
             role_profile_refs=payload.role_profile_refs,
@@ -272,6 +273,8 @@ def _resolve_employee_hire_request(
 def handle_ceo_direct_employee_hire(
     repository: ControlPlaneRepository,
     payload: EmployeeHireRequestCommand,
+    *,
+    allow_high_overlap: bool = False,
 ) -> CommandAckEnvelope:
     repository.initialize()
 
@@ -294,6 +297,7 @@ def handle_ceo_direct_employee_hire(
             command_id=command_id,
             received_at=received_at,
             staffing_combo_resolver=resolve_limited_ceo_staffing_combo,
+            allow_high_overlap=allow_high_overlap,
         )
         if rejected_ack is not None:
             return rejected_ack

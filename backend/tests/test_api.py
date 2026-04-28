@@ -15780,6 +15780,15 @@ def test_workforce_projection_exposes_staffing_templates_and_server_driven_actio
         "architect_governance_backup",
         "cto_governance_backup",
     ]
+    assert [template["max_active_count"] for template in body["hire_templates"]] == [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        1,
+    ]
     assert all("supported_output_schema_refs" not in template for template in body["hire_templates"])
     assert all("supported_execution_target_refs" not in template for template in body["hire_templates"])
     assert [template["template_id"] for template in body["role_templates_catalog"]["role_templates"]] == [

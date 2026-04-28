@@ -1,6 +1,6 @@
 # 主线真相表
 
-> 最后更新：2026-04-25
+> 最后更新：2026-04-27
 > 这份文档只回答一个问题：**当前代码里到底什么是真的**。如果 `README`、设计文档和这里冲突，先以代码现实和这份表为准。
 
 ## 1. 主链阶段对照表
@@ -79,6 +79,9 @@
 - 上述 capability plan 当前会先读取 backlog recommendation 里的结构化 ticket split；如果票项显式带 `target_role / owner_role`，controller 会把 `backend / database / platform` 映射到对应 `source_code_delivery` build 票，不再默认全部落到前端。active roster 覆盖不到时，controller 会先暴露 `staffing_gaps`，不会静默改派给现有 frontend
 - 当 autopilot workflow 的硬约束显式提到 `architect_primary` 时，实现 fanout 现在有两段 architect gate：没有 active architect 时，controller 会先建议 `HIRE_EMPLOYEE`
 - autopilot 主线里的 `HIRE_EMPLOYEE` 现在不会再创建 `CORE_HIRE_APPROVAL`；CEO 自动招聘会直接注册 active employee 进入 roster。手工 `employee-hire-request` 仍保留 `CORE_HIRE_APPROVAL` 审批链
+- CEO 自动招聘现在按“可用性 + 同类 active 人数 cap”决策：没有 active role worker 时仍建议招聘；同类 worker 全部 busy 且未达 cap 时允许补容量；达到 cap 后进入 `STAFFING_WAIT / STAFFING_CAP_REACHED`，不再继续招聘。`WORKER_EXCLUDED` 和 `PROVIDER_PAUSED` 仍只等待恢复，不触发招聘
+- 当前 staffing cap 固定来自 `staffing_catalog`：`frontend / checker / backend / database / platform / architect` 最多 2 名 active board-approved 员工，`governance_cto` 最多 1 名。cap 只统计 `ACTIVE + board_approved + 覆盖 role_profile_refs` 的员工，不统计 frozen、replaced 或未审批员工
+- CEO capacity hire 只在 snapshot 明确暴露 `NO_ACTIVE_ROLE_WORKER / WORKER_BUSY` staffing gap 且未达 cap 时放宽同岗 high-overlap；手工 `employee-hire-request` 和非 staffing gap 的 CEO 招聘仍按 `ROLE_ALREADY_COVERED` 严格拒绝重复画像。默认员工 ID 已改为稳定后缀策略，例如 `emp_backend_backup_2`
 - architect 已在岗但还没有过 governance gate 的 `architect_primary` 文档时，`workflow_controller` 现在会在 `capability_plan.required_governance_ticket_plan` 暴露一条稳定的 architect `architecture_brief` 补票计划；deterministic fallback 和 CEO `CREATE_TICKET` 校验都会先对齐这条计划，再允许实现 fanout
 - 上述 architect gate 的满足口径现在已放宽到任意已过 internal governance gate 的 `architect_primary` 文档：`architecture_brief / technology_decision / detailed_design` 任一成立都算放行；自动补票默认仍只补 `architecture_brief`
 - 当 autopilot workflow 的硬约束显式要求技术决策会议时，controller 现在会为 backlog fanout 追加专用 meeting candidate；只有关闭且已批准的 meeting evidence 出现后，controller 才会放行实现票。缺 meeting evidence 时，deterministic/live path 会先 `REQUEST_MEETING` 或保持阻断

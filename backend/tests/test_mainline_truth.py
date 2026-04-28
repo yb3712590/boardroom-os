@@ -4,10 +4,10 @@ from pathlib import Path
 
 from app.api.router_registry import ALL_ROUTE_GROUPS, FROZEN_ROUTE_GROUPS
 from app.core.api_surface import API_SURFACE_GROUP_ORDER, collect_api_surface_groups
-from app.core.approval_handlers import FOLLOWUP_OWNER_ROLE_TO_PROFILE
 from app.core.mainline_truth import (
     FROZEN_CAPABILITY_BOUNDARIES,
     MAINLINE_RUNTIME_SUPPORT_MATRIX,
+    MAINLINE_STAFFING_CAPACITY_TRUTH,
     MAINLINE_WORKFLOW_STAGE_TRUTH,
 )
 from app.core.output_schemas import (
@@ -24,6 +24,8 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.runtime import SUPPORTED_RUNTIME_OUTPUT_SCHEMAS, SUPPORTED_RUNTIME_ROLE_PROFILES
+from app.core.staffing_catalog import list_board_workforce_staffing_hire_templates
+from app.core.workflow_controller import _ROLE_PROFILE_BY_TARGET_ROLE as FOLLOWUP_OWNER_ROLE_TO_PROFILE
 from app.contracts.worker_admin import WorkerAdminBindingItem, WorkerAdminIssueBootstrapRequest
 from app.contracts.worker_runtime import WorkerAssignmentsData
 from app.main import create_app
@@ -83,6 +85,30 @@ def test_mainline_truth_records_frontend_followup_mapping_as_current_reality() -
     assert "frontend_engineer" in build_stage.actual_owner_roles
     assert "frontend_engineer_primary" in build_stage.actual_role_profiles
     assert "独立 runtime worker" in build_stage.notes
+
+
+def test_mainline_staffing_capacity_truth_matches_staffing_catalog() -> None:
+    truth_by_role = {entry.role_type: entry for entry in MAINLINE_STAFFING_CAPACITY_TRUTH}
+    templates_by_role = {
+        str(template["role_type"]): template
+        for template in list_board_workforce_staffing_hire_templates()
+    }
+
+    assert set(truth_by_role) == set(templates_by_role)
+    assert truth_by_role["governance_cto"].max_active_count == 1
+    assert all(
+        entry.max_active_count == 2
+        for role_type, entry in truth_by_role.items()
+        if role_type != "governance_cto"
+    )
+
+    for role_type, template in templates_by_role.items():
+        truth = truth_by_role[role_type]
+        assert truth.role_profile_refs == tuple(template["role_profile_refs"])
+        assert truth.max_active_count == int(template["max_active_count"])
+        assert truth.busy_worker_policy == "HIRE_WHEN_BELOW_CAP"
+        assert truth.cap_reached_policy == "STAFFING_WAIT"
+        assert truth.public_hire_overlap_policy == "STRICT_ROLE_ALREADY_COVERED"
 
 
 def test_frozen_capability_boundaries_match_current_mounted_routes_and_documented_refs() -> None:

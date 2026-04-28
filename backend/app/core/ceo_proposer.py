@@ -38,7 +38,12 @@ from app.core.execution_targets import (
     employee_supports_execution_contract,
     infer_execution_contract_payload,
 )
-from app.core.employee_reuse import build_role_already_covered_details, find_reuse_candidate_employee
+from app.core.staffing_catalog import (
+    STAFFING_CAP_REACHED_REASON_CODE,
+    build_staffing_capacity_details,
+    count_active_board_approved_staffing_matches,
+    resolve_limited_ceo_staffing_combo,
+)
 from app.core.provider_openai_compat import (
     OpenAICompatProviderConfig,
     OpenAICompatProviderError,
@@ -1269,26 +1274,38 @@ def _build_capability_hire_batch(
             message="recommended_hire is incomplete.",
             details={"missing_fields": missing_fields},
         )
-    reuse_candidate = find_reuse_candidate_employee(
+    active_board_approved_employees = repository.list_employee_projections(
+        states=["ACTIVE"],
+        board_approved_only=True,
+    )
+    template, staffing_reason = resolve_limited_ceo_staffing_combo(role_type, role_profile_refs)
+    if staffing_reason is not None or template is None:
+        _raise_proposal_contract_error(
+            source_component="deterministic_fallback.capability_hire",
+            reason_code="STAFFING_TEMPLATE_UNSUPPORTED",
+            message=staffing_reason or "Controller requested unsupported HIRE_EMPLOYEE staffing template.",
+        )
+    active_matching_count = count_active_board_approved_staffing_matches(
         role_type=role_type,
         role_profile_refs=role_profile_refs,
-        employees=repository.list_employee_projections(
-            states=["ACTIVE"],
-            board_approved_only=True,
-        ),
+        employees=active_board_approved_employees,
     )
-    if role_type == "governance_cto" and reuse_candidate is not None:
-        details = build_role_already_covered_details(
+    max_active_count = int(template["max_active_count"])
+    if active_matching_count >= max_active_count:
+        details = build_staffing_capacity_details(
+            reason_code=STAFFING_CAP_REACHED_REASON_CODE,
             role_type=role_type,
             role_profile_refs=role_profile_refs,
-            reuse_candidate_employee_id=str(reuse_candidate["employee_id"]),
+            active_matching_count=active_matching_count,
+            max_active_count=max_active_count,
+            template_id=str(template["template_id"]),
         )
         _raise_proposal_contract_error(
             source_component="deterministic_fallback.capability_hire",
-            reason_code="ROLE_ALREADY_COVERED",
+            reason_code=STAFFING_CAP_REACHED_REASON_CODE,
             message=(
-                "Controller requested HIRE_EMPLOYEE, but the role profile is already covered by "
-                f"active board-approved worker {reuse_candidate['employee_id']}."
+                "Controller requested HIRE_EMPLOYEE, but the staffing capacity cap is already reached "
+                f"for {role_type}."
             ),
             details=details,
         )

@@ -2250,7 +2250,7 @@ def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_en
     monkeypatch.setenv("BOARDROOM_OS_CEO_STAFFING_VARIANT_SEED", "17")
     workflow_id = _project_init(client, "CEO validator seeded variant")
     repository = client.app.state.repository
-    hire_template = clone_persona_template(get_hire_persona_template_id("frontend_engineer"))
+    hire_template = clone_persona_template(get_hire_persona_template_id("backend_engineer"))
 
     with repository.transaction() as connection:
         repository.insert_event(
@@ -2259,19 +2259,19 @@ def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_en
             actor_type="system",
             actor_id="test-seed",
             workflow_id=None,
-            idempotency_key="test-seed-employee:emp_frontend_polish_seeded",
+            idempotency_key="test-seed-employee:emp_backend_seeded_existing",
             causation_id=None,
             correlation_id=None,
             payload={
-                "employee_id": "emp_frontend_polish_seeded",
-                "role_type": "frontend_engineer",
+                "employee_id": "emp_backend_seeded_existing",
+                "role_type": "backend_engineer",
                 "skill_profile": hire_template["skill_profile"],
                 "personality_profile": hire_template["personality_profile"],
                 "aesthetic_profile": hire_template["aesthetic_profile"],
                 "state": "ACTIVE",
                 "board_approved": True,
                 "provider_id": "prov_openai_compat",
-                "role_profile_refs": ["frontend_engineer_primary"],
+                "role_profile_refs": ["backend_engineer_primary"],
             },
             occurred_at=datetime.fromisoformat("2026-04-04T18:00:00+08:00"),
         )
@@ -2281,16 +2281,16 @@ def test_ceo_validator_accepts_seeded_variant_hire_when_live_staffing_seed_is_en
         repository,
         action_batch=CEOActionBatch.model_validate(
             {
-                "summary": "Hire a seeded frontend backup.",
+                "summary": "Hire a seeded backend backup.",
                 "actions": [
                     {
                         "action_type": "HIRE_EMPLOYEE",
                         "payload": {
                             "workflow_id": workflow_id,
-                            "role_type": "frontend_engineer",
-                            "role_profile_refs": ["frontend_engineer_primary"],
-                            "request_summary": "Hire another frontend backup with a seeded variant.",
-                            "employee_id_hint": "emp_frontend_seeded_variant",
+                            "role_type": "backend_engineer",
+                            "role_profile_refs": ["backend_engineer_primary"],
+                            "request_summary": "Hire another backend backup with a seeded variant.",
+                            "employee_id_hint": "emp_backend_seeded_variant",
                             "provider_id": "prov_openai_compat",
                         },
                     }
@@ -2362,7 +2362,7 @@ def test_ceo_validator_accepts_new_role_hires_on_current_ceo_path(
     employee_id_hint,
 ):
     _set_deterministic_mode(client)
-    workflow_id = _project_init(client, "CEO limited staffing boundary")
+    workflow_id = _seed_workflow(client, "wf_ceo_limited_staffing_boundary", "CEO limited staffing boundary")
     repository = client.app.state.repository
 
     result = validate_ceo_action_batch(
@@ -4080,6 +4080,271 @@ def test_controller_worker_busy_recommends_capacity_hire_for_ready_ticket(client
     assert "capacity" in snapshot["capability_plan"]["recommended_hire"]["request_summary"].lower()
 
 
+def test_ceo_capacity_hire_succeeds_when_busy_worker_is_below_cap(client):
+    _set_deterministic_mode(client)
+    busy_workflow_id = _seed_workflow(client, "wf_capacity_hire_busy_backend", "Busy backend worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_capacity_busy",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_busy_backend_existing",
+            node_id="node_capacity_busy_backend_existing",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_busy_backend_existing",
+            node_id="node_capacity_busy_backend_existing",
+            leased_by="emp_backend_capacity_busy",
+            idempotency_key="ticket-lease:wf_capacity_hire_busy_backend:tkt_capacity_busy_backend_existing",
+        )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_capacity_hire_backend",
+        "Busy backend worker should allow one capacity hire.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_capacity_backend_ready",
+            node_id="node_capacity_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-capacity-hire",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+    hired_employee = client.app.state.repository.get_employee_projection("emp_backend_backup")
+
+    assert run["rejected_actions"] == []
+    assert run["accepted_actions"][0]["details"]["reason_code"] == "STAFFING_CAPACITY_HIRE_ALLOWED"
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["payload"]["employee_id"] == "emp_backend_backup"
+    assert hired_employee is not None
+    assert hired_employee["role_profile_refs"] == ["backend_engineer_primary"]
+
+
+def test_controller_worker_busy_waits_when_capacity_cap_is_reached(client):
+    for index in (1, 2):
+        busy_workflow_id = _seed_workflow(
+            client,
+            f"wf_capacity_cap_busy_backend_{index}",
+            f"Busy backend worker {index}",
+        )
+        employee_id = f"emp_backend_capacity_busy_{index}"
+        _seed_board_approved_employee(
+            client,
+            employee_id=employee_id,
+            role_type="backend_engineer",
+            role_profile_refs=["backend_engineer_primary"],
+        )
+        _create_ticket_for_test(
+            client,
+            _ticket_create_payload(
+                workflow_id=busy_workflow_id,
+                ticket_id=f"tkt_capacity_cap_busy_backend_{index}",
+                node_id=f"node_capacity_cap_busy_backend_{index}",
+                role_profile_ref="backend_engineer_primary",
+                output_schema_ref="source_code_delivery",
+            ),
+        )
+        with _temporary_live_provider(client):
+            _lease_ticket_for_test(
+                client,
+                workflow_id=busy_workflow_id,
+                ticket_id=f"tkt_capacity_cap_busy_backend_{index}",
+                node_id=f"node_capacity_cap_busy_backend_{index}",
+                leased_by=employee_id,
+                idempotency_key=f"ticket-lease:wf_capacity_cap_busy_backend_{index}:busy",
+            )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_capacity_cap_backend",
+        "Busy backend workers should wait at capacity cap.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_capacity_cap_backend_ready",
+            node_id="node_capacity_cap_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-capacity-cap-reached",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["ready_ticket_staffing_gaps"] == []
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["reason_code"] == "STAFFING_CAP_REACHED"
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["max_active_count"] == 2
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["active_matching_count"] == 2
+
+
+def test_ceo_capacity_hire_uses_stable_suffix_when_template_employee_id_exists(client):
+    _set_deterministic_mode(client)
+    busy_workflow_id = _seed_workflow(client, "wf_capacity_suffix_busy_backend", "Busy backend worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_backup",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_suffix_busy_backend",
+            node_id="node_capacity_suffix_busy_backend",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_suffix_busy_backend",
+            node_id="node_capacity_suffix_busy_backend",
+            leased_by="emp_backend_backup",
+            idempotency_key="ticket-lease:wf_capacity_suffix_busy_backend:busy",
+        )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_capacity_suffix_backend",
+        "Capacity hire should use a stable employee id suffix.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_capacity_suffix_backend_ready",
+            node_id="node_capacity_suffix_backend_ready",
+            role_profile_ref="backend_engineer_primary",
+            output_schema_ref="source_code_delivery",
+        ),
+    )
+
+    run = run_ceo_shadow_for_trigger(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-capacity-suffix",
+        runtime_provider_store=client.app.state.runtime_provider_store,
+    )
+
+    assert run["rejected_actions"] == []
+    assert run["executed_actions"][0]["execution_status"] == "EXECUTED"
+    assert run["executed_actions"][0]["payload"]["employee_id"] == "emp_backend_backup_2"
+    assert client.app.state.repository.get_employee_projection("emp_backend_backup_2") is not None
+
+
+def test_controller_cto_worker_busy_waits_when_singleton_capacity_is_reached(client):
+    busy_workflow_id = _seed_workflow(client, "wf_capacity_cto_busy", "Busy CTO worker")
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_cto_capacity_busy",
+        role_type="governance_cto",
+        role_profile_refs=["cto_primary"],
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_cto_busy",
+            node_id="node_capacity_cto_busy",
+            role_profile_ref="cto_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+    )
+    with _temporary_live_provider(client):
+        _lease_ticket_for_test(
+            client,
+            workflow_id=busy_workflow_id,
+            ticket_id="tkt_capacity_cto_busy",
+            node_id="node_capacity_cto_busy",
+            leased_by="emp_cto_capacity_busy",
+            idempotency_key="ticket-lease:wf_capacity_cto_busy:busy",
+        )
+
+    workflow_id = _seed_workflow(
+        client,
+        "wf_capacity_cto_singleton",
+        "Busy CTO worker should not trigger capacity hire.",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+    )
+    _create_ticket_for_test(
+        client,
+        _ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_capacity_cto_ready",
+            node_id="node_capacity_cto_ready",
+            role_profile_ref="cto_primary",
+            output_schema_ref=ARCHITECTURE_BRIEF_SCHEMA_REF,
+        ),
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type=SCHEDULER_IDLE_MAINTENANCE_TRIGGER,
+        trigger_ref="scheduler-runner:test-cto-capacity-cap",
+    )
+
+    assert snapshot["controller_state"]["state"] == "STAFFING_WAIT"
+    assert snapshot["controller_state"]["recommended_action"] == "NO_ACTION"
+    assert "recommended_hire" not in snapshot["capability_plan"]
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["reason_code"] == "STAFFING_CAP_REACHED"
+    assert snapshot["capability_plan"]["staffing_wait_reasons"][0]["max_active_count"] == 1
+
+
 def test_controller_worker_excluded_waits_for_ready_ticket_recovery(client):
     workflow_id = _seed_workflow(
         client,
@@ -4289,10 +4554,12 @@ def test_ceo_hire_fallback_rejects_when_role_profile_is_already_covered(client):
             "Hire the missing CTO role.",
         )
 
-    assert exc_info.value.reason_code == "ROLE_ALREADY_COVERED"
+    assert exc_info.value.reason_code == "STAFFING_CAP_REACHED"
     assert exc_info.value.details == {
-        "reason_code": "ROLE_ALREADY_COVERED",
-        "reuse_candidate_employee_id": "emp_existing_cto_any_id",
+        "reason_code": "STAFFING_CAP_REACHED",
+        "active_matching_count": 1,
+        "max_active_count": 1,
+        "template_id": "cto_governance_backup",
         "role_type": "governance_cto",
         "role_profile_refs": ["cto_primary"],
     }
@@ -4407,7 +4674,7 @@ def test_ceo_shadow_snapshot_suppresses_repeated_hire_after_role_already_covered
     assert "emp_backend_reuse_guard_busy" in snapshot["capability_plan"]["reuse_candidate_employee_ids"]
 
 
-def test_duplicate_hire_loop_opens_incident_after_second_rejection(client, monkeypatch):
+def test_capacity_hire_loop_does_not_open_duplicate_incident_after_allowed_hire(client, monkeypatch):
     _set_live_provider(client)
     busy_workflow_id = _seed_workflow(client, "wf_duplicate_loop_busy_backend", "Busy backend worker")
     _seed_board_approved_employee(
@@ -4508,7 +4775,8 @@ def test_duplicate_hire_loop_opens_incident_after_second_rejection(client, monke
         trigger_ref="scheduler-runner:test-duplicate-loop-first",
         runtime_provider_store=client.app.state.runtime_provider_store,
     )
-    assert first_run["rejected_actions"][0]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
+    assert first_run["rejected_actions"] == []
+    assert first_run["executed_actions"][0]["execution_status"] == "EXECUTED"
     assert [
         incident
         for incident in repository.list_open_incidents()
@@ -4528,14 +4796,13 @@ def test_duplicate_hire_loop_opens_incident_after_second_rejection(client, monke
         if incident["workflow_id"] == workflow_id
     ]
 
-    assert second_run["rejected_actions"][0]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
-    assert len(incidents) == 1
-    assert incidents[0]["incident_type"] == "CEO_HIRE_LOOP_DETECTED"
-    assert incidents[0]["payload"]["reuse_candidate_employee_id"] == "emp_backend_duplicate_loop_busy"
-    assert incidents[0]["payload"]["rejected_action"]["details"]["reason_code"] == "ROLE_ALREADY_COVERED"
-    assert incidents[0]["payload"]["recommended_hire"]["role_profile_refs"] == [
-        "backend_engineer_primary"
-    ]
+    assert second_run["accepted_actions"] == []
+    assert second_run["rejected_actions"]
+    assert all(
+        (action.get("details") or {}).get("reason_code") != "ROLE_ALREADY_COVERED"
+        for action in second_run["rejected_actions"]
+    )
+    assert incidents == []
 
 
 def test_duplicate_hire_loop_summary_suppresses_same_recommended_hire(client):

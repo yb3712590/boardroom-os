@@ -31,6 +31,12 @@ from app.core.output_schemas import (
     schema_id,
     validate_output_payload,
 )
+from app.core.staffing_catalog import (
+    STAFFING_CAP_REACHED_REASON_CODE,
+    build_staffing_capacity_details,
+    count_active_board_approved_staffing_matches,
+    resolve_limited_ceo_staffing_combo,
+)
 from app.core.workflow_autopilot import workflow_uses_ceo_board_delegate
 from app.core.workflow_progression import (
     AUTOPILOT_GOVERNANCE_CHAIN,
@@ -857,8 +863,9 @@ def _build_ready_ticket_issue_payload(
     busy_count: int,
     provider_paused_count: int,
     eligible_count: int,
+    capacity_details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "ticket_id": str(ticket_id),
         "node_id": str(ticket.get("node_id") or created_spec.get("node_id") or ""),
         "reason_code": reason_code,
@@ -875,6 +882,9 @@ def _build_ready_ticket_issue_payload(
         },
         "candidate_details": candidate_details,
     }
+    if capacity_details is not None:
+        payload.update(capacity_details)
+    return payload
 
 
 def _build_ready_ticket_staffing_assessment(
@@ -1028,6 +1038,22 @@ def _build_ready_ticket_staffing_assessment(
                     "eligible": eligible,
                 }
             )
+        template, _staffing_reason = resolve_limited_ceo_staffing_combo(role_type, [role_profile_ref])
+        active_matching_count = count_active_board_approved_staffing_matches(
+            role_type=role_type,
+            role_profile_refs=[role_profile_ref],
+            employees=employees,
+        )
+        max_active_count = int(template["max_active_count"]) if template is not None else active_matching_count + 1
+        cap_reached = active_matching_count >= max_active_count
+        cap_reached_details = build_staffing_capacity_details(
+            reason_code=STAFFING_CAP_REACHED_REASON_CODE,
+            role_type=role_type,
+            role_profile_refs=[role_profile_ref],
+            active_matching_count=active_matching_count,
+            max_active_count=max_active_count,
+            template_id=str(template["template_id"]) if template is not None else None,
+        )
         if eligible_count > 0:
             continue
         if matching_role_count == 0:
@@ -1037,25 +1063,6 @@ def _build_ready_ticket_staffing_assessment(
                     ticket=ticket,
                     created_spec=created_spec,
                     reason_code="NO_ACTIVE_ROLE_WORKER",
-                    role_profile_ref=role_profile_ref,
-                    role_type=role_type,
-                    excluded_employee_ids=excluded_employee_ids,
-                    candidate_details=candidate_details,
-                    matching_role_count=matching_role_count,
-                    excluded_count=excluded_count,
-                    busy_count=busy_count,
-                    provider_paused_count=provider_paused_count,
-                    eligible_count=eligible_count,
-                )
-            )
-            continue
-        if busy_count > 0:
-            gaps.append(
-                _build_ready_ticket_issue_payload(
-                    ticket_id=str(ticket_id),
-                    ticket=ticket,
-                    created_spec=created_spec,
-                    reason_code="WORKER_BUSY",
                     role_profile_ref=role_profile_ref,
                     role_type=role_type,
                     excluded_employee_ids=excluded_employee_ids,
@@ -1105,6 +1112,28 @@ def _build_ready_ticket_staffing_assessment(
                     eligible_count=eligible_count,
                 )
             )
+            continue
+        if busy_count > 0:
+            target_collection = staffing_wait_reasons if cap_reached else gaps
+            target_collection.append(
+                _build_ready_ticket_issue_payload(
+                    ticket_id=str(ticket_id),
+                    ticket=ticket,
+                    created_spec=created_spec,
+                    reason_code=STAFFING_CAP_REACHED_REASON_CODE if cap_reached else "WORKER_BUSY",
+                    role_profile_ref=role_profile_ref,
+                    role_type=role_type,
+                    excluded_employee_ids=excluded_employee_ids,
+                    candidate_details=candidate_details,
+                    matching_role_count=matching_role_count,
+                    excluded_count=excluded_count,
+                    busy_count=busy_count,
+                    provider_paused_count=provider_paused_count,
+                    eligible_count=eligible_count,
+                    capacity_details=cap_reached_details if cap_reached else None,
+                )
+            )
+            continue
     return {
         "ready_ticket_staffing_gaps": gaps,
         "contract_issues": contract_issues,
