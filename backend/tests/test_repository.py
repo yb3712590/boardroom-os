@@ -30,6 +30,31 @@ def test_initialize_writes_single_system_initialized_event_before_employee_seed(
     assert reloaded.count_events_by_type(EVENT_SYSTEM_INITIALIZED) == 1
 
 
+def test_initialize_creates_process_asset_index(db_path):
+    repository = ControlPlaneRepository(db_path, 1000)
+
+    repository.initialize()
+
+    with repository.connection() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(process_asset_index)").fetchall()
+        }
+
+    assert {
+        "process_asset_ref",
+        "canonical_ref",
+        "process_asset_kind",
+        "workflow_id",
+        "producer_ticket_id",
+        "producer_node_id",
+        "graph_version",
+        "content_hash",
+        "visibility_status",
+        "linked_process_asset_refs_json",
+    }.issubset(columns)
+
+
 def test_initialize_backfills_default_scope_for_legacy_rows(db_path):
     connection = sqlite3.connect(db_path)
     connection.execute(

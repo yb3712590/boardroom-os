@@ -95,12 +95,14 @@ from app.core.versioning import (
     build_compiled_execution_package_version_ref,
     build_compile_manifest_version_ref,
     resolve_workflow_graph_version,
+    split_versioned_ref,
     validate_supersedes_ref,
 )
 from app.core.reducer import (
     rebuild_employee_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
+    rebuild_process_asset_index,
     rebuild_runtime_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
@@ -153,6 +155,7 @@ class ControlPlaneRepository:
             self._ensure_compiled_context_bundle_shape(connection)
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
+            self._ensure_process_asset_index_shape(connection)
             self._ensure_governance_profile_shape(connection)
             self._ensure_board_advisory_session_shape(connection)
             self._ensure_board_advisory_analysis_run_shape(connection)
@@ -172,6 +175,10 @@ class ControlPlaneRepository:
             self.replace_employee_projections(
                 connection,
                 rebuild_employee_projections(employee_events),
+            )
+            self.replace_process_asset_index(
+                connection,
+                rebuild_process_asset_index(employee_events),
             )
             self._rebuild_retrieval_review_summary_fts(connection)
             self._rebuild_retrieval_incident_summary_fts(connection)
@@ -589,6 +596,56 @@ class ControlPlaneRepository:
             )
         self._rebuild_retrieval_incident_summary_fts(connection)
 
+    def replace_process_asset_index(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM process_asset_index")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO process_asset_index (
+                    process_asset_ref,
+                    canonical_ref,
+                    version_int,
+                    supersedes_ref,
+                    process_asset_kind,
+                    workflow_id,
+                    producer_ticket_id,
+                    producer_node_id,
+                    graph_version,
+                    content_hash,
+                    visibility_status,
+                    linked_process_asset_refs_json,
+                    summary,
+                    consumable_by_json,
+                    source_metadata_json,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["process_asset_ref"],
+                    projection["canonical_ref"],
+                    projection.get("version_int"),
+                    projection.get("supersedes_ref"),
+                    projection["process_asset_kind"],
+                    projection.get("workflow_id"),
+                    projection.get("producer_ticket_id"),
+                    projection.get("producer_node_id"),
+                    projection.get("graph_version"),
+                    projection.get("content_hash"),
+                    projection.get("visibility_status", "CONSUMABLE"),
+                    json.dumps(projection.get("linked_process_asset_refs") or [], sort_keys=True),
+                    projection.get("summary"),
+                    json.dumps(projection.get("consumable_by") or [], sort_keys=True),
+                    json.dumps(projection.get("source_metadata") or {}, sort_keys=True),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def refresh_projections(self, connection: sqlite3.Connection) -> None:
         from app.core.planned_placeholder_projection import rebuild_planned_placeholder_projections
 
@@ -599,10 +656,151 @@ class ControlPlaneRepository:
         self.replace_runtime_node_projections(connection, rebuild_runtime_node_projections(events))
         self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
+        self.replace_process_asset_index(connection, rebuild_process_asset_index(events))
         self.replace_planned_placeholder_projections(
             connection,
             rebuild_planned_placeholder_projections(self, connection=connection),
         )
+
+    def list_process_assets_by_producer_ticket(
+        self,
+        producer_ticket_id: str,
+        *,
+        process_asset_kinds: set[str] | None = None,
+        visibility_statuses: set[str] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["producer_ticket_id = ?"]
+        params: list[Any] = [producer_ticket_id]
+        if process_asset_kinds:
+            placeholders = ", ".join("?" for _ in process_asset_kinds)
+            clauses.append(f"process_asset_kind IN ({placeholders})")
+            params.extend(sorted(process_asset_kinds))
+        if visibility_statuses:
+            placeholders = ", ".join("?" for _ in visibility_statuses)
+            clauses.append(f"visibility_status IN ({placeholders})")
+            params.extend(sorted(visibility_statuses))
+        query = f"""
+            SELECT *
+            FROM process_asset_index
+            WHERE {' AND '.join(clauses)}
+            ORDER BY
+                CASE process_asset_kind
+                    WHEN 'SOURCE_CODE_DELIVERY' THEN 0
+                    WHEN 'EVIDENCE_PACK' THEN 1
+                    WHEN 'GOVERNANCE_DOCUMENT' THEN 2
+                    WHEN 'MEETING_DECISION_RECORD' THEN 3
+                    WHEN 'CLOSEOUT_SUMMARY' THEN 4
+                    WHEN 'ARTIFACT' THEN 9
+                    ELSE 5
+                END,
+                process_asset_ref ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, params).fetchall()
+            return [self._convert_process_asset_index_row(row) for row in rows]
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, params).fetchall()
+            return [self._convert_process_asset_index_row(row) for row in rows]
+
+    def list_process_assets_by_workflow(
+        self,
+        workflow_id: str,
+        *,
+        process_asset_kinds: set[str] | None = None,
+        visibility_statuses: set[str] | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = ["workflow_id = ?"]
+        params: list[Any] = [workflow_id]
+        if process_asset_kinds:
+            placeholders = ", ".join("?" for _ in process_asset_kinds)
+            clauses.append(f"process_asset_kind IN ({placeholders})")
+            params.extend(sorted(process_asset_kinds))
+        if visibility_statuses:
+            placeholders = ", ".join("?" for _ in visibility_statuses)
+            clauses.append(f"visibility_status IN ({placeholders})")
+            params.extend(sorted(visibility_statuses))
+        query = f"""
+            SELECT *
+            FROM process_asset_index
+            WHERE {' AND '.join(clauses)}
+            ORDER BY producer_node_id ASC, version ASC, process_asset_ref ASC
+        """
+        if connection is not None:
+            rows = connection.execute(query, params).fetchall()
+            return [self._convert_process_asset_index_row(row) for row in rows]
+        self.initialize()
+        with self.connection() as owned_connection:
+            rows = owned_connection.execute(query, params).fetchall()
+            return [self._convert_process_asset_index_row(row) for row in rows]
+
+    def get_process_asset_index_entry(
+        self,
+        process_asset_ref: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        base_ref, version_int = split_versioned_ref(process_asset_ref)
+        if version_int is None:
+            query = """
+                SELECT *
+                FROM process_asset_index
+                WHERE process_asset_ref = ? OR canonical_ref = ? OR canonical_ref LIKE ?
+                ORDER BY version_int DESC, version DESC
+                LIMIT 1
+            """
+            params = (process_asset_ref, process_asset_ref, f"{base_ref}@%")
+        else:
+            query = """
+                SELECT *
+                FROM process_asset_index
+                WHERE process_asset_ref = ? OR canonical_ref = ?
+                LIMIT 1
+            """
+            params = (process_asset_ref, process_asset_ref)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_process_asset_index_row(row)
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_process_asset_index_row(row)
+
+    def get_default_consumable_process_asset(
+        self,
+        *,
+        workflow_id: str,
+        producer_node_id: str,
+        process_asset_kind: str,
+        graph_version: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        clauses = [
+            "workflow_id = ?",
+            "producer_node_id = ?",
+            "process_asset_kind = ?",
+            "visibility_status = 'CONSUMABLE'",
+        ]
+        params: list[Any] = [workflow_id, producer_node_id, process_asset_kind]
+        if graph_version is not None:
+            clauses.append("graph_version = ?")
+            params.append(graph_version)
+        query = f"""
+            SELECT *
+            FROM process_asset_index
+            WHERE {' AND '.join(clauses)}
+            ORDER BY version DESC, process_asset_ref DESC
+            LIMIT 1
+        """
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_process_asset_index_row(row)
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            return None if row is None else self._convert_process_asset_index_row(row)
 
     def get_active_workflow(self) -> dict[str, Any] | None:
         self.initialize()
@@ -5732,6 +5930,20 @@ class ControlPlaneRepository:
         converted["version_int"] = int(converted.get("version_int") or 0)
         return converted
 
+    def _convert_process_asset_index_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        converted["version_int"] = (
+            int(converted["version_int"]) if converted.get("version_int") is not None else None
+        )
+        converted["linked_process_asset_refs"] = json.loads(
+            converted.get("linked_process_asset_refs_json") or "[]"
+        )
+        converted["consumable_by"] = json.loads(converted.get("consumable_by_json") or "[]")
+        converted["source_metadata"] = json.loads(converted.get("source_metadata_json") or "{}")
+        return converted
+
     def _convert_governance_profile_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["version_int"] = int(converted.get("version_int") or 0)
@@ -7675,6 +7887,68 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_ticket_version ON compiled_execution_package(ticket_id, version_int)"
+        )
+
+    def _ensure_process_asset_index_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS process_asset_index (
+                process_asset_ref TEXT PRIMARY KEY,
+                canonical_ref TEXT NOT NULL,
+                version_int INTEGER,
+                supersedes_ref TEXT,
+                process_asset_kind TEXT NOT NULL,
+                workflow_id TEXT,
+                producer_ticket_id TEXT,
+                producer_node_id TEXT,
+                graph_version TEXT,
+                content_hash TEXT,
+                visibility_status TEXT NOT NULL,
+                linked_process_asset_refs_json TEXT NOT NULL DEFAULT '[]',
+                summary TEXT,
+                consumable_by_json TEXT NOT NULL DEFAULT '[]',
+                source_metadata_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(process_asset_index)").fetchall()
+        }
+        required_columns = {
+            "process_asset_ref": "TEXT",
+            "canonical_ref": "TEXT",
+            "version_int": "INTEGER",
+            "supersedes_ref": "TEXT",
+            "process_asset_kind": "TEXT",
+            "workflow_id": "TEXT",
+            "producer_ticket_id": "TEXT",
+            "producer_node_id": "TEXT",
+            "graph_version": "TEXT",
+            "content_hash": "TEXT",
+            "visibility_status": "TEXT",
+            "linked_process_asset_refs_json": "TEXT NOT NULL DEFAULT '[]'",
+            "summary": "TEXT",
+            "consumable_by_json": "TEXT NOT NULL DEFAULT '[]'",
+            "source_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE process_asset_index ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_process_asset_index_producer_ticket ON process_asset_index(producer_ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_process_asset_index_workflow_kind_node ON process_asset_index(workflow_id, process_asset_kind, producer_node_id, visibility_status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_process_asset_index_kind_visibility ON process_asset_index(process_asset_kind, visibility_status)"
         )
 
     def _ensure_governance_profile_shape(self, connection: sqlite3.Connection) -> None:

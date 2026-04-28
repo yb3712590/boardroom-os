@@ -16,6 +16,10 @@ from app.core.constants import (
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
 )
+from app.core.process_assets import (
+    build_evidence_pack_process_asset_ref,
+    build_source_code_delivery_process_asset_ref,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from tests.test_api import (
@@ -1312,6 +1316,16 @@ def test_autopilot_internal_delivery_rework_loop_converges_after_threshold(clien
         workflow_id,
         "node_autopilot_build_rework",
     )["latest_ticket_id"]
+    with repository.connection() as connection:
+        second_checker_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            second_checker_ticket_id,
+        )
+    assert second_checker_created_spec["input_process_asset_refs"] == [
+        build_source_code_delivery_process_asset_ref(fix_ticket_id, version_int=1),
+        build_evidence_pack_process_asset_ref(fix_ticket_id, version_int=1),
+    ]
+    assert first_checker_ticket_id not in " ".join(second_checker_created_spec["input_process_asset_refs"])
     client.post(
         "/api/v1/commands/ticket-lease",
         json=_ticket_lease_payload(

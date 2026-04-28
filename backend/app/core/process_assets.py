@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import nullcontext
@@ -130,6 +131,10 @@ def build_source_code_delivery_process_asset_ref(ticket_id: str, *, version_int:
     return _process_asset_ref("source-code-delivery", ticket_id, version_int=version_int)
 
 
+def build_evidence_pack_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
+    return _process_asset_ref("evidence-pack", ticket_id, version_int=version_int)
+
+
 def build_closeout_summary_process_asset_ref(ticket_id: str, *, version_int: int | None = None) -> str:
     return _process_asset_ref("closeout-summary", ticket_id, version_int=version_int)
 
@@ -155,6 +160,18 @@ def merge_input_process_asset_refs(
             *list(produced_process_asset_refs),
         ]
     )
+
+
+def _stable_content_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def parse_process_asset_ref(process_asset_ref: str) -> tuple[str, str]:
@@ -189,6 +206,19 @@ def get_ticket_output_process_asset_refs(
     connection: sqlite3.Connection,
     ticket_id: str,
 ) -> list[str]:
+    indexed_assets = repository.list_process_assets_by_producer_ticket(
+        ticket_id,
+        visibility_statuses={"CONSUMABLE"},
+        connection=connection,
+    )
+    indexed_refs = [
+        str(asset.get("process_asset_ref") or "").strip()
+        for asset in indexed_assets
+        if str(asset.get("process_asset_ref") or "").strip()
+    ]
+    if indexed_refs:
+        return dedupe_process_asset_refs(indexed_refs)
+
     terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
     if terminal_event is None:
         return []
@@ -221,9 +251,15 @@ def build_result_process_assets(
     written_artifacts: list[dict[str, Any]] | None = None,
     verification_evidence_refs: list[str] | None = None,
     git_commit_record: dict[str, Any] | None = None,
+    workflow_id: str | None = None,
+    producer_node_id: str | None = None,
+    graph_version: str | None = None,
 ) -> list[dict[str, Any]]:
     produced_assets: list[ProcessAssetReference] = []
     output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+    resolved_workflow_id = str(workflow_id or created_spec.get("workflow_id") or "").strip() or None
+    resolved_producer_node_id = str(producer_node_id or created_spec.get("node_id") or "").strip() or None
+    resolved_graph_version = str(graph_version or "").strip() or None
     summary = ""
     if isinstance(result_payload, dict):
         summary = str(result_payload.get("summary") or "").strip()
@@ -235,7 +271,10 @@ def build_result_process_assets(
                 canonical_ref=build_artifact_process_asset_ref(artifact_ref, version_int=1),
                 version_int=1,
                 process_asset_kind="ARTIFACT",
+                workflow_id=resolved_workflow_id,
                 producer_ticket_id=ticket_id,
+                producer_node_id=resolved_producer_node_id,
+                graph_version=resolved_graph_version,
                 summary=summary or artifact_ref,
                 consumable_by=["context_compiler", "review", "closeout"],
                 source_metadata={"artifact_ref": artifact_ref},
@@ -266,30 +305,82 @@ def build_result_process_assets(
             )
             if module_path
         ]
+        source_delivery_ref = build_source_code_delivery_process_asset_ref(ticket_id, version_int=1)
+        source_delivery_metadata = {
+            "source_file_refs": list(result_payload.get("source_file_refs") or []),
+            "source_paths": dedupe_process_asset_refs(source_paths),
+            "written_artifact_refs": [
+                str(item.get("artifact_ref") or "").strip()
+                for item in list(written_artifacts or [])
+                if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
+            ],
+            "written_paths": dedupe_process_asset_refs(written_paths),
+            "module_paths": dedupe_process_asset_refs(module_paths),
+            "verification_evidence_refs": list(verification_evidence_refs or []),
+            "documentation_updates": documentation_updates,
+            "document_surfaces": dedupe_process_asset_refs(document_surfaces),
+            "git_commit_record": dict(git_commit_record or {}),
+            "producer_ticket_id": ticket_id,
+            "producer_node_id": resolved_producer_node_id,
+            "graph_version": resolved_graph_version,
+        }
+        source_delivery_content = {
+            "summary": summary or "Source code delivery",
+            "source_refs": source_delivery_metadata["source_file_refs"],
+            "verification_refs": source_delivery_metadata["verification_evidence_refs"],
+            "git_refs": dict(git_commit_record or {}),
+            "producer_ticket_id": ticket_id,
+            "producer_node_id": resolved_producer_node_id,
+            "graph_version": resolved_graph_version,
+            "source_metadata": source_delivery_metadata,
+        }
         produced_assets.append(
             ProcessAssetReference(
-                process_asset_ref=build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
-                canonical_ref=build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
+                process_asset_ref=source_delivery_ref,
+                canonical_ref=source_delivery_ref,
                 version_int=1,
                 process_asset_kind="SOURCE_CODE_DELIVERY",
+                workflow_id=resolved_workflow_id,
                 producer_ticket_id=ticket_id,
+                producer_node_id=resolved_producer_node_id,
+                graph_version=resolved_graph_version,
+                content_hash=_stable_content_hash(source_delivery_content),
+                visibility_status="CONSUMABLE",
                 summary=summary or "Source code delivery",
                 consumable_by=["context_compiler", "followup_ticket", "review", "closeout"],
-                source_metadata={
-                    "source_file_refs": list(result_payload.get("source_file_refs") or []),
-                    "source_paths": dedupe_process_asset_refs(source_paths),
-                    "written_artifact_refs": [
-                        str(item.get("artifact_ref") or "").strip()
-                        for item in list(written_artifacts or [])
-                        if isinstance(item, dict) and str(item.get("artifact_ref") or "").strip()
-                    ],
-                    "written_paths": dedupe_process_asset_refs(written_paths),
-                    "module_paths": dedupe_process_asset_refs(module_paths),
-                    "verification_evidence_refs": list(verification_evidence_refs or []),
-                    "documentation_updates": documentation_updates,
-                    "document_surfaces": dedupe_process_asset_refs(document_surfaces),
-                    "git_commit_record": dict(git_commit_record or {}),
-                },
+                source_metadata=source_delivery_metadata,
+            )
+        )
+        verification_runs = [
+            item
+            for item in list(result_payload.get("verification_runs") or [])
+            if isinstance(item, dict)
+        ]
+        evidence_pack_ref = build_evidence_pack_process_asset_ref(ticket_id, version_int=1)
+        evidence_pack_content = {
+            "ticket_id": ticket_id,
+            "attempt_id": f"ticket:{ticket_id}:attempt:{int(created_spec.get('attempt_no') or 1)}",
+            "verification_runs": verification_runs,
+            "verification_evidence_refs": list(verification_evidence_refs or []),
+            "git_commit_record": dict(git_commit_record or {}),
+            "source_delivery_ref": source_delivery_ref,
+        }
+        produced_assets.append(
+            ProcessAssetReference(
+                process_asset_ref=evidence_pack_ref,
+                canonical_ref=evidence_pack_ref,
+                version_int=1,
+                process_asset_kind="EVIDENCE_PACK",
+                workflow_id=resolved_workflow_id,
+                producer_ticket_id=ticket_id,
+                producer_node_id=resolved_producer_node_id,
+                graph_version=resolved_graph_version,
+                content_hash=_stable_content_hash(evidence_pack_content),
+                visibility_status="CONSUMABLE",
+                linked_process_asset_refs=[source_delivery_ref],
+                summary=f"Evidence pack for {ticket_id}",
+                consumable_by=["context_compiler", "review", "closeout"],
+                source_metadata=evidence_pack_content,
             )
         )
 
@@ -302,7 +393,10 @@ def build_result_process_assets(
                     canonical_ref=build_meeting_decision_process_asset_ref(ticket_id, version_int=1),
                     version_int=1,
                     process_asset_kind="MEETING_DECISION_RECORD",
+                    workflow_id=resolved_workflow_id,
                     producer_ticket_id=ticket_id,
+                    producer_node_id=resolved_producer_node_id,
+                    graph_version=resolved_graph_version,
                     summary=(
                         str(decision_record.get("decision") or "").strip()
                         or str(result_payload.get("consensus_summary") or "").strip()
@@ -321,7 +415,10 @@ def build_result_process_assets(
                 canonical_ref=build_closeout_summary_process_asset_ref(ticket_id, version_int=1),
                 version_int=1,
                 process_asset_kind="CLOSEOUT_SUMMARY",
+                workflow_id=resolved_workflow_id,
                 producer_ticket_id=ticket_id,
+                producer_node_id=resolved_producer_node_id,
+                graph_version=resolved_graph_version,
                 summary=summary or "Delivery closeout summary",
                 consumable_by=["context_compiler", "review", "closeout"],
                 source_metadata={
@@ -347,7 +444,10 @@ def build_result_process_assets(
                 canonical_ref=build_governance_document_process_asset_ref(ticket_id, version_int=1),
                 version_int=1,
                 process_asset_kind="GOVERNANCE_DOCUMENT",
+                workflow_id=resolved_workflow_id,
                 producer_ticket_id=ticket_id,
+                producer_node_id=resolved_producer_node_id,
+                graph_version=resolved_graph_version,
                 summary=summary,
                 consumable_by=["context_compiler", "followup_ticket", "review"],
                 source_metadata={
@@ -465,6 +565,13 @@ def resolve_process_asset(
         )
     if kind == "source-code-delivery":
         return _resolve_source_code_delivery_process_asset(
+            repository,
+            process_asset_ref=process_asset_ref,
+            ticket_id=target,
+            connection=connection,
+        )
+    if kind == "evidence-pack":
+        return _resolve_evidence_pack_process_asset(
             repository,
             process_asset_ref=process_asset_ref,
             ticket_id=target,
@@ -1033,6 +1140,44 @@ def _resolve_project_map_slice_process_asset(
         decision_asset_refs: list[str] = []
         source_process_asset_refs: list[str] = []
 
+        indexed_assets = repository.list_process_assets_by_workflow(
+            workflow_id,
+            process_asset_kinds={
+                "SOURCE_CODE_DELIVERY",
+                "GOVERNANCE_DOCUMENT",
+                "MEETING_DECISION_RECORD",
+            },
+            visibility_statuses={"CONSUMABLE"},
+            connection=resolved_connection,
+        )
+        for indexed_asset in indexed_assets:
+            asset_ref = str(indexed_asset.get("process_asset_ref") or "").strip()
+            asset_kind = str(indexed_asset.get("process_asset_kind") or "").strip()
+            if not asset_ref:
+                continue
+            if asset_kind == "SOURCE_CODE_DELIVERY":
+                resolved_delivery_asset = resolve_process_asset(
+                    repository,
+                    asset_ref,
+                    connection=resolved_connection,
+                )
+                delivery_payload = dict(resolved_delivery_asset.json_content or {})
+                module_paths.extend(
+                    str(item).strip()
+                    for item in list(delivery_payload.get("module_paths") or [])
+                    if str(item).strip()
+                )
+                document_surfaces.extend(
+                    str(item).strip()
+                    for item in list(delivery_payload.get("document_surfaces") or [])
+                    if str(item).strip()
+                )
+                source_process_asset_refs.append(asset_ref)
+            elif asset_kind in {"GOVERNANCE_DOCUMENT", "MEETING_DECISION_RECORD"}:
+                decision_asset_refs.append(asset_ref)
+                if asset_kind == "GOVERNANCE_DOCUMENT":
+                    source_process_asset_refs.append(asset_ref)
+
         for ticket_id in ticket_ids:
             created_spec = repository.get_latest_ticket_created_payload(resolved_connection, ticket_id) or {}
             output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
@@ -1044,30 +1189,6 @@ def _resolve_project_map_slice_process_asset(
             ticket_module_paths: list[str] = []
             ticket_document_surfaces: list[str] = []
             if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
-                delivery_asset_refs = [
-                    str(asset.get("process_asset_ref") or "").strip()
-                    for asset in produced_assets
-                    if isinstance(asset, dict)
-                    and str(asset.get("process_asset_kind") or "").strip() == "SOURCE_CODE_DELIVERY"
-                    and str(asset.get("process_asset_ref") or "").strip()
-                ]
-                for asset_ref in delivery_asset_refs:
-                    resolved_delivery_asset = resolve_process_asset(
-                        repository,
-                        asset_ref,
-                        connection=resolved_connection,
-                    )
-                    delivery_payload = dict(resolved_delivery_asset.json_content or {})
-                    ticket_module_paths.extend(
-                        str(item).strip()
-                        for item in list(delivery_payload.get("module_paths") or [])
-                        if str(item).strip()
-                    )
-                    ticket_document_surfaces.extend(
-                        str(item).strip()
-                        for item in list(delivery_payload.get("document_surfaces") or [])
-                        if str(item).strip()
-                    )
                 if not ticket_module_paths:
                     for allowed_pattern in list(created_spec.get("allowed_write_set") or []):
                         module_path = _top_level_module_path(str(allowed_pattern).replace("*", ""))
@@ -1082,7 +1203,7 @@ def _resolve_project_map_slice_process_asset(
                     continue
                 if asset_kind in {"GOVERNANCE_DOCUMENT", "MEETING_DECISION_RECORD"}:
                     decision_asset_refs.append(asset_ref)
-                if asset_kind in {"GOVERNANCE_DOCUMENT", "SOURCE_CODE_DELIVERY"}:
+                if asset_kind == "GOVERNANCE_DOCUMENT":
                     source_process_asset_refs.append(asset_ref)
             module_paths.extend(ticket_module_paths)
             document_surfaces.extend(ticket_document_surfaces)
@@ -1162,6 +1283,29 @@ def _resolve_meeting_decision_process_asset(
     return base
 
 
+def _require_consumable_index_entry(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    expected_kind: str,
+    connection: sqlite3.Connection,
+) -> dict[str, Any]:
+    index_entry = repository.get_process_asset_index_entry(process_asset_ref, connection=connection)
+    if index_entry is None:
+        raise ValueError(f"EVIDENCE_GAP: Process asset {process_asset_ref} is missing from process_asset_index.")
+    if str(index_entry.get("process_asset_kind") or "").strip() != expected_kind:
+        raise ValueError(
+            f"COMPILER_FAILURE: Process asset {process_asset_ref} has kind "
+            f"{index_entry.get('process_asset_kind')!r}, expected {expected_kind!r}."
+        )
+    if str(index_entry.get("visibility_status") or "").strip() != "CONSUMABLE":
+        raise ValueError(
+            f"EVIDENCE_LINEAGE_BREAK: Process asset {process_asset_ref} is "
+            f"{index_entry.get('visibility_status')} and cannot be consumed."
+        )
+    return index_entry
+
+
 def _resolve_source_code_delivery_process_asset(
     repository: ControlPlaneRepository,
     *,
@@ -1170,6 +1314,12 @@ def _resolve_source_code_delivery_process_asset(
     connection: sqlite3.Connection | None,
 ) -> ResolvedProcessAsset:
     with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        index_entry = _require_consumable_index_entry(
+            repository,
+            process_asset_ref=process_asset_ref,
+            expected_kind="SOURCE_CODE_DELIVERY",
+            connection=resolved_connection,
+        )
         terminal_event = repository.get_latest_ticket_terminal_event(resolved_connection, ticket_id)
         if terminal_event is None:
             raise ValueError(f"Process asset {process_asset_ref} is missing.")
@@ -1258,7 +1408,12 @@ def _resolve_source_code_delivery_process_asset(
             version_int=asset_entry.get("version_int"),
             supersedes_ref=asset_entry.get("supersedes_ref"),
             process_asset_kind="SOURCE_CODE_DELIVERY",
+            workflow_id=index_entry.get("workflow_id"),
             producer_ticket_id=ticket_id,
+            producer_node_id=index_entry.get("producer_node_id"),
+            graph_version=index_entry.get("graph_version"),
+            content_hash=index_entry.get("content_hash"),
+            visibility_status=index_entry.get("visibility_status") or "CONSUMABLE",
             summary=(
                 str(result_payload.get("summary") or "").strip()
                 or str(asset_entry.get("summary") or "").strip()
@@ -1284,6 +1439,51 @@ def _resolve_source_code_delivery_process_asset(
                 "git_commit_record": git_commit_record,
             },
             schema_ref="source_code_delivery@1",
+        )
+
+
+def _resolve_evidence_pack_process_asset(
+    repository: ControlPlaneRepository,
+    *,
+    process_asset_ref: str,
+    ticket_id: str,
+    connection: sqlite3.Connection | None,
+) -> ResolvedProcessAsset:
+    with repository.connection() if connection is None else nullcontext(connection) as resolved_connection:
+        index_entry = _require_consumable_index_entry(
+            repository,
+            process_asset_ref=process_asset_ref,
+            expected_kind="EVIDENCE_PACK",
+            connection=resolved_connection,
+        )
+        source_metadata = dict(index_entry.get("source_metadata") or {})
+        canonical_ref = str(index_entry.get("canonical_ref") or process_asset_ref).strip()
+        return ResolvedProcessAsset(
+            process_asset_ref=canonical_ref,
+            canonical_ref=canonical_ref,
+            version_int=index_entry.get("version_int"),
+            supersedes_ref=index_entry.get("supersedes_ref"),
+            process_asset_kind="EVIDENCE_PACK",
+            workflow_id=index_entry.get("workflow_id"),
+            producer_ticket_id=ticket_id,
+            producer_node_id=index_entry.get("producer_node_id"),
+            graph_version=index_entry.get("graph_version"),
+            content_hash=index_entry.get("content_hash"),
+            visibility_status=index_entry.get("visibility_status") or "CONSUMABLE",
+            linked_process_asset_refs=list(index_entry.get("linked_process_asset_refs") or []),
+            summary=str(index_entry.get("summary") or f"Evidence pack for {ticket_id}"),
+            consumable_by=list(index_entry.get("consumable_by") or ["context_compiler", "review", "closeout"]),
+            source_metadata=source_metadata,
+            content_type="JSON",
+            json_content={
+                "ticket_id": ticket_id,
+                "attempt_id": source_metadata.get("attempt_id"),
+                "verification_runs": list(source_metadata.get("verification_runs") or []),
+                "verification_evidence_refs": list(source_metadata.get("verification_evidence_refs") or []),
+                "git_commit_record": dict(source_metadata.get("git_commit_record") or {}),
+                "source_delivery_ref": source_metadata.get("source_delivery_ref"),
+            },
+            schema_ref="evidence_pack@1",
         )
 
 

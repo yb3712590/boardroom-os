@@ -222,6 +222,7 @@ from app.core.ticket_artifacts import (
 )
 from app.core.ticket_context_archive import latest_provider_audit_for_ticket, write_ticket_context_markdown
 from app.core.time import now_local
+from app.core.versioning import resolve_workflow_graph_version
 from app.core.workflow_autopilot import (
     WorkflowChainReportUnavailableError,
     ensure_workflow_atomic_chain_report,
@@ -655,6 +656,40 @@ def _build_maker_checker_input_process_asset_refs(
     return merge_input_process_asset_refs(
         existing_process_asset_refs=existing_process_asset_refs,
         artifact_refs=list(created_spec.get("input_artifact_refs") or []),
+    )
+
+
+def _select_maker_checker_process_asset_refs(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    maker_ticket_id: str,
+    maker_created_spec: dict[str, Any] | None,
+    produced_process_asset_refs: list[str],
+) -> list[str]:
+    output_schema_ref = str((maker_created_spec or {}).get("output_schema_ref") or "").strip()
+    if output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
+        indexed_refs = [
+            str(asset.get("process_asset_ref") or "").strip()
+            for asset in repository.list_process_assets_by_producer_ticket(
+                maker_ticket_id,
+                process_asset_kinds={"SOURCE_CODE_DELIVERY", "EVIDENCE_PACK"},
+                visibility_statuses={"CONSUMABLE"},
+                connection=connection,
+            )
+            if str(asset.get("process_asset_ref") or "").strip()
+        ]
+        if indexed_refs:
+            return dedupe_process_asset_refs(indexed_refs)
+        return dedupe_process_asset_refs(
+            ref
+            for ref in produced_process_asset_refs
+            if "/source-code-delivery/" in ref or "/evidence-pack/" in ref
+        )
+    return dedupe_process_asset_refs(
+        ref
+        for ref in produced_process_asset_refs
+        if not str(ref).startswith("pa://artifact/")
     )
 
 
@@ -1209,10 +1244,27 @@ def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) ->
     resolved_payload = dict(ticket_payload)
     execution_contract = resolved_payload.get("execution_contract")
     if not isinstance(execution_contract, dict):
-        raise ValueError("Ticket payload requires execution_contract.")
+        execution_contract = infer_execution_contract_payload(
+            role_profile_ref=str(resolved_payload.get("role_profile_ref") or ""),
+            output_schema_ref=str(resolved_payload.get("output_schema_ref") or ""),
+        )
+        if execution_contract is None:
+            fallback_role_profile_ref = {
+                DELIVERY_CHECK_REPORT_SCHEMA_REF: "checker_primary",
+                MAKER_CHECKER_VERDICT_SCHEMA_REF: "checker_primary",
+                SOURCE_CODE_DELIVERY_SCHEMA_REF: "frontend_engineer_primary",
+            }.get(str(resolved_payload.get("output_schema_ref") or ""))
+            if fallback_role_profile_ref:
+                execution_contract = infer_execution_contract_payload(
+                    role_profile_ref=fallback_role_profile_ref,
+                    output_schema_ref=str(resolved_payload.get("output_schema_ref") or ""),
+                )
+        if execution_contract is None:
+            raise ValueError("Ticket payload requires execution_contract.")
+        resolved_payload["execution_contract"] = execution_contract
     graph_contract = resolved_payload.get("graph_contract")
     if not isinstance(graph_contract, dict) or not str(graph_contract.get("lane_kind") or "").strip():
-        raise ValueError("Ticket payload requires graph_contract.lane_kind.")
+        resolved_payload["graph_contract"] = {"lane_kind": "execution"}
     if (
         resolved_payload.get("auto_review_request") is None
         and str(resolved_payload.get("output_schema_ref") or "") in GOVERNANCE_DOCUMENT_SCHEMA_REFS
@@ -7466,6 +7518,7 @@ def handle_ticket_result_submit(
     completed_artifact_refs = _dedupe_artifact_refs(
         list(payload.artifact_refs) + [artifact.artifact_ref for artifact in prepared_artifacts]
     )
+    graph_version = resolve_workflow_graph_version(repository, payload.workflow_id)
     produced_process_assets = build_result_process_assets(
         ticket_id=payload.ticket_id,
         created_spec=created_spec,
@@ -7481,6 +7534,9 @@ def handle_ticket_result_submit(
             if effective_git_commit_record is not None
             else None
         ),
+        workflow_id=payload.workflow_id,
+        producer_node_id=payload.node_id,
+        graph_version=graph_version,
     )
     try:
         with repository.transaction() as connection:
@@ -7867,6 +7923,15 @@ def _complete_ticket_locked(
     if route_to_maker_checker:
         if created_spec is None or effective_review_request is None:
             raise RuntimeError("Maker-checker routing requires ticket create spec and review request.")
+        maker_process_asset_refs = _select_maker_checker_process_asset_refs(
+            repository,
+            connection,
+            maker_ticket_id=payload.ticket_id,
+            maker_created_spec=created_spec,
+            produced_process_asset_refs=[
+                item.process_asset_ref for item in payload.produced_process_assets
+            ],
+        )
         checker_ticket_payload = _build_maker_checker_ticket_payload(
             workflow_id=payload.workflow_id,
             node_id=payload.node_id,
@@ -7875,9 +7940,7 @@ def _complete_ticket_locked(
             review_request=effective_review_request,
             maker_completed_by=payload.completed_by,
             maker_artifact_refs=_dedupe_artifact_refs(list(payload.artifact_refs)),
-            maker_process_asset_refs=[
-                item.process_asset_ref for item in payload.produced_process_assets
-            ],
+            maker_process_asset_refs=maker_process_asset_refs,
         )
         next_ticket_id = _insert_followup_ticket_created_event(
             repository=repository,

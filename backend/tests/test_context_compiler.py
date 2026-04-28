@@ -23,6 +23,8 @@ from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_compiled_context_bundle_process_asset_ref,
     build_compiled_execution_package_process_asset_ref,
+    build_evidence_pack_process_asset_ref,
+    build_source_code_delivery_process_asset_ref,
 )
 from app.core.runtime_provider_config import (
     OPENAI_COMPAT_PROVIDER_ID,
@@ -2102,6 +2104,266 @@ def test_build_compile_request_resolves_governance_document_process_asset(client
     assert compile_request.explicit_sources[0].inline_content_json["linked_document_refs"] == [
         "doc://governance/technology-decision/current"
     ]
+
+
+def test_source_delivery_and_evidence_pack_are_indexed_and_rebuild_stable(client, set_ticket_time):
+    set_ticket_time("2026-04-28T09:00:00+08:00")
+    workflow_id = "wf_process_asset_index"
+    ticket_id = "tkt_process_asset_build"
+    node_id = "node_process_asset_build"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Index source delivery process assets.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    before = repository.list_process_assets_by_producer_ticket(
+        ticket_id,
+        process_asset_kinds={"SOURCE_CODE_DELIVERY", "EVIDENCE_PACK"},
+    )
+    with repository.transaction() as connection:
+        repository.refresh_projections(connection)
+    after = repository.list_process_assets_by_producer_ticket(
+        ticket_id,
+        process_asset_kinds={"SOURCE_CODE_DELIVERY", "EVIDENCE_PACK"},
+    )
+
+    assert [asset["process_asset_ref"] for asset in before] == [
+        build_source_code_delivery_process_asset_ref(ticket_id, version_int=1),
+        build_evidence_pack_process_asset_ref(ticket_id, version_int=1),
+    ]
+    assert [asset["process_asset_ref"] for asset in after] == [
+        asset["process_asset_ref"] for asset in before
+    ]
+    assert [asset["content_hash"] for asset in after] == [
+        asset["content_hash"] for asset in before
+    ]
+    source_asset = after[0]
+    evidence_asset = after[1]
+    assert source_asset["process_asset_kind"] == "SOURCE_CODE_DELIVERY"
+    assert source_asset["workflow_id"] == workflow_id
+    assert source_asset["producer_node_id"] == node_id
+    assert source_asset["visibility_status"] == "CONSUMABLE"
+    assert source_asset["content_hash"]
+    assert evidence_asset["process_asset_kind"] == "EVIDENCE_PACK"
+    assert evidence_asset["linked_process_asset_refs"] == [
+        build_source_code_delivery_process_asset_ref(ticket_id, version_int=1)
+    ]
+
+
+def test_build_compile_request_fails_closed_when_source_delivery_index_is_missing(client, set_ticket_time):
+    set_ticket_time("2026-04-28T09:15:00+08:00")
+    workflow_id = "wf_process_asset_gap"
+    source_ticket_id = "tkt_process_asset_gap_build"
+    source_node_id = "node_process_asset_gap_build"
+    consumer_ticket_id = "tkt_process_asset_gap_consumer"
+    consumer_node_id = "node_process_asset_gap_consumer"
+    source_ref = build_source_code_delivery_process_asset_ref(source_ticket_id, version_int=1)
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Missing source delivery assets should fail closed.",
+    )
+    _seed_governance_profile(client.app.state.repository, workflow_id=workflow_id)
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=[f"artifacts/ui/scope-followups/{source_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=source_node_id,
+        ),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=consumer_ticket_id,
+            node_id=consumer_node_id,
+            input_artifact_refs=[],
+            input_process_asset_refs=[source_ref],
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=consumer_ticket_id,
+            node_id=consumer_node_id,
+        ),
+    )
+
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            "DELETE FROM process_asset_index WHERE process_asset_ref = ?",
+            (source_ref,),
+        )
+    consumer_ticket = repository.get_current_ticket_projection(consumer_ticket_id)
+
+    with pytest.raises(ValueError, match="EVIDENCE_GAP"):
+        build_compile_request(repository, consumer_ticket)
+
+
+def test_new_source_delivery_supersedes_prior_default_for_same_node(client, set_ticket_time):
+    set_ticket_time("2026-04-28T09:30:00+08:00")
+    workflow_id = "wf_process_asset_supersede"
+    node_id = "node_process_asset_supersede"
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Supersede source delivery process assets.",
+    )
+    api_test_helpers._create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_process_asset_old",
+        node_id=node_id,
+        output_schema_ref="source_code_delivery",
+        delivery_stage="BUILD",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_process_asset_old/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+    )
+    old_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_process_asset_old",
+            node_id=node_id,
+            include_review_request=True,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:tkt_process_asset_old:implementation",
+        ),
+    )
+    assert old_response.status_code == 200
+    assert old_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            review_status="CHANGES_REQUIRED",
+            findings=[
+                {
+                    "finding_id": "finding_process_asset_rework",
+                    "severity": "high",
+                    "category": "DELIVERY_CLARITY",
+                    "headline": "Source delivery needs one fix.",
+                    "summary": "The source delivery needs a follow-up pass.",
+                    "required_action": "Submit a corrected source delivery.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:changes-required",
+        ),
+    )
+    assert checker_response.status_code == 200
+    assert checker_response.json()["status"] == "ACCEPTED"
+
+    fix_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id=node_id,
+            leased_by="emp_frontend_2",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id=node_id,
+            started_by="emp_frontend_2",
+        ),
+    )
+    fix_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=api_test_helpers._source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=fix_ticket_id,
+            node_id=node_id,
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{fix_ticket_id}:implementation",
+        ),
+    )
+    assert fix_response.status_code == 200
+    assert fix_response.json()["status"] == "ACCEPTED"
+
+    old_asset = repository.get_process_asset_index_entry(
+        build_source_code_delivery_process_asset_ref("tkt_process_asset_old", version_int=1)
+    )
+    new_default = repository.get_default_consumable_process_asset(
+        workflow_id=workflow_id,
+        producer_node_id=node_id,
+        process_asset_kind="SOURCE_CODE_DELIVERY",
+    )
+
+    assert old_asset is not None
+    assert old_asset["visibility_status"] == "SUPERSEDED"
+    assert new_default is not None
+    assert new_default["producer_ticket_id"] == fix_ticket_id
 
 
 def test_compile_and_persist_execution_artifacts_rejects_planned_placeholder_before_materialization(client):

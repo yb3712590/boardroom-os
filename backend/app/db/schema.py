@@ -257,6 +257,26 @@ CREATE TABLE IF NOT EXISTS compiled_execution_package (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS process_asset_index (
+    process_asset_ref TEXT PRIMARY KEY,
+    canonical_ref TEXT NOT NULL,
+    version_int INTEGER,
+    supersedes_ref TEXT,
+    process_asset_kind TEXT NOT NULL,
+    workflow_id TEXT,
+    producer_ticket_id TEXT,
+    producer_node_id TEXT,
+    graph_version TEXT,
+    content_hash TEXT,
+    visibility_status TEXT NOT NULL,
+    linked_process_asset_refs_json TEXT NOT NULL DEFAULT '[]',
+    summary TEXT,
+    consumable_by_json TEXT NOT NULL DEFAULT '[]',
+    source_metadata_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS board_advisory_session (
     session_id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL,
@@ -380,6 +400,15 @@ ON compiled_execution_package(ticket_id);
 
 CREATE INDEX IF NOT EXISTS idx_compiled_execution_package_compile_request_id
 ON compiled_execution_package(compile_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_process_asset_index_producer_ticket
+ON process_asset_index(producer_ticket_id);
+
+CREATE INDEX IF NOT EXISTS idx_process_asset_index_workflow_kind_node
+ON process_asset_index(workflow_id, process_asset_kind, producer_node_id, visibility_status);
+
+CREATE INDEX IF NOT EXISTS idx_process_asset_index_kind_visibility
+ON process_asset_index(process_asset_kind, visibility_status);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_board_advisory_session_approval_id
 ON board_advisory_session(approval_id);

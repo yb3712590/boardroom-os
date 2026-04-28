@@ -17,6 +17,7 @@ ProcessAssetKind = Literal[
     "GRAPH_PATCH_PROPOSAL",
     "PROJECT_MAP_SLICE",
     "SOURCE_CODE_DELIVERY",
+    "EVIDENCE_PACK",
     "TIMELINE_INDEX",
     "MEETING_DECISION_RECORD",
     "CLOSEOUT_SUMMARY",
@@ -24,6 +25,7 @@ ProcessAssetKind = Literal[
 ]
 
 ProcessAssetContentType = Literal["TEXT", "JSON"]
+ProcessAssetVisibilityStatus = Literal["MATERIALIZED", "VALIDATED", "CONSUMABLE", "SUPERSEDED"]
 
 
 class ProcessAssetReference(StrictModel):
@@ -32,7 +34,13 @@ class ProcessAssetReference(StrictModel):
     version_int: int | None = Field(default=None, ge=1)
     supersedes_ref: str | None = None
     process_asset_kind: ProcessAssetKind
+    workflow_id: str | None = None
     producer_ticket_id: str | None = None
+    producer_node_id: str | None = None
+    graph_version: str | None = None
+    content_hash: str | None = None
+    visibility_status: ProcessAssetVisibilityStatus = "CONSUMABLE"
+    linked_process_asset_refs: list[str] = Field(default_factory=list)
     summary: str | None = None
     consumable_by: list[str] = Field(default_factory=list)
     source_metadata: dict[str, Any] = Field(default_factory=dict)

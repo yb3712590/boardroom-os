@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
@@ -689,6 +690,104 @@ def rebuild_employee_projections(events: Iterable[dict]) -> list[dict]:
             }
 
     return [projections[employee_id] for employee_id in sorted(projections)]
+
+
+def _process_asset_content_hash(asset: dict[str, Any]) -> str:
+    payload = {
+        key: value
+        for key, value in asset.items()
+        if key not in {"content_hash", "visibility_status"}
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def rebuild_process_asset_index(events: Iterable[dict]) -> list[dict[str, Any]]:
+    projections: dict[str, dict[str, Any]] = {}
+
+    for event in events:
+        if event["event_type"] != EVENT_TICKET_COMPLETED:
+            continue
+        payload = _event_payload(event)
+        produced_assets = payload.get("produced_process_assets")
+        if not isinstance(produced_assets, list):
+            continue
+        occurred_at = event["occurred_at"].isoformat()
+        version = int(event["sequence_no"])
+        workflow_id = str(payload.get("workflow_id") or event.get("workflow_id") or "").strip() or None
+        ticket_id = str(payload.get("ticket_id") or "").strip() or None
+        node_id = str(payload.get("node_id") or "").strip() or None
+
+        for asset in produced_assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_ref = str(asset.get("process_asset_ref") or asset.get("canonical_ref") or "").strip()
+            if not asset_ref:
+                continue
+            asset_kind = str(asset.get("process_asset_kind") or "").strip()
+            asset_workflow_id = str(asset.get("workflow_id") or workflow_id or "").strip() or None
+            producer_node_id = str(asset.get("producer_node_id") or node_id or "").strip() or None
+            if asset_kind == "SOURCE_CODE_DELIVERY" and asset_workflow_id and producer_node_id:
+                for existing in projections.values():
+                    if (
+                        existing.get("process_asset_kind") == "SOURCE_CODE_DELIVERY"
+                        and existing.get("workflow_id") == asset_workflow_id
+                        and existing.get("producer_node_id") == producer_node_id
+                        and existing.get("visibility_status") == "CONSUMABLE"
+                    ):
+                        existing["visibility_status"] = "SUPERSEDED"
+                        existing["updated_at"] = occurred_at
+                        existing["version"] = version
+
+            canonical_ref = str(asset.get("canonical_ref") or asset_ref).strip()
+            projection = {
+                "process_asset_ref": asset_ref,
+                "canonical_ref": canonical_ref,
+                "version_int": asset.get("version_int"),
+                "supersedes_ref": asset.get("supersedes_ref"),
+                "process_asset_kind": asset_kind,
+                "workflow_id": asset_workflow_id,
+                "producer_ticket_id": str(asset.get("producer_ticket_id") or ticket_id or "").strip()
+                or None,
+                "producer_node_id": producer_node_id,
+                "graph_version": str(asset.get("graph_version") or "").strip() or None,
+                "content_hash": str(asset.get("content_hash") or "").strip()
+                or _process_asset_content_hash(asset),
+                "visibility_status": str(asset.get("visibility_status") or "CONSUMABLE").strip()
+                or "CONSUMABLE",
+                "linked_process_asset_refs": [
+                    str(ref).strip()
+                    for ref in list(asset.get("linked_process_asset_refs") or [])
+                    if str(ref).strip()
+                ],
+                "summary": asset.get("summary"),
+                "consumable_by": [
+                    str(value).strip()
+                    for value in list(asset.get("consumable_by") or [])
+                    if str(value).strip()
+                ],
+                "source_metadata": dict(asset.get("source_metadata") or {}),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            projections[asset_ref] = projection
+
+    return [
+        projections[asset_ref]
+        for asset_ref in sorted(
+            projections,
+            key=lambda ref: (
+                str(projections[ref].get("workflow_id") or ""),
+                str(projections[ref].get("producer_node_id") or ""),
+                str(projections[ref].get("producer_ticket_id") or ""),
+                str(projections[ref].get("process_asset_kind") or ""),
+                ref,
+            ),
+        )
+    ]
 
 
 def rebuild_ticket_projections(events: Iterable[dict]) -> list[dict]:
