@@ -146,6 +146,40 @@ DeliveryPolicy / DeliverableContract / CloseoutPolicy / ProgressionPolicy
 - `doc/archive/specs/feature-spec.md`。
 - `doc/tests/intergration-test-015-20260429.md` 与 `doc/tests/intergration-test-015-20260429-final.md`。
 
+## Round 4 backend cleanup 审计记录（2026-05-01）
+
+本轮只审计 `backend/app/core` 和 `backend/tests`，删除明确废弃、无生产引用、无当前测试引用、非审计证据、非未来目标架构必要入口的 backend surface；未拆 `ticket_handlers.py`、`runtime.py`、`workflow_controller.py`，也未启动 provider、progression 或 actor 重构。
+
+### 当前树快照
+
+`backend/app/core` 当前仍保留事件、ticket、projection、artifact、runtime、provider、governance、workspace、worker frozen helpers 和审计 truth 模块；`backend/tests` 当前仍保留普通 pytest、`live/` provider/live harness、`scenario/` library management staged scenario 三类测试树。
+
+### 删除
+
+| 路径 | 处理 | 验证依据 |
+|---|---|---|
+| `backend/app/core/project_init_architecture_tickets.py` | 删除 | 无生产导入、无当前测试导入；旧 project-init architecture 预置插票 helper 已被 `workflow_progression` / `project_init_governance` / CEO kickoff 路径取代 |
+
+### 同步事实表 / 测试
+
+| 路径 | 处理 | 原因 |
+|---|---|---|
+| `doc/mainline-truth.md` | 更新 frozen boundary 表 | 人类入口同步当前事实：worker-admin / worker-runtime 是 unmounted frozen material，不是 mounted compatibility surface |
+| `backend/app/core/mainline_truth.py` | 更新 frozen boundary | 当前 API registry 不再挂载 `worker-admin` / `worker-runtime` HTTP surface，root CLI 兼容入口也不存在；冻结实现仍留在 `_frozen` 与 token/scope/schema helper 中 |
+| `backend/tests/test_mainline_truth.py` | 更新断言 | 回归当前事实：worker surfaces 是 `FROZEN_UNMOUNTED`，不是 mounted compatibility surface |
+
+### 保留 / 不删
+
+| 路径 | 处理 | 原因 |
+|---|---|---|
+| `backend/app/core/board_riddle_drill.py`、`backend/tests/test_board_riddle_drill.py` | 保留 | 看起来是旧 scenario-only helper，但仍有当前测试引用；不满足“无当前测试引用”删除条件 |
+| `backend/app/core/worker_admin.py`、`backend/app/core/worker_runtime.py` | 保留 | 无生产导入，但被 `mainline_truth` 作为冻结壳审计锚点测试；不作为 mounted API 入口 |
+| `backend/app/_frozen/worker_admin/**`、`backend/app/_frozen/worker_runtime/**` | 保留 | 冻结实现仍是审计/迁移材料；本轮不做成组退休 |
+| `backend/app/core/api_surface.py` | 保留 | route-family truth 的审计支持，仍被测试使用 |
+| `backend/app/core/governance_templates.py` | 保留 | `projections.py` 仍生产引用 workforce role templates catalog |
+| `backend/app/core/streaming.py` | 保留 | `api/events.py` 生产引用事件流 |
+| `backend/app/core/ticket_handlers.py`、`backend/app/core/runtime.py`、`backend/app/core/workflow_controller.py` | 保留，只记录拆分建议 | 当前核心大模块；后续应按 policy/contract 边界拆，不在 cleanup 轮顺手拆 |
+
 ## 审计结论
 
 当前项目不是底层不可救的屎山；事件源、ticket、projection、artifact、process asset 和 compiled execution package 是值得保留的基础。

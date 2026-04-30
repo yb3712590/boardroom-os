@@ -19,6 +19,8 @@
 - [x] 旧设计、路线、任务 backlog、历史记忆和 001-014 integration logs 已集中归档。
 - [x] `doc/` active 入口只保留当前真相、重构控制面、后端参考和必要 015 证据。
 - [x] Phase 0 未修改 provider、scheduler、ticket handler、workflow controller 或 `backend/app/core` runtime 行为。
+- [x] Round 4 backend cleanup 已删除无生产/测试引用的旧 project-init architecture helper，并同步 frozen boundary truth。
+- [x] Round 4 未拆 provider、progression、actor 或核心 runtime 大模块。
 
 ## Phase 1：目录 / 产物 / 写权限 contract
 

@@ -289,9 +289,9 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
     FrozenCapabilityBoundary(
         slug="worker_admin",
         label="Worker admin control plane",
-        boundary_status="FROZEN_PRESENT",
-        route_prefixes=("/api/v1/worker-admin",),
-        api_surface_groups=("worker-admin", "worker-admin-projections"),
+        boundary_status="FROZEN_UNMOUNTED",
+        route_prefixes=(),
+        api_surface_groups=(),
         storage_table_refs=(
             "worker_bootstrap_state",
             "worker_bootstrap_issue",
@@ -307,36 +307,31 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
             "backend/app/_frozen/worker_admin/core/worker_admin.py",
             "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
+            "backend/app/core/worker_admin.py",
         ),
-        entrypoint_refs=(
-            "backend/app/api/worker_admin.py",
-            "backend/app/api/worker_admin_projections.py",
-            "backend/app/worker_admin_auth_cli.py",
-        ),
+        entrypoint_refs=(),
         mainline_dependency_refs=(),
-        test_refs=(
-            "backend/tests/test_api.py",
-            "backend/tests/test_worker_admin_auth_cli.py",
-            "backend/tests/test_repository.py",
-        ),
+        test_refs=("backend/tests/test_mainline_truth.py",),
         migration_preconditions=(
-            "Worker-admin API, auth projection, and CLI entrypoints must either move together or stay in place.",
-            "No current mainline workflow path may import worker_admin modules directly before any physical migration starts.",
+            "Worker-admin API and root CLI compatibility entrypoints are already removed from the mounted backend surface.",
+            "Remaining frozen implementation and storage schema must either be retired together or re-mounted explicitly in a future ticket.",
         ),
         migration_blocker_refs=(
-            "backend/app/api/worker_admin.py",
-            "backend/app/api/worker_admin_auth.py",
-            "backend/app/api/worker_admin_projections.py",
-            "backend/app/main.py",
-            "backend/app/worker_admin_auth_cli.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin_auth.py",
+            "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
+            "backend/app/_frozen/worker_admin/core/worker_admin.py",
+            "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
+            "backend/app/core/worker_admin.py",
+            "backend/app/core/worker_admin_tokens.py",
+            "backend/app/db/repository.py",
         ),
         migration_blocker_summary=(
-            "worker-admin 实现已迁入 `_frozen/worker_admin`，但 API、auth、projection 和 CLI 兼容壳仍需成组保留。"
+            "worker-admin compatibility entrypoints are unmounted; only frozen implementation, token helpers, and storage schema remain."
         ),
         notes=(
-            "HTTP 管理面和操作人令牌链仍保留在仓库中，但当前默认不继续扩张。"
-            "它现在是保留的运维面，不是主线业务依赖。"
-            "P1-CLN-001 这轮已把真实实现迁入 `_frozen/worker_admin`，旧入口当前只保留兼容壳。"
+            "HTTP 管理面不再挂载到当前 API registry，root CLI 兼容入口也不在当前仓库入口面。"
+            "冻结实现只作为历史/迁移材料保留，不是主线业务依赖。"
         ),
     ),
     FrozenCapabilityBoundary(
@@ -347,17 +342,12 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         api_surface_groups=(
             "commands",
             "projections",
-            "worker-admin",
-            "worker-admin-projections",
-            "worker-runtime",
-            "worker-runtime-projections",
         ),
         storage_table_refs=(),
         code_refs=(
             "backend/app/contracts/scope.py",
             "backend/app/contracts/worker_admin.py",
             "backend/app/contracts/worker_runtime.py",
-            "backend/app/core/worker_runtime.py",
         ),
         entrypoint_refs=(
             "backend/app/api/projections.py",
@@ -399,7 +389,7 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         label="Artifact uploads and object store",
         boundary_status="FROZEN_PRESENT",
         route_prefixes=("/api/v1/artifact-uploads",),
-        api_surface_groups=("artifact-uploads", "commands", "worker-runtime"),
+        api_surface_groups=("artifact-uploads", "commands"),
         storage_table_refs=("artifact_upload_session", "artifact_upload_part"),
         code_refs=(
             "backend/app/_frozen/object_store.py",
@@ -412,7 +402,6 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
         mainline_dependency_refs=(
             "backend/app/core/artifact_store.py",
             "backend/app/core/artifact_handlers.py",
-            "backend/app/core/worker_runtime.py",
         ),
         test_refs=(
             "backend/tests/test_api.py",
@@ -440,9 +429,9 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
     FrozenCapabilityBoundary(
         slug="external_worker_handoff",
         label="External worker handoff",
-        boundary_status="FROZEN_PRESENT",
-        route_prefixes=("/api/v1/worker-runtime",),
-        api_surface_groups=("worker-runtime", "worker-runtime-projections"),
+        boundary_status="FROZEN_UNMOUNTED",
+        route_prefixes=(),
+        api_surface_groups=(),
         storage_table_refs=(
             "worker_bootstrap_state",
             "worker_session",
@@ -454,36 +443,32 @@ FROZEN_CAPABILITY_BOUNDARIES: tuple[FrozenCapabilityBoundary, ...] = (
             "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
             "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
             "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
+            "backend/app/core/worker_runtime.py",
         ),
-        entrypoint_refs=(
-            "backend/app/api/worker_runtime.py",
-            "backend/app/api/worker_runtime_projections.py",
-            "backend/app/worker_auth_cli.py",
-        ),
+        entrypoint_refs=(),
         mainline_dependency_refs=(),
-        test_refs=(
-            "backend/tests/test_api.py",
-            "backend/tests/test_worker_auth_cli.py",
-            "backend/tests/conftest.py",
-        ),
+        test_refs=("backend/tests/test_mainline_truth.py",),
         migration_preconditions=(
-            "Worker-runtime delivery routes and the worker-runtime projection must stay aligned until the handoff surface is retired together.",
-            "No physical migration should start while worker bootstrap, session, and delivery-grant storage still share the active repository schema.",
+            "Worker-runtime API projection and root CLI compatibility entrypoints are already removed from the mounted backend surface.",
+            "Remaining frozen implementation and bootstrap/session/delivery-grant schema must either be retired together or re-mounted explicitly in a future ticket.",
         ),
         migration_blocker_refs=(
-            "backend/app/api/worker_runtime_projections.py",
-            "backend/app/api/worker_runtime.py",
+            "backend/app/_frozen/worker_runtime/api/worker_runtime.py",
+            "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
+            "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
+            "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
             "backend/app/core/worker_runtime.py",
+            "backend/app/core/worker_bootstrap_tokens.py",
+            "backend/app/core/worker_delivery_tokens.py",
+            "backend/app/core/worker_scope_ops.py",
             "backend/app/db/repository.py",
-            "backend/app/worker_auth_cli.py",
         ),
         migration_blocker_summary=(
-            "worker-runtime 路由、投影、CLI 和 worker bootstrap/session/delivery-grant schema 仍需成组保留。"
+            "worker-runtime compatibility entrypoints are unmounted; only frozen implementation, token helpers, scope helpers, and storage schema remain."
         ),
         notes=(
-            "外部 worker bootstrap、session 和 delivery grant 仍在仓库中，但当前默认不作为主线继续推进。"
-            "它现在是保留的交接面，不是当前 MVP 的主链卖点。"
-            "P1-CLN-004 这轮已完成独立 projection 入口前置拆分，但 schema 仍需成组保留。"
+            "外部 worker HTTP handoff 不再挂载到当前 API registry，root CLI 兼容入口也不在当前仓库入口面。"
+            "冻结实现和 shared scope/token/schema 只作为历史/迁移材料保留，不是当前 MVP 的主链卖点。"
         ),
     ),
 )

@@ -18,6 +18,7 @@
 - 明确本轮不承载的愿景。
 - 标记 015 为压力审计，不作为自治验收通过。
 - 删除旧 `frontend/` 源码树。
+- 完成 Round 4 backend cleanup：删除无引用旧 `project_init_architecture_tickets.py`，并把 worker-admin / worker-runtime frozen boundary 同步为未挂载的冻结材料。
 - 将旧设计、旧路线、旧任务流水、旧历史记忆、001-014 integration logs 和旧 refactor 实施资料集中归档到 `doc/archive/`。
 
 验收：
@@ -165,6 +166,10 @@
 - final deliverable contract pass。
 - provider failure attribution clear。
 - replay from checkpoint pass。
+
+## Cleanup audit guardrail
+
+Round 4 backend cleanup 只允许删除满足“无生产引用、无当前测试引用、非审计证据、非未来目标架构必要入口”的废弃 surface。`ticket_handlers.py`、`runtime.py`、`workflow_controller.py` 仍按后续 policy/contract phase 拆分；cleanup 轮只记录这些大模块的拆分建议，不直接改行为。
 
 ## 提交策略
 

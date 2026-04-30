@@ -123,11 +123,9 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "artifact_uploads_and_object_store",
         "external_worker_handoff",
     }
-    assert boundaries_by_slug["worker_admin"].route_prefixes == ("/api/v1/worker-admin",)
-    assert boundaries_by_slug["worker_admin"].api_surface_groups == (
-        "worker-admin",
-        "worker-admin-projections",
-    )
+    assert boundaries_by_slug["worker_admin"].boundary_status == "FROZEN_UNMOUNTED"
+    assert boundaries_by_slug["worker_admin"].route_prefixes == ()
+    assert boundaries_by_slug["worker_admin"].api_surface_groups == ()
     assert boundaries_by_slug["worker_admin"].storage_table_refs == (
         "worker_bootstrap_state",
         "worker_bootstrap_issue",
@@ -143,17 +141,14 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
     assert boundaries_by_slug["artifact_uploads_and_object_store"].api_surface_groups == (
         "artifact-uploads",
         "commands",
-        "worker-runtime",
     )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].storage_table_refs == (
         "artifact_upload_session",
         "artifact_upload_part",
     )
-    assert boundaries_by_slug["external_worker_handoff"].route_prefixes == ("/api/v1/worker-runtime",)
-    assert boundaries_by_slug["external_worker_handoff"].api_surface_groups == (
-        "worker-runtime",
-        "worker-runtime-projections",
-    )
+    assert boundaries_by_slug["external_worker_handoff"].boundary_status == "FROZEN_UNMOUNTED"
+    assert boundaries_by_slug["external_worker_handoff"].route_prefixes == ()
+    assert boundaries_by_slug["external_worker_handoff"].api_surface_groups == ()
     assert boundaries_by_slug["external_worker_handoff"].storage_table_refs == (
         "worker_bootstrap_state",
         "worker_session",
@@ -164,27 +159,15 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
     assert boundaries_by_slug["multi_tenant_scope"].api_surface_groups == (
         "commands",
         "projections",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime",
-        "worker-runtime-projections",
     )
     assert boundaries_by_slug["multi_tenant_scope"].storage_table_refs == ()
 
-    assert boundaries_by_slug["worker_admin"].entrypoint_refs == (
-        "backend/app/api/worker_admin.py",
-        "backend/app/api/worker_admin_projections.py",
-        "backend/app/worker_admin_auth_cli.py",
-    )
+    assert boundaries_by_slug["worker_admin"].entrypoint_refs == ()
     assert boundaries_by_slug["worker_admin"].mainline_dependency_refs == ()
-    assert boundaries_by_slug["worker_admin"].test_refs == (
-        "backend/tests/test_api.py",
-        "backend/tests/test_worker_admin_auth_cli.py",
-        "backend/tests/test_repository.py",
-    )
+    assert boundaries_by_slug["worker_admin"].test_refs == ("backend/tests/test_mainline_truth.py",)
     assert boundaries_by_slug["worker_admin"].migration_preconditions == (
-        "Worker-admin API, auth projection, and CLI entrypoints must either move together or stay in place.",
-        "No current mainline workflow path may import worker_admin modules directly before any physical migration starts.",
+        "Worker-admin API and root CLI compatibility entrypoints are already removed from the mounted backend surface.",
+        "Remaining frozen implementation and storage schema must either be retired together or re-mounted explicitly in a future ticket.",
     )
 
     assert boundaries_by_slug["multi_tenant_scope"].entrypoint_refs == (
@@ -220,7 +203,6 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
     assert boundaries_by_slug["artifact_uploads_and_object_store"].mainline_dependency_refs == (
         "backend/app/core/artifact_store.py",
         "backend/app/core/artifact_handlers.py",
-        "backend/app/core/worker_runtime.py",
     )
     assert boundaries_by_slug["artifact_uploads_and_object_store"].test_refs == (
         "backend/tests/test_api.py",
@@ -231,26 +213,19 @@ def test_frozen_capability_boundaries_match_current_mounted_routes_and_documente
         "Object-store support must remain a minimal storage backend and must not be expanded during this cleanup round.",
     )
 
-    assert boundaries_by_slug["external_worker_handoff"].entrypoint_refs == (
-        "backend/app/api/worker_runtime.py",
-        "backend/app/api/worker_runtime_projections.py",
-        "backend/app/worker_auth_cli.py",
-    )
+    assert boundaries_by_slug["external_worker_handoff"].entrypoint_refs == ()
     assert boundaries_by_slug["external_worker_handoff"].code_refs == (
         "backend/app/_frozen/worker_runtime/api/worker_runtime.py",
         "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
         "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
         "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
+        "backend/app/core/worker_runtime.py",
     )
     assert boundaries_by_slug["external_worker_handoff"].mainline_dependency_refs == ()
-    assert boundaries_by_slug["external_worker_handoff"].test_refs == (
-        "backend/tests/test_api.py",
-        "backend/tests/test_worker_auth_cli.py",
-        "backend/tests/conftest.py",
-    )
+    assert boundaries_by_slug["external_worker_handoff"].test_refs == ("backend/tests/test_mainline_truth.py",)
     assert boundaries_by_slug["external_worker_handoff"].migration_preconditions == (
-        "Worker-runtime delivery routes and the worker-runtime projection must stay aligned until the handoff surface is retired together.",
-        "No physical migration should start while worker bootstrap, session, and delivery-grant storage still share the active repository schema.",
+        "Worker-runtime API projection and root CLI compatibility entrypoints are already removed from the mounted backend surface.",
+        "Remaining frozen implementation and bootstrap/session/delivery-grant schema must either be retired together or re-mounted explicitly in a future ticket.",
     )
 
     for entry in FROZEN_CAPABILITY_BOUNDARIES:
@@ -274,7 +249,6 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert artifact_boundary.mainline_dependency_refs == (
         "backend/app/core/artifact_store.py",
         "backend/app/core/artifact_handlers.py",
-        "backend/app/core/worker_runtime.py",
     )
     assert "ticket-result-submit 已不再依赖 upload session" in artifact_boundary.notes
     assert artifact_boundary.migration_blocker_refs == (
@@ -285,7 +259,7 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert artifact_boundary.migration_blocker_summary == (
         "本地 artifact 存储仍是主线；冻结的只是可选对象存储分支，upload 导入入口和 artifact upload session 存储仍需保留。"
     )
-    assert artifact_boundary.api_surface_groups == ("artifact-uploads", "commands", "worker-runtime")
+    assert artifact_boundary.api_surface_groups == ("artifact-uploads", "commands")
     assert artifact_boundary.storage_table_refs == ("artifact_upload_session", "artifact_upload_part")
 
     scope_boundary = boundaries_by_slug["multi_tenant_scope"]
@@ -303,25 +277,25 @@ def test_frozen_capability_boundaries_capture_shared_scope_and_bridge_constraint
     assert scope_boundary.api_surface_groups == (
         "commands",
         "projections",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime",
-        "worker-runtime-projections",
     )
     assert scope_boundary.storage_table_refs == ()
 
     handoff_boundary = boundaries_by_slug["external_worker_handoff"]
     assert handoff_boundary.migration_blocker_refs == (
-        "backend/app/api/worker_runtime_projections.py",
-        "backend/app/api/worker_runtime.py",
+        "backend/app/_frozen/worker_runtime/api/worker_runtime.py",
+        "backend/app/_frozen/worker_runtime/api/worker_runtime_projections.py",
+        "backend/app/_frozen/worker_runtime/core/worker_runtime.py",
+        "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py",
         "backend/app/core/worker_runtime.py",
+        "backend/app/core/worker_bootstrap_tokens.py",
+        "backend/app/core/worker_delivery_tokens.py",
+        "backend/app/core/worker_scope_ops.py",
         "backend/app/db/repository.py",
-        "backend/app/worker_auth_cli.py",
     )
     assert handoff_boundary.migration_blocker_summary == (
-        "worker-runtime 路由、投影、CLI 和 worker bootstrap/session/delivery-grant schema 仍需成组保留。"
+        "worker-runtime compatibility entrypoints are unmounted; only frozen implementation, token helpers, scope helpers, and storage schema remain."
     )
-    assert handoff_boundary.api_surface_groups == ("worker-runtime", "worker-runtime-projections")
+    assert handoff_boundary.api_surface_groups == ()
     assert handoff_boundary.storage_table_refs == (
         "worker_bootstrap_state",
         "worker_session",
@@ -341,28 +315,31 @@ def test_frozen_capability_api_surface_groups_stay_within_documented_group_order
     assert API_SURFACE_GROUP_ORDER == ALL_ROUTE_GROUPS
     assert set(FROZEN_ROUTE_GROUPS) == {
         "artifact-uploads",
-        "worker-runtime",
-        "worker-admin",
-        "worker-admin-projections",
-        "worker-runtime-projections",
     }
 
 
-def test_worker_admin_boundary_uses_dedicated_projection_entrypoint() -> None:
-    projection_entrypoint = REPO_ROOT / "backend/app/api/worker_admin_projections.py"
+def test_worker_admin_boundary_records_unmounted_frozen_implementation() -> None:
+    worker_admin_boundary = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}["worker_admin"]
+    worker_admin_core_source = _read_repo_text("backend/app/core/worker_admin.py")
+    router_registry_source = _read_repo_text("backend/app/api/router_registry.py")
 
-    assert projection_entrypoint.exists()
-
-
-def test_worker_auth_cli_no_longer_imports_worker_admin_core_module() -> None:
-    worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
-    frozen_worker_auth_cli_source = _read_repo_text(
-        "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py"
+    assert worker_admin_boundary.boundary_status == "FROZEN_UNMOUNTED"
+    assert worker_admin_boundary.code_refs == (
+        "backend/app/_frozen/worker_admin/api/worker_admin.py",
+        "backend/app/_frozen/worker_admin/api/worker_admin_auth.py",
+        "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
+        "backend/app/_frozen/worker_admin/core/worker_admin.py",
+        "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
+        "backend/app/core/worker_admin.py",
     )
-
-    assert "from app.core.worker_admin import" not in worker_auth_cli_source
-    assert "from app._frozen.worker_runtime.cli.worker_auth_cli import main" in worker_auth_cli_source
-    assert "from app.core.worker_scope_ops import" in frozen_worker_auth_cli_source
+    assert worker_admin_boundary.entrypoint_refs == ()
+    assert not (REPO_ROOT / "backend/app/api/worker_admin.py").exists()
+    assert not (REPO_ROOT / "backend/app/api/worker_admin_projections.py").exists()
+    assert not (REPO_ROOT / "backend/app/worker_admin_auth_cli.py").exists()
+    assert 'group_name="worker-admin"' not in router_registry_source
+    assert 'group_name="worker-admin-projections"' not in router_registry_source
+    assert "from app._frozen.worker_admin.core.worker_admin import (" in worker_admin_core_source
+    assert "compatibility entrypoints are unmounted" in worker_admin_boundary.migration_blocker_summary
 
 
 def test_multi_tenant_scope_blockers_now_live_in_runtime_and_frozen_contracts() -> None:
@@ -429,7 +406,7 @@ def test_artifact_upload_bridge_has_moved_out_of_result_submit_path() -> None:
     assert artifact_boundary.migration_blocker_summary.endswith("仍需保留。")
 
 
-def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> None:
+def test_external_worker_handoff_blockers_still_exist_as_unmounted_frozen_unit() -> None:
     handoff_boundary = {
         entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES
     }["external_worker_handoff"]
@@ -439,37 +416,33 @@ def test_external_worker_handoff_blockers_still_exist_as_one_runtime_unit() -> N
     worker_runtime_api_source = _read_repo_text("backend/app/_frozen/worker_runtime/api/worker_runtime.py")
     projections_api_source = _read_repo_text("backend/app/api/projections.py")
     worker_runtime_core_source = _read_repo_text("backend/app/_frozen/worker_runtime/core/worker_runtime.py")
-    worker_auth_cli_source = _read_repo_text("backend/app/worker_auth_cli.py")
     frozen_worker_auth_cli_source = _read_repo_text(
         "backend/app/_frozen/worker_runtime/cli/worker_auth_cli.py"
     )
-    worker_runtime_api_shim_source = _read_repo_text("backend/app/api/worker_runtime.py")
-    worker_runtime_projection_shim_source = _read_repo_text("backend/app/api/worker_runtime_projections.py")
     worker_runtime_core_shim_source = _read_repo_text("backend/app/core/worker_runtime.py")
     repository_source = _read_repo_text("backend/app/db/repository.py")
     main_source = _read_repo_text("backend/app/main.py")
     router_registry_source = _read_repo_text("backend/app/api/router_registry.py")
 
+    assert handoff_boundary.boundary_status == "FROZEN_UNMOUNTED"
+    assert handoff_boundary.entrypoint_refs == ()
+    assert not (REPO_ROOT / "backend/app/api/worker_runtime.py").exists()
+    assert not (REPO_ROOT / "backend/app/api/worker_runtime_projections.py").exists()
+    assert not (REPO_ROOT / "backend/app/worker_auth_cli.py").exists()
     assert 'APIRouter(prefix="/api/v1/worker-runtime"' in worker_runtime_api_source
     assert "from app.api.router_registry import include_registered_routers" in main_source
     assert "include_registered_routers(app)" in main_source
     assert '@router.get("/worker-runtime"' not in projections_api_source
     assert '@router.get("/worker-runtime"' in worker_runtime_projection_api_source
-    assert "from app._frozen.worker_runtime.api.worker_runtime import router" in worker_runtime_api_shim_source
-    assert (
-        "from app._frozen.worker_runtime.api.worker_runtime_projections import router"
-        in worker_runtime_projection_shim_source
-    )
     assert "from app._frozen.worker_runtime.core.worker_runtime import (" in worker_runtime_core_shim_source
-    assert 'group_name="worker-runtime"' in router_registry_source
-    assert 'group_name="worker-runtime-projections"' in router_registry_source
+    assert 'group_name="worker-runtime"' not in router_registry_source
+    assert 'group_name="worker-runtime-projections"' not in router_registry_source
     assert "def _create_or_refresh_worker_session(" in worker_runtime_core_source
-    assert "from app._frozen.worker_runtime.cli.worker_auth_cli import main" in worker_auth_cli_source
     assert 'prog="python -m app.worker_auth_cli"' in frozen_worker_auth_cli_source
     assert "CREATE TABLE IF NOT EXISTS worker_bootstrap_state" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_session" in repository_source
     assert "CREATE TABLE IF NOT EXISTS worker_delivery_grant" in repository_source
-    assert handoff_boundary.migration_blocker_summary.endswith("schema 仍需成组保留。")
+    assert "compatibility entrypoints are unmounted" in handoff_boundary.migration_blocker_summary
 
 
 def test_external_worker_handoff_projection_builder_uses_worker_scope_helpers() -> None:
@@ -493,37 +466,3 @@ def test_external_worker_handoff_projection_builder_uses_worker_scope_helpers() 
     assert "list_sessions(" in worker_runtime_section
     assert "list_delivery_grants(" in worker_runtime_section
     assert "list_auth_rejections(" in worker_runtime_section
-
-
-def test_worker_admin_boundary_points_to_frozen_implementation_files() -> None:
-    worker_admin_boundary = {entry.slug: entry for entry in FROZEN_CAPABILITY_BOUNDARIES}["worker_admin"]
-
-    assert worker_admin_boundary.code_refs == (
-        "backend/app/_frozen/worker_admin/api/worker_admin.py",
-        "backend/app/_frozen/worker_admin/api/worker_admin_auth.py",
-        "backend/app/_frozen/worker_admin/api/worker_admin_projections.py",
-        "backend/app/_frozen/worker_admin/core/worker_admin.py",
-        "backend/app/_frozen/worker_admin/cli/worker_admin_auth_cli.py",
-    )
-    assert worker_admin_boundary.entrypoint_refs == (
-        "backend/app/api/worker_admin.py",
-        "backend/app/api/worker_admin_projections.py",
-        "backend/app/worker_admin_auth_cli.py",
-    )
-    assert "兼容壳" in worker_admin_boundary.notes
-
-
-def test_worker_admin_legacy_entrypoints_are_thin_shims() -> None:
-    worker_admin_api_source = _read_repo_text("backend/app/api/worker_admin.py")
-    worker_admin_auth_source = _read_repo_text("backend/app/api/worker_admin_auth.py")
-    worker_admin_projection_source = _read_repo_text("backend/app/api/worker_admin_projections.py")
-    worker_admin_core_source = _read_repo_text("backend/app/core/worker_admin.py")
-    worker_admin_cli_source = _read_repo_text("backend/app/worker_admin_auth_cli.py")
-
-    assert "from app._frozen.worker_admin.api.worker_admin import router" in worker_admin_api_source
-    assert "from app._frozen.worker_admin.api.worker_admin_auth import (" in worker_admin_auth_source
-    assert "from app._frozen.worker_admin.api.worker_admin_projections import router" in (
-        worker_admin_projection_source
-    )
-    assert "from app._frozen.worker_admin.core.worker_admin import (" in worker_admin_core_source
-    assert "from app._frozen.worker_admin.cli.worker_admin_auth_cli import main" in worker_admin_cli_source
