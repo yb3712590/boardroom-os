@@ -1794,6 +1794,200 @@ def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():
     )
 
 
+
+def test_closeout_gate_rejects_illegal_final_artifact_ref_kind():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    build_ticket_id = "tkt_closeout_gate_build"
+    closeout_ticket_id = "tkt_closeout_gate_closeout"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    source_ref = f"art://workspace/{build_ticket_id}/source/src/app/main.py"
+    illegal_final_ref = f"art://runtime/{build_ticket_id}/governance/architecture-brief.json"
+    tickets = [
+        {
+            "ticket_id": build_ticket_id,
+            "node_id": "node_closeout_gate_build",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": closeout_ticket_id,
+            "node_id": "node_closeout_gate_closeout",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        build_ticket_id: {
+            "ticket_id": build_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        closeout_ticket_id: {
+            "ticket_id": closeout_ticket_id,
+            "output_schema_ref": "delivery_closeout_package",
+            "parent_ticket_id": build_ticket_id,
+        },
+    }
+    terminal_events = {
+        build_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": build_ticket_id,
+                "payload": {
+                    "source_file_refs": [source_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [source_ref],
+                "written_artifacts": [
+                    {
+                        "artifact_ref": source_ref,
+                        "path": "10-project/src/app/main.py",
+                    }
+                ],
+            },
+        },
+        closeout_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": closeout_ticket_id,
+                "payload": {
+                    "summary": "Closeout references an illegal governance document.",
+                    "final_artifact_refs": [illegal_final_ref],
+                    "documentation_updates": [
+                        {
+                            "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                            "status": "UPDATED",
+                        }
+                    ],
+                },
+                "written_artifacts": [
+                    {
+                        "artifact_ref": f"art://runtime/{closeout_ticket_id}/delivery-closeout-package.json",
+                        "content_json": {
+                            "summary": "Closeout references an illegal governance document.",
+                            "final_artifact_refs": [illegal_final_ref],
+                            "documentation_updates": [
+                                {
+                                    "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                                    "status": "UPDATED",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+        closeout_ticket=tickets[1],
+        closeout_terminal_event=terminal_events[closeout_ticket_id],
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "closeout_illegal_final_artifact_ref"
+    assert issue["details"]["status"] == "ILLEGAL_KIND"
+
+
+def test_closeout_gate_rejects_placeholder_final_artifact_ref():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    build_ticket_id = "tkt_closeout_gate_placeholder_build"
+    closeout_ticket_id = "tkt_closeout_gate_placeholder_closeout"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    source_ref = f"art://workspace/{build_ticket_id}/source/src/app/main.py"
+    placeholder_ref = f"art://runtime/{build_ticket_id}/placeholder/source-code-delivery.json"
+    tickets = [
+        {
+            "ticket_id": build_ticket_id,
+            "node_id": "node_closeout_gate_placeholder_build",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": closeout_ticket_id,
+            "node_id": "node_closeout_gate_placeholder_closeout",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        build_ticket_id: {
+            "ticket_id": build_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        closeout_ticket_id: {
+            "ticket_id": closeout_ticket_id,
+            "output_schema_ref": "delivery_closeout_package",
+            "parent_ticket_id": build_ticket_id,
+        },
+    }
+    terminal_events = {
+        build_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": build_ticket_id,
+                "payload": {
+                    "source_file_refs": [source_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [source_ref],
+            },
+        },
+        closeout_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": closeout_ticket_id,
+                "payload": {
+                    "summary": "Closeout references a placeholder.",
+                    "final_artifact_refs": [placeholder_ref],
+                    "documentation_updates": [
+                        {
+                            "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                            "status": "UPDATED",
+                        }
+                    ],
+                },
+                "written_artifacts": [
+                    {
+                        "artifact_ref": f"art://runtime/{closeout_ticket_id}/delivery-closeout-package.json",
+                        "content_json": {
+                            "summary": "Closeout references a placeholder.",
+                            "final_artifact_refs": [placeholder_ref],
+                            "documentation_updates": [
+                                {
+                                    "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                                    "status": "UPDATED",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+        closeout_ticket=tickets[1],
+        closeout_terminal_event=terminal_events[closeout_ticket_id],
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "closeout_illegal_final_artifact_ref"
+    assert issue["details"]["status"] == "PLACEHOLDER"
+
 def test_autopilot_closeout_fail_closed_payload_does_not_complete_workflow(client):
     workflow_id = "wf_autopilot_fail_closed_closeout"
     repository = client.app.state.repository

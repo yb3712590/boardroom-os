@@ -67,9 +67,19 @@ Actor / Employee
 | `closeout.write` | `50-closeout/**` | `10-project/src/**` | final package + final evidence refs |
 | `archive.write` | `90-archive/**` | all active source/doc views | immutable archive receipt |
 
-## RoleTemplate 示例
+## Phase 1 implementation status
 
-Role template 是组织层配置，不是 runtime 执行键。
+Phase 1 has codified the current fixed workspace write-surface profile in `backend/app/core/workspace_path_contracts.py`:
+
+- `CAPABILITY_WRITE_SURFACES` maps capability keys to allowed directory globs; execution code consumes these compiled write sets instead of branching on role names.
+- `match_contract_write_set()` is the shared path matcher used by artifact write validation.
+- `resolve_artifact_ref_contract()` and `classify_closeout_final_artifact_ref()` provide the shared artifact legality vocabulary for source delivery, evidence, git, delivery check, and closeout refs.
+- `source_code_delivery` ticket hooks now validate source refs, test/verification evidence refs, git evidence refs, and documentation update refs against this contract.
+- closeout validation and workflow completion gates reject governance/archive/unknown/superseded/placeholder/fallback refs as final evidence.
+
+This phase intentionally does not refactor actor lifecycle, hiring, role template assignment, provider selection, provider streaming, or progression policy. Future flexible project directory layouts should be introduced by parameterizing this contract profile, not by reintroducing role-name-to-root branches in ticket handlers or runtime code.
+
+
 
 ```yaml
 roles:

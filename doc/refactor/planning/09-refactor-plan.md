@@ -34,16 +34,16 @@
 
 任务：
 
-- 将 `03-directory-contract.md` 映射到现有 workspace 代码。
-- 将 `04-write-surface-policy.md` 编译为可测试 policy。
-- closeout final refs 统一走 artifact type allowlist。
-- 阻断 placeholder source/test fallback 进入 final evidence。
+- [x] 将 `03-directory-contract.md` 映射到现有 workspace 代码：`backend/app/core/workspace_path_contracts.py` now resolves workspace source/test/git refs, runtime delivery/check/closeout refs, governance refs, upload-import refs, archive refs, and unknown refs into explicit contract kinds and logical paths.
+- [x] 将 `04-write-surface-policy.md` 编译为可测试 policy：`CAPABILITY_WRITE_SURFACES`, `build_allowed_write_set_for_capabilities()`, and `match_contract_write_set()` codify capability-keyed write surfaces without new role-name-to-write-root branches.
+- [x] closeout final refs 统一走 artifact type allowlist：ticket closeout hooks and workflow completion gates classify final refs with `classify_closeout_final_artifact_ref()`.
+- [x] 阻断 placeholder source/test fallback 进入 final evidence：placeholder, legacy fallback, superseded, archive, governance, and unknown refs are rejected before closeout completion.
 
 验收：
 
-- 任意 artifact ref 可追溯到合法目录。
-- checker/closeout 共用同一 artifact legality 判断。
-- 015 中 placeholder delivery 不能通过。
+- [x] 任意 Phase 1 covered artifact ref 可追溯到合法目录或 explicit illegal/unknown kind.
+- [x] checker/source-delivery/closeout paths share the same artifact legality vocabulary for evidence refs.
+- [x] 015-style placeholder delivery refs cannot pass closeout final evidence checks.
 
 ## Phase 2：Provider adapter 重建与 streaming soak test
 

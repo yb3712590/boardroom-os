@@ -239,8 +239,12 @@ from app.core.workflow_autopilot import (
 )
 from app.core.workflow_scope import resolve_workflow_scope
 from app.core.workspace_path_contracts import (
+    ArtifactRefKind,
+    CloseoutFinalRefStatus,
+    classify_closeout_final_artifact_ref,
     is_workspace_managed_write_set,
     rebind_ticket_id_in_allowed_write_set,
+    resolve_artifact_ref_contract,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -1553,10 +1557,16 @@ def _validate_source_code_delivery_hooks(
         if written_artifact is None:
             return f"payload.source_file_refs includes unknown artifact_ref {artifact_ref}."
         path = str(written_artifact.path or "")
-        if not path.startswith("10-project/") or path.startswith("10-project/docs/"):
+        contract = resolve_artifact_ref_contract(str(artifact_ref), logical_path=path)
+        if contract.kind != ArtifactRefKind.WORKSPACE_SOURCE:
             return (
                 "Code delivery tickets must keep payload.source_file_refs inside "
-                f"10-project/ source paths; got {path}."
+                f"workspace source artifacts; got {artifact_ref} at {path}."
+            )
+        if not path.startswith("10-project/src/"):
+            return (
+                "Code delivery tickets must keep source_file_refs under 10-project/src/; "
+                f"got {path}."
             )
     source_files_by_ref = {
         str(item.get("artifact_ref") or "").strip(): item
@@ -1586,6 +1596,19 @@ def _validate_source_code_delivery_hooks(
                 f"UPDATED or NO_CHANGE_REQUIRED; got {update.get('status')} for {doc_ref}."
             )
 
+    for update in documentation_updates:
+        if not isinstance(update, dict):
+            continue
+        doc_artifact_ref = str(update.get("artifact_ref") or "").strip()
+        if not doc_artifact_ref:
+            continue
+        written_doc = written_artifacts_by_ref.get(doc_artifact_ref)
+        if written_doc is not None and not str(written_doc.path or "").startswith("10-project/docs/"):
+            return (
+                "Code delivery documentation update artifacts must be under 10-project/docs/; "
+                f"got {written_doc.path}."
+            )
+
     available_artifact_refs = set(payload.artifact_refs)
     available_artifact_refs.update(str(item.artifact_ref) for item in payload.written_artifacts)
     if not payload.verification_evidence_refs:
@@ -1606,6 +1629,12 @@ def _validate_source_code_delivery_hooks(
             return f"verification_evidence_refs includes non-materialized artifact_ref {artifact_ref}."
         verification_path = str(written_artifact.path or "")
         verification_paths.append(verification_path)
+        contract = resolve_artifact_ref_contract(str(artifact_ref), logical_path=verification_path)
+        if contract.kind not in {ArtifactRefKind.TEST_EVIDENCE, ArtifactRefKind.VERIFICATION_EVIDENCE}:
+            return (
+                "Code delivery tickets must keep verification evidence as test/verification evidence; "
+                f"got {artifact_ref} at {verification_path}."
+            )
         if not verification_path.startswith("20-evidence/tests/"):
             return (
                 "Code delivery tickets must keep verification evidence inside "
@@ -1621,6 +1650,13 @@ def _validate_source_code_delivery_hooks(
     ]
     if not git_written_artifacts:
         return "Code delivery tickets must persist git evidence under 20-evidence/git/."
+    for item in git_written_artifacts:
+        contract = resolve_artifact_ref_contract(str(item.artifact_ref), logical_path=str(item.path or ""))
+        if contract.kind != ArtifactRefKind.GIT_EVIDENCE:
+            return (
+                "Code delivery git evidence must use git evidence artifact refs; "
+                f"got {item.artifact_ref} at {item.path}."
+            )
     if not all("/attempt-" in str(item.path or "") for item in git_written_artifacts):
         return "Code delivery tickets must version git evidence paths by attempt."
     return None
@@ -1668,28 +1704,21 @@ _CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS = {
 }
 
 
-def _is_closeout_package_artifact_evidence_ref(artifact_ref: str) -> bool:
-    normalized_artifact_ref = str(artifact_ref).strip()
-    if not normalized_artifact_ref.startswith("art://runtime/"):
-        return False
-    if "/delivery-check-report." in normalized_artifact_ref:
-        return True
-    if "/source-code-delivery." in normalized_artifact_ref:
-        return True
-    if "/source-code" in normalized_artifact_ref:
-        return True
-    if "/test" in normalized_artifact_ref or "/verification" in normalized_artifact_ref:
-        return True
-    return False
+def _is_placeholder_final_artifact_ref(artifact_ref: str) -> bool:
+    normalized = str(artifact_ref or "").strip().lower()
+    return (
+        normalized.endswith("/source.py")
+        or "/placeholder/" in normalized
+        or "placeholder" in normalized
+    )
 
 
 def _is_delivery_evidence_artifact_ref(artifact_ref: str, *, source_context: str) -> bool:
     normalized_artifact_ref = str(artifact_ref).strip()
     if not normalized_artifact_ref:
         return False
-    if str(source_context).strip() == "closeout_package_artifact_refs":
-        return _is_closeout_package_artifact_evidence_ref(normalized_artifact_ref)
-    return str(source_context).strip() in _CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS
+    contract = resolve_artifact_ref_contract(normalized_artifact_ref)
+    return contract.is_final_closeout_evidence and not _is_placeholder_final_artifact_ref(normalized_artifact_ref)
 
 
 def _add_closeout_delivery_evidence_refs(
@@ -1843,11 +1872,22 @@ def _validate_closeout_delivery_hooks(
             "Closeout tickets must reference known delivery evidence before completion; "
             "payload.final_artifact_refs has no matching delivery evidence."
         )
+    current_artifact_refs = set(known_artifact_refs)
+    superseded_artifact_refs: set[str] = set()
+    placeholder_artifact_refs = {
+        ref for ref in current_artifact_refs if _is_placeholder_final_artifact_ref(ref)
+    }
     for artifact_ref in final_artifact_refs:
-        if artifact_ref not in known_artifact_refs:
+        final_ref_check = classify_closeout_final_artifact_ref(
+            artifact_ref,
+            current_artifact_refs=current_artifact_refs,
+            superseded_artifact_refs=superseded_artifact_refs,
+            placeholder_artifact_refs=placeholder_artifact_refs,
+        )
+        if final_ref_check.status != CloseoutFinalRefStatus.ACCEPTED:
             return (
-                "Closeout tickets must keep payload.final_artifact_refs aligned with known delivery evidence; "
-                f"got {artifact_ref}."
+                "Closeout tickets must keep payload.final_artifact_refs aligned with current delivery evidence; "
+                f"got {artifact_ref} ({final_ref_check.status.value})."
             )
     return None
 

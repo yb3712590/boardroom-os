@@ -26,12 +26,12 @@
 
 - [x] 仓库根目录已清理为 backend-only runtime rebuild 基线。
 
-- [ ] 每种 artifact ref 都有合法路径映射。
-- [ ] write-set policy 以 capability 为主键。
-- [ ] 角色模板不直接决定 write root。
-- [ ] closeout final refs 只接受合法 delivery evidence。
-- [ ] placeholder source/test fallback 被阻断。
-- [ ] 目录契约有单测或 contract test。
+- [x] 每种 Phase 1 covered artifact ref 都有合法路径映射或显式非法分类。
+- [x] write-set policy 以 capability 为主键。
+- [x] 角色模板不直接决定 write root；Phase 1 未新增 role-name-to-root 分支。
+- [x] closeout final refs 只接受合法 delivery/check/verification/git/closeout evidence。
+- [x] placeholder source/test fallback 被阻断。
+- [x] 目录契约有单测或 contract test。
 
 ## Phase 2：Provider adapter 与 streaming soak
 

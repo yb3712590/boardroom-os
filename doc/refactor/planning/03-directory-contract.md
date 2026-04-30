@@ -97,14 +97,17 @@ workflow-root/
 
 ## Artifact ref 映射
 
-Artifact refs 必须能映射到稳定路径：
+Artifact refs 必须能映射到稳定路径。当前 Phase 1 已将这组映射代码化在 `backend/app/core/workspace_path_contracts.py`，作为固定 runtime workspace profile 的 contract helper；未来如果不同项目需要不同目录骨架，应在该 helper 外层参数化 profile，而不是让各执行路径自行分叉判断。
 
 ```text
 art://workspace/<ticket_id>/source/<encoded-path>
-  -> workflow-root/10-project/<path>
+  -> workflow-root/10-project/src/<path>
 
 art://workspace/<ticket_id>/tests/<encoded-path>
   -> workflow-root/20-evidence/tests/<ticket_id>/<path>
+
+art://workspace/<ticket_id>/git/<encoded-path>
+  -> workflow-root/20-evidence/git/<ticket_id>/<path>
 
 art://runtime/<ticket_id>/delivery-check-report.json
   -> workflow-root/20-evidence/delivery/<ticket_id>/delivery-check-report.json
@@ -113,10 +116,21 @@ art://runtime/<ticket_id>/delivery-closeout-package.json
   -> workflow-root/50-closeout/<ticket_id>/delivery-closeout-package.json
 ```
 
+Phase 1 helper 覆盖的当前 ref kind：
+
+- workspace source delivery；
+- test / verification evidence；
+- git evidence；
+- runtime delivery report、delivery check report、closeout package；
+- governance document；
+- upload-import artifact；
+- archive 与 unknown refs。
+
 规则：
 
 - artifact ref 不能指向任意项目文档作为 final delivery evidence。
-- closeout final refs 只能引用已登记的 source/evidence/delivery/check/verification 类资产。
+- closeout final refs 只能引用当前登记且未 supersede 的 source/evidence/delivery/check/verification/closeout 类资产。
+- governance document、archive、unknown ref、placeholder ref、superseded ref 和 legacy `source.py`/单文件 fallback 不能进入 closeout final evidence。
 - artifact index 必须记录 content hash、source ticket、graph version、supersedes。
 
 ## 禁止事项

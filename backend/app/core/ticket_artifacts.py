@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -17,6 +16,7 @@ from app.core.artifacts import (
     resolve_artifact_retention,
     normalize_retention_class,
 )
+from app.core.workspace_path_contracts import match_contract_write_set
 from app.db.repository import ControlPlaneRepository
 
 
@@ -46,7 +46,7 @@ class PreparedTicketArtifact:
 
 
 def match_allowed_write_set(path: str, allowed_write_set: list[str]) -> bool:
-    return any(fnmatch.fnmatchcase(path, pattern) for pattern in allowed_write_set)
+    return match_contract_write_set(path, allowed_write_set)
 
 
 def _resolve_retention(

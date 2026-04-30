@@ -339,17 +339,26 @@ def _source_code_delivery_result_submit_payload(
     source_file_content: str = "export const workspaceBuild = true;\n",
     verification_stdout: str = "collected 1 item\n\n1 passed in 0.12s\n",
     verification_stderr: str = "",
+    source_artifact_ref: str | None = None,
+    source_artifact_path: str | None = None,
+    verification_artifact_ref: str | None = None,
+    verification_artifact_path: str | None = None,
+    git_artifact_ref: str | None = None,
+    git_artifact_path: str | None = None,
 ) -> dict[str, object]:
-    source_file_ref = f"art://workspace/{ticket_id}/source.ts"
-    verification_ref = f"art://workspace/{ticket_id}/test-report.json"
-    verification_path = f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json"
+    source_file_ref = source_artifact_ref or f"art://workspace/{ticket_id}/source.ts"
+    verification_ref = verification_artifact_ref or f"art://workspace/{ticket_id}/test-report.json"
+    source_path = source_artifact_path or f"10-project/src/{ticket_id}.ts"
+    verification_path = verification_artifact_path or f"20-evidence/tests/{ticket_id}/attempt-1/test-report.json"
+    git_ref = git_artifact_ref or f"art://workspace/{ticket_id}/git-commit.json"
+    git_path = git_artifact_path or f"20-evidence/git/{ticket_id}/attempt-1/git-closeout.json"
     payload: dict[str, object] = {
         "summary": f"Source code delivery prepared for {ticket_id}.",
         "source_file_refs": [source_file_ref],
         "source_files": [
             {
                 "artifact_ref": source_file_ref,
-                "path": f"10-project/src/{ticket_id}.ts",
+                "path": source_path,
                 "content": source_file_content,
             }
         ],
@@ -375,7 +384,7 @@ def _source_code_delivery_result_submit_payload(
     }
     written_artifacts: list[dict[str, object]] = [
         {
-            "path": f"10-project/src/{ticket_id}.ts",
+            "path": source_path,
             "artifact_ref": source_file_ref,
             "kind": "TEXT",
             "content_text": source_file_content,
@@ -399,8 +408,8 @@ def _source_code_delivery_result_submit_payload(
             "content_json": payload["verification_runs"][0],
         },
         {
-            "path": f"20-evidence/git/{ticket_id}/attempt-1/git-closeout.json",
-            "artifact_ref": f"art://workspace/{ticket_id}/git-commit.json",
+            "path": git_path,
+            "artifact_ref": git_ref,
             "kind": "JSON",
             "content_json": {"commit_sha": "abc1234", "branch_ref": f"codex/{ticket_id}"},
         },
@@ -1150,6 +1159,156 @@ def test_source_code_delivery_rejects_minimal_verification_stub(client) -> None:
     assert ticket["last_failure_kind"] == "SCHEMA_ERROR"
 
 
+
+def test_source_code_delivery_accepts_contract_section_artifact_refs(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code contract ref acceptance demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_contract_refs_001"
+    node_id = "node_code_contract_refs_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+            source_artifact_ref=f"art://workspace/{ticket_id}/source/src/{ticket_id}.ts",
+            verification_artifact_ref=f"art://workspace/{ticket_id}/tests/attempt-1/test-report.json",
+            git_artifact_ref=f"art://workspace/{ticket_id}/git/attempt-1/git-closeout.json",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "COMPLETED"
+
+
+def test_source_code_delivery_rejects_source_ref_for_verification_evidence(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code verification ref contract demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_bad_verification_ref_001"
+    node_id = "node_code_bad_verification_ref_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+            verification_artifact_ref=f"art://workspace/{ticket_id}/source/src/test-report.json",
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert "verification evidence" in str(ticket["last_failure_message"])
+
+
+def test_source_code_delivery_rejects_test_ref_for_git_evidence(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code git ref contract demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_bad_git_ref_001"
+    node_id = "node_code_bad_git_ref_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            include_documentation_updates=True,
+            include_git_evidence=True,
+            git_artifact_ref=f"art://workspace/{ticket_id}/tests/attempt-1/git-closeout.json",
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert "git evidence" in str(ticket["last_failure_message"])
+
+
+def test_source_code_delivery_rejects_documentation_update_ref_outside_docs(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Source-code doc update ref contract demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    ticket_id = "tkt_code_bad_doc_ref_001"
+    node_id = "node_code_bad_doc_ref_001"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id),
+    )
+    client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+    client.post("/api/v1/commands/ticket-start", json=_ticket_start_payload(workflow_id=workflow_id, ticket_id=ticket_id, node_id=node_id))
+
+    payload = _source_code_delivery_result_submit_payload(
+        workflow_id=workflow_id,
+        ticket_id=ticket_id,
+        node_id=node_id,
+        include_documentation_updates=True,
+        include_git_evidence=True,
+    )
+    source_ref = payload["payload"]["source_file_refs"][0]
+    payload["payload"]["documentation_updates"][0]["artifact_ref"] = source_ref
+
+    response = client.post("/api/v1/commands/ticket-result-submit", json=payload)
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert "documentation update" in str(ticket["last_failure_message"])
+
+
 def test_structured_document_delivery_does_not_require_git_commit(client) -> None:
     init_response = client.post(
         "/api/v1/commands/project-init",
@@ -1441,6 +1600,150 @@ def test_closeout_ticket_result_submit_materializes_workspace_evidence_files(cli
     assert closeout_path.is_file()
     closeout_payload = json.loads(closeout_path.read_text(encoding="utf-8"))
     assert closeout_payload["final_artifact_refs"] == [known_final_artifact_ref]
+
+
+
+@pytest.mark.parametrize(
+    "illegal_final_ref",
+    [
+        "art://runtime/tkt_closeout_illegal_evidence_build_001/governance/architecture-brief.json",
+        "art://archive/tkt_closeout_illegal_evidence_build_001/source-code-delivery.json",
+        "art://workspace/tkt_closeout_illegal_evidence_build_001/source/source.py",
+        "art://runtime/tkt_closeout_illegal_evidence_build_001/placeholder/source-code-delivery.json",
+    ],
+)
+def test_closeout_ticket_rejects_illegal_final_evidence_kinds(
+    client,
+    illegal_final_ref: str,
+) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout illegal final evidence demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    source_ticket_id = "tkt_closeout_illegal_evidence_build_001"
+    source_node_id = "node_closeout_illegal_evidence_build_001"
+    closeout_ticket_id = "tkt_closeout_illegal_evidence_001"
+    closeout_node_id = "node_closeout_illegal_evidence_001"
+    _complete_source_code_delivery_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=closeout_ticket_id,
+                node_id=closeout_node_id,
+            ),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{closeout_ticket_id}/*"],
+            "input_artifact_refs": [illegal_final_ref],
+            "input_process_asset_refs": [
+                build_source_code_delivery_process_asset_ref(source_ticket_id),
+            ],
+            "idempotency_key": (
+                f"ticket-create:{workflow_id}:{closeout_ticket_id}:illegal-final-evidence:{illegal_final_ref}"
+            ),
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+            final_artifact_refs=[illegal_final_ref],
+        ),
+    )
+
+    assert response.status_code == 200
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "FAILED"
+    assert ticket["last_failure_kind"] == "WORKSPACE_HOOK_VALIDATION_ERROR"
+    assert "final_artifact_refs" in str(ticket["last_failure_message"])
+
+
+def test_closeout_ticket_accepts_git_evidence_final_ref(client) -> None:
+    init_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Closeout git evidence final ref demo"),
+    )
+    workflow_id = init_response.json()["causation_hint"].split(":", 1)[1]
+    closeout_ticket_id = "tkt_closeout_git_evidence_001"
+    closeout_node_id = "node_closeout_git_evidence_001"
+    git_evidence_ref = "art://runtime/tkt_check_001/git/attempt-1/commit.json"
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=closeout_ticket_id,
+                node_id=closeout_node_id,
+            ),
+            "output_schema_ref": "delivery_closeout_package",
+            "allowed_write_set": [f"20-evidence/closeout/{closeout_ticket_id}/*"],
+            "input_artifact_refs": [git_evidence_ref],
+            "idempotency_key": f"ticket-create:{workflow_id}:{closeout_ticket_id}:git-evidence-final-ref",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_closeout_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=closeout_ticket_id,
+            node_id=closeout_node_id,
+            final_artifact_refs=[git_evidence_ref],
+        ),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ACCEPTED"
+    repository = client.app.state.repository
+    ticket = repository.get_current_ticket_projection(closeout_ticket_id)
+    assert ticket is not None
+    assert ticket["status"] == "COMPLETED"
 
 
 def test_governance_document_requires_declared_artifact_ref(client) -> None:

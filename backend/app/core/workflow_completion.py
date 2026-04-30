@@ -13,6 +13,10 @@ from app.core.output_schemas import (
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
+from app.core.workspace_path_contracts import (
+    CloseoutFinalRefStatus,
+    classify_closeout_final_artifact_ref,
+)
 
 ACTIVE_TICKET_STATUSES = {
     "PENDING",
@@ -414,6 +418,15 @@ def _payload_contains_fail_closed_marker(value: Any) -> bool:
     return False
 
 
+def _is_placeholder_final_artifact_ref(artifact_ref: str) -> bool:
+    normalized = str(artifact_ref or "").strip().lower()
+    return (
+        normalized.endswith("/source.py")
+        or "/placeholder/" in normalized
+        or "placeholder" in normalized
+    )
+
+
 def _collect_closeout_final_artifact_refs(payloads: list[dict[str, Any]]) -> set[str]:
     refs: set[str] = set()
     for payload in payloads:
@@ -449,6 +462,41 @@ def _closeout_payload_issue(
         )
 
     final_artifact_refs = _collect_closeout_final_artifact_refs(closeout_payloads)
+    known_final_refs = _collect_schema_artifact_refs(
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+    )
+    known_final_refs.update(
+        _collect_schema_artifact_refs(
+            output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+            created_specs_by_ticket=created_specs_by_ticket,
+            ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        )
+    )
+    known_final_refs.update(final_artifact_refs)
+    placeholder_final_refs = {
+        ref for ref in known_final_refs if _is_placeholder_final_artifact_ref(ref)
+    }
+    for artifact_ref in final_artifact_refs:
+        final_ref_check = classify_closeout_final_artifact_ref(
+            artifact_ref,
+            current_artifact_refs=known_final_refs,
+            superseded_artifact_refs=set(),
+            placeholder_artifact_refs=placeholder_final_refs,
+        )
+        if final_ref_check.status != CloseoutFinalRefStatus.ACCEPTED:
+            return _closeout_gate_issue(
+                reason_code="closeout_illegal_final_artifact_ref",
+                ticket_id=closeout_ticket_id,
+                output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+                details={
+                    "artifact_ref": artifact_ref,
+                    "status": final_ref_check.status.value,
+                    "kind": final_ref_check.kind.value,
+                },
+            )
+
     source_delivery_ticket_ids = {
         ticket_id
         for ticket_id, created_spec in created_specs_by_ticket.items()
