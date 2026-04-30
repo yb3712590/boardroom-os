@@ -13,11 +13,16 @@
 
 - [x] 12 份重构规划文档已写入 `doc/refactor/planning/`。
 - [x] 新规划索引 `INDEX.md` 已建立。
-- [ ] `doc/README.md` 已加入新规划入口。
-- [ ] 一次性 handoff 文档已安全归档。
-- [ ] 初始提交不包含 runtime 行为修改。
+- [x] `doc/README.md` 已加入新规划入口。
+- [x] 一次性 handoff 文档已安全归档。
+- [x] 旧 `frontend/` 源码树已删除。
+- [x] 旧设计、路线、任务 backlog、历史记忆和 001-014 integration logs 已集中归档。
+- [x] `doc/` active 入口只保留当前真相、重构控制面、后端参考和必要 015 证据。
+- [x] Phase 0 未修改 provider、scheduler、ticket handler、workflow controller 或 `backend/app/core` runtime 行为。
 
 ## Phase 1：目录 / 产物 / 写权限 contract
+
+- [x] 仓库根目录已清理为 backend-only runtime rebuild 基线。
 
 - [ ] 每种 artifact ref 都有合法路径映射。
 - [ ] write-set policy 以 capability 为主键。

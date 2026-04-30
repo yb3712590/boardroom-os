@@ -18,6 +18,7 @@
 - Round 0：分支与基线盘点。
 - Round 1：写入 12 份规划文档。
 - Round 2：整理文档入口的最小版本。
+- Round 3：仓库瘦身与目录重组。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -28,7 +29,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 3：仓库瘦身与目录重组** 开始。Round 3 完成后，用户期望看到一个干净清爽的目录结构，并准备把当前分支合并回 `main`，作为项目重新开始的基线。
+下一轮新会话应从 **Round 4：Backend 废弃代码审计与安全删除** 开始。Round 4 只审计并删除 backend 中明确废弃、无引用、非核心 runtime 的代码，不开始 provider 或 progression 重构。
 
 ---
 
@@ -123,80 +124,17 @@
 
 ---
 
-## Round 3：仓库瘦身与目录重组（下一轮执行）
+## Round 3：仓库瘦身与目录重组（已完成）
 
-```text
-你在 D:\Projects\boardroom-os 的 refactor/autonomous-runtime-docs 分支。目标是完成一次大规模安全清理，让项目目录重新变得干净清爽。用户明确授权：frontend 可以整体删除，先跑通后端自治 runtime；旧文档和旧规范应该归档或删除；本轮结束后用户准备把当前分支合并回 main 作为项目重新开始基线。
+完成摘要：
 
-必读，按顺序：
-1. doc/README.md
-2. doc/refactor/README.md
-3. doc/refactor/planning/INDEX.md
-4. doc/refactor/planning/00-refactor-north-star.md
-5. doc/refactor/planning/01-current-state-audit.md
-6. doc/refactor/planning/03-directory-contract.md
-7. doc/refactor/planning/09-refactor-plan.md
-8. doc/refactor/planning/10-refactor-acceptance-criteria.md
-9. doc/archive/README.md
-10. .gitignore
-11. README.md
+- 删除旧 `frontend/` 源码树和本地依赖/构建产物。
+- 将旧设计、旧路线、旧任务流水、旧历史记忆、旧会话提示词、旧 refactor 实施资料和 001-014 integration logs 集中归档到 `doc/archive/`。
+- 保留 `doc/tests/intergration-test-015-20260429.md` 与 `doc/tests/intergration-test-015-20260429-final.md` 作为 015 压力审计锚点。
+- 将 `doc/README.md`、`doc/refactor/README.md`、`doc/archive/README.md`、`01-current-state-audit.md`、`09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md` 更新为 backend-only runtime rebuild 基线。
+- 未修改 provider、scheduler、ticket handler、workflow controller 或 `backend/app/core` runtime 行为。
 
-任务：
-1. 确认 git status 干净，并确认当前分支是 refactor/autonomous-runtime-docs。
-2. 删除 frontend/ 整目录，并清理 README、doc、脚本、测试、配置中对 frontend 的 active 引用。
-3. 清理 backend 中明显服务旧 frontend/UI 的文档或接口说明；不要删除 backend core runtime 行为代码。
-4. 清理 doc/ 目录：
-   - 保留 doc/README.md、doc/mainline-truth.md、doc/refactor/planning/**、doc/new-architecture/**、doc/archive/specs/feature-spec.md、015 两份报告。
-   - 将 doc/refactor/ 下 3 份旧 new-architecture-* 文档移入 doc/archive/refactor-legacy/，并更新引用。
-   - 将大量旧 integration logs 归档到 doc/archive/integration-logs/，但 015 长日志和 final 日志保留在 doc/tests/。
-   - 将旧 design/UI/roadmap/task-backlog/history 中不再作为 active truth 的内容归档，避免默认上下文污染。
-5. 清理 tracked generated/cache/log/db/build artifacts；未被 git 跟踪的本地文件不必强行处理。
-6. 更新 doc/README.md，让默认入口只剩当前真相、重构控制面、后端参考和必要历史入口。
-7. 更新 doc/archive/README.md，记录本轮归档位置和原因。
-8. 更新 doc/refactor/planning/01-current-state-audit.md，补充本轮实际删除/归档清单。
-9. 更新 doc/refactor/planning/09-refactor-plan.md，将 Round 3/Phase 0 状态写为完成。
-10. 更新 doc/refactor/planning/10-refactor-acceptance-criteria.md，勾选 Phase 0 和目录清理相关验收项。
-11. 更新 doc/refactor/planning/11-round-prompts.md，将 Round 3 标记为已完成，并把下一轮指向 Round 4。
-12. 创建提交，commit message 建议：`refactor-cleanup: reset project structure for backend runtime rebuild`。
-
-允许删除：
-- frontend/
-- frontend 相关 active 文档引用
-- 明确废弃的一次性 prompt、旧计划、旧 UI 设计稿
-- tracked cache/build/log/db 生成物
-
-优先归档而非删除：
-- 历史愿景
-- integration 审计日志
-- 旧重构计划
-- 曾用于决策的设计文档
-
-禁止：
-- 删除 backend/app/core 下的 runtime 核心代码。
-- 删除 backend/tests 中仍覆盖当前 backend runtime 的测试。
-- 删除 doc/archive/specs/feature-spec.md。
-- 删除 doc/new-architecture/**。
-- 删除 doc/tests/intergration-test-015-20260429.md。
-- 删除 doc/tests/intergration-test-015-20260429-final.md。
-- 修改 provider、scheduler、ticket handler、workflow controller 行为。
-
-验证：
-1. git status --short
-2. git diff --stat
-3. 检查 frontend 引用：搜索 `frontend/`、`npm`、`vite`、`Boardroom UI`，确认 active docs 中没有误导性入口。
-4. 检查新文档链接：至少检查 doc/README.md、doc/refactor/README.md、doc/refactor/planning/*.md。
-5. 运行后端轻量测试：
-   - cd backend && python -m pytest tests/test_scenario_config.py -q --basetemp .tmp/pytest-cleanup-scenario
-   - cd backend && python -m pytest tests/test_live_configured_runner.py -q --basetemp .tmp/pytest-cleanup-live
-6. 如果删除 frontend 后存在脚本或文档断链，修正后再提交。
-
-完成标准：
-- 根目录不再有 frontend/。
-- doc/ active 入口清爽，旧材料集中 archive。
-- 新会话从 doc/README.md 能直接进入当前重构控制面。
-- 后端轻量测试通过。
-- 工作树提交后干净。
-```
+下一轮从 Round 4 开始。
 
 ---
 

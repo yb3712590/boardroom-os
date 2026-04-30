@@ -9,9 +9,9 @@
 当前后端位于 `backend/`，技术栈是 FastAPI + Pydantic v2 + SQLite。它仍然是整个系统的执行中心：
 
 - durable truth 在事件日志和确定性投影里
-- React 只读投影、提交治理命令，不持有工作流真相
+- 当前浏览器前端已从源码树移除；后端投影和命令接口保留为 runtime/control-plane 读写面
 - runtime 默认走本地 deterministic；当前 registry 首版可选走 `OpenAI Compat` 或 `Claude Code CLI`
-- maker-checker、incident、review room、closeout 都已经进入主链；`runtime ticket / legacy compat` 硬切的当前收尾也已落完，手工 scope review 历史测试链和 scheduler recovery 历史桶都已贴住现行真相
+- maker-checker、incident、closeout 和后端 runtime control-plane 都已经进入主链；`runtime ticket / legacy compat` 硬切的当前收尾也已落完，手工 scope review 历史测试链和 scheduler recovery 历史桶都已贴住现行真相
 
 ## 2. 当前主线与冻结边界
 
@@ -133,15 +133,12 @@ cd backend
 py -m pytest tests/ -q
 ```
 
-本轮整体验证口径：
+本轮后端轻量验证口径：
 
 ```bash
 cd backend
-pytest tests/ -q
-
-cd ../frontend
-npm run build
-npm run test:run
+python -m pytest tests/test_scenario_config.py -q --basetemp .tmp/pytest-cleanup-scenario
+python -m pytest tests/test_live_configured_runner.py -q --basetemp .tmp/pytest-cleanup-live
 ```
 
 当前后端全量回归基线：
@@ -233,7 +230,7 @@ live 集成场景会把这些路径整体重定向到各自场景目录：
 - 请求输入当前按编译后的 `rendered_execution_payload.messages` 逐条转成结构化文本 prompt
 - CLI 返回结果同样会在本地做 JSON 解析和现有 output schema 校验，不把 CLI 输出当唯一真相
 
-当前 live path 已覆盖主线需要的 6 组 role / schema 组合：
+当前 live path 已覆盖主线需要的 role / schema 组合；其中部分 role/profile 名称仍保留历史前端命名，但本轮目录清理后它们只代表 runtime execution target，不代表仓库内存在浏览器前端：
 
 - `ui_designer_primary -> consensus_document`
 - `frontend_engineer_primary -> source_code_delivery`

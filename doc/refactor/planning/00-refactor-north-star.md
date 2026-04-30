@@ -9,7 +9,7 @@
 - runtime 过度纠结 delivery 合法性，且规则散落在 reducer、projection、runtime、ticket handler、approval 和 closeout gate 中。
 - workflow progression 存在 hardcoded chain、字符串启发和默认 fanout，而不是显式 policy。
 - provider 失败率异常高，且当前证据不能区分上游不稳和本项目 streaming/parser/timeout 实现问题。
-- frontend/backend 产物目录、证据目录、runtime 目录和 archive 边界不够硬。
+- 旧前端、后端、证据目录、runtime 目录和 archive 边界不够硬。
 - actor/role/employee/capability 混在一起，角色模板仍在很多地方承担 runtime 执行键职责。
 - replay/resume 仍依赖人工理解和投影修补，未成为可验证的一等能力。
 
@@ -63,6 +63,7 @@ closeout 不能只证明 graph 完成。closeout 必须证明 `DeliverableContra
 6. LanceDB、复杂 RAG 层和长期语义记忆系统。
 7. 高级模型成本治理和复杂 provider 路由策略。
 8. 通用视觉董事会审核门。
+9. 浏览器前端源码和 Boardroom UI 交互壳。
 
 这些能力未来可以作为 policy pack、UI layer 或 plugin 恢复。本轮只保留它们背后的必要抽象：actor、capability、policy、incident、evidence、replay。
 
@@ -71,7 +72,7 @@ closeout 不能只证明 graph 完成。closeout 必须证明 `DeliverableContra
 1. `EventRecord` 是唯一历史真相。
 2. `TicketGraph` 是唯一任务结构真相。
 3. `ProcessAsset / Artifact` 是唯一产物和证据真相。
-4. Projection、Markdown 和 UI 都是物化视图。
+4. Projection 和 Markdown 都是物化视图；未来 UI 也只能是物化视图。
 5. Runtime kernel 不认识 CEO、员工、具体业务 milestone 或角色名称。
 6. Runtime kernel 只认识 actor、capability、ticket、action、policy、asset、incident。
 7. Scheduler 不做业务判断，只做 ready、lease、timeout、retry wakeup。

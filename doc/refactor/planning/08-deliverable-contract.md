@@ -4,7 +4,7 @@
 
 `DeliverableContract` 定义“最终产物是否满足 PRD”，而不是只判断 ticket 是否完成、checker 是否 approved、graph 是否 terminal。
 
-第 15 轮暴露的问题是：runtime graph 可以被推到 completed，但 frontend placeholder、浅层 smoke evidence、failed check convergence、closeout final refs 误选等问题仍可能削弱最终交付可信度。
+第 15 轮暴露的问题是：runtime graph 可以被推到 completed，但 placeholder source、浅层 smoke evidence、failed check convergence、closeout final refs 误选等问题仍可能削弱最终交付可信度。
 
 ## 输入来源
 
@@ -53,16 +53,16 @@ deliverable_contract:
 示例：
 
 ```yaml
-- surface_id: frontend.reader_loans
+- surface_id: backend.loan_transactions
   paths:
-    - 10-project/src/frontend/**/reader*/**
+    - 10-project/src/backend/**/loans*/**
   required_capabilities:
-    - source.modify.frontend
+    - source.modify.backend
   acceptance_refs:
-    - AC-reader-borrowing
-    - AC-reader-reservations
+    - AC-loan-create
+    - AC-loan-return
   required_evidence:
-    - frontend.integration_smoke
+    - backend.integration_test
     - api_contract_test
 ```
 
@@ -72,9 +72,9 @@ deliverable_contract:
 |---|---|
 | `source_inventory` | changed files + purpose mapping |
 | `unit_test` | 单元测试结果 |
-| `integration_test` | 前后端/服务集成测试 |
+| `integration_test` | 服务/模块集成测试 |
 | `api_contract_test` | API contract 验证 |
-| `ui_smoke` | UI 可见行为 smoke，截图/录屏/trace 优先 |
+| `runtime_smoke` | runtime 可见行为 smoke，trace/log 优先 |
 | `security_check` | 权限、输入、敏感信息检查 |
 | `performance_check` | 如 PRD 要求 |
 | `git_closeout` | diff/commit/working tree 证据 |
@@ -86,7 +86,7 @@ deliverable_contract:
 以下内容不能满足 deliverable contract：
 
 - 文件名或内容是 `source.py` 且无业务实现。
-- 页面文字说明“后续里程碑补齐”但被当作最终 UI。
+- 产物文字说明“后续里程碑补齐”但被当作最终交付。
 - 只有泛化 `1 passed`，没有业务断言。
 - 测试 stdout 由 runtime fallback 默认生成。
 - source inventory 未覆盖 changed source。

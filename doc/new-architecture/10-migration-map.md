@@ -70,7 +70,7 @@
 
 ### 当前优先级
 
-按 [../roadmap-reset.md](../roadmap-reset.md) 的边界，这几个顺序不能乱：
+按 [../refactor/planning/09-refactor-plan.md](../refactor/planning/09-refactor-plan.md) 的边界，这几个顺序不能乱：
 
 1. 先收 controller、contract、delivery evidence。
 2. 再收图协议、恢复协议、hook。
@@ -115,8 +115,8 @@
 这份迁移图默认同时参考：
 
 - [../mainline-truth.md](../mainline-truth.md)
-- [../roadmap-reset.md](../roadmap-reset.md)
-- [../history/context-baseline.md](../history/context-baseline.md)
+- [../refactor/planning/09-refactor-plan.md](../refactor/planning/09-refactor-plan.md)
+- [../refactor/planning/10-refactor-acceptance-criteria.md](../refactor/planning/10-refactor-acceptance-criteria.md)
 
 说白了，这份图不是另起一套世界观。  
 它是把当前主线已经摸到的方向，重新排成一个不会继续长歪的顺序。

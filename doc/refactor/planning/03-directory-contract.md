@@ -11,10 +11,8 @@
 ```text
 boardroom-os/
 ├── backend/              # 后端源码、后端测试、后端配置
-├── frontend/             # 前端源码、前端测试、前端构建配置
 ├── doc/                  # 工作文档控制面
-├── docs/                 # 若存在，只能作为发布级快照，不承载 active planning
-├── scripts/              # 跨 backend/frontend 的维护脚本，后续可新增
+├── scripts/              # 维护脚本；当前可不存在
 ├── .claude/              # Claude/worktree/tooling 状态，不进入产品真相
 ├── .worktrees/           # 本地 worktree/runtime 操作区，不进入产品真相
 ├── .tmp/                 # 临时文件，不入库
@@ -29,20 +27,23 @@ boardroom-os/
 doc/
 ├── README.md             # 文档入口和阅读规则
 ├── mainline-truth.md     # 当前代码事实锚点
+├── backend-runtime-guide.md
+├── api-reference.md
 ├── new-architecture/     # 目标架构 canon，不直接代表当前实现
 ├── refactor/             # 当前重构控制面
-├── tests/                # 历史测试审计和 verification history
-├── archive/              # 退出当前主线的历史材料
-└── history/              # 历史上下文和旧 memory/log
+├── tests/                # 仅保留 015 压力审计锚点
+└── archive/              # 退出当前主线的历史材料
 ```
 
 规则：
 
 - 当前事实优先看 `mainline-truth.md`。
+- 后端运行和接口参考看 `backend-runtime-guide.md` 与 `api-reference.md`。
 - 目标架构看 `new-architecture/`。
 - 本轮重构看 `refactor/planning/`。
 - 历史愿景看 `archive/specs/feature-spec.md`。
 - 015 证据看 `tests/intergration-test-015-20260429*.md`。
+- 旧设计、旧路线、旧任务和 001-014 integration logs 只从 `archive/README.md` 进入。
 - 不允许把新计划散写到 `doc/` 根目录。
 - 不允许把一次性 session prompt 放在 backend/docs 作为稳定文档。
 
@@ -132,12 +133,12 @@ art://runtime/<ticket_id>/delivery-closeout-package.json
 
 | 类型 | 例子 | 是否入库 | 说明 |
 |---|---|---|---|
-| source | backend/frontend 源码 | 是 | 真实实现 |
+| source | backend 源码 | 是 | 真实实现 |
 | working doc | `doc/refactor/planning/*` | 是 | 当前控制面 |
 | audit evidence | integration final report | 是 | 可追溯证据 |
 | runtime DB | live scenario DB | 通常否 | 除非作为 replay fixture 明确登记 |
 | cache | `.pytest_cache`, `__pycache__` | 否 | 删除 |
-| build output | `frontend/dist` | 否 | 删除 |
+| build output | generated build directories | 否 | 删除 |
 | temp | `.tmp` | 否 | 删除 |
 | archive | `doc/archive/*` | 是 | 历史材料，但不默认读取 |
 

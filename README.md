@@ -1,58 +1,42 @@
 # Boardroom OS
 
-一个让 AI Agent 团队自主交付项目的本地操作系统。
+事件源、无状态、可审计、可重放的 AI 自治 runtime 实验项目。
 
-你定义目标和验收标准，系统负责拆解、执行、审查、返工和交付。不是又一个 AI 编程助手——是一支能跑完整个交付流程的 Agent 团队。
+本分支已进入后端自治 runtime 重建基线：旧浏览器界面已从当前源码树移除，当前目标是先把后端事件日志、ticket graph、provider、scheduler、replay/resume、evidence 和 closeout 链路跑稳。
 
-## 为什么不一样
+## 当前定位
 
-**多角色治理，不是单 Agent 对话。** 系统内设 CEO（调度拆解）、Executor（执行）、Checker（审查）、Board（决策）四类角色，各司其职。Executor 和 Checker 刻意选用互补思维风格，减少盲区。
-
-**跑完全流程，不是生成片段。** 从需求细化 → 任务分解 → 执行 → 验证 → 评审 → 交付，完整闭环。不需要你在中间反复介入拼接。
-
-**Ticket 驱动，无状态执行。** 工作单元是结构化 Ticket，不是聊天记录。Worker 无状态消费任务，CEO 读取快照做调度——没有隐式上下文依赖，每一步可追溯、可重放。
-
-## 核心设计
-
-| 机制 | 做什么 | 完成进度 |
-|------|--------|----------|
-| Event Sourcing | 全量事件流 + 状态投影，替代自由对话作为协作基底 | 已落地 |
-| Maker-Checker | 执行和审查分离，审查不通过自动生成修复 Ticket | 已落地 |
-| Git Worktree | 每个代码任务独立 worktree，合并经过门禁审查 | 已落代码链 |
-| 三层上下文 | L1 当前工作区 / L2 按需检索(RAG) / L3 持久存储，防止上下文爆炸 | L1 已落，L2/L3 逐步补齐 |
-| Circuit Breaker | 重复失败、预算耗尽自动熔断上报，不做无限重试 | 基础版已落 |
-| 证据包 | 交付物附带测试结果、diff、审查结论、截图、已知风险 | 基础版已落，持续补齐 |
-
-## 人只管关键决策
-
-系统默认自主推进。只有这些情况会请求你介入：
-
-- 多个高成本视觉方向需要抉择
-- 需求、预算、合规边界存在冲突
-- 所需权限或外部依赖无法获取
-
-UI 提供 Dashboard、Inbox、Review Room，看的是状态投影和审批队列，不是聊天记录。
-
-## 技术栈
-
-- **后端** FastAPI + Pydantic + SQLite(WAL) + pytest
-- **前端** React + Vite + TypeScript + Vitest
-- **模型** 支持 OpenAI 兼容端点，按角色绑定模型，高成本模型留给低频高杠杆角色
+- **后端 runtime**：FastAPI + Pydantic + SQLite(WAL) + pytest。
+- **真相来源**：事件日志、确定性投影、ticket graph、process asset 和 artifact index。
+- **执行模型**：worker/checker 消费 compiled execution package，所有动作由 reducer / policy / guard 校验。
+- **文档入口**：从 [`doc/README.md`](doc/README.md) 进入当前真相、重构控制面和必要历史归档。
 
 ## 快速开始
 
 ```bash
-git clone https://github.com/yb3712590/boardroom-os.git
-cd boardroom-os
-# 后端
-cd backend && pip install -r requirements.txt && uvicorn main:app
-# 前端
-cd frontend && npm install && npm run dev
+cd backend
+python -m pytest tests/test_scenario_config.py -q
+python -m pytest tests/test_live_configured_runner.py -q
 ```
 
-## 状态
+本地服务入口仍在后端：
 
-本地 MVP 可用。当前重心：先把交付流程跑通跑稳，再谈平台化。
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+## 当前重构控制面
+
+- [`doc/mainline-truth.md`](doc/mainline-truth.md)：当前代码事实锚点。
+- [`doc/refactor/planning/INDEX.md`](doc/refactor/planning/INDEX.md)：自治 runtime 大重构控制面。
+- [`doc/refactor/planning/00-refactor-north-star.md`](doc/refactor/planning/00-refactor-north-star.md)：本轮北极星与非目标。
+- [`doc/refactor/planning/09-refactor-plan.md`](doc/refactor/planning/09-refactor-plan.md)：分阶段执行计划。
+- [`doc/refactor/planning/10-refactor-acceptance-criteria.md`](doc/refactor/planning/10-refactor-acceptance-criteria.md)：可验证验收标准。
+
+## 历史材料
+
+旧愿景、旧设计、旧路线、旧任务流水、旧界面材料和 integration logs 已集中到 [`doc/archive/`](doc/archive/)；默认不要把它们作为当前实现上下文。
 
 ## License
 

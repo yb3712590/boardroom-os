@@ -6,23 +6,26 @@
 
 不直接从代码清理开始。先将目录、写入面、provider、actor lifecycle、progression policy、deliverable contract 和 replay/resume 的验收口径写清，再按阶段把现有 runtime 的隐式逻辑迁移到显式 policy 和 contract 中。
 
-## Phase 0：文档与边界冻结
+## Phase 0：文档与边界冻结（已完成）
 
-目标：建立重构控制面，冻结主线取舍。
+目标：建立重构控制面，冻结主线取舍，并把项目目录重置为后端自治 runtime 重建基线。
 
-任务：
+已完成：
 
 - 写入 12 份规划文档。
 - 更新文档入口。
 - 归档一次性 handoff 文档。
 - 明确本轮不承载的愿景。
 - 标记 015 为压力审计，不作为自治验收通过。
+- 删除旧 `frontend/` 源码树。
+- 将旧设计、旧路线、旧任务流水、旧历史记忆、001-014 integration logs 和旧 refactor 实施资料集中归档到 `doc/archive/`。
 
 验收：
 
 - `doc/refactor/planning/INDEX.md` 可导航全部文档。
 - `doc/README.md` 指向新规划入口。
-- 初始提交不包含 runtime 行为修改。
+- `doc/` active 入口只保留当前真相、重构控制面、后端参考和必要 015 证据。
+- Phase 0 提交不包含 runtime 行为修改。
 
 ## Phase 1：目录 / 产物 / 写权限 contract
 
@@ -165,7 +168,7 @@
 
 ## 提交策略
 
-- Phase 0 初始提交只含文档和安全归档。
+- Phase 0 已完成目录清理和文档归档，作为合回 `main` 的重新开始基线。
 - Phase 1 以后每个 phase 单独提交。
 - 行为代码重构和文档移动不要混在同一提交。
 - 每个提交必须更新对应 acceptance。

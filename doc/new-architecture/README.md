@@ -2,11 +2,11 @@
 
 这套文稿只回答一个问题：**如果要把 Boardroom OS 重构成健壮、无状态、幂等、可恢复的自治状态机，它下一代应该长成什么样。**
 
-这里不是当前代码真相层。当前真相还是看：
+这里不是当前代码真相层。当前真相和重构控制面看：
 
 - [../mainline-truth.md](../mainline-truth.md)
-- [../roadmap-reset.md](../roadmap-reset.md)
-- [../TODO.md](../TODO.md)
+- [../refactor/planning/INDEX.md](../refactor/planning/INDEX.md)
+- [../refactor/planning/09-refactor-plan.md](../refactor/planning/09-refactor-plan.md)
 
 这套新文稿的作用是定目标架构，后面拆重构任务、画迁移边界、审查实现偏差，都以这里为准。
 
@@ -66,9 +66,9 @@
 ## 和现有文档栈的关系
 
 - [../mainline-truth.md](../mainline-truth.md) 讲的是“当前代码已经是什么”。
-- [../roadmap-reset.md](../roadmap-reset.md) 讲的是“当前阶段先做什么，不做什么”。
-- `doc/design/*` 讲的是“当前主线某个子系统的设计细节”。
-- `doc/new-architech/*` 讲的是“自治状态机的目标架构和迁移落点”。
+- [../refactor/planning/INDEX.md](../refactor/planning/INDEX.md) 讲的是“当前阶段先做什么，不做什么”。
+- `doc/archive/design/*` 是旧设计材料，只作历史追溯。
+- `doc/new-architecture/*` 讲的是“自治状态机的目标架构和迁移落点”。
 
 说白了，旧文档偏现状，新文档偏目标。两边都保留，但职责不同。
 

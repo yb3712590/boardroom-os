@@ -113,24 +113,38 @@ DeliveryPolicy / DeliverableContract / CloseoutPolicy / ProgressionPolicy
 
 并让它们以同一份 graph/assets/incidents snapshot 计算合法动作。
 
-## Archive-first 候选
+## Round 3 实际清理记录（2026-05-01）
 
-| 路径 | 处理建议 | 原因 |
+本轮完成仓库瘦身与目录重组，范围限定为文档、旧前端源码和生成物清理；没有修改 provider、scheduler、ticket handler、workflow controller 或 `backend/app/core` runtime 行为代码。
+
+### 删除
+
+| 路径 | 处理 | 原因 |
 |---|---|---|
-| `backend/docs/library-management-scenario-next-session-prompt.md` | 移入 `doc/archive/session-prompts/` | 一次性 handoff，包含旧绝对路径 |
-| `doc/tests/intergration-test-*` | 保留为 verification history | 是审计证据，不默认读 |
-| `doc/task-backlog/done.md` | 保留或归档索引引用 | 历史任务卡片 |
-| `doc/todo/completed-capabilities.md` | 保留或归档索引引用 | 历史能力清单 |
-| `doc/history/archive/*` | 保留 archive | 历史 memory/log |
-| tracked cache/log/db/artifacts | 若存在则删除 | 生成物不应入库 |
+| `frontend/` | 删除 | 当前重构先跑通后端自治 runtime，旧浏览器界面不再作为 active source |
+| untracked `frontend/node_modules`、`frontend/dist` | 随目录删除 | 本地依赖/构建产物，不进入新基线 |
 
-## 暂不删除的内容
+### 归档
 
-- `doc/new-architecture/*`：目标架构 canon。
-- `doc/archive/specs/feature-spec.md`：历史愿景来源。
-- `doc/tests/intergration-test-015-20260429.md`：015 详细审计证据。
-- `doc/tests/intergration-test-015-20260429-final.md`：015 精简结论。
-- backend/frontend runtime source：本轮不做行为重构。
+| 原路径 | 新路径 | 原因 |
+|---|---|---|
+| `doc/refactor/new-architecture-*.md` | `doc/archive/refactor-legacy/` | 旧新架构实施计划、模板和提示词，不再作为当前 refactor 入口 |
+| `doc/tests/intergration-test-001..014*` 及 remediation/audit 文档 | `doc/archive/integration-logs/` | verification history，不默认进入实现上下文 |
+| `backend/library-mgmt-prd.md`、`backend/library_management_autopilot_live_013.toml`、`backend/library_management_autopilot_live_015.toml` | `doc/archive/integration-logs/backend-live-configs/` | 旧图书馆 live PRD/config 含旧界面交付要求，当前不再作为 active backend 根目录 fixture |
+| `doc/design/` | `doc/archive/design/` | 旧 UI/设计材料，不再作为 active truth |
+| `doc/roadmap-reset*`、`doc/milestone-timeline.md` | `doc/archive/roadmap/` | 旧路线材料，当前由 refactor planning 控制面替代 |
+| `doc/TODO.md`、`doc/task-backlog*` | `doc/archive/task-backlog/` | 旧任务流水，不再作为当前任务入口 |
+| `doc/history/` | `doc/archive/history/` | 旧工作记忆和详细历史，不默认进入上下文 |
+| `doc/todo/` | `doc/archive/todo/` | 旧能力清单，只作历史追溯 |
+| `dev-prompts.md` | `doc/archive/session-prompts/dev-prompts-legacy.md` | 旧多客户端开发提示词包含已删除 frontend 流程 |
+
+### 保留
+
+- `doc/README.md`、`doc/mainline-truth.md`、`doc/backend-runtime-guide.md`、`doc/api-reference.md`。
+- `doc/refactor/planning/**` 与 `doc/refactor/README.md`。
+- `doc/new-architecture/**`。
+- `doc/archive/specs/feature-spec.md`。
+- `doc/tests/intergration-test-015-20260429.md` 与 `doc/tests/intergration-test-015-20260429-final.md`。
 
 ## 审计结论
 

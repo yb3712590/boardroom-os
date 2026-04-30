@@ -7,8 +7,8 @@
 错误示例：
 
 ```text
-if role_profile_ref == "frontend_engineer_primary":
-    allow 10-project/src/frontend/**
+if role_profile_ref == "implementation_worker_primary":
+    allow 10-project/src/app/**
 ```
 
 目标示例：
@@ -17,7 +17,7 @@ if role_profile_ref == "frontend_engineer_primary":
 actor -> role template -> capability set -> write surface policy
 ```
 
-runtime kernel 只判断 actor 是否具备 ticket contract 要求的 capability，不判断该 actor 是不是 frontend engineer、backend engineer 或 checker。
+runtime kernel 只判断 actor 是否具备 ticket contract 要求的 capability，不判断该 actor 是不是 implementation worker、backend engineer 或 checker。
 
 ## 核心对象
 
@@ -34,11 +34,11 @@ Actor / Employee
 | Capability | 说明 |
 |---|---|
 | `source.modify.backend` | 修改 backend source |
-| `source.modify.frontend` | 修改 frontend source |
+| `source.modify.application` | 修改交付项目 application source |
 | `source.modify.database` | 修改 schema/migration/seed |
 | `source.modify.platform` | 修改 platform/deploy/runtime scripts |
 | `test.run.backend` | 运行并登记 backend 测试证据 |
-| `test.run.frontend` | 运行并登记 frontend 测试证据 |
+| `test.run.application` | 运行并登记交付项目测试证据 |
 | `evidence.write.test` | 写测试证据 |
 | `evidence.write.git` | 写 git closeout evidence |
 | `evidence.check.delivery` | 写 delivery check report |
@@ -54,11 +54,11 @@ Actor / Employee
 | Capability | Allowed roots | Forbidden roots | Required evidence |
 |---|---|---|---|
 | `source.modify.backend` | `10-project/src/backend/**` | `00-boardroom/**`, `50-closeout/**`, `90-archive/**` | source diff + backend test log |
-| `source.modify.frontend` | `10-project/src/frontend/**` | `00-boardroom/**`, `50-closeout/**`, `90-archive/**` | source diff + frontend test/smoke log |
+| `source.modify.application` | `10-project/src/app/**` | `00-boardroom/**`, `50-closeout/**`, `90-archive/**` | source diff + application test/smoke log |
 | `source.modify.database` | `10-project/src/**/migrations/**`, `10-project/src/**/schema/**`, `10-project/src/**/seeds/**` | `50-closeout/**`, `90-archive/**` | migration validation + rollback note |
 | `source.modify.platform` | `10-project/src/platform/**`, `10-project/scripts/**` | `00-boardroom/20-graph/**`, `90-archive/**` | platform smoke + risk note |
 | `test.run.backend` | `20-evidence/tests/**` | `10-project/src/**` | command, exit code, stdout/stderr |
-| `test.run.frontend` | `20-evidence/tests/**` | `10-project/src/**` | command, exit code, stdout/stderr, UI evidence if relevant |
+| `test.run.application` | `20-evidence/tests/**` | `10-project/src/**` | command, exit code, stdout/stderr |
 | `evidence.write.git` | `20-evidence/git/**` | `10-project/src/**` | changed files, commit/diff metadata |
 | `evidence.check.delivery` | `20-evidence/delivery/**`, `20-evidence/reviews/**` | `10-project/src/**` | findings + evidence refs |
 | `verdict.write.maker_checker` | `20-evidence/reviews/**` | `10-project/src/**` | verdict + blocking status |
@@ -73,10 +73,10 @@ Role template 是组织层配置，不是 runtime 执行键。
 
 ```yaml
 roles:
-  frontend_engineer_primary:
+  implementation_worker_primary:
     capabilities:
-      - source.modify.frontend
-      - test.run.frontend
+      - source.modify.application
+      - test.run.application
       - evidence.write.test
       - evidence.write.git
       - docs.update.delivery
@@ -133,7 +133,7 @@ Worker 不能自行扩大 allowed write set。
 
 - `source.py` 单文件占位；
 - 只有 `1 passed` 的泛化 smoke，无业务断言；
-- 描述为“后续里程碑补齐”的页面占位；
+- 描述为“后续里程碑补齐”的产物占位；
 - 未覆盖 PRD acceptance 的 checklist；
 - provider fallback 自动生成的默认 source/test payload；
 - 没有 changed file inventory 的 source delivery。

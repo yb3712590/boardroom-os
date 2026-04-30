@@ -1,52 +1,33 @@
 # 文档索引
 
-`doc/` 现在按“当前真相 -> 工作参考 -> 历史归档”三层收口。默认只读当前真相层，不把旧计划、旧分析、已完成流水和长历史日志塞进上下文。
+`doc/` 现在只保留当前真相、自治 runtime 重构控制面、后端参考和必要历史入口。默认不要从旧路线、旧设计、旧任务流水或长 integration logs 开始读。
 
 ## 默认首读
 
-1. [mainline-truth.md](mainline-truth.md)：当前代码真相、runtime 支持矩阵和冻结边界
-2. [roadmap-reset.md](roadmap-reset.md)：当前阶段边界和开发判断规则
-3. [TODO.md](TODO.md)：当前批次、条件批次和当前阶段目标
+1. [mainline-truth.md](mainline-truth.md)：当前后端代码事实、runtime 支持矩阵和冻结边界。
+2. [refactor/planning/INDEX.md](refactor/planning/INDEX.md)：2026-05 自治 runtime 大重构控制面。
+3. [refactor/planning/00-refactor-north-star.md](refactor/planning/00-refactor-north-star.md)：本轮重构北极星、非目标和核心不变量。
+4. [refactor/planning/09-refactor-plan.md](refactor/planning/09-refactor-plan.md)：分阶段重构计划。
+5. [refactor/planning/10-refactor-acceptance-criteria.md](refactor/planning/10-refactor-acceptance-criteria.md)：每阶段验收标准。
 
-## 工作参考
+## 当前工作参考
 
-- [milestone-timeline.md](milestone-timeline.md)：后续顺序、条件批次、远期储备，以及未来可支持的交付类型方向
-- [task-backlog.md](task-backlog.md)：任务库入口，只放统计、状态索引和阅读说明
-- [task-backlog/active.md](task-backlog/active.md)：当前未关闭任务
-- [refactor/README.md](refactor/README.md)：重构文档入口
-- [refactor/planning/INDEX.md](refactor/planning/INDEX.md)：自治 runtime 大重构控制面，后续大规模重构默认从这里进入
-- [refactor/planning/11-round-prompts.md](refactor/planning/11-round-prompts.md)：每一轮重构推进提示词
-- [refactor/new-architecture-implementation-plan.md](refactor/new-architecture-implementation-plan.md)：旧新架构重构主计划，保留为历史实施参考
-- [refactor/new-architecture-refactor-session-prompt.md](refactor/new-architecture-refactor-session-prompt.md)：旧新架构重构提示词，保留为历史实施参考
-- [backend-runtime-guide.md](backend-runtime-guide.md)：当前后端运行、运维和排障指南
-- [api-reference.md](api-reference.md)：当前 HTTP 接口参考
-- [history/context-baseline.md](history/context-baseline.md)：稳定不常变的规则和架构基线，只在需要时打开
-- [history/memory-log.md](history/memory-log.md)：最近仍影响实现判断的事实，只在需要近期原因时打开
+- [refactor/README.md](refactor/README.md)：重构文档入口。
+- [refactor/planning/11-round-prompts.md](refactor/planning/11-round-prompts.md)：后续每轮推进提示词。
+- [backend-runtime-guide.md](backend-runtime-guide.md)：后端运行、live 场景和排障指南。
+- [api-reference.md](api-reference.md)：当前后端 HTTP 接口参考。
+- [new-architecture/README.md](new-architecture/README.md)：目标架构 canon；不等同于当前实现事实。
 
-## 设计文档
+## 必要历史入口
 
-默认只按需打开相关设计文档，且先读开头 `TL;DR`：
-
-- `design/message-bus-design.md`
-- `design/context-compiler-design.md`
-- `design/meeting-room-protocol.md`
-- `design/boardroom-data-contracts.md`
-- `design/boardroom-ui-*.md`
-
-## 历史归档
-
-- [archive/README.md](archive/README.md)：旧 spec、旧计划、旧分析和历史评估的入口
-- [task-backlog/done.md](task-backlog/done.md)：已完成任务卡片和完成补记
-- [todo/completed-capabilities.md](todo/completed-capabilities.md)：已落地主线能力清单
-- [history/archive/](history/archive/)：详细 memory log 和旧验证流水
-- [roadmap-reset/rationale.md](roadmap-reset/rationale.md)：路线纠偏长版背景，按需看
+- [archive/README.md](archive/README.md)：旧 spec、旧计划、旧设计、旧路线、旧任务流水、旧会话提示词和旧 integration logs 的统一入口。
+- [archive/specs/feature-spec.md](archive/specs/feature-spec.md)：初始历史愿景来源，只作追溯。
+- [tests/intergration-test-015-20260429.md](tests/intergration-test-015-20260429.md)：015 详细审计证据。
+- [tests/intergration-test-015-20260429-final.md](tests/intergration-test-015-20260429-final.md)：015 精简结论。
 
 ## 阅读规则
 
-- 默认固定顺序：`README.md -> doc/README.md -> mainline-truth.md -> roadmap-reset.md -> TODO.md`
-- 需要当前任务时再进 `task-backlog/active.md`
-- 需要排后续顺序时再进 `milestone-timeline.md`
-- 需要自治 runtime 大重构时再进 `refactor/planning/INDEX.md`
-- 需要稳定规则时再进 `history/context-baseline.md`
-- 需要最近几天的具体变化原因时再进 `history/memory-log.md`
-- 需要旧计划、旧评估或旧 spec 时，统一从 `archive/README.md` 进入
+- 默认固定顺序：`README.md -> doc/README.md -> doc/mainline-truth.md -> doc/refactor/planning/INDEX.md`。
+- 做 runtime 重构时，按 [refactor/planning/INDEX.md](refactor/planning/INDEX.md) 的阅读顺序进入。
+- 涉及目录、产物、写权限时，优先读 [refactor/planning/03-directory-contract.md](refactor/planning/03-directory-contract.md) 和 [refactor/planning/04-write-surface-policy.md](refactor/planning/04-write-surface-policy.md)。
+- 旧设计、旧路线、旧任务 backlog 和 001-014 integration logs 只从 [archive/README.md](archive/README.md) 按需打开。
