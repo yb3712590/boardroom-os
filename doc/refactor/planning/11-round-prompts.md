@@ -4,13 +4,35 @@
 
 每次新会话或新阶段开始时，复制对应 round 的提示词。每轮默认要求：
 
-1. 先读指定文档。
+1. 先读指定文档，不要全仓库乱读。
 2. 只做本轮允许的改动。
-3. 完成后更新相关文档和验收项。
-4. 运行指定验证。
-5. 单独提交。
+3. 做完必须更新本轮指定文档。
+4. 运行本轮指定验证。
+5. 除非用户明确要求，否则不要 push。
+6. 每轮结束时说明：完成项、删除/归档项、验证结果、下一轮入口。
 
-## Round 0：分支与基线盘点
+## 当前状态
+
+以下轮次已经完成并提交：
+
+- Round 0：分支与基线盘点。
+- Round 1：写入 12 份规划文档。
+- Round 2：整理文档入口的最小版本。
+
+当前分支：`refactor/autonomous-runtime-docs`。
+
+当前重构控制面入口：
+
+- [INDEX.md](INDEX.md)
+- [00-refactor-north-star.md](00-refactor-north-star.md)
+- [09-refactor-plan.md](09-refactor-plan.md)
+- [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
+
+下一轮新会话应从 **Round 3：仓库瘦身与目录重组** 开始。Round 3 完成后，用户期望看到一个干净清爽的目录结构，并准备把当前分支合并回 `main`，作为项目重新开始的基线。
+
+---
+
+## Round 0：分支与基线盘点（已完成）
 
 ```text
 你在 D:\Projects\boardroom-os 工作。目标是启动自治 runtime 大重构的准备分支。
@@ -33,12 +55,17 @@
 - 删除 backend/frontend runtime code。
 - 修改 provider、scheduler、ticket handler 行为。
 
+完成后更新：
+- doc/refactor/planning/10-refactor-acceptance-criteria.md 中 Phase 0 对应项。
+
 验收：
 - 分支已创建。
 - 工作树变更范围清楚。
 ```
 
-## Round 1：写入 12 份规划文档
+---
+
+## Round 1：写入 12 份规划文档（已完成）
 
 ```text
 你在 refactor/autonomous-runtime-docs 分支。目标是建立重构控制面。
@@ -55,24 +82,31 @@
 3. 更新 INDEX.md。
 4. 不改代码。
 
+完成后更新：
+- doc/refactor/planning/INDEX.md
+- doc/refactor/planning/10-refactor-acceptance-criteria.md 中 Phase 0 对应项。
+
 验收：
 - 12 份文档可从 INDEX.md 导航。
 - 文档明确本轮不承载的愿景。
 ```
 
-## Round 2：整理文档入口
+---
+
+## Round 2：整理文档入口（已完成最小版本）
 
 ```text
 目标：让 doc/README.md 成为清晰入口，并把重构规划纳入默认导航。
 
 必读：
 - doc/README.md
+- doc/refactor/README.md
 - doc/refactor/planning/INDEX.md
 - doc/mainline-truth.md
 
 任务：
 1. 更新 doc/README.md 的默认首读和工作参考。
-2. 新增 doc/refactor/README.md。
+2. 新增或更新 doc/refactor/README.md。
 3. 明确 doc/new-architecture 是目标 canon，doc/refactor/planning 是执行控制面。
 4. 检查相对链接。
 
@@ -80,193 +114,331 @@
 - 移动 015 报告。
 - 移动 feature-spec。
 
+完成后更新：
+- doc/refactor/planning/10-refactor-acceptance-criteria.md 中 Phase 0 对应项。
+
 验收：
 - 新会话能从 doc/README.md 找到规划文档。
 ```
 
-## Round 3：目录契约与写权限审计
+---
+
+## Round 3：仓库瘦身与目录重组（下一轮执行）
 
 ```text
-目标：把目录和写入面从文档契约映射到当前代码差距。
+你在 D:\Projects\boardroom-os 的 refactor/autonomous-runtime-docs 分支。目标是完成一次大规模安全清理，让项目目录重新变得干净清爽。用户明确授权：frontend 可以整体删除，先跑通后端自治 runtime；旧文档和旧规范应该归档或删除；本轮结束后用户准备把当前分支合并回 main 作为项目重新开始基线。
 
-必读：
-- doc/refactor/planning/03-directory-contract.md
-- doc/refactor/planning/04-write-surface-policy.md
-- backend/app/core/project_workspaces.py
-- backend/app/core/runtime.py
-- backend/app/core/ticket_handlers.py
+必读，按顺序：
+1. doc/README.md
+2. doc/refactor/README.md
+3. doc/refactor/planning/INDEX.md
+4. doc/refactor/planning/00-refactor-north-star.md
+5. doc/refactor/planning/01-current-state-audit.md
+6. doc/refactor/planning/03-directory-contract.md
+7. doc/refactor/planning/09-refactor-plan.md
+8. doc/refactor/planning/10-refactor-acceptance-criteria.md
+9. doc/archive/README.md
+10. .gitignore
+11. README.md
 
 任务：
-1. 搜索 role_profile_ref 决定 write root 的代码。
-2. 搜索 default source/test fallback。
-3. 搜索 closeout final artifact refs 筛选逻辑。
-4. 写出 gap list，不急于大改。
-5. 补最小 contract test，如安全可行。
+1. 确认 git status 干净，并确认当前分支是 refactor/autonomous-runtime-docs。
+2. 删除 frontend/ 整目录，并清理 README、doc、脚本、测试、配置中对 frontend 的 active 引用。
+3. 清理 backend 中明显服务旧 frontend/UI 的文档或接口说明；不要删除 backend core runtime 行为代码。
+4. 清理 doc/ 目录：
+   - 保留 doc/README.md、doc/mainline-truth.md、doc/refactor/planning/**、doc/new-architecture/**、doc/archive/specs/feature-spec.md、015 两份报告。
+   - 将 doc/refactor/ 下 3 份旧 new-architecture-* 文档移入 doc/archive/refactor-legacy/，并更新引用。
+   - 将大量旧 integration logs 归档到 doc/archive/integration-logs/，但 015 长日志和 final 日志保留在 doc/tests/。
+   - 将旧 design/UI/roadmap/task-backlog/history 中不再作为 active truth 的内容归档，避免默认上下文污染。
+5. 清理 tracked generated/cache/log/db/build artifacts；未被 git 跟踪的本地文件不必强行处理。
+6. 更新 doc/README.md，让默认入口只剩当前真相、重构控制面、后端参考和必要历史入口。
+7. 更新 doc/archive/README.md，记录本轮归档位置和原因。
+8. 更新 doc/refactor/planning/01-current-state-audit.md，补充本轮实际删除/归档清单。
+9. 更新 doc/refactor/planning/09-refactor-plan.md，将 Round 3/Phase 0 状态写为完成。
+10. 更新 doc/refactor/planning/10-refactor-acceptance-criteria.md，勾选 Phase 0 和目录清理相关验收项。
+11. 更新 doc/refactor/planning/11-round-prompts.md，将 Round 3 标记为已完成，并把下一轮指向 Round 4。
+12. 创建提交，commit message 建议：`refactor-cleanup: reset project structure for backend runtime rebuild`。
+
+允许删除：
+- frontend/
+- frontend 相关 active 文档引用
+- 明确废弃的一次性 prompt、旧计划、旧 UI 设计稿
+- tracked cache/build/log/db 生成物
+
+优先归档而非删除：
+- 历史愿景
+- integration 审计日志
+- 旧重构计划
+- 曾用于决策的设计文档
 
 禁止：
-- 一次性重写 runtime。
+- 删除 backend/app/core 下的 runtime 核心代码。
+- 删除 backend/tests 中仍覆盖当前 backend runtime 的测试。
+- 删除 doc/archive/specs/feature-spec.md。
+- 删除 doc/new-architecture/**。
+- 删除 doc/tests/intergration-test-015-20260429.md。
+- 删除 doc/tests/intergration-test-015-20260429-final.md。
+- 修改 provider、scheduler、ticket handler、workflow controller 行为。
 
-验收：
-- 有明确 code gap list。
-- 没有新增角色名硬编码。
+验证：
+1. git status --short
+2. git diff --stat
+3. 检查 frontend 引用：搜索 `frontend/`、`npm`、`vite`、`Boardroom UI`，确认 active docs 中没有误导性入口。
+4. 检查新文档链接：至少检查 doc/README.md、doc/refactor/README.md、doc/refactor/planning/*.md。
+5. 运行后端轻量测试：
+   - cd backend && python -m pytest tests/test_scenario_config.py -q --basetemp .tmp/pytest-cleanup-scenario
+   - cd backend && python -m pytest tests/test_live_configured_runner.py -q --basetemp .tmp/pytest-cleanup-live
+6. 如果删除 frontend 后存在脚本或文档断链，修正后再提交。
+
+完成标准：
+- 根目录不再有 frontend/。
+- doc/ active 入口清爽，旧材料集中 archive。
+- 新会话从 doc/README.md 能直接进入当前重构控制面。
+- 后端轻量测试通过。
+- 工作树提交后干净。
 ```
 
-## Round 4：Provider contract 实施
+---
+
+## Round 4：Backend 废弃代码审计与安全删除
 
 ```text
-目标：重建 provider 稳定性验证。
+你在 refactor/autonomous-runtime-docs 分支。Round 3 已完成，仓库目录已经清爽。目标是审计并删除 backend 中明确废弃、无引用、非核心 runtime 的代码。不要开始 provider 或 progression 重构。
 
 必读：
-- doc/refactor/planning/05-provider-contract.md
-- backend/app/core/runtime_provider_config.py
-- backend/app/core/runtime.py
-- backend/tests/live/run_configured.py 或相关 provider harness
+1. doc/README.md
+2. doc/mainline-truth.md
+3. doc/refactor/planning/00-refactor-north-star.md
+4. doc/refactor/planning/01-current-state-audit.md
+5. doc/refactor/planning/02-target-architecture.md
+6. doc/refactor/planning/03-directory-contract.md
+7. doc/refactor/planning/09-refactor-plan.md
+8. doc/refactor/planning/10-refactor-acceptance-criteria.md
+9. backend/app/core/ 下候选模块
+10. backend/tests/ 下对应测试
 
 任务：
-1. 建立独立 provider streaming smoke。
-2. 区分 timeout 类型。
+1. 列出 backend 当前模块树和测试树。
+2. 用 grep 找无引用模块、旧 UI/API 专用模块、旧 scenario-only helper、frozen/compatibility shell。
+3. 每个删除候选必须满足：无生产引用、无当前测试引用、非审计证据、非未来目标架构必要入口。
+4. 删除安全候选并同步测试。
+5. 不拆 ticket_handlers.py/runtime.py/workflow_controller.py 这类核心大模块；只记录拆分建议。
+6. 更新 doc/refactor/planning/01-current-state-audit.md 的 backend cleanup 表。
+7. 更新 doc/refactor/planning/09-refactor-plan.md 和 10-refactor-acceptance-criteria.md。
+8. 提交，message 建议：`refactor-cleanup: remove obsolete backend surfaces`。
+
+禁止：
+- 删除 core runtime 行为代码。
+- 顺手重构 provider/progression/actor 逻辑。
+- 为了让测试过而放宽测试。
+
+验证：
+- 后端相关 pytest smoke。
+- grep 确认删除路径无引用。
+- git diff --stat 以删除废弃代码和文档同步为主。
+```
+
+---
+
+## Round 5：Provider contract 实施
+
+```text
+目标：重建 provider 稳定性验证，先证明 provider 层，再继续 runtime 重构。
+
+必读：
+1. doc/refactor/planning/05-provider-contract.md
+2. doc/refactor/planning/09-refactor-plan.md
+3. doc/refactor/planning/10-refactor-acceptance-criteria.md
+4. backend/app/core/runtime_provider_config.py
+5. backend/app/core/runtime.py
+6. backend/tests/live/ 相关 provider harness
+
+任务：
+1. 建立独立 provider streaming smoke，不依赖 workflow。
+2. 区分 connect_timeout、first_token_timeout、stream_idle_timeout、request_total_timeout、ticket_lease_timeout。
 3. 分类 malformed SSE、empty assistant、schema validation failure。
 4. 记录 preferred/actual provider/model。
 5. 不触碰 workflow progression。
+6. 更新 provider contract 文档中已实现状态。
+7. 更新 acceptance criteria。
+8. 提交，message 建议：`refactor-provider: add streaming contract smoke`。
 
-验收：
-- provider smoke 可不依赖 workflow 运行。
-- 同 API 配置可输出稳定性报告。
+验证：
+- provider smoke 可独立运行。
+- 相关 provider/parser 单测通过。
 ```
 
-## Round 5：Actor / Role lifecycle 实施
+---
+
+## Round 6：Actor / Role lifecycle 实施
 
 ```text
 目标：让派工从 role name 转向 capability。
 
 必读：
-- doc/refactor/planning/06-actor-role-lifecycle.md
-- doc/refactor/planning/04-write-surface-policy.md
-- backend/app/core/workflow_controller.py
-- backend/app/core/projections.py
-- backend/app/core/ticket_handlers.py
+1. doc/refactor/planning/06-actor-role-lifecycle.md
+2. doc/refactor/planning/04-write-surface-policy.md
+3. doc/refactor/planning/09-refactor-plan.md
+4. doc/refactor/planning/10-refactor-acceptance-criteria.md
+5. backend/app/core/workflow_controller.py
+6. backend/app/core/projections.py
+7. backend/app/core/ticket_handlers.py
 
 任务：
 1. 找到 role_profile_ref 作为执行键的路径。
 2. 建立 capability mapping 的最小模型。
 3. 给 excluded_employee_ids 增加作用域设计或测试。
 4. no eligible actor 必须显式 incident/action。
+5. 更新 actor lifecycle 和 write-surface 文档。
+6. 更新 acceptance criteria。
+7. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
 
-验收：
-- 新增测试覆盖 no eligible actor。
+验证：
+- 新增/更新测试覆盖 no eligible actor。
 - 不再新增 role name -> write root 逻辑。
 ```
 
-## Round 6：Progression policy engine 抽离
+---
+
+## Round 7：Progression policy engine 抽离
 
 ```text
 目标：把推进规则从 controller/runtime 中抽为显式 policy。
 
 必读：
-- doc/refactor/planning/07-progression-policy.md
-- backend/app/core/workflow_progression.py
-- backend/app/core/workflow_controller.py
-- backend/app/core/workflow_autopilot.py
-- backend/app/core/ceo_proposer.py
+1. doc/refactor/planning/07-progression-policy.md
+2. doc/refactor/planning/09-refactor-plan.md
+3. doc/refactor/planning/10-refactor-acceptance-criteria.md
+4. backend/app/core/workflow_progression.py
+5. backend/app/core/workflow_controller.py
+6. backend/app/core/workflow_autopilot.py
+7. backend/app/core/ceo_proposer.py
 
 任务：
 1. 定义 decide_next_actions(snapshot, policy)。
 2. 从最小场景开始迁移 closeout/fanout/rework 判断。
 3. 保留旧路径直到测试覆盖。
 4. 删除 substring/hardcoded milestone 前先补测试。
+5. 更新 progression policy 文档和 acceptance criteria。
+6. 提交，message 建议：`refactor-policy: extract explicit progression decisions`。
 
-验收：
+验证：
 - 相同 snapshot 输出稳定 action proposals。
 - orphan pending 不阻断 graph complete。
 ```
 
-## Round 7：Deliverable contract + checker/rework
+---
+
+## Round 8：Deliverable contract + checker/rework
 
 ```text
 目标：closeout 证明 PRD 满足，而不是 graph 完成。
 
 必读：
-- doc/refactor/planning/08-deliverable-contract.md
-- backend/app/core/workflow_completion.py
-- backend/app/core/ticket_handlers.py
-- backend/app/core/runtime.py
+1. doc/refactor/planning/08-deliverable-contract.md
+2. doc/refactor/planning/04-write-surface-policy.md
+3. doc/refactor/planning/09-refactor-plan.md
+4. doc/refactor/planning/10-refactor-acceptance-criteria.md
+5. backend/app/core/workflow_completion.py
+6. backend/app/core/ticket_handlers.py
+7. backend/app/core/runtime.py
 
 任务：
 1. 定义 DeliverableContract 结构。
 2. 加 placeholder detection。
 3. 改 checker/rework target 选择。
 4. closeout final refs 只允许 current final evidence。
+5. 更新 deliverable contract 文档和 acceptance criteria。
+6. 提交，message 建议：`refactor-delivery: enforce deliverable contract closeout`。
 
-验收：
+验证：
 - 015 中 BR-040/BR-041 placeholder 不能通过。
 - APPROVED_WITH_NOTES 不放行 blocker。
 ```
 
-## Round 8：Replay / resume / checkpoint
+---
+
+## Round 9：Replay / resume / checkpoint
 
 ```text
 目标：replay/resume 一等化。
 
 必读：
-- doc/refactor/planning/10-refactor-acceptance-criteria.md
-- backend/app/core/projections.py
-- backend/app/core/reducer.py
-- backend/app/scheduler_runner.py
+1. doc/refactor/planning/10-refactor-acceptance-criteria.md
+2. doc/refactor/planning/07-progression-policy.md
+3. backend/app/core/projections.py
+4. backend/app/core/reducer.py
+5. backend/app/scheduler_runner.py
 
 任务：
 1. 定义 resume from event/version/ticket/incident。
 2. 建立 projection checkpoint 策略。
 3. 避免每次全量 JSON replay。
 4. 写 replay consistency tests。
+5. 更新 refactor plan 和 acceptance criteria。
+6. 提交，message 建议：`refactor-replay: add checkpointed resume path`。
 
-验收：
+验证：
 - 不需要人工补 projection。
 - replay 后 materialized view hash 一致。
 ```
 
-## Round 9：015 replay 包验证
+---
+
+## Round 10：015 replay 包验证
 
 ```text
 目标：用 D:\Projects\boardroom-os-replay 验证新规则。
 
 必读：
-- doc/refactor/planning/01-current-state-audit.md
-- doc/refactor/planning/08-deliverable-contract.md
-- doc/tests/intergration-test-015-20260429-final.md
+1. doc/refactor/planning/01-current-state-audit.md
+2. doc/refactor/planning/08-deliverable-contract.md
+3. doc/refactor/planning/10-refactor-acceptance-criteria.md
+4. doc/tests/intergration-test-015-20260429-final.md
 
 任务：
 1. 导入 015 replay 包。
 2. 重放关键 provider/rework/closeout 路径。
 3. 验证 placeholder、orphan pending、manual closeout recovery 都被新规则处理。
 4. 输出 replay audit report。
+5. 更新 current-state audit、acceptance criteria 和 refactor plan。
+6. 提交，message 建议：`test-replay: validate integration 015 without manual projection repair`。
 
-验收：
+验证：
 - 无人工 DB/projection 注入。
 - closeout 必须经过 deliverable contract。
 ```
 
-## Round 10：新 live scenario clean run
+---
+
+## Round 11：后端-only live scenario clean run
 
 ```text
-目标：证明新 runtime 可 clean run。
+目标：证明新 backend runtime 可以 clean run。此时 frontend 已删除，不再作为 live 成功条件。
 
 必读：
-- doc/refactor/planning/09-refactor-plan.md
-- doc/refactor/planning/10-refactor-acceptance-criteria.md
-- backend/data/live-tests/ 或当前 live config 目录
+1. doc/refactor/planning/09-refactor-plan.md
+2. doc/refactor/planning/10-refactor-acceptance-criteria.md
+3. doc/refactor/planning/05-provider-contract.md
+4. backend/data/live-tests/ 或当前 live config 目录
 
 任务：
-1. 设计小而完整的新 PRD scenario。
+1. 设计小而完整的后端-only PRD scenario。
 2. 先跑 provider soak。
 3. 再跑 live scenario。
 4. 禁止人工 DB/projection/event 注入。
 5. 产出 closeout、evidence、replay bundle。
+6. 更新 acceptance criteria、refactor plan 和测试报告。
+7. 提交，message 建议：`test-live: complete backend-only autonomous runtime scenario`。
 
-验收：
+验证：
 - final deliverable contract pass。
 - replay from checkpoint pass。
 - provider failure attribution clear。
+- 工作树干净。
 ```
+
+---
 
 ## 提交通用模板
 
