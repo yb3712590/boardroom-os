@@ -1633,6 +1633,167 @@ def test_autopilot_closeout_batch_blocks_failed_delivery_check_report(client):
     assert batch is None
 
 
+def test_autopilot_closeout_batch_uses_runtime_graph_when_snapshot_has_orphan_pending_node(client):
+    from app.core import ceo_proposer
+
+    workflow_id = "wf_autopilot_closeout_orphan_pending"
+    repository = client.app.state.repository
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Autopilot closeout should ignore orphan pending snapshot nodes",
+    )
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_worker(
+        client,
+        employee_id="emp_closeout_frontend",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_closeout_orphan_build",
+        node_id="node_closeout_orphan_build",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_closeout_orphan_build/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved delivery slice.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    build_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_closeout_orphan_build",
+            node_id="node_closeout_orphan_build",
+        ),
+    )
+
+    batch = ceo_proposer._build_autopilot_closeout_batch(
+        repository,
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Close out after runtime graph completion.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 1},
+            "nodes": [
+                {"node_id": "node_closeout_orphan_build", "status": "COMPLETED"},
+                {"node_id": "node_stale_orphan", "status": "PENDING"},
+            ],
+            "employees": [
+                {
+                    "employee_id": "emp_closeout_frontend",
+                    "state": "ACTIVE",
+                    "role_profile_refs": ["frontend_engineer_primary"],
+                }
+            ],
+        },
+        "Create closeout after the runtime graph is complete.",
+    )
+
+    assert build_response.status_code == 200
+    assert build_response.json()["status"] == "ACCEPTED"
+    assert batch is not None
+    assert len(batch.actions) == 1
+    assert batch.actions[0].payload.output_schema_ref == "delivery_closeout_package"
+    assert batch.actions[0].payload.parent_ticket_id == "tkt_closeout_orphan_build"
+
+
+def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    maker_ticket_id = "tkt_converged_check_report"
+    checker_ticket_id = "tkt_converged_check_verdict"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    tickets = [
+        {
+            "ticket_id": maker_ticket_id,
+            "node_id": "node_converged_check",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": checker_ticket_id,
+            "node_id": "node_converged_check",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        maker_ticket_id: {
+            "ticket_id": maker_ticket_id,
+            "output_schema_ref": "delivery_check_report",
+            "delivery_stage": "CHECK",
+        },
+        checker_ticket_id: {
+            "ticket_id": checker_ticket_id,
+            "output_schema_ref": "maker_checker_verdict",
+            "maker_checker_context": {
+                "maker_ticket_id": maker_ticket_id,
+                "maker_ticket_spec": {
+                    "ticket_id": maker_ticket_id,
+                    "output_schema_ref": "delivery_check_report",
+                    "delivery_stage": "CHECK",
+                },
+            },
+        },
+    }
+    terminal_events = {
+        maker_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": maker_ticket_id,
+                "payload": {
+                    "status": "FAIL",
+                    "findings": [
+                        {
+                            "finding_id": "finding_missing_evidence",
+                            "summary": "Evidence is still missing.",
+                            "blocking": True,
+                        }
+                    ],
+                },
+            },
+        },
+        checker_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": checker_ticket_id,
+                "review_status": "APPROVED_WITH_NOTES",
+                "autopilot_convergence_applied": True,
+                "findings": [
+                    {
+                        "finding_id": "finding_missing_evidence",
+                        "summary": "Accepted after reaching the autopilot rework cap.",
+                        "blocking": False,
+                    }
+                ],
+            },
+        },
+    }
+
+    assert (
+        evaluate_workflow_closeout_gate_issue(
+            tickets=tickets,
+            created_specs_by_ticket=created_specs,
+            ticket_terminal_events_by_ticket=terminal_events,
+        )
+        is None
+    )
+
+
 def test_autopilot_closeout_fail_closed_payload_does_not_complete_workflow(client):
     workflow_id = "wf_autopilot_fail_closed_closeout"
     repository = client.app.state.repository

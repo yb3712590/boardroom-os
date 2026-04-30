@@ -4583,9 +4583,128 @@ def test_internal_delivery_build_checker_escalated_opens_incident_without_board_
     assert checker_result.status_code == 200
     assert checker_result.json()["status"] == "ACCEPTED"
     assert repository.list_open_approvals() == []
-    assert len(open_incidents) == 1
+    assert len(open_incidents) == 1, [
+        {
+            "incident_type": item["incident_type"],
+            "error_class": (item.get("payload") or {}).get("error_class"),
+            "error_message": (item.get("payload") or {}).get("error_message"),
+        }
+        for item in open_incidents
+    ]
     assert open_incidents[0]["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
     assert open_incidents[0]["ticket_id"] == checker_ticket_id
+
+
+def test_maker_checker_rework_incident_resolve_creates_followup_fix_ticket(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_build_rework_incident_resolve",
+        ticket_id="tkt_build_rework_incident_resolve",
+        node_id="node_build_rework_incident_resolve",
+        output_schema_ref="source_code_delivery",
+        allowed_write_set=["artifacts/ui/scope-followups/tkt_build_rework_incident_resolve/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must implement the approved scope follow-up.",
+            "Must produce a structured source code delivery.",
+        ],
+        delivery_stage="BUILD",
+    )
+    maker_response = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_source_code_delivery_result_submit_payload(
+            workflow_id="wf_build_rework_incident_resolve",
+            ticket_id="tkt_build_rework_incident_resolve",
+            node_id="node_build_rework_incident_resolve",
+            include_review_request=True,
+        ),
+    )
+    assert maker_response.status_code == 200
+    assert maker_response.json()["status"] == "ACCEPTED"
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(
+        "wf_build_rework_incident_resolve",
+        "node_build_rework_incident_resolve",
+    )["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_build_rework_incident_resolve",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_incident_resolve",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_build_rework_incident_resolve",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_incident_resolve",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_build_rework_incident_resolve",
+            ticket_id=checker_ticket_id,
+            node_id="node_build_rework_incident_resolve",
+            review_status="ESCALATED",
+            findings=[
+                {
+                    "finding_id": "finding_build_unverifiable",
+                    "severity": "high",
+                    "category": "DELIVERY_RISK",
+                    "headline": "Checker cannot verify the bundle with current evidence.",
+                    "summary": "Source code delivery needs CEO attention before downstream work continues.",
+                    "required_action": "Escalate this source delivery for deeper intervention.",
+                    "blocking": True,
+                }
+            ],
+            idempotency_key=(
+                "ticket-result-submit:wf_build_rework_incident_resolve:"
+                f"{checker_ticket_id}:escalated"
+            ),
+        ),
+    )
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+
+    incident = next(
+        item
+        for item in repository.list_open_incidents()
+        if item["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    )
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident["incident_id"],
+            followup_action="RESTORE_AND_RETRY_MAKER_CHECKER_REWORK",
+        ),
+    )
+    recovered_incident = repository.get_incident_projection(incident["incident_id"])
+    assert resolve_response.json()["status"] == "ACCEPTED", resolve_response.json()["reason"]
+    followup_ticket_id = recovered_incident["payload"]["followup_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    with repository.connection() as connection:
+        followup_spec = repository.get_latest_ticket_created_payload(connection, followup_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert recovered_incident["status"] == "RECOVERING"
+    assert recovered_incident["circuit_breaker_state"] == "CLOSED"
+    assert recovered_incident["payload"]["followup_action"] == "RESTORE_AND_RETRY_MAKER_CHECKER_REWORK"
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_spec["parent_ticket_id"] == checker_ticket_id
+    assert followup_spec["ticket_kind"] == "MAKER_REWORK_FIX"
+    assert followup_spec["maker_checker_context"]["checker_ticket_id"] == checker_ticket_id
 
 
 def test_check_followup_result_creates_internal_checker_and_preserves_review_gate(client, set_ticket_time):
@@ -4778,6 +4897,187 @@ def test_check_internal_checker_approved_releases_final_review_ticket(client, se
     assert review_ticket is not None
     assert review_ticket["status"] == TICKET_STATUS_LEASED
     assert review_ticket["lease_owner"] == "emp_frontend_2"
+
+
+def test_check_internal_checker_approval_on_failed_report_creates_fix_ticket(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id="wf_check_fail_closed_rework",
+        ticket_id="tkt_check_fail_closed_rework",
+        node_id="node_check_fail_closed_rework",
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        allowed_write_set=["reports/check/tkt_check_fail_closed_rework/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must check the source code delivery against the approved scope lock.",
+            "Must produce a structured delivery check report.",
+        ],
+        input_artifact_refs=[
+            "art://runtime/tkt_check_fail_closed_rework_build/source-code.tsx",
+            "art://meeting/consensus-document.json",
+        ],
+        delivery_stage="CHECK",
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_check_report_result_submit_payload(
+            workflow_id="wf_check_fail_closed_rework",
+            ticket_id="tkt_check_fail_closed_rework",
+            node_id="node_check_fail_closed_rework",
+            include_review_request=True,
+            status="FAIL",
+            findings=[
+                {
+                    "finding_id": "finding_missing_security_evidence",
+                    "summary": "Missing linked security and RBAC verification evidence.",
+                    "blocking": True,
+                }
+            ],
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(
+        "wf_check_fail_closed_rework",
+        "node_check_fail_closed_rework",
+    )["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id="wf_check_fail_closed_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_check_fail_closed_rework",
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id="wf_check_fail_closed_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_check_fail_closed_rework",
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id="wf_check_fail_closed_rework",
+            ticket_id=checker_ticket_id,
+            node_id="node_check_fail_closed_rework",
+            review_status="APPROVED_WITH_NOTES",
+            idempotency_key=(
+                f"ticket-result-submit:wf_check_fail_closed_rework:{checker_ticket_id}:approved-but-failed"
+            ),
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection(
+        "wf_check_fail_closed_rework",
+        "node_check_fail_closed_rework",
+    )
+    fix_ticket = repository.get_current_ticket_projection(node_projection["latest_ticket_id"])
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, checker_ticket_id)
+        fix_created_spec = repository.get_latest_ticket_created_payload(
+            connection,
+            node_projection["latest_ticket_id"],
+        )
+
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert terminal_event["payload"]["review_status"] == "CHANGES_REQUIRED"
+    assert fix_ticket is not None
+    assert fix_ticket["status"] == TICKET_STATUS_PENDING
+    assert fix_created_spec is not None
+    assert fix_created_spec["output_schema_ref"] == "delivery_check_report"
+    assert fix_created_spec["maker_checker_context"]["blocking_finding_refs"] == [
+        "finding_missing_security_evidence"
+    ]
+
+
+def test_autopilot_converged_check_report_is_not_forced_back_to_rework(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_response = client.post(
+        "/api/v1/commands/project-init",
+        json=_project_init_payload("Autopilot should converge repeated internal check rework."),
+    )
+    workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
+    node_id = "node_check_autopilot_converge"
+    maker_ticket_id = "tkt_check_autopilot_converge_maker"
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=maker_ticket_id,
+        node_id=node_id,
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        allowed_write_set=[f"reports/check/{maker_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must check the source code delivery against the approved scope lock.",
+            "Must produce a structured delivery check report.",
+        ],
+        input_artifact_refs=[
+            "art://runtime/tkt_build_autopilot/source-code.tsx",
+            "art://meeting/consensus-document.json",
+        ],
+        delivery_stage="CHECK",
+        repeat_failure_threshold=2,
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_check_report_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=maker_ticket_id,
+            node_id=node_id,
+            include_review_request=True,
+            status="FAIL",
+            findings=[
+                {
+                    "finding_id": "finding_missing_security_evidence",
+                    "summary": "Missing linked security and RBAC verification evidence.",
+                    "blocking": True,
+                }
+            ],
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    with repository.connection() as connection:
+        checker_created_spec = repository.get_latest_ticket_created_payload(connection, checker_ticket_id)
+        checker_created_spec["parent_ticket_id"] = "tkt_prior_rework_fix"
+        checker_created_spec["escalation_policy"]["repeat_failure_threshold"] = 2
+
+        assert ticket_handlers_module._should_autopilot_converge_maker_checker_rework(
+            workflow={"workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED"},
+            review_request=ticket_handlers_module._resolve_original_review_request(
+                type("Payload", (), {"review_request": None})(),
+                checker_created_spec,
+            ),
+            created_spec=checker_created_spec,
+            rework_cycle_count=2,
+        )
+
+        converged_payload = ticket_handlers_module._build_autopilot_converged_checker_result_payload(
+            _maker_checker_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=checker_ticket_id,
+                node_id=node_id,
+                review_status="CHANGES_REQUIRED",
+            )["payload"]
+        )
+        forced_rework_payload = ticket_handlers_module._force_failed_delivery_check_to_rework(
+            repository,
+            connection,
+            created_spec=checker_created_spec,
+            checker_result_payload=converged_payload,
+        )
+
+    assert forced_rework_payload is None
 
 
 def test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked(client, set_ticket_time):
@@ -13834,8 +14134,8 @@ def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_failure_for_
             correlation_id=workflow_id,
             payload={
                 "incident_id": incident_id,
-                "ticket_id": retry_ticket_id,
-                "node_id": source_node_id,
+                "ticket_id": None,
+                "node_id": None,
                 "circuit_breaker_state": "OPEN",
                 "fingerprint": f"{workflow_id}:TICKET_FAILED:{retry_ticket_id}:proposal:JSONDecodeError",
             },
@@ -13853,6 +14153,14 @@ def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_failure_for_
     incident_response = client.get(f"/api/v1/projections/incidents/{incident_id}")
     followup_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
     followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+    with repository.connection() as connection:
+        followup_created_spec = repository.get_latest_ticket_created_payload(connection, followup_ticket_id)
+    retry_scheduled_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_TICKET_RETRY_SCHEDULED
+        and event["payload"].get("next_ticket_id") == followup_ticket_id
+    ]
 
     assert resolve_response.status_code == 200
     assert resolve_response.json()["status"] == "ACCEPTED"
@@ -13860,12 +14168,247 @@ def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_failure_for_
     assert followup_ticket is not None
     assert followup_ticket["status"] == TICKET_STATUS_PENDING
     assert followup_ticket["retry_count"] == 2
+    assert followup_created_spec is not None
+    assert followup_created_spec["parent_ticket_id"] == retry_ticket_id
+    assert retry_scheduled_events[0]["payload"]["ticket_id"] == retry_ticket_id
+    assert retry_scheduled_events[0]["payload"]["node_id"] == source_node_id
     assert incident_response.json()["data"]["incident"]["status"] == "RECOVERING"
     assert incident_response.json()["data"]["incident"]["circuit_breaker_state"] == "CLOSED"
     assert incident_response.json()["data"]["incident"]["payload"]["followup_action"] == (
         "RESTORE_AND_RETRY_LATEST_FAILURE"
     )
     assert incident_response.json()["data"]["incident"]["payload"]["followup_ticket_id"] == followup_ticket_id
+
+
+def test_ceo_shadow_scheduler_idle_incident_restores_ticket_from_error_message(client):
+    workflow_id = "wf_ceo_shadow_idle_restore_failure"
+    incident_id = "inc_ceo_shadow_idle_restore_failure"
+    source_ticket_id = "tkt_ceo_shadow_idle_restore_failure"
+    source_node_id = "node_ceo_shadow_idle_restore_failure"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow scheduler-idle incident should restore the failed ticket named in the error.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=1,
+        repeat_failure_threshold=4,
+    )
+    first_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed source ticket failure for CEO shadow recovery.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{source_ticket_id}:idle-first",
+        ),
+    )
+    assert first_fail_response.status_code == 200
+    repository = client.app.state.repository
+    retry_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            leased_by="emp_frontend_2",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            started_by="emp_frontend_2",
+        ),
+    )
+    second_fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=retry_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed exhausted source ticket failure for scheduler-idle recovery.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{retry_ticket_id}:idle-second",
+        ),
+    )
+    assert second_fail_response.status_code == 200
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:execution:ExecutionFailed",
+                "trigger_type": "SCHEDULER_IDLE_MAINTENANCE",
+                "trigger_ref": f"live-scenario:{workflow_id}:2072",
+                "source_stage": "execution",
+                "error_class": "ExecutionFailed",
+                "error_message": (
+                    f"Ticket {retry_ticket_id} exhausted its failure retry budget or failure retry is disabled."
+                ),
+                "failure_fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:execution:ExecutionFailed",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:execution:ExecutionFailed",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
+        ),
+    )
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id not in {source_ticket_id, retry_ticket_id}
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 2
+
+
+def test_ceo_shadow_restore_needed_incident_uses_latest_terminal_ticket_without_source_id(client):
+    workflow_id = "wf_ceo_shadow_restore_needed_latest_terminal"
+    incident_id = "inc_ceo_shadow_restore_needed_latest_terminal"
+    source_ticket_id = "tkt_ceo_shadow_restore_needed_latest_terminal"
+    source_node_id = "node_ceo_shadow_restore_needed_latest_terminal"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="CEO shadow restore-needed incident should recover the latest terminal ticket.",
+    )
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=source_ticket_id,
+        node_id=source_node_id,
+        retry_budget=0,
+        repeat_failure_threshold=4,
+    )
+    fail_response = client.post(
+        "/api/v1/commands/ticket-fail",
+        json=_ticket_fail_payload(
+            workflow_id=workflow_id,
+            ticket_id=source_ticket_id,
+            node_id=source_node_id,
+            failure_message="Seed terminal failure for restore-needed recovery.",
+            idempotency_key=f"ticket-fail:{workflow_id}:{source_ticket_id}:restore-needed",
+        ),
+    )
+    assert fail_response.status_code == 200
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_INCIDENT_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-incident-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "node_id": None,
+                "ticket_id": None,
+                "incident_type": INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
+                "status": "OPEN",
+                "severity": "high",
+                "fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:restore-needed",
+                "trigger_type": "SCHEDULER_IDLE_MAINTENANCE",
+                "trigger_ref": f"live-scenario:{workflow_id}:restore-needed",
+                "source_stage": "validation",
+                "error_class": "CEOProposalContractError",
+                "error_message": (
+                    "deterministic_fallback.backlog_followup[restore_needed]: "
+                    "Existing backlog follow-up ticket needs restore/retry recovery instead of a new fallback ticket."
+                ),
+                "failure_fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:restore-needed",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_CIRCUIT_BREAKER_OPENED,
+            actor_type="system",
+            actor_id="scheduler",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-breaker-opened:{workflow_id}:{incident_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "incident_id": incident_id,
+                "ticket_id": None,
+                "node_id": None,
+                "circuit_breaker_state": "OPEN",
+                "fingerprint": f"{workflow_id}:SCHEDULER_IDLE_MAINTENANCE:restore-needed",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:42:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    resolve_response = client.post(
+        "/api/v1/commands/incident-resolve",
+        json=_incident_resolve_payload(
+            incident_id,
+            followup_action="RESTORE_AND_RETRY_LATEST_FAILURE",
+        ),
+    )
+    followup_ticket_id = repository.get_current_node_projection(workflow_id, source_node_id)["latest_ticket_id"]
+    followup_ticket = repository.get_current_ticket_projection(followup_ticket_id)
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "ACCEPTED"
+    assert followup_ticket_id != source_ticket_id
+    assert followup_ticket is not None
+    assert followup_ticket["status"] == TICKET_STATUS_PENDING
+    assert followup_ticket["retry_count"] == 1
 
 
 def test_p2_ceo_shadow_incident_resolve_restores_and_retries_latest_timeout_for_source_ticket(

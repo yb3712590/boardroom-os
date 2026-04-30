@@ -5327,17 +5327,23 @@ class ControlPlaneRepository:
         )
         self._rebuild_retrieval_artifact_summary_fts(connection)
 
-    def get_recent_event_previews(self) -> list[dict[str, Any]]:
-        self.initialize()
-        with self.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM events
-                ORDER BY sequence_no DESC
-                LIMIT ?
-                """,
-                (self.recent_event_limit,),
-            ).fetchall()
+    def get_recent_event_previews(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        if connection is None:
+            self.initialize()
+            with self.connection() as owned_connection:
+                return self.get_recent_event_previews(owned_connection)
+
+        rows = connection.execute(
+            """
+            SELECT * FROM events
+            ORDER BY sequence_no DESC
+            LIMIT ?
+            """,
+            (self.recent_event_limit,),
+        ).fetchall()
 
         previews = []
         for row in rows:
@@ -5532,18 +5538,24 @@ class ControlPlaneRepository:
             ).fetchone()
             return int(row["total"])
 
-    def list_open_incidents(self) -> list[dict[str, Any]]:
-        self.initialize()
-        with self.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM incident_projection
-                WHERE status = ?
-                ORDER BY opened_at DESC, incident_id DESC
-                """,
-                ("OPEN",),
-            ).fetchall()
-            return [self._convert_incident_projection_row(row) for row in rows]
+    def list_open_incidents(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        if connection is None:
+            self.initialize()
+            with self.connection() as owned_connection:
+                return self.list_open_incidents(owned_connection)
+
+        rows = connection.execute(
+            """
+            SELECT * FROM incident_projection
+            WHERE status = ?
+            ORDER BY opened_at DESC, incident_id DESC
+            """,
+            ("OPEN",),
+        ).fetchall()
+        return [self._convert_incident_projection_row(row) for row in rows]
 
     def list_open_provider_incidents(self) -> list[dict[str, Any]]:
         self.initialize()
@@ -5829,18 +5841,24 @@ class ControlPlaneRepository:
             row = owned_connection.execute(query, params).fetchone()
             return None if row is None else self._convert_meeting_projection_row(row)
 
-    def list_open_approvals(self) -> list[dict[str, Any]]:
-        self.initialize()
-        with self.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM approval_projection
-                WHERE status = ?
-                ORDER BY created_at DESC, approval_id DESC
-                """,
-                (APPROVAL_STATUS_OPEN,),
-            ).fetchall()
-            return [self._convert_approval_row(row) for row in rows]
+    def list_open_approvals(
+        self,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[dict[str, Any]]:
+        if connection is None:
+            self.initialize()
+            with self.connection() as owned_connection:
+                return self.list_open_approvals(owned_connection)
+
+        rows = connection.execute(
+            """
+            SELECT * FROM approval_projection
+            WHERE status = ?
+            ORDER BY created_at DESC, approval_id DESC
+            """,
+            (APPROVAL_STATUS_OPEN,),
+        ).fetchall()
+        return [self._convert_approval_row(row) for row in rows]
 
     def get_approval_by_review_pack_id(self, review_pack_id: str) -> dict[str, Any] | None:
         self.initialize()

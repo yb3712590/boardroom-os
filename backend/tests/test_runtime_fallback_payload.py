@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.core.runtime import (
     _build_runtime_default_artifacts,
     _build_runtime_success_payload,
+    _normalize_provider_payload_for_execution,
     _normalize_source_code_delivery_payload,
 )
 
@@ -23,6 +24,7 @@ def _fake_execution_package(
         ),
         execution=SimpleNamespace(
             output_schema_ref=output_schema_ref,
+            output_schema_version=1,
             doc_update_requirements=[],
             allowed_write_set=["10-project/src/*", "20-evidence/tests/*", "20-evidence/git/*"],
             input_artifact_refs=list(input_artifact_refs or []),
@@ -304,3 +306,27 @@ def test_delivery_closeout_runtime_payload_filters_non_delivery_input_artifact_r
     )
 
     assert payload["final_artifact_refs"] == [source_file_ref, verification_ref]
+
+
+def test_delivery_closeout_provider_payload_filters_non_delivery_final_artifact_refs():
+    delivery_check_ref = "art://runtime/tkt_runtime_check/delivery-check-report.json"
+    project_document_ref = "art://project-workspace/wf_runtime_closeout/10-project/ARCHITECTURE.md"
+    backlog_ref = "art://runtime/tkt_runtime_backlog/backlog_recommendation.json"
+    execution_package = _fake_execution_package(
+        ticket_id="tkt_runtime_closeout_provider_filters",
+        output_schema_ref="delivery_closeout_package",
+        process_asset_refs=[],
+        input_artifact_refs=[delivery_check_ref],
+    )
+
+    payload = _normalize_provider_payload_for_execution(
+        execution_package,
+        {
+            "summary": "Closeout package prepared from approved delivery evidence.",
+            "final_artifact_refs": [project_document_ref, backlog_ref],
+            "handoff_notes": ["Keep the accepted delivery check report linked for audit."],
+            "documentation_updates": [],
+        },
+    )
+
+    assert payload["final_artifact_refs"] == [delivery_check_ref]

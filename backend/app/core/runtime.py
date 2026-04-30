@@ -1125,10 +1125,24 @@ def _delivery_closeout_source_evidence_refs(
     return _dedupe_non_empty_strings(evidence_refs)
 
 
+def _delivery_closeout_input_evidence_refs(
+    execution_package: CompiledExecutionPackage,
+) -> list[str]:
+    return [
+        artifact_ref
+        for artifact_ref in _dedupe_non_empty_strings(
+            list(getattr(execution_package.execution, "input_artifact_refs", []) or [])
+        )
+        if "/delivery-check-report." in artifact_ref
+    ]
+
+
 def _delivery_closeout_final_artifact_refs(
     execution_package: CompiledExecutionPackage,
 ) -> list[str]:
     delivery_evidence_refs = _delivery_closeout_source_evidence_refs(execution_package)
+    if not delivery_evidence_refs:
+        delivery_evidence_refs = _delivery_closeout_input_evidence_refs(execution_package)
     if not delivery_evidence_refs:
         return []
     delivery_evidence_ref_set = set(delivery_evidence_refs)
@@ -1141,6 +1155,23 @@ def _delivery_closeout_final_artifact_refs(
         if artifact_ref in delivery_evidence_ref_set
     ]
     return selected_input_refs or delivery_evidence_refs
+
+
+def _normalize_delivery_closeout_package_payload(
+    execution_package: CompiledExecutionPackage,
+    result_payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = dict(result_payload)
+    known_final_artifact_refs = _delivery_closeout_final_artifact_refs(execution_package)
+    if not known_final_artifact_refs:
+        return normalized
+    known_ref_set = set(known_final_artifact_refs)
+    submitted_refs = _dedupe_non_empty_strings(
+        list(normalized.get("final_artifact_refs") or [])
+    )
+    filtered_refs = [artifact_ref for artifact_ref in submitted_refs if artifact_ref in known_ref_set]
+    normalized["final_artifact_refs"] = filtered_refs or known_final_artifact_refs
+    return normalized
 
 
 def _build_meeting_round_notes(round_type: str, topic: str, participant_ids: list[str]) -> list[str]:
@@ -1975,6 +2006,8 @@ def _normalize_provider_payload_for_execution(
     normalized = dict(payload)
     if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
         normalized = _normalize_source_code_delivery_payload(execution_package, normalized)
+    elif execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        normalized = _normalize_delivery_closeout_package_payload(execution_package, normalized)
     validate_output_payload(
         schema_ref=execution_package.execution.output_schema_ref,
         schema_version=execution_package.execution.output_schema_version,
@@ -2701,6 +2734,8 @@ def _execute_claude_code_provider(
         result_payload = _load_provider_payload(provider_result.output_text)
         if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
             result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
+        elif execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+            result_payload = _normalize_delivery_closeout_package_payload(execution_package, result_payload)
         validate_output_payload(
             schema_ref=execution_package.execution.output_schema_ref,
             schema_version=execution_package.execution.output_schema_version,
@@ -3248,6 +3283,8 @@ def _execute_compiled_execution_package(
         result_payload = _build_runtime_success_payload(execution_package, artifact_refs)
         if execution_package.execution.output_schema_ref == SOURCE_CODE_DELIVERY_SCHEMA_REF:
             result_payload = _normalize_source_code_delivery_payload(execution_package, result_payload)
+        elif execution_package.execution.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+            result_payload = _normalize_delivery_closeout_package_payload(execution_package, result_payload)
         artifact_refs, written_artifacts = _build_runtime_default_artifacts(
             execution_package,
             result_payload,

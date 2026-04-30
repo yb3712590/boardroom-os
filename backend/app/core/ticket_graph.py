@@ -151,6 +151,13 @@ def _status_from_ticket_status(ticket_status: str | None) -> str | None:
     return NODE_STATUS_PENDING
 
 
+def _is_removed_from_effective_graph(node: TicketGraphNode | None) -> bool:
+    if node is None:
+        return False
+    node_status = str(node.node_status or "").strip()
+    return node_status in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}
+
+
 def _effective_graph_node_status(
     *,
     graph_node_id: str,
@@ -663,6 +670,8 @@ def build_ticket_graph_snapshot(
                     else None
                 ),
             )
+            continue
+        if _is_removed_from_effective_graph(source_node) or _is_removed_from_effective_graph(target_node):
             continue
         _append_edge(
             effective_edges,

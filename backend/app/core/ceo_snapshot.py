@@ -453,126 +453,147 @@ def build_ceo_shadow_snapshot(
     trigger_ref: str | None,
 ) -> dict[str, Any]:
     repository.initialize()
-    workflow = repository.get_workflow_projection(workflow_id)
+    with repository.connection() as connection:
+        connection.execute("BEGIN")
+        try:
+            return _build_ceo_shadow_snapshot_from_connection(
+                repository,
+                connection=connection,
+                workflow_id=workflow_id,
+                trigger_type=trigger_type,
+                trigger_ref=trigger_ref,
+            )
+        finally:
+            connection.rollback()
+
+
+def _build_ceo_shadow_snapshot_from_connection(
+    repository: ControlPlaneRepository,
+    *,
+    connection,
+    workflow_id: str,
+    trigger_type: str,
+    trigger_ref: str | None,
+) -> dict[str, Any]:
+    workflow = repository.get_workflow_projection(workflow_id, connection=connection)
     if workflow is None:
         raise ValueError(f"Workflow {workflow_id} does not exist.")
 
     open_approvals = [
         approval
-        for approval in repository.list_open_approvals()
+        for approval in repository.list_open_approvals(connection)
         if approval["workflow_id"] == workflow_id
     ]
     open_incidents = [
         incident
-        for incident in repository.list_open_incidents()
+        for incident in repository.list_open_incidents(connection)
         if incident["workflow_id"] == workflow_id
     ]
 
-    employees = repository.list_employee_projections()
-    with repository.connection() as connection:
-        governance_profile = require_governance_profile(
+    employees = repository.list_employee_projections(connection)
+    governance_profile = require_governance_profile(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    ticket_rows = connection.execute(
+        """
+        SELECT * FROM ticket_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at DESC, ticket_id DESC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    node_rows = connection.execute(
+        """
+        SELECT * FROM node_projection
+        WHERE workflow_id = ?
+        ORDER BY updated_at DESC, node_id DESC
+        """,
+        (workflow_id,),
+    ).fetchall()
+    tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
+    nodes = [repository._convert_node_projection_row(row) for row in node_rows]
+    ticket_graph_snapshot = build_ticket_graph_snapshot(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    reuse_candidates = {
+        "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
+            repository,
+            tickets=tickets,
+            graph_snapshot=ticket_graph_snapshot,
+            connection=connection,
+        ),
+        "recent_closed_meetings": _build_recent_closed_meeting_reuse_candidates(
             repository,
             workflow_id=workflow_id,
             connection=connection,
-        )
-        ticket_rows = connection.execute(
-            """
-            SELECT * FROM ticket_projection
-            WHERE workflow_id = ?
-            ORDER BY updated_at DESC, ticket_id DESC
-            """,
-            (workflow_id,),
-        ).fetchall()
-        node_rows = connection.execute(
-            """
-            SELECT * FROM node_projection
-            WHERE workflow_id = ?
-            ORDER BY updated_at DESC, node_id DESC
-            """,
-            (workflow_id,),
-        ).fetchall()
-        tickets = [repository._convert_ticket_projection_row(row) for row in ticket_rows]
-        nodes = [repository._convert_node_projection_row(row) for row in node_rows]
-        ticket_graph_snapshot = build_ticket_graph_snapshot(
+        ),
+    }
+    advisory_sessions = repository.list_board_advisory_sessions(
+        workflow_id,
+        statuses=[
+            BOARD_ADVISORY_STATUS_OPEN,
+            "DRAFTING",
+            "PENDING_ANALYSIS",
+            "PENDING_BOARD_CONFIRMATION",
+            "ANALYSIS_REJECTED",
+            "APPLIED",
+        ],
+        connection=connection,
+    )
+    project_map_slices = _build_project_map_slices(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    failure_fingerprints = _build_failure_fingerprints(
+        repository,
+        workflow_id=workflow_id,
+        connection=connection,
+    )
+    recent_failures = _build_recent_failures(
+        repository,
+        tickets=tickets,
+        connection=connection,
+    )
+    graph_health_report = GraphHealthReportDigest.model_validate(
+        build_graph_health_report(
             repository,
             workflow_id,
             connection=connection,
         )
-        reuse_candidates = {
-            "recent_completed_tickets": _build_recent_completed_ticket_reuse_candidates(
-                repository,
-                tickets=tickets,
-                graph_snapshot=ticket_graph_snapshot,
-                connection=connection,
-            ),
-            "recent_closed_meetings": _build_recent_closed_meeting_reuse_candidates(
-                repository,
-                workflow_id=workflow_id,
-                connection=connection,
-            ),
-        }
-        advisory_sessions = repository.list_board_advisory_sessions(
+    ).model_dump(mode="json")
+    runtime_liveness_report = RuntimeLivenessReportDigest.model_validate(
+        build_runtime_liveness_report(
+            repository,
             workflow_id,
-            statuses=[
-                BOARD_ADVISORY_STATUS_OPEN,
-                "DRAFTING",
-                "PENDING_ANALYSIS",
-                "PENDING_BOARD_CONFIRMATION",
-                "ANALYSIS_REJECTED",
-                "APPLIED",
-            ],
             connection=connection,
         )
-        project_map_slices = _build_project_map_slices(
+    ).model_dump(mode="json")
+    controller_view = build_workflow_controller_view(
+        repository,
+        workflow=workflow,
+        tickets=tickets,
+        nodes=nodes,
+        approvals=open_approvals,
+        incidents=open_incidents,
+        employees=employees,
+        trigger_ref=trigger_ref,
+        meeting_candidates=build_ceo_meeting_candidates(
             repository,
             workflow_id=workflow_id,
-            connection=connection,
-        )
-        failure_fingerprints = _build_failure_fingerprints(
-            repository,
-            workflow_id=workflow_id,
-            connection=connection,
-        )
-        recent_failures = _build_recent_failures(
-            repository,
-            tickets=tickets,
-            connection=connection,
-        )
-        graph_health_report = GraphHealthReportDigest.model_validate(
-            build_graph_health_report(
-                repository,
-                workflow_id,
-                connection=connection,
-            )
-        ).model_dump(mode="json")
-        runtime_liveness_report = RuntimeLivenessReportDigest.model_validate(
-            build_runtime_liveness_report(
-                repository,
-                workflow_id,
-                connection=connection,
-            )
-        ).model_dump(mode="json")
-        controller_view = build_workflow_controller_view(
-            repository,
-            workflow=workflow,
-            tickets=tickets,
-            nodes=nodes,
+            trigger_type=trigger_type,
+            trigger_ref=trigger_ref,
             approvals=open_approvals,
             incidents=open_incidents,
-            employees=employees,
-            trigger_ref=trigger_ref,
-            meeting_candidates=build_ceo_meeting_candidates(
-                repository,
-                workflow_id=workflow_id,
-                trigger_type=trigger_type,
-                trigger_ref=trigger_ref,
-                approvals=open_approvals,
-                incidents=open_incidents,
-            ),
-            ticket_graph_snapshot=ticket_graph_snapshot,
-            graph_health_report=graph_health_report,
-            connection=connection,
-        )
+        ),
+        ticket_graph_snapshot=ticket_graph_snapshot,
+        graph_health_report=graph_health_report,
+        connection=connection,
+    )
     ready_ticket_id_set = set(ticket_graph_snapshot.index_summary.ready_ticket_ids)
     ready_tickets = [
         ticket
@@ -751,7 +772,7 @@ def build_ceo_shadow_snapshot(
                 "message": preview["message"],
                 "related_ref": preview.get("related_ref"),
             }
-            for preview in repository.get_recent_event_previews()
+            for preview in repository.get_recent_event_previews(connection)
         ],
         "projection_snapshot": projection_snapshot.model_dump(mode="json"),
         "replan_focus": replan_focus.model_dump(mode="json"),

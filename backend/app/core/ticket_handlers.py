@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Any
@@ -912,6 +913,110 @@ def _build_autopilot_converged_checker_result_payload(
     }
 
 
+def _terminal_event_payload(terminal_event: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(terminal_event, dict):
+        return {}
+    payload = terminal_event.get("payload") or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _payload_dicts_from_terminal_payload(terminal_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads = [terminal_payload]
+    for written_artifact in list(terminal_payload.get("written_artifacts") or []):
+        if not isinstance(written_artifact, dict):
+            continue
+        content_json = written_artifact.get("content_json")
+        if isinstance(content_json, dict):
+            payloads.append(content_json)
+    return payloads
+
+
+def _delivery_check_report_rework_findings(
+    terminal_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    required_findings: list[dict[str, Any]] = []
+    for candidate_payload in _payload_dicts_from_terminal_payload(terminal_payload):
+        status = str(candidate_payload.get("status") or "").strip()
+        findings = candidate_payload.get("findings")
+        blocking_findings = [
+            finding
+            for finding in list(findings or [])
+            if isinstance(finding, dict) and bool(finding.get("blocking"))
+        ]
+        if status != "FAIL" and not blocking_findings:
+            continue
+        for finding in blocking_findings:
+            finding_id = str(finding.get("finding_id") or "").strip()
+            summary = str(finding.get("summary") or "").strip()
+            if not finding_id:
+                continue
+            required_findings.append(
+                {
+                    "finding_id": finding_id,
+                    "severity": "high",
+                    "category": "DELIVERY_CHECK_REPORT",
+                    "headline": summary[:120] or "Delivery check report has a blocking finding.",
+                    "summary": summary or "Delivery check report has a blocking finding.",
+                    "required_action": (
+                        "Produce a revised delivery check report that resolves this blocking finding "
+                        "with concrete linked implementation and verification evidence."
+                    ),
+                    "blocking": True,
+                }
+            )
+        if not required_findings and status == "FAIL":
+            summary = str(candidate_payload.get("summary") or "").strip()
+            required_findings.append(
+                {
+                    "finding_id": "delivery_check_report_failed",
+                    "severity": "high",
+                    "category": "DELIVERY_CHECK_REPORT",
+                    "headline": "Delivery check report returned FAIL.",
+                    "summary": summary or "Delivery check report returned FAIL.",
+                    "required_action": (
+                        "Produce a revised delivery check report that changes the report status "
+                        "to PASS or PASS_WITH_NOTES with grounded evidence."
+                    ),
+                    "blocking": True,
+                }
+            )
+    return required_findings
+
+
+def _force_failed_delivery_check_to_rework(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    created_spec: dict[str, Any],
+    checker_result_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if checker_result_payload.get("autopilot_convergence_applied") is True:
+        return None
+    maker_checker_context = created_spec.get("maker_checker_context") or {}
+    maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
+    if str(maker_ticket_spec.get("output_schema_ref") or "").strip() != DELIVERY_CHECK_REPORT_SCHEMA_REF:
+        return None
+    maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+    if not maker_ticket_id:
+        return None
+    maker_terminal_event = repository.get_latest_ticket_terminal_event(connection, maker_ticket_id)
+    rework_findings = _delivery_check_report_rework_findings(
+        _terminal_event_payload(maker_terminal_event),
+    )
+    if not rework_findings:
+        return None
+    summary = str(checker_result_payload.get("summary") or "").strip()
+    return {
+        **checker_result_payload,
+        "summary": (
+            f"{summary} Delivery check report is fail-closed and must be reworked."
+        ).strip(),
+        "review_status": "CHANGES_REQUIRED",
+        "findings": rework_findings,
+        "fail_closed_delivery_check_rework_applied": True,
+    }
+
+
 def _resolve_maker_checker_rework_incident_fingerprint(
     workflow_id: str,
     node_id: str,
@@ -1248,6 +1353,65 @@ def _insert_followup_ticket_created_event(
     return str(resolved_ticket_payload["ticket_id"])
 
 
+def _validate_maker_checker_rework_followup(
+    *,
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], str, int]:
+    if incident["incident_type"] != INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
+        raise ValueError(f"Incident {incident['incident_id']} does not support maker-checker rework recovery.")
+    checker_ticket_id = str(
+        (incident.get("payload") or {}).get("latest_checker_ticket_id")
+        or incident.get("ticket_id")
+        or ""
+    ).strip()
+    if not checker_ticket_id:
+        raise ValueError("Maker-checker rework incident is missing its checker ticket.")
+
+    checker_ticket = repository.get_current_ticket_projection(checker_ticket_id, connection=connection)
+    if checker_ticket is None:
+        raise ValueError(f"Maker-checker checker ticket {checker_ticket_id} is missing.")
+    checker_created_spec = repository.get_latest_ticket_created_payload(connection, checker_ticket_id)
+    if checker_created_spec is None:
+        raise ValueError(f"Maker-checker checker ticket {checker_ticket_id} is missing its create spec.")
+    if _ticket_kind(checker_created_spec) != MAKER_CHECKER_REVIEW_TICKET_KIND:
+        raise ValueError(f"Ticket {checker_ticket_id} is not a maker-checker review ticket.")
+
+    checker_terminal_event = repository.get_latest_ticket_terminal_event(connection, checker_ticket_id)
+    checker_result_payload = _terminal_event_payload(checker_terminal_event)
+    if str(checker_result_payload.get("review_status") or "") not in {"CHANGES_REQUIRED", "ESCALATED"}:
+        raise ValueError(f"Ticket {checker_ticket_id} does not contain a blocking checker verdict.")
+
+    blocking_findings = _extract_blocking_checker_findings(checker_result_payload)
+    if not blocking_findings:
+        raw_findings = (incident.get("payload") or {}).get("latest_blocking_findings")
+        blocking_findings = [dict(item) for item in raw_findings or [] if isinstance(item, dict)]
+    if not blocking_findings:
+        raise ValueError("Maker-checker rework incident has no blocking findings to repair.")
+
+    rework_fingerprint = str(
+        (incident.get("payload") or {}).get("rework_fingerprint")
+        or _build_rework_fingerprint(blocking_findings)
+    )
+    rework_streak_count = int(
+        (incident.get("payload") or {}).get("rework_streak_count")
+        or _calculate_maker_checker_rework_streak(
+            repository,
+            connection,
+            checker_created_spec=checker_created_spec,
+            rework_fingerprint=rework_fingerprint,
+        )
+    )
+    return (
+        checker_ticket,
+        checker_created_spec,
+        blocking_findings,
+        rework_fingerprint,
+        rework_streak_count,
+    )
+
+
 def _ensure_ticket_execution_contract_payload(ticket_payload: dict[str, Any]) -> dict[str, Any]:
     resolved_payload = dict(ticket_payload)
     execution_contract = resolved_payload.get("execution_contract")
@@ -1504,10 +1668,27 @@ _CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS = {
 }
 
 
+def _is_closeout_package_artifact_evidence_ref(artifact_ref: str) -> bool:
+    normalized_artifact_ref = str(artifact_ref).strip()
+    if not normalized_artifact_ref.startswith("art://runtime/"):
+        return False
+    if "/delivery-check-report." in normalized_artifact_ref:
+        return True
+    if "/source-code-delivery." in normalized_artifact_ref:
+        return True
+    if "/source-code" in normalized_artifact_ref:
+        return True
+    if "/test" in normalized_artifact_ref or "/verification" in normalized_artifact_ref:
+        return True
+    return False
+
+
 def _is_delivery_evidence_artifact_ref(artifact_ref: str, *, source_context: str) -> bool:
     normalized_artifact_ref = str(artifact_ref).strip()
     if not normalized_artifact_ref:
         return False
+    if str(source_context).strip() == "closeout_package_artifact_refs":
+        return _is_closeout_package_artifact_evidence_ref(normalized_artifact_ref)
     return str(source_context).strip() in _CLOSEOUT_DELIVERY_EVIDENCE_SOURCE_CONTEXTS
 
 
@@ -1658,7 +1839,10 @@ def _validate_closeout_delivery_hooks(
         closeout_artifact_refs=list(payload.artifact_refs),
     )
     if not known_artifact_refs:
-        return "Closeout tickets must reference known delivery evidence before completion."
+        return (
+            "Closeout tickets must reference known delivery evidence before completion; "
+            "payload.final_artifact_refs has no matching delivery evidence."
+        )
     for artifact_ref in final_artifact_refs:
         if artifact_ref not in known_artifact_refs:
             return (
@@ -3060,13 +3244,62 @@ def _should_escalate_repeat_failure(
     )
 
 
+def _incident_source_ticket_id(incident: dict[str, Any]) -> str | None:
+    payload = incident.get("payload") or {}
+    trigger_ref = str(payload.get("trigger_ref") or "").strip()
+    source_ticket_id = (
+        str(incident.get("ticket_id") or "").strip()
+        or str(payload.get("ticket_id") or "").strip()
+        or (trigger_ref if trigger_ref.startswith("tkt_") else "")
+    )
+    if source_ticket_id:
+        return source_ticket_id
+    match = re.search(r"\bTicket\s+(tkt_[A-Za-z0-9_]+)\b", str(payload.get("error_message") or ""))
+    if match:
+        return match.group(1)
+    return source_ticket_id or None
+
+
+def _restore_needed_without_source_ticket(incident: dict[str, Any]) -> bool:
+    payload = incident.get("payload") or {}
+    message = str(payload.get("error_message") or "")
+    return "restore_needed" in message or "restore/retry recovery" in message
+
+
+def _resolve_incident_source_ticket_id(
+    repository: ControlPlaneRepository,
+    connection,
+    incident: dict[str, Any],
+) -> str | None:
+    incident_ticket_id = _incident_source_ticket_id(incident)
+    if incident_ticket_id is not None:
+        return incident_ticket_id
+    if not _restore_needed_without_source_ticket(incident):
+        return None
+    workflow_id = str(incident.get("workflow_id") or "").strip()
+    if not workflow_id:
+        return None
+    row = connection.execute(
+        """
+        SELECT ticket_id
+        FROM ticket_projection
+        WHERE workflow_id = ?
+          AND status IN ('FAILED', 'TIMED_OUT')
+        ORDER BY updated_at DESC, ticket_id DESC
+        LIMIT 1
+        """,
+        (workflow_id,),
+    ).fetchone()
+    return None if row is None else str(row["ticket_id"])
+
+
 def _validate_restore_and_retry_followup(
     *,
     repository: ControlPlaneRepository,
     connection,
     incident: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    incident_ticket_id = incident.get("ticket_id")
+    incident_ticket_id = _resolve_incident_source_ticket_id(repository, connection, incident)
     if incident_ticket_id is None:
         raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
 
@@ -3105,7 +3338,7 @@ def _validate_restore_and_retry_failure_followup(
     connection,
     incident: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    incident_ticket_id = incident.get("ticket_id")
+    incident_ticket_id = _resolve_incident_source_ticket_id(repository, connection, incident)
     if incident_ticket_id is None:
         raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
 
@@ -3151,7 +3384,7 @@ def _validate_restore_and_retry_provider_followup(
     connection,
     incident: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    incident_ticket_id = incident.get("ticket_id")
+    incident_ticket_id = _resolve_incident_source_ticket_id(repository, connection, incident)
     if incident_ticket_id is None:
         raise ValueError(f"Incident {incident['incident_id']} is missing its source ticket.")
 
@@ -5356,6 +5589,11 @@ def handle_incident_resolve(
         followup_action = payload.followup_action.value
         retry_ticket: dict[str, Any] | None = None
         retry_created_spec: dict[str, Any] | None = None
+        rework_checker_ticket: dict[str, Any] | None = None
+        rework_checker_created_spec: dict[str, Any] | None = None
+        rework_blocking_findings: list[dict[str, Any]] = []
+        rework_fingerprint: str | None = None
+        rework_streak_count: int | None = None
         replay_result = None
         rerun_context: dict[str, Any] | None = None
         advisory_rerun_context: dict[str, Any] | None = None
@@ -5495,6 +5733,27 @@ def handle_incident_resolve(
                 )
             try:
                 retry_ticket, retry_created_spec = _validate_restore_and_retry_staffing_followup(
+                    repository=repository,
+                    connection=connection,
+                    incident=incident,
+                )
+            except ValueError as exc:
+                return _incident_rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    incident_id=payload.incident_id,
+                    reason=str(exc),
+                )
+        elif payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK:
+            try:
+                (
+                    rework_checker_ticket,
+                    rework_checker_created_spec,
+                    rework_blocking_findings,
+                    rework_fingerprint,
+                    rework_streak_count,
+                ) = _validate_maker_checker_rework_followup(
                     repository=repository,
                     connection=connection,
                     incident=incident,
@@ -5776,14 +6035,16 @@ def handle_incident_resolve(
                         if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
                         else EVENT_TICKET_FAILED
                     )
+                    retry_ticket_id = str(retry_ticket["ticket_id"])
+                    retry_node_id = str(retry_ticket["node_id"])
                     followup_ticket_id = _schedule_retry(
                         repository=repository,
                         connection=connection,
                         command_id=command_id,
                         occurred_at=received_at,
                         workflow_id=workflow_id,
-                        failed_ticket_id=str(incident["ticket_id"]),
-                        node_id=str(incident["node_id"]),
+                        failed_ticket_id=retry_ticket_id,
+                        node_id=retry_node_id,
                         created_spec=retry_created_spec,
                         failure_payload={
                             "failure_fingerprint": (
@@ -5800,11 +6061,47 @@ def handle_incident_resolve(
                         command_id=command_id,
                         occurred_at=received_at,
                         workflow_id=workflow_id,
-                        failed_ticket_id=str(incident["ticket_id"]),
+                        failed_ticket_id=retry_ticket_id,
                         replacement_ticket_id=followup_ticket_id,
                         replacement_created_spec=retry_created_spec,
                         idempotency_key_base=f"{payload.idempotency_key}:followup-descendants",
                     )
+                resolution_payload["followup_ticket_id"] = followup_ticket_id
+
+            if payload.followup_action == IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK:
+                assert rework_checker_ticket is not None
+                assert rework_checker_created_spec is not None
+                assert rework_fingerprint is not None
+                assert rework_streak_count is not None
+                checker_ticket_id = str(rework_checker_ticket["ticket_id"])
+                checker_terminal_payload = _terminal_event_payload(
+                    repository.get_latest_ticket_terminal_event(
+                        connection,
+                        checker_ticket_id,
+                    )
+                )
+                followup_ticket_id = _insert_followup_ticket_created_event(
+                    repository=repository,
+                    connection=connection,
+                    command_id=command_id,
+                    occurred_at=received_at,
+                    workflow_id=workflow_id,
+                    ticket_payload=_build_fix_ticket_payload(
+                        workflow_id=workflow_id,
+                        node_id=str(rework_checker_ticket["node_id"]),
+                        checker_ticket_id=checker_ticket_id,
+                        checker_created_spec=rework_checker_created_spec,
+                        checker_result_payload={
+                            **checker_terminal_payload,
+                            "artifact_refs": list(checker_terminal_payload.get("artifact_refs") or []),
+                        },
+                        blocking_findings=rework_blocking_findings,
+                        rework_fingerprint=rework_fingerprint,
+                        rework_streak_count=rework_streak_count,
+                    ),
+                    idempotency_key=f"{payload.idempotency_key}:followup-maker-checker-rework",
+                    actor_id="maker-checker-router",
+                )
                 resolution_payload["followup_ticket_id"] = followup_ticket_id
 
             if payload.followup_action == IncidentFollowupAction.RECOMPILE_CONTEXT and recompile_context is not None:
@@ -7979,6 +8276,21 @@ def _complete_ticket_locked(
             rework_cycle_count=rework_cycle_count,
         ):
             result_payload = _build_autopilot_converged_checker_result_payload(result_payload)
+            checker_review_status = str(result_payload.get("review_status") or "")
+    if (
+        checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND
+        and checker_review_status in {"APPROVED", "APPROVED_WITH_NOTES"}
+        and created_spec is not None
+        and isinstance(result_payload, dict)
+    ):
+        forced_rework_payload = _force_failed_delivery_check_to_rework(
+            repository,
+            connection,
+            created_spec=created_spec,
+            checker_result_payload=result_payload,
+        )
+        if forced_rework_payload is not None:
+            result_payload = forced_rework_payload
             checker_review_status = str(result_payload.get("review_status") or "")
     checker_requires_no_board_gate = bool(
         checker_ticket_kind == MAKER_CHECKER_REVIEW_TICKET_KIND

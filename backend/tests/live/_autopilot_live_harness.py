@@ -1223,13 +1223,39 @@ def _workflow_incidents(repository, workflow_id: str) -> list[dict[str, Any]]:
     return [repository._convert_incident_projection_row(row) for row in rows]
 
 
-def _active_ticket_ids(tickets: list[dict[str, Any]]) -> list[str]:
+def _active_ticket_ids(tickets: list[dict[str, Any]], current_ticket_ids: set[str] | None = None) -> list[str]:
     return [
         str(ticket.get("ticket_id") or "")
         for ticket in tickets
         if str(ticket.get("status") or "").upper() not in TERMINAL_TICKET_STATUSES
         and str(ticket.get("ticket_id") or "").strip()
+        and (current_ticket_ids is None or str(ticket.get("ticket_id") or "") in current_ticket_ids)
     ]
+
+
+def _current_runtime_ticket_ids(repository, workflow_id: str) -> set[str]:
+    with repository.connection() as connection:
+        node_rows = connection.execute(
+            """
+            SELECT latest_ticket_id
+            FROM node_projection
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchall()
+        runtime_rows = connection.execute(
+            """
+            SELECT latest_ticket_id
+            FROM runtime_node_projection
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchall()
+    return {
+        str(row["latest_ticket_id"])
+        for row in [*node_rows, *runtime_rows]
+        if str(row["latest_ticket_id"] or "").strip()
+    }
 
 
 def _ticket_summary(tickets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1348,6 +1374,7 @@ def _display_timestamp(value: str | None) -> str:
 def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str) -> dict[str, Any]:
     workflow = repository.get_workflow_projection(workflow_id) or {}
     tickets = workflow_ticket_rows(repository, workflow_id)
+    current_ticket_ids = _current_runtime_ticket_ids(repository, workflow_id)
     approvals = workflow_approvals(repository, workflow_id)
     incidents = _workflow_incidents(repository, workflow_id)
     provider_snapshot = _latest_provider_runtime_snapshot(repository, workflow_id)
@@ -1359,7 +1386,7 @@ def _collect_monitor_snapshot(repository, workflow_id: str, *, recorded_at: str)
         "stage": str(workflow.get("current_stage") or "unknown"),
         "ticket_count": len(tickets),
         "event_count": _workflow_event_count(repository, workflow_id),
-        "active_ticket_ids": _active_ticket_ids(tickets),
+        "active_ticket_ids": _active_ticket_ids(tickets, current_ticket_ids),
         "approval_count": len(approvals),
         "incident_count": len([item for item in incidents if str(item.get("status") or "").upper() == "OPEN"]),
         "open_incidents": [
@@ -1484,7 +1511,7 @@ def _should_count_stall(
     for incident in open_incidents:
         incident_status = str(incident.get("status") or "").upper()
         incident_type = str(incident.get("incident_type") or "").upper()
-        if incident_status in {"OPEN", "RECOVERING"} and incident_type in recoverable_incident_types:
+        if incident_status == "OPEN" and incident_type in recoverable_incident_types:
             return False
     return True
 

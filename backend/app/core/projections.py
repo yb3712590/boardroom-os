@@ -2542,6 +2542,11 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
         )
         recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+    elif incident_type == INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
+        available_followup_actions.append(
+            IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK.value
+        )
+        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK.value
     elif incident_type == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value

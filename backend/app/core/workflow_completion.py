@@ -253,6 +253,15 @@ def _payload_review_status(payload: dict[str, Any]) -> str:
     return str(payload.get("review_status") or "").strip()
 
 
+def _payload_has_autopilot_convergence(payload: dict[str, Any]) -> bool:
+    if payload.get("autopilot_convergence_applied") is True:
+        return True
+    maker_checker_summary = payload.get("maker_checker_summary")
+    if isinstance(maker_checker_summary, dict):
+        return maker_checker_summary.get("autopilot_convergence_applied") is True
+    return False
+
+
 def _blocking_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     findings = payload.get("findings")
     if not isinstance(findings, list):
@@ -509,12 +518,17 @@ def evaluate_workflow_closeout_gate_issue(
         maker_output_schema_ref = str(maker_ticket_spec.get("output_schema_ref") or "").strip()
         maker_ticket_id = str((created_spec.get("maker_checker_context") or {}).get("maker_ticket_id") or "").strip()
         if maker_output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF and maker_ticket_id:
-            issue = _delivery_check_issue(
-                ticket_id=maker_ticket_id,
-                payload=_terminal_payload(ticket_terminal_events_by_ticket.get(maker_ticket_id)),
-            )
-            if issue is not None:
-                return issue
+            checker_review_status = _payload_review_status(terminal_payload)
+            if (
+                checker_review_status not in APPROVED_REVIEW_STATUSES
+                and not _payload_has_autopilot_convergence(terminal_payload)
+            ):
+                issue = _delivery_check_issue(
+                    ticket_id=maker_ticket_id,
+                    payload=_terminal_payload(ticket_terminal_events_by_ticket.get(maker_ticket_id)),
+                )
+                if issue is not None:
+                    return issue
         issue = _maker_checker_issue(
             ticket_id=ticket_id,
             payload=terminal_payload,

@@ -29,6 +29,7 @@ from tests.test_api import (
     _ensure_scoped_workflow,
     _seed_created_ticket,
     _seed_review_request,
+    _ticket_cancel_payload,
     _ticket_create_payload,
 )
 
@@ -1362,6 +1363,96 @@ def test_ticket_graph_snapshot_applies_remove_node_patch_and_excludes_cancelled_
     assert ("PARENT_OF", "node_patch_remove_parent", "node_patch_remove_target") not in edge_tuples
     assert "node_patch_remove_target" not in snapshot.index_summary.ready_node_ids
     assert "node_patch_remove_target" not in snapshot.index_summary.blocked_node_ids
+
+
+def test_ticket_graph_snapshot_excludes_cancelled_lane_from_effective_edges(client):
+    workflow_id = "wf_ticket_graph_cancelled_lane_edges"
+    cancelled_node_id = "node_cancelled_lane_source"
+    downstream_node_id = "node_cancelled_lane_downstream"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Cancelled graph lanes should stay visible without contributing path edges.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_cancelled_lane_maker",
+        node_id=cancelled_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_cancelled_lane_review",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_cancelled_lane_review",
+                node_id=cancelled_node_id,
+                role_profile_ref="checker_primary",
+                output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+                delivery_stage="CHECK",
+                parent_ticket_id="tkt_cancelled_lane_maker",
+            ),
+            "graph_contract": {
+                "lane_kind": "review",
+            },
+            "ticket_kind": "MAKER_CHECKER_REVIEW",
+            "maker_checker_context": {
+                "maker_ticket_id": "tkt_cancelled_lane_maker",
+                "maker_completed_by": "emp_frontend_2",
+                "maker_ticket_spec": {
+                    "ticket_id": "tkt_cancelled_lane_maker",
+                    "node_id": cancelled_node_id,
+                    "role_profile_ref": "frontend_engineer_primary",
+                    "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                    "output_schema_version": 1,
+                    "delivery_stage": "BUILD",
+                },
+                "original_review_request": {
+                    "review_type": "INTERNAL_DELIVERY_REVIEW",
+                },
+            },
+        },
+    )
+    response = client.post(
+        "/api/v1/commands/ticket-cancel",
+        json=_ticket_cancel_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_cancelled_lane_review",
+            node_id=cancelled_node_id,
+            idempotency_key=f"ticket-cancel:{workflow_id}:tkt_cancelled_lane_review",
+        ),
+    )
+    assert response.status_code == 200
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_cancelled_lane_downstream",
+        node_id=downstream_node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+        parent_ticket_id="tkt_cancelled_lane_review",
+    )
+
+    snapshot = build_ticket_graph_snapshot(client.app.state.repository, workflow_id)
+    edge_tuples = {
+        (edge.edge_type, edge.source_graph_node_id, edge.target_graph_node_id)
+        for edge in snapshot.edges
+    }
+    node_by_graph_id = {node.graph_node_id: node for node in snapshot.nodes}
+
+    assert node_by_graph_id[f"{cancelled_node_id}::review"].node_status == "CANCELLED"
+    assert not any(
+        f"{cancelled_node_id}::review" in {source, target}
+        for _edge_type, source, target in edge_tuples
+    )
 
 
 def test_graph_health_report_detects_fanout_too_wide(client):

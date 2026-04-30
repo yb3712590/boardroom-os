@@ -9,6 +9,7 @@ from app.core.constants import (
     INCIDENT_TYPE_CEO_HIRE_LOOP_DETECTED,
     INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED,
     INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
+    INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION,
     INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED,
     INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
     INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE,
@@ -124,6 +125,8 @@ def _recommended_incident_followup_action(
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
     if incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
         return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE
+    if incident_type == INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
+        return IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK
     if incident_type == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
         if _provider_incident_should_retry_source_ticket(repository, incident):
             return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE

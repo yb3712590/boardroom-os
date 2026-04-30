@@ -1541,6 +1541,24 @@ def _workflow_closeout_gate_issue(
     )
 
 
+def _workflow_runtime_graph_is_complete(
+    *,
+    workflow_id: str,
+    connection,
+) -> bool:
+    rows = connection.execute(
+        """
+        SELECT status
+        FROM runtime_node_projection
+        WHERE workflow_id = ?
+        """,
+        (workflow_id,),
+    ).fetchall()
+    if not rows:
+        return False
+    return all(str(row["status"] or "").strip() == "COMPLETED" for row in rows)
+
+
 def _build_autopilot_closeout_batch(
     repository: ControlPlaneRepository,
     snapshot: dict,
@@ -1552,16 +1570,16 @@ def _build_autopilot_closeout_batch(
     if snapshot.get("approvals") or snapshot.get("incidents"):
         return None
 
-    ticket_summary = snapshot.get("ticket_summary") or {}
-    if int(ticket_summary.get("active_count") or 0) > 0:
-        return None
-
-    nodes = list(snapshot.get("nodes") or [])
-    if not nodes or any(str(node.get("status") or "") != "COMPLETED" for node in nodes):
-        return None
-
     workflow_id = str(workflow.get("workflow_id") or "").strip()
     if not workflow_id:
+        return None
+    with repository.connection() as connection:
+        runtime_graph_complete = _workflow_runtime_graph_is_complete(
+            workflow_id=workflow_id,
+            connection=connection,
+        )
+    ticket_summary = snapshot.get("ticket_summary") or {}
+    if not runtime_graph_complete and int(ticket_summary.get("active_count") or 0) > 0:
         return None
     replan_focus = snapshot.get("replan_focus")
     capability_plan = (
@@ -1588,6 +1606,10 @@ def _build_autopilot_closeout_batch(
         return None
 
     with repository.connection() as connection:
+        if not runtime_graph_complete:
+            nodes = list(snapshot.get("nodes") or [])
+            if not nodes or any(str(node.get("status") or "") != "COMPLETED" for node in nodes):
+                return None
         if _has_incomplete_followup_ticket_plans(
             snapshot=snapshot,
             workflow_id=workflow_id,

@@ -2338,5 +2338,37 @@ def test_should_count_stall_ignores_active_execution_and_recoverable_provider_in
     assert _should_count_stall(
         workflow={"status": "EXECUTING"},
         active_ticket_ids=[],
+        open_incidents=[
+            {
+                "status": "RECOVERING",
+                "incident_type": "PROVIDER_EXECUTION_PAUSED",
+            }
+        ],
+    ) is True
+    assert _should_count_stall(
+        workflow={"status": "EXECUTING"},
+        active_ticket_ids=[],
         open_incidents=[],
     ) is True
+
+
+def test_active_ticket_ids_ignores_orphan_pending_ticket_not_pointed_to_by_runtime() -> None:
+    tickets = [
+        {
+            "ticket_id": "tkt_orphan_pending",
+            "status": "PENDING",
+        },
+        {
+            "ticket_id": "tkt_current_running",
+            "status": "EXECUTING",
+        },
+        {
+            "ticket_id": "tkt_completed",
+            "status": "COMPLETED",
+        },
+    ]
+
+    assert live_harness._active_ticket_ids(
+        tickets,
+        {"tkt_current_running", "tkt_completed"},
+    ) == ["tkt_current_running"]
