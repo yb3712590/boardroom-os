@@ -109,7 +109,7 @@
 
 - 命令：`py -3 -m pytest tests/scenario -q`
 - 现象：6 个 stage 快速失败，均为 `FileNotFoundError: Seed root does not exist`；路径被解析到 `backend/data/scenario-tests/data/scenario-tests/...`，且当前仓库没有已落盘的 `library-management/seeds`。
-- 依据：`backend/docs/library-management-scenario-next-session-prompt.md` 记录 Stage 02 seed 仍不存在，需要先跑 Stage 01 并 freeze。
+- 依据：`doc/archive/session-prompts/library-management-scenario-next-session-prompt.md` 记录 Stage 02 seed 仍不存在，需要先跑 Stage 01 并 freeze。
 - 修补动作：不改 runner；改为按链路先运行 Stage 01，待 Stage 01 checkpoint 成功后用 `_seed_builder.py capture-stage` 冻结 Stage 02 seed，再继续后续阶段。
 ### 配置修补：seed path 相对目录
 

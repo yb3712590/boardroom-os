@@ -12,6 +12,12 @@
 - [../milestone-timeline.md](../milestone-timeline.md)
 - [../task-backlog/active.md](../task-backlog/active.md)
 
+## 本轮归档（2026-05-01）
+
+### 一次性会话提示词
+
+- [session-prompts/library-management-scenario-next-session-prompt.md](session-prompts/library-management-scenario-next-session-prompt.md)：极简图书馆场景 Stage 01/02 收口 handoff，包含旧机器绝对路径，只保留历史追溯意义。
+
 ## 本轮归档（2026-04-10）
 
 ### 旧 spec

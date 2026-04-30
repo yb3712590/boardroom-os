@@ -1,0 +1,171 @@
+# 重构实施计划
+
+## 总体策略
+
+本次重构采用“先立 contract，再拆 runtime”的顺序。
+
+不直接从代码清理开始。先将目录、写入面、provider、actor lifecycle、progression policy、deliverable contract 和 replay/resume 的验收口径写清，再按阶段把现有 runtime 的隐式逻辑迁移到显式 policy 和 contract 中。
+
+## Phase 0：文档与边界冻结
+
+目标：建立重构控制面，冻结主线取舍。
+
+任务：
+
+- 写入 12 份规划文档。
+- 更新文档入口。
+- 归档一次性 handoff 文档。
+- 明确本轮不承载的愿景。
+- 标记 015 为压力审计，不作为自治验收通过。
+
+验收：
+
+- `doc/refactor/planning/INDEX.md` 可导航全部文档。
+- `doc/README.md` 指向新规划入口。
+- 初始提交不包含 runtime 行为修改。
+
+## Phase 1：目录 / 产物 / 写权限 contract
+
+目标：把目录和写入面变成 runtime contract。
+
+任务：
+
+- 将 `03-directory-contract.md` 映射到现有 workspace 代码。
+- 将 `04-write-surface-policy.md` 编译为可测试 policy。
+- closeout final refs 统一走 artifact type allowlist。
+- 阻断 placeholder source/test fallback 进入 final evidence。
+
+验收：
+
+- 任意 artifact ref 可追溯到合法目录。
+- checker/closeout 共用同一 artifact legality 判断。
+- 015 中 placeholder delivery 不能通过。
+
+## Phase 2：Provider adapter 重建与 streaming soak test
+
+目标：证明 provider 层稳定性，隔离上游故障与本项目实现问题。
+
+任务：
+
+- 定义标准 `ProviderEvent`。
+- 抽离厂商 SSE/parser。
+- 明确 timeout 语义。
+- 建立 provider smoke/soak test。
+- 记录 preferred vs actual provider/model。
+
+验收：
+
+- 同一 API 配置连续 streaming smoke 成功率达到阈值。
+- malformed SSE、empty assistant、schema failure、first token timeout 都有分类测试。
+- late provider event 不污染 current ticket projection。
+
+## Phase 3：Actor / Role lifecycle 重建
+
+目标：把 role template 从 runtime 执行键降级为 governance template。
+
+任务：
+
+- 建立 actor registry。
+- 建立 capability mapping。
+- 定义 employee enable/suspend/deactivate/replace 事件。
+- 修复 excluded employee 继承污染。
+- actor pool empty 时生成显式 action/incident。
+
+验收：
+
+- 派工由 required capabilities 驱动。
+- 角色名不再决定 write root。
+- no eligible worker 不会 silent stall。
+
+## Phase 4：Progression policy engine 抽离
+
+目标：把推进规则从 controller/runtime/ticket handlers 中抽到显式 policy。
+
+任务：
+
+- 实现 `decide_next_actions()`。
+- 建立 effective graph pointer 规则。
+- 统一 CREATE_TICKET / REWORK / CLOSEOUT / INCIDENT / WAIT / NO_ACTION。
+- 移除 substring/hardcoded milestone 作为推进依据。
+
+验收：
+
+- 相同 snapshot 输出稳定 action proposals。
+- 015 的 stale gate、orphan pending、restore-needed、BR-100 loop 有 policy 回归。
+- Scheduler 不再做业务判断。
+
+## Phase 5：Deliverable contract + checker/rework 重建
+
+目标：closeout 证明 PRD 满足，而不是 graph terminal。
+
+任务：
+
+- 将 PRD acceptance 编译为 deliverable contract。
+- checker verdict 与 deliverable contract 解耦。
+- rework target 指向能修问题的 upstream node。
+- `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap。
+
+验收：
+
+- placeholder source/evidence 不能通过 closeout。
+- failed delivery report 有结构化 convergence policy 才能放行。
+- final evidence set 不包含 superseded/old placeholder 资产。
+
+## Phase 6：Replay / resume / checkpoint 重建
+
+目标：replay/resume 成为一等操作。
+
+任务：
+
+- 增量 projection checkpoint。
+- event replay 性能预算。
+- resume from event/version/ticket/incident。
+- replay bundle materializer。
+- 禁止人工投影补写作为正常路径。
+
+验收：
+
+- 从中间 graph version 恢复不需要人工 DB/projection 注入。
+- 1GB 级 DB 不需要每次全量 JSON replay。
+- replay 后 artifact/doc view hash 一致。
+
+## Phase 7：015 replay 包验证
+
+目标：用 `boardroom-os-replay` 作为回归靶场。
+
+任务：
+
+- 导入 015 replay 包。
+- 重放关键 incident/rework/closeout 路径。
+- 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
+
+验收：
+
+- 无人工 DB/projection 注入。
+- closeout 不能绕过 deliverable contract。
+- 输出 replay audit report。
+
+## Phase 8：新 live scenario clean run
+
+目标：证明新 runtime 能 clean run。
+
+任务：
+
+- 设计小而完整的 PRD scenario。
+- 固定 provider soak 前置条件。
+- 运行无人工 DB/projection 介入的 live。
+- 产出 closeout、evidence、replay bundle。
+
+验收：
+
+- zero manual intervention。
+- final deliverable contract pass。
+- provider failure attribution clear。
+- replay from checkpoint pass。
+
+## 提交策略
+
+- Phase 0 初始提交只含文档和安全归档。
+- Phase 1 以后每个 phase 单独提交。
+- 行为代码重构和文档移动不要混在同一提交。
+- 每个提交必须更新对应 acceptance。
