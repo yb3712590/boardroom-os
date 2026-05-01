@@ -58,6 +58,8 @@ Provider adapter 不负责：
 | `request_total_timeout` | 单次请求最大墙钟预算 | terminal for attempt, recovery by ticket policy |
 | `ticket_lease_timeout` | 执行票租约过期 | runtime timeout，不等同 provider timeout |
 
+实现备注（2026-05-01）：provider smoke 将 `ticket_lease_timeout` 标记为 `not_applicable_provider_smoke`，以证明 provider 层测试不依赖 ticket lease。`request_total_timeout` 只作为单次 provider request 墙钟预算，不复用 `first_token_timeout` 或 `stream_idle_timeout`。
+
 禁止把 `stream_idle_timeout` 隐式当作总预算，除非配置显式声明。
 
 ## 错误分类
@@ -94,7 +96,16 @@ Provider adapter 不能创建 ticket。Ticket recovery 不能伪造 provider suc
 
 ## Streaming Soak Test
 
-每个 provider 配置必须有独立 smoke：
+当前实现状态（2026-05-01）：
+
+- [x] `backend/tests/live/openai_compat_reliability_suite.py` 可独立运行 provider-only streaming smoke，不创建 workflow、ticket、lease 或 progression event。
+- [x] 默认 20 次短 streaming 请求，覆盖 small / medium / schema prompt，并按 `success rate >= 95%` 判定。
+- [x] 可选 `--include-long-request` 覆盖预计可能超过 300s 的长请求，只放宽 `request_total_timeout_sec`。
+- [x] 报告 `preferred_provider_id/preferred_model` 与 `actual_provider_id/actual_model`。
+- [x] 报告 first token p95、stream idle gap p95、failure counts、response/request id、stream text counters 和 JSON/schema resolver 信息。
+- [ ] late provider event 不污染 current ticket projection 属于 runtime/ticket recovery 边界，仍在后续 Phase 2/Phase 4 验收。
+
+每个 provider 配置必须有独立 smoke:
 
 ```text
 20 consecutive streaming requests

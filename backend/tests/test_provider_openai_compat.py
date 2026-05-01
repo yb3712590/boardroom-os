@@ -427,6 +427,34 @@ def test_invoke_openai_compat_response_maps_429_to_rate_limited() -> None:
     assert exc_info.value.failure_detail["retry_after_sec"] == 7.0
 
 
+def test_invoke_openai_compat_response_classifies_connect_timeout() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("connect timed out", request=request)
+
+    config = OpenAICompatProviderConfig(
+        base_url="https://api-vip.codex-for.me/v1",
+        api_key="test-key",
+        model="gpt-5.3-codex",
+        timeout_sec=30.0,
+        connect_timeout_sec=0.01,
+        first_token_timeout_sec=1.0,
+        stream_idle_timeout_sec=1.0,
+        request_total_timeout_sec=5.0,
+        provider_type=OpenAICompatProviderType.RESPONSES_STREAM,
+    )
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            config,
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+        )
+
+    assert exc_info.value.failure_kind == "CONNECT_TIMEOUT"
+    assert exc_info.value.failure_detail["timeout_phase"] == "connect"
+    assert exc_info.value.failure_detail["provider_transport_error"] == "ConnectTimeout"
+
+
 def test_invoke_openai_compat_response_maps_timeout_to_unavailable() -> None:
     def _handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("timed out", request=request)
@@ -465,7 +493,7 @@ def test_invoke_openai_compat_response_maps_auth_failures() -> None:
     assert exc_info.value.failure_detail["provider_status_code"] == 401
 
 
-def test_invoke_openai_compat_response_rejects_bad_json_payloads() -> None:
+def test_invoke_openai_compat_response_rejects_empty_assistant_payloads() -> None:
     config = OpenAICompatProviderConfig(
         base_url="https://api-vip.codex-for.me/v1",
         api_key="test-key",
@@ -484,7 +512,7 @@ def test_invoke_openai_compat_response_rejects_bad_json_payloads() -> None:
             client_factory=lambda config: _FakeOpenAIClient(_create_factory),
         )
 
-    assert exc_info.value.failure_kind == "PROVIDER_BAD_RESPONSE"
+    assert exc_info.value.failure_kind == "EMPTY_ASSISTANT_TEXT"
     assert exc_info.value.failure_detail["provider_response_id"] == "resp_bad"
 
 
@@ -564,6 +592,33 @@ def test_invoke_openai_compat_response_returns_after_response_completed_without_
 
     assert result.response_id == "resp_stream_completed_only"
     assert result.output_text == '{"ok":true}'
+
+
+def test_invoke_openai_compat_response_records_stream_idle_gap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monotonic_values = iter([0.0, 0.0, 0.0, 0.1, 0.2, 0.7, 0.7, 0.8, 1.0, 1.1, 1.1, 1.1])
+
+    def _fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 1.2
+
+    monkeypatch.setattr("app.core.provider_openai_compat.time.monotonic", _fake_monotonic)
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=_stream_transport(
+            {"type": "response.output_text.delta", "delta": '{"ok":'},
+            {"type": "response.output_text.delta", "delta": "true}"},
+            {"type": "response.completed", "response": {"id": "resp_stream_idle_gap"}},
+        ),
+    )
+
+    assert result.first_token_elapsed_sec == 0.2
+    assert result.max_stream_idle_gap_sec == 0.8
 
 
 def test_invoke_openai_compat_response_enforces_request_total_timeout_for_streaming(
@@ -745,8 +800,37 @@ def test_invoke_openai_compat_response_rejects_malformed_sse_json() -> None:
             transport=_stream_transport('{"type":"response.output_text.delta",'),
         )
 
-    assert exc_info.value.failure_kind == "PROVIDER_BAD_RESPONSE"
+    assert exc_info.value.failure_kind == "MALFORMED_STREAM_EVENT"
     assert exc_info.value.failure_detail["response_error_type"] == "MalformedSSEJson"
+    assert "raw_event_length" in exc_info.value.failure_detail
+
+
+def test_invoke_openai_compat_response_classifies_empty_assistant_text() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_empty",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": ""}],
+                        }
+                    ],
+                },
+            }
+        )
+
+    with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+        )
+
+    assert exc_info.value.failure_kind == "EMPTY_ASSISTANT_TEXT"
+    assert exc_info.value.failure_detail["provider_response_id"] == "resp_empty"
 
 
 def test_connectivity_test_falls_back_to_non_streaming_responses_when_streaming_is_not_supported() -> None:

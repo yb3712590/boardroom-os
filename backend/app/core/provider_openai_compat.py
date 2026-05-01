@@ -71,6 +71,7 @@ class OpenAICompatProviderResult:
     raw_text_length: int = 0
     first_token_elapsed_sec: float | None = None
     last_token_elapsed_sec: float | None = None
+    max_stream_idle_gap_sec: float | None = None
     events_summary: dict[str, object] = field(default_factory=dict)
 
 
@@ -483,6 +484,7 @@ class _ResponsesStreamAccumulator:
         self.stream_started_at = time.monotonic()
         self.last_output_at: float | None = None
         self.first_token_elapsed_sec: float | None = None
+        self.max_stream_idle_gap_sec: float | None = None
 
     def check_timeout(self) -> None:
         now = time.monotonic()
@@ -555,6 +557,9 @@ class _ResponsesStreamAccumulator:
                             },
                         )
                 else:
+                    gap_sec = round(output_mark - self.last_output_at, 3)
+                    if self.max_stream_idle_gap_sec is None or gap_sec > self.max_stream_idle_gap_sec:
+                        self.max_stream_idle_gap_sec = gap_sec
                     self.last_output_at = output_mark
             return None
         if event_type in {"response.failed", "error"}:
@@ -600,6 +605,7 @@ class _ResponsesStreamAccumulator:
                 "last_token_elapsed_sec": (
                     round(self.last_output_at - self.stream_started_at, 3) if self.last_output_at is not None else None
                 ),
+                "max_stream_idle_gap_sec": self.max_stream_idle_gap_sec,
                 "events_summary": events_summary,
             }
         )
@@ -842,7 +848,7 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
     output = response_payload.get("output")
     if not isinstance(output, list):
         raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
+            failure_kind="EMPTY_ASSISTANT_TEXT",
             message="Provider response is missing output text content.",
             failure_detail={
                 "provider_response_id": response_payload.get("id"),
@@ -870,7 +876,7 @@ def _extract_output_text(response_payload: dict[str, object]) -> str:
         return "\n".join(texts)
 
     raise OpenAICompatProviderBadResponseError(
-        failure_kind="PROVIDER_BAD_RESPONSE",
+        failure_kind="EMPTY_ASSISTANT_TEXT",
         message="Provider response did not contain any assistant text output.",
         failure_detail={
             "provider_response_id": response_payload.get("id"),
@@ -1273,7 +1279,7 @@ def _build_result_from_response(
         raw_output_text = output_text
     if not output_text:
         raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
+            failure_kind="EMPTY_ASSISTANT_TEXT",
             message="Provider response did not contain any assistant text output.",
             failure_detail={
                 "provider_response_id": final_response_id,
@@ -1343,21 +1349,23 @@ def _parse_sse_event_data(data: str, *, response_id: str | None) -> dict[str, ob
         payload = json.loads(data)
     except json.JSONDecodeError as exc:
         raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
+            failure_kind="MALFORMED_STREAM_EVENT",
             message="Provider stream emitted malformed SSE JSON.",
             failure_detail={
                 "provider_response_id": response_id,
                 "response_error_type": "MalformedSSEJson",
                 "response_error_message": str(exc),
+                "raw_event_length": len(data),
             },
         ) from exc
     if not isinstance(payload, dict):
         raise OpenAICompatProviderBadResponseError(
-            failure_kind="PROVIDER_BAD_RESPONSE",
+            failure_kind="MALFORMED_STREAM_EVENT",
             message="Provider stream emitted a non-object SSE payload.",
             failure_detail={
                 "provider_response_id": response_id,
                 "response_error_type": "MalformedSSEPayload",
+                "raw_event_length": len(data),
             },
         )
     return payload
@@ -1368,6 +1376,17 @@ def _map_stream_transport_error(
     *,
     accumulator: _ResponsesStreamAccumulator | None,
 ) -> OpenAICompatProviderUnavailableError:
+    if isinstance(exc, httpx.ConnectTimeout):
+        return OpenAICompatProviderUnavailableError(
+            failure_kind="CONNECT_TIMEOUT",
+            message=str(exc),
+            failure_detail={
+                "provider_response_id": accumulator.response_id if accumulator is not None else None,
+                "request_id": accumulator.request_id if accumulator is not None else None,
+                "provider_transport_error": type(exc).__name__,
+                "timeout_phase": "connect",
+            },
+        )
     if isinstance(exc, httpx.TimeoutException):
         phase = "stream_idle" if accumulator is not None and accumulator.last_output_at is not None else "first_token"
         return OpenAICompatProviderUnavailableError(
@@ -1451,6 +1470,13 @@ def _map_sdk_exception(exc: BaseException) -> OpenAICompatProviderError:
     if status_code in {401, 403} or class_name in {"AuthenticationError", "PermissionDeniedError"}:
         return OpenAICompatProviderAuthError(
             failure_kind="PROVIDER_AUTH_FAILED",
+            message=str(exc),
+            failure_detail=failure_detail,
+        )
+    if class_name == "ConnectTimeout":
+        failure_detail["timeout_phase"] = "connect"
+        return OpenAICompatProviderUnavailableError(
+            failure_kind="CONNECT_TIMEOUT",
             message=str(exc),
             failure_detail=failure_detail,
         )

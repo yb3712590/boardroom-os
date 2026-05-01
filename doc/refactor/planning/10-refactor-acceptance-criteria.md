@@ -36,11 +36,11 @@
 ## Phase 2：Provider adapter 与 streaming soak
 
 - [ ] Provider adapter 输出标准 `ProviderEvent`。
-- [ ] first-token timeout、stream-idle timeout、request-total timeout、ticket lease timeout 被区分。
-- [ ] malformed SSE 有 raw archive 和 retryable 分类。
-- [ ] empty assistant text 被分类为 provider bad response。
-- [ ] schema validation failure 不被归为 upstream unavailable。
-- [ ] 同一 API 配置连续 20 次 streaming smoke 成功率 >= 95%。
+- [x] first-token timeout、stream-idle timeout、request-total timeout、ticket lease timeout 被区分。
+- [ ] malformed SSE 有 raw archive 和 retryable 分类；当前 provider adapter 已分类为 `MALFORMED_STREAM_EVENT` 并记录 raw event metadata。
+- [x] empty assistant text 被分类为 provider bad response。
+- [x] schema validation failure 不被归为 upstream unavailable。
+- [x] 同一 API 配置连续 20 次 streaming smoke 成功率 >= 95% 的独立 smoke 已建立。
 - [ ] late provider event 不覆盖 current graph pointer。
 
 ## Phase 3：Actor / Role lifecycle
