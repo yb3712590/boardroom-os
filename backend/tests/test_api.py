@@ -50,6 +50,9 @@ from app.core.process_assets import (
     build_source_code_delivery_process_asset_ref,
 )
 from app.core.constants import (
+    ACTOR_STATUS_ACTIVE,
+    EVENT_ACTOR_DEACTIVATED,
+    EVENT_ACTOR_ENABLED,
     APPROVAL_STATUS_APPROVED,
     APPROVAL_STATUS_MODIFIED_CONSTRAINTS,
     APPROVAL_STATUS_OPEN,
@@ -252,6 +255,77 @@ def _ensure_scoped_workflow(
             ),
         )
         repository.refresh_projections(connection)
+
+
+def test_repository_persists_actor_projection_from_independent_actor_events(client):
+    repository = client.app.state.repository
+
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_EMPLOYEE_HIRED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id="wf_actor_registry",
+            idempotency_key="test-actor-registry:legacy-employee",
+            causation_id=None,
+            correlation_id="wf_actor_registry",
+            payload={
+                "employee_id": "emp_legacy_only",
+                "role_type": "backend_engineer",
+                "state": "ACTIVE",
+                "board_approved": True,
+                "role_profile_refs": ["backend_engineer_primary"],
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T09:55:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_ENABLED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id="wf_actor_registry",
+            idempotency_key="test-actor-registry:enable",
+            causation_id=None,
+            correlation_id="wf_actor_registry",
+            payload={
+                "actor_id": "actor_backend_repo",
+                "employee_id": "emp_backend_repo",
+                "capability_set": ["source.modify.backend", "test.run.backend"],
+                "provider_preferences": {"purpose": "implementation"},
+                "availability": {"max_concurrent_leases": 1},
+                "created_from_policy": "round7a-repository-test",
+                "audit_reason": "Enable repository actor.",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+        )
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_DEACTIVATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id="wf_actor_registry",
+            idempotency_key="test-actor-registry:deactivate",
+            causation_id=None,
+            correlation_id="wf_actor_registry",
+            payload={
+                "actor_id": "actor_backend_repo",
+                "deactivated_reason": "Stop runtime eligibility.",
+                "replacement_plan": {"action": "CREATE_ACTOR"},
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T10:05:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+    assert repository.get_actor_projection("emp_legacy_only") is None
+    actor = repository.get_actor_projection("actor_backend_repo")
+    assert actor is not None
+    assert actor["status"] == "DEACTIVATED"
+    assert actor["capability_set"] == ["source.modify.backend", "test.run.backend"]
+    assert actor["provider_preferences"] == {"purpose": "implementation"}
+    assert actor["replacement_plan"] == {"action": "CREATE_ACTOR"}
+    active_actors = repository.list_actor_projections(statuses=[ACTOR_STATUS_ACTIVE])
+    assert active_actors == []
 
 
 def _ensure_default_governance_profile(client, *, workflow_id: str) -> None:

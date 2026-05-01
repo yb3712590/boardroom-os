@@ -13,6 +13,10 @@ from app.core.constants import (
     BLOCKING_REASON_PROVIDER_REQUIRED,
     CIRCUIT_BREAKER_STATE_CLOSED,
     CIRCUIT_BREAKER_STATE_OPEN,
+    ACTOR_STATUS_ACTIVE,
+    ACTOR_STATUS_DEACTIVATED,
+    ACTOR_STATUS_REPLACED,
+    ACTOR_STATUS_SUSPENDED,
     DEFAULT_BOARD_GATE_STATE,
     EMPLOYEE_STATE_ACTIVE,
     EMPLOYEE_STATE_FROZEN,
@@ -30,6 +34,10 @@ from app.core.constants import (
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
     EVENT_EMPLOYEE_RESTORED,
+    EVENT_ACTOR_DEACTIVATED,
+    EVENT_ACTOR_ENABLED,
+    EVENT_ACTOR_REPLACED,
+    EVENT_ACTOR_SUSPENDED,
     EVENT_INCIDENT_CLOSED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_INCIDENT_OPENED,
@@ -725,6 +733,117 @@ def rebuild_workflow_projections(events: Iterable[dict]) -> list[dict]:
         )
 
     return list(projections.values())
+
+
+def _dedupe_text_values(values: Iterable[Any]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        deduped.append(normalized)
+        seen.add(normalized)
+    return deduped
+
+
+def rebuild_actor_projections(events: Iterable[dict]) -> list[dict[str, Any]]:
+    projections: dict[str, dict[str, Any]] = {}
+
+    for event in events:
+        event_type = event["event_type"]
+        if event_type not in {
+            EVENT_ACTOR_ENABLED,
+            EVENT_ACTOR_SUSPENDED,
+            EVENT_ACTOR_DEACTIVATED,
+            EVENT_ACTOR_REPLACED,
+        }:
+            continue
+
+        payload = _event_payload(event)
+        actor_id = str(payload.get("actor_id") or "").strip()
+        if not actor_id:
+            continue
+        occurred_at = event["occurred_at"].isoformat()
+        version = int(event["sequence_no"])
+        previous_projection = projections.get(actor_id, {})
+
+        if event_type == EVENT_ACTOR_ENABLED:
+            projections[actor_id] = {
+                "actor_id": actor_id,
+                "employee_id": payload.get("employee_id") or previous_projection.get("employee_id"),
+                "status": ACTOR_STATUS_ACTIVE,
+                "capability_set": _dedupe_text_values(payload.get("capability_set") or []),
+                "provider_preferences": dict(payload.get("provider_preferences") or {}),
+                "availability": dict(payload.get("availability") or {}),
+                "created_from_policy": str(payload.get("created_from_policy") or ""),
+                "deactivated_reason": None,
+                "replaced_by_actor_id": None,
+                "replacement_reason": None,
+                "replacement_plan": None,
+                "lifecycle_reason": payload.get("audit_reason"),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_ACTOR_SUSPENDED:
+            projections[actor_id] = {
+                **previous_projection,
+                "actor_id": actor_id,
+                "employee_id": previous_projection.get("employee_id") or payload.get("employee_id"),
+                "status": ACTOR_STATUS_SUSPENDED,
+                "capability_set": list(previous_projection.get("capability_set") or []),
+                "provider_preferences": dict(previous_projection.get("provider_preferences") or {}),
+                "availability": dict(previous_projection.get("availability") or {}),
+                "created_from_policy": previous_projection.get("created_from_policy"),
+                "deactivated_reason": None,
+                "lifecycle_reason": payload.get("suspended_reason") or payload.get("reason"),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_ACTOR_DEACTIVATED:
+            projections[actor_id] = {
+                **previous_projection,
+                "actor_id": actor_id,
+                "employee_id": previous_projection.get("employee_id") or payload.get("employee_id"),
+                "status": ACTOR_STATUS_DEACTIVATED,
+                "capability_set": list(previous_projection.get("capability_set") or []),
+                "provider_preferences": dict(previous_projection.get("provider_preferences") or {}),
+                "availability": dict(previous_projection.get("availability") or {}),
+                "created_from_policy": previous_projection.get("created_from_policy"),
+                "deactivated_reason": payload.get("deactivated_reason") or payload.get("reason"),
+                "replacement_plan": payload.get("replacement_plan"),
+                "lifecycle_reason": payload.get("deactivated_reason") or payload.get("reason"),
+                "updated_at": occurred_at,
+                "version": version,
+            }
+            continue
+
+        if event_type == EVENT_ACTOR_REPLACED:
+            replacement_actor_id = str(payload.get("replacement_actor_id") or "").strip() or None
+            replacement_reason = payload.get("replacement_reason") or payload.get("reason")
+            projections[actor_id] = {
+                **previous_projection,
+                "actor_id": actor_id,
+                "employee_id": previous_projection.get("employee_id") or payload.get("employee_id"),
+                "status": ACTOR_STATUS_REPLACED,
+                "capability_set": list(previous_projection.get("capability_set") or []),
+                "provider_preferences": dict(previous_projection.get("provider_preferences") or {}),
+                "availability": dict(previous_projection.get("availability") or {}),
+                "created_from_policy": previous_projection.get("created_from_policy"),
+                "deactivated_reason": previous_projection.get("deactivated_reason"),
+                "replaced_by_actor_id": replacement_actor_id,
+                "replacement_reason": replacement_reason,
+                "replacement_plan": payload.get("replacement_plan"),
+                "lifecycle_reason": replacement_reason,
+                "updated_at": occurred_at,
+                "version": version,
+            }
+
+    return [projections[actor_id] for actor_id in sorted(projections)]
 
 
 def rebuild_employee_projections(events: Iterable[dict]) -> list[dict]:

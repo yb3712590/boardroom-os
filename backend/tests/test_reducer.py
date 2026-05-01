@@ -4,6 +4,10 @@ import json
 from datetime import datetime
 
 from app.core.constants import (
+    ACTOR_STATUS_ACTIVE,
+    ACTOR_STATUS_DEACTIVATED,
+    ACTOR_STATUS_REPLACED,
+    ACTOR_STATUS_SUSPENDED,
     BLOCKING_REASON_BOARD_REJECTED,
     BLOCKING_REASON_BOARD_REVIEW_REQUIRED,
     BLOCKING_REASON_MODIFY_CONSTRAINTS,
@@ -13,6 +17,10 @@ from app.core.constants import (
     EVENT_EMPLOYEE_HIRED,
     EVENT_EMPLOYEE_REPLACED,
     EVENT_EMPLOYEE_RESTORED,
+    EVENT_ACTOR_DEACTIVATED,
+    EVENT_ACTOR_ENABLED,
+    EVENT_ACTOR_REPLACED,
+    EVENT_ACTOR_SUSPENDED,
     EVENT_BOARD_REVIEW_APPROVED,
     EVENT_BOARD_REVIEW_REJECTED,
     EVENT_BOARD_REVIEW_REQUIRED,
@@ -52,6 +60,7 @@ from app.core.constants import (
     TICKET_STATUS_TIMED_OUT,
 )
 from app.core.reducer import (
+    rebuild_actor_projections,
     rebuild_employee_projections,
     rebuild_incident_projections,
     rebuild_node_projections,
@@ -188,6 +197,160 @@ def test_reducer_rebuilds_employee_projection_through_hire_replace_freeze_and_re
     assert by_id["emp_frontend_backup"]["state"] == "ACTIVE"
     assert by_id["emp_frontend_backup"]["role_profile_refs"] == ["frontend_engineer_primary"]
     assert by_id["emp_frontend_backup"]["provider_id"] == "prov_openai_compat"
+
+
+def test_reducer_rebuilds_actor_projection_from_independent_actor_events():
+    events = [
+        {
+            "sequence_no": 1,
+            "event_type": EVENT_EMPLOYEE_HIRED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T09:55:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "employee_id": "emp_backend_legacy",
+                    "role_type": "backend_engineer",
+                    "state": "ACTIVE",
+                    "board_approved": True,
+                    "role_profile_refs": ["backend_engineer_primary"],
+                }
+            ),
+        },
+        {
+            "sequence_no": 2,
+            "event_type": EVENT_ACTOR_ENABLED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_1",
+                    "employee_id": "emp_backend_1",
+                    "capability_set": [
+                        "source.modify.backend",
+                        "test.run.backend",
+                        "evidence.write.test",
+                    ],
+                    "provider_preferences": {
+                        "purpose": "implementation",
+                        "preferred_provider_id": "prov_openai_compat",
+                    },
+                    "availability": {"max_concurrent_leases": 1},
+                    "created_from_policy": "round7a-test",
+                    "audit_reason": "Enable backend actor.",
+                }
+            ),
+        },
+        {
+            "sequence_no": 3,
+            "event_type": EVENT_ACTOR_SUSPENDED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:05:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_1",
+                    "suspended_reason": "Provider quota containment.",
+                    "capability_scope": ["source.modify.backend"],
+                }
+            ),
+        },
+        {
+            "sequence_no": 4,
+            "event_type": EVENT_ACTOR_ENABLED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:10:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_1",
+                    "capability_set": [
+                        "source.modify.backend",
+                        "test.run.backend",
+                        "evidence.write.test",
+                        "evidence.write.git",
+                    ],
+                    "provider_preferences": {"purpose": "implementation"},
+                    "availability": {"max_concurrent_leases": 2},
+                    "created_from_policy": "manual-restore",
+                    "audit_reason": "Restore backend actor.",
+                }
+            ),
+        },
+        {
+            "sequence_no": 5,
+            "event_type": EVENT_ACTOR_REPLACED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:15:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_1",
+                    "replacement_actor_id": "actor_backend_2",
+                    "replacement_reason": "Rotate executor after repeated rework.",
+                    "replacement_plan": {"handoff_ticket_ids": ["tkt_123"]},
+                }
+            ),
+        },
+        {
+            "sequence_no": 6,
+            "event_type": EVENT_ACTOR_ENABLED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:16:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_2",
+                    "employee_id": "emp_backend_2",
+                    "capability_set": ["source.modify.backend", "test.run.backend"],
+                    "provider_preferences": {"purpose": "implementation"},
+                    "availability": {"max_concurrent_leases": 1},
+                    "created_from_policy": "replacement",
+                    "audit_reason": "Enable replacement actor.",
+                }
+            ),
+        },
+        {
+            "sequence_no": 7,
+            "event_type": EVENT_ACTOR_DEACTIVATED,
+            "workflow_id": "wf_staffing",
+            "occurred_at": datetime.fromisoformat("2026-04-01T10:20:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "actor_id": "actor_backend_2",
+                    "deactivated_reason": "Retire temporary replacement.",
+                    "active_lease_ids": ["lease_001"],
+                    "affected_node_ids": ["node_backend"],
+                    "replacement_plan": {"action": "REQUEST_HUMAN_DECISION"},
+                }
+            ),
+        },
+    ]
+
+    projections = rebuild_actor_projections(events)
+    by_id = {projection["actor_id"]: projection for projection in projections}
+
+    assert "emp_backend_legacy" not in by_id
+    assert by_id["actor_backend_1"] == {
+        "actor_id": "actor_backend_1",
+        "employee_id": "emp_backend_1",
+        "status": ACTOR_STATUS_REPLACED,
+        "capability_set": [
+            "source.modify.backend",
+            "test.run.backend",
+            "evidence.write.test",
+            "evidence.write.git",
+        ],
+        "provider_preferences": {"purpose": "implementation"},
+        "availability": {"max_concurrent_leases": 2},
+        "created_from_policy": "manual-restore",
+        "deactivated_reason": None,
+        "replaced_by_actor_id": "actor_backend_2",
+        "replacement_reason": "Rotate executor after repeated rework.",
+        "replacement_plan": {"handoff_ticket_ids": ["tkt_123"]},
+        "lifecycle_reason": "Rotate executor after repeated rework.",
+        "updated_at": "2026-04-01T10:15:00+08:00",
+        "version": 5,
+    }
+    assert by_id["actor_backend_2"]["status"] == ACTOR_STATUS_DEACTIVATED
+    assert by_id["actor_backend_2"]["deactivated_reason"] == "Retire temporary replacement."
+    assert by_id["actor_backend_2"]["replacement_plan"] == {"action": "REQUEST_HUMAN_DECISION"}
+    assert by_id["actor_backend_2"]["lifecycle_reason"] == "Retire temporary replacement."
 
 
 def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_executing_completed():

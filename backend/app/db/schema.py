@@ -144,6 +144,23 @@ CREATE TABLE IF NOT EXISTS employee_projection (
     version INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS actor_projection (
+    actor_id TEXT PRIMARY KEY,
+    employee_id TEXT,
+    status TEXT NOT NULL,
+    capability_set_json TEXT NOT NULL,
+    provider_preferences_json TEXT NOT NULL,
+    availability_json TEXT NOT NULL,
+    created_from_policy TEXT,
+    deactivated_reason TEXT,
+    replaced_by_actor_id TEXT,
+    replacement_reason TEXT,
+    replacement_plan_json TEXT,
+    lifecycle_reason TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS worker_bootstrap_state (
     worker_id TEXT NOT NULL,
     credential_version INTEGER NOT NULL,
@@ -458,6 +475,12 @@ ON artifact_index(workflow_id);
 
 CREATE INDEX IF NOT EXISTS idx_artifact_index_node_id
 ON artifact_index(node_id);
+
+CREATE INDEX IF NOT EXISTS idx_actor_projection_status
+ON actor_projection(status);
+
+CREATE INDEX IF NOT EXISTS idx_actor_projection_employee_id
+ON actor_projection(employee_id);
 
 CREATE INDEX IF NOT EXISTS idx_incident_projection_workflow_id
 ON incident_projection(workflow_id);

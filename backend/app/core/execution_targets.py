@@ -61,6 +61,82 @@ class ExecutionTargetDefinition:
     label: str
 
 
+ROLE_TEMPLATE_CAPABILITY_CONTRACTS: dict[str, dict[str, Any]] = {
+    "ui_designer_primary": {
+        "capability_set": ("docs.update.delivery",),
+        "provider_preferences": {"purpose": "planning"},
+    },
+    "frontend_engineer_primary": {
+        "capability_set": (
+            "source.modify.application",
+            "test.run.application",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ),
+        "provider_preferences": {"purpose": "implementation"},
+    },
+    "checker_primary": {
+        "capability_set": (
+            "evidence.check.delivery",
+            "verdict.write.maker_checker",
+        ),
+        "provider_preferences": {"purpose": "review"},
+    },
+    "backend_engineer_primary": {
+        "capability_set": (
+            "source.modify.backend",
+            "test.run.backend",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ),
+        "provider_preferences": {"purpose": "implementation"},
+    },
+    "database_engineer_primary": {
+        "capability_set": (
+            "source.modify.database",
+            "test.run.backend",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ),
+        "provider_preferences": {"purpose": "implementation"},
+    },
+    "platform_sre_primary": {
+        "capability_set": (
+            "source.modify.platform",
+            "test.run.backend",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ),
+        "provider_preferences": {"purpose": "implementation"},
+    },
+    "architect_primary": {
+        "capability_set": ("policy.propose.graph_patch", "docs.update.delivery"),
+        "provider_preferences": {"purpose": "planning"},
+    },
+    "cto_primary": {
+        "capability_set": ("policy.propose.graph_patch", "docs.update.delivery"),
+        "provider_preferences": {"purpose": "planning"},
+    },
+}
+
+
+def build_role_template_capability_contract(role_template_ref: str | None) -> dict[str, Any] | None:
+    normalized_role_template_ref = str(role_template_ref or "").strip()
+    if not normalized_role_template_ref:
+        return None
+    contract = ROLE_TEMPLATE_CAPABILITY_CONTRACTS.get(normalized_role_template_ref)
+    if contract is None:
+        return None
+    return {
+        "role_template_ref": normalized_role_template_ref,
+        "capability_set": list(contract["capability_set"]),
+        "provider_preferences": dict(contract["provider_preferences"]),
+    }
+
 EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_SCOPE_CONSENSUS,

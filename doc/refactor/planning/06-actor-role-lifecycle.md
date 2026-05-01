@@ -192,9 +192,31 @@ Actor 可以有 provider preference，但 provider 实际选择必须记录：
 
 Provider binding 不应写死在 role template 中作为不可变事实。
 
-## 验收标准
+## Round 7A 实现状态
 
-- runtime 不再以 `role_profile_ref` 作为唯一派工依据。
+Round 7A 已按强迁移建立独立 Actor registry，`actor_projection` 只由 `ACTOR_ENABLED`、`ACTOR_SUSPENDED`、`ACTOR_DEACTIVATED`、`ACTOR_REPLACED` 事件重放生成；`EMPLOYEE_*` 事件不会桥接或回填 runtime actor。
+
+已落地的数据结构：
+
+- `backend/app/core/constants.py` 定义 actor lifecycle 事件与 `CANDIDATE` / `ACTIVE` / `SUSPENDED` / `DEACTIVATED` / `REPLACED` 状态常量。
+- `backend/app/core/reducer.py` 提供 `rebuild_actor_projections(events)`，覆盖 enable、suspend、deactivate、replace，并保留 replacement lineage。
+- `backend/app/db/schema.py` 新增持久化 `actor_projection` 表。
+- `backend/app/db/repository.py` 初始化和 `refresh_projections()` 会重放 actor projection，并提供 `replace_actor_projections()`、`list_actor_projections()`、`get_actor_projection()`。
+- `backend/app/core/execution_targets.py` 新增 `build_role_template_capability_contract()`；RoleTemplate 只输出 `capability_set` 与 `provider_preferences`，不输出 `execution_target_ref` 或 runtime execution key。
+
+7A 明确边界：
+
+- `employee_projection` 仍保留为产品/公司化表示和历史输入来源，但不再作为后续 runtime eligibility 的目标路径。
+- 旧 `role_profile_ref -> execution_target_ref`、scheduler eligibility、assignment、lease、provider selection 调用点本批不全链路迁移；7B–7E 必须继续删除这些 runtime 决策路径，而不是把 role template 包装成新的执行键。
+- 7B 的入口应直接消费 `actor_projection`、ticket required capabilities 和 scoped exclusion，不能从 `EMPLOYEE_*` lifecycle 恢复 runtime actor。
+
+测试证据：
+
+- `backend/tests/test_reducer.py::test_reducer_rebuilds_actor_projection_from_independent_actor_events`
+- `backend/tests/test_api.py::test_repository_persists_actor_projection_from_independent_actor_events`
+- `backend/tests/test_execution_targets.py::test_role_template_capability_contract_does_not_emit_runtime_execution_key`
+
+
 - `excluded_employee_ids` 有明确作用域，不能继承污染后续票。
 - 员工池为空时产生显式 action/incident。
 - late lease/provider event 不污染 current graph pointer。

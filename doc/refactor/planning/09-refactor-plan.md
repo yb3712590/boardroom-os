@@ -69,9 +69,9 @@
 
 任务：
 
-- 建立 actor registry。
-- 建立 capability mapping。
-- 定义 employee enable/suspend/deactivate/replace 事件。
+- [x] 建立 actor registry：Round 7A added independent `ACTOR_*` lifecycle events, replayable `actor_projection`, repository read APIs, and tests proving no `EMPLOYEE_*` bridge.
+- [x] 建立 capability mapping：Round 7A added `build_role_template_capability_contract()` so RoleTemplate emits capability/provider preference only, not runtime execution keys.
+- [x] 定义 actor enable/suspend/deactivate/replace 事件：Round 7A reducer tests cover the actor lifecycle state transitions and replacement lineage.
 - 修复 excluded employee 继承污染。
 - actor pool empty 时生成显式 action/incident。
 

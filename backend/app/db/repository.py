@@ -101,6 +101,7 @@ from app.core.versioning import (
     validate_supersedes_ref,
 )
 from app.core.reducer import (
+    rebuild_actor_projections,
     rebuild_employee_projections,
     rebuild_execution_attempt_projections,
     rebuild_incident_projections,
@@ -146,6 +147,7 @@ class ControlPlaneRepository:
             self._ensure_execution_attempt_projection_shape(connection)
             self._ensure_planned_placeholder_projection_shape(connection)
             self._ensure_employee_projection_shape(connection)
+            self._ensure_actor_projection_shape(connection)
             self._ensure_worker_bootstrap_state_shape(connection)
             self._ensure_worker_bootstrap_issue_shape(connection)
             self._ensure_worker_session_shape(connection)
@@ -179,6 +181,10 @@ class ControlPlaneRepository:
             self.replace_employee_projections(
                 connection,
                 rebuild_employee_projections(employee_events),
+            )
+            self.replace_actor_projections(
+                connection,
+                rebuild_actor_projections(employee_events),
             )
             self.replace_process_asset_index(
                 connection,
@@ -605,6 +611,50 @@ class ControlPlaneRepository:
                 ),
             )
 
+    def replace_actor_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM actor_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO actor_projection (
+                    actor_id,
+                    employee_id,
+                    status,
+                    capability_set_json,
+                    provider_preferences_json,
+                    availability_json,
+                    created_from_policy,
+                    deactivated_reason,
+                    replaced_by_actor_id,
+                    replacement_reason,
+                    replacement_plan_json,
+                    lifecycle_reason,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["actor_id"],
+                    projection.get("employee_id"),
+                    projection["status"],
+                    json.dumps(projection.get("capability_set") or [], sort_keys=True),
+                    json.dumps(projection.get("provider_preferences") or {}, sort_keys=True),
+                    json.dumps(projection.get("availability") or {}, sort_keys=True),
+                    projection.get("created_from_policy"),
+                    projection.get("deactivated_reason"),
+                    projection.get("replaced_by_actor_id"),
+                    projection.get("replacement_reason"),
+                    json.dumps(projection.get("replacement_plan"), sort_keys=True),
+                    projection.get("lifecycle_reason"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
     def replace_incident_projections(
         self,
         connection: sqlite3.Connection,
@@ -711,6 +761,7 @@ class ControlPlaneRepository:
         self.replace_node_projections(connection, rebuild_node_projections(events))
         self.replace_runtime_node_projections(connection, rebuild_runtime_node_projections(events))
         self.replace_execution_attempt_projections(connection, rebuild_execution_attempt_projections(events))
+        self.replace_actor_projections(connection, rebuild_actor_projections(events))
         self.replace_employee_projections(connection, rebuild_employee_projections(events))
         self.replace_incident_projections(connection, rebuild_incident_projections(events))
         self.replace_process_asset_index(connection, rebuild_process_asset_index(events))
@@ -1242,6 +1293,42 @@ class ControlPlaneRepository:
         ).fetchall()
         return [self._convert_incident_projection_row(row) for row in rows]
 
+    def list_actor_projections(
+        self,
+        connection: sqlite3.Connection | None = None,
+        *,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if connection is not None:
+            return self._list_actor_projections(connection, statuses=statuses)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            return self._list_actor_projections(owned_connection, statuses=statuses)
+
+    def get_actor_projection(
+        self,
+        actor_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM actor_projection WHERE actor_id = ?",
+                (actor_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_actor_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM actor_projection WHERE actor_id = ?",
+                (actor_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_actor_projection_row(row)
     def list_employee_projections(
         self,
         connection: sqlite3.Connection | None = None,
@@ -6369,6 +6456,22 @@ class ControlPlaneRepository:
         converted["version"] = int(converted.get("version") or 0)
         return converted
 
+    def _convert_actor_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        if converted.get("updated_at"):
+            converted["updated_at"] = datetime.fromisoformat(converted["updated_at"])
+        converted["capability_set"] = json.loads(converted.get("capability_set_json") or "[]")
+        converted["provider_preferences"] = json.loads(converted.get("provider_preferences_json") or "{}")
+        converted["availability"] = json.loads(converted.get("availability_json") or "{}")
+        replacement_plan_raw = converted.get("replacement_plan_json")
+        converted["replacement_plan"] = json.loads(replacement_plan_raw) if replacement_plan_raw else None
+        converted.pop("capability_set_json", None)
+        converted.pop("provider_preferences_json", None)
+        converted.pop("availability_json", None)
+        converted.pop("replacement_plan_json", None)
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _convert_employee_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("updated_at"):
@@ -7418,6 +7521,59 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_planned_placeholder_projection_graph_node_id ON planned_placeholder_projection(graph_node_id)"
+        )
+
+    def _ensure_actor_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS actor_projection (
+                actor_id TEXT PRIMARY KEY,
+                employee_id TEXT,
+                status TEXT NOT NULL,
+                capability_set_json TEXT NOT NULL,
+                provider_preferences_json TEXT NOT NULL,
+                availability_json TEXT NOT NULL,
+                created_from_policy TEXT,
+                deactivated_reason TEXT,
+                replaced_by_actor_id TEXT,
+                replacement_reason TEXT,
+                replacement_plan_json TEXT,
+                lifecycle_reason TEXT,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(actor_projection)").fetchall()
+        }
+        required_columns = {
+            "actor_id": "TEXT",
+            "employee_id": "TEXT",
+            "status": "TEXT",
+            "capability_set_json": "TEXT",
+            "provider_preferences_json": "TEXT",
+            "availability_json": "TEXT",
+            "created_from_policy": "TEXT",
+            "deactivated_reason": "TEXT",
+            "replaced_by_actor_id": "TEXT",
+            "replacement_reason": "TEXT",
+            "replacement_plan_json": "TEXT",
+            "lifecycle_reason": "TEXT",
+            "updated_at": "TEXT",
+            "version": "INTEGER",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE actor_projection ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_actor_projection_status ON actor_projection(status)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_actor_projection_employee_id ON actor_projection(employee_id)"
         )
 
     def _ensure_employee_projection_shape(self, connection: sqlite3.Connection) -> None:
@@ -9014,6 +9170,33 @@ class ControlPlaneRepository:
                 },
                 occurred_at=employee["occurred_at"],
             )
+
+    def _list_actor_projections(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            clauses.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+
+        where_clause = ""
+        if clauses:
+            where_clause = "WHERE " + " AND ".join(clauses)
+
+        rows = connection.execute(
+            f"""
+            SELECT * FROM actor_projection
+            {where_clause}
+            ORDER BY actor_id ASC
+            """,
+            tuple(params),
+        ).fetchall()
+        return [self._convert_actor_projection_row(row) for row in rows]
 
     def _list_employee_projections(
         self,
