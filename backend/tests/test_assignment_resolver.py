@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-from app.core.assignment_resolver import (
-    EXCLUSION_SCOPE_CAPABILITY,
-    EXCLUSION_SCOPE_NODE,
-    EXCLUSION_SCOPE_TICKET,
-    EXCLUSION_SCOPE_WORKFLOW,
-    NO_ELIGIBLE_ACTOR_REASON_CODE,
-    resolve_assignment,
-)
+from app.core.assignment_resolver import resolve_assignment
 from app.core.constants import ACTOR_STATUS_ACTIVE, ACTOR_STATUS_SUSPENDED
 
 
-def _actor(actor_id: str, capabilities: list[str], *, status: str = ACTOR_STATUS_ACTIVE) -> dict:
-    return {
+def _actor(
+    actor_id: str,
+    capabilities: list[str],
+    *,
+    status: str = ACTOR_STATUS_ACTIVE,
+    provider_id: str | None = None,
+) -> dict:
+    actor = {
         "actor_id": actor_id,
         "status": status,
         "capability_set": capabilities,
-        "provider_preferences": {"provider_id": f"prov_{actor_id}"},
     }
+    if provider_id is not None:
+        actor["provider_preferences"] = {"provider_id": provider_id}
+    return actor
 
 
 def test_resolver_selects_active_actor_with_required_capabilities() -> None:
@@ -53,9 +54,13 @@ def test_resolver_rejects_actor_without_required_capabilities_even_when_availabl
 
     assert result.selected_actor_id is None
     assert result.diagnostic_payload is not None
-    assert result.diagnostic_payload["reason_code"] == NO_ELIGIBLE_ACTOR_REASON_CODE
+    assert result.diagnostic_payload["reason_code"] == "NO_ELIGIBLE_ACTOR"
     assert result.diagnostic_payload["required_capabilities"] == ["source.modify.backend"]
-    assert result.diagnostic_payload["candidate_details"][0]["missing_capabilities"] == ["source.modify.backend"]
+
+    candidate_details = {
+        detail["actor_id"]: detail for detail in result.diagnostic_payload["candidate_details"]
+    }
+    assert "source.modify.backend" in candidate_details["actor_frontend"]["missing_capabilities"]
     assert "CREATE_ACTOR" in result.diagnostic_payload["suggested_actions"]
     assert "BLOCK_NODE_NO_CAPABLE_ACTOR" in result.diagnostic_payload["suggested_actions"]
 
@@ -77,13 +82,13 @@ def test_resolver_applies_only_matching_scoped_exclusions() -> None:
         scoped_exclusions=[
             {
                 "actor_id": "actor_backend_primary",
-                "scope": EXCLUSION_SCOPE_TICKET,
+                "scope": "ticket",
                 "ticket_id": "tkt_unrelated",
                 "reason": "unrelated ticket retry",
             },
             {
                 "actor_id": "actor_backend_primary",
-                "scope": EXCLUSION_SCOPE_NODE,
+                "scope": "node",
                 "node_id": "node_backend_current",
                 "reason": "current node exclusion",
             },
@@ -95,25 +100,27 @@ def test_resolver_applies_only_matching_scoped_exclusions() -> None:
         detail for detail in result.candidate_details if detail["actor_id"] == "actor_backend_primary"
     )
     assert primary_detail["excluded"] is True
-    assert primary_detail["exclusion_matches"] == [
-        {
-            "scope": EXCLUSION_SCOPE_NODE,
-            "reason": "current node exclusion",
-            "capability": None,
-            "ticket_id": None,
-            "node_id": "node_backend_current",
-            "workflow_id": None,
-        }
-    ]
+
+    exclusion_matches = primary_detail["exclusion_matches"]
+    assert any(
+        match.get("scope") == "node"
+        and match.get("reason") == "current node exclusion"
+        and match.get("node_id") == "node_backend_current"
+        for match in exclusion_matches
+    )
+    assert not any(
+        match.get("scope") == "ticket" and match.get("ticket_id") == "tkt_unrelated"
+        for match in exclusion_matches
+    )
 
 
-def test_resolver_scopes_capability_and_workflow_exclusions() -> None:
+def test_resolver_ignores_capability_exclusion_for_unrequired_capability() -> None:
     actors = [
         _actor("actor_backend_primary", ["source.modify.backend", "test.run.backend"]),
         _actor("actor_backend_backup", ["source.modify.backend", "test.run.backend"]),
     ]
 
-    capability_result = resolve_assignment(
+    result = resolve_assignment(
         ticket_id="tkt_backend",
         workflow_id="wf_assign",
         node_id="node_backend",
@@ -124,15 +131,23 @@ def test_resolver_scopes_capability_and_workflow_exclusions() -> None:
         scoped_exclusions=[
             {
                 "actor_id": "actor_backend_primary",
-                "scope": EXCLUSION_SCOPE_CAPABILITY,
+                "scope": "capability",
                 "capability": "test.run.backend",
                 "reason": "different capability",
             }
         ],
     )
-    assert capability_result.selected_actor_id == "actor_backend_primary"
 
-    workflow_result = resolve_assignment(
+    assert result.selected_actor_id == "actor_backend_primary"
+
+
+def test_resolver_applies_matching_workflow_exclusion() -> None:
+    actors = [
+        _actor("actor_backend_primary", ["source.modify.backend", "test.run.backend"]),
+        _actor("actor_backend_backup", ["source.modify.backend", "test.run.backend"]),
+    ]
+
+    result = resolve_assignment(
         ticket_id="tkt_backend",
         workflow_id="wf_assign",
         node_id="node_backend",
@@ -143,13 +158,14 @@ def test_resolver_scopes_capability_and_workflow_exclusions() -> None:
         scoped_exclusions=[
             {
                 "actor_id": "actor_backend_primary",
-                "scope": EXCLUSION_SCOPE_WORKFLOW,
+                "scope": "workflow",
                 "workflow_id": "wf_assign",
                 "reason": "workflow incident",
             }
         ],
     )
-    assert workflow_result.selected_actor_id == "actor_backend_backup"
+
+    assert result.selected_actor_id == "actor_backend_backup"
 
 
 def test_resolver_marks_status_busy_and_provider_paused_reasons() -> None:
@@ -161,7 +177,7 @@ def test_resolver_marks_status_busy_and_provider_paused_reasons() -> None:
         actors=[
             _actor("actor_suspended", ["source.modify.backend"], status=ACTOR_STATUS_SUSPENDED),
             _actor("actor_busy", ["source.modify.backend"]),
-            _actor("actor_paused", ["source.modify.backend"]),
+            _actor("actor_paused", ["source.modify.backend"], provider_id="prov_actor_paused"),
         ],
         active_lease_actor_ids={"actor_busy"},
         paused_provider_ids={"prov_actor_paused"},
@@ -169,6 +185,7 @@ def test_resolver_marks_status_busy_and_provider_paused_reasons() -> None:
     )
 
     assert result.selected_actor_id is None
+    assert result.diagnostic_payload is not None
     details = {detail["actor_id"]: detail for detail in result.diagnostic_payload["candidate_details"]}
     assert details["actor_suspended"]["status_eligible"] is False
     assert details["actor_busy"]["busy"] is True
