@@ -22,6 +22,9 @@
 - Round 4：Backend 废弃代码审计与安全删除。
 - Round 5：Directory / Artifact / Write-surface contract 实施。
 - Round 6：Provider-only streaming smoke。
+- Round 6B：ProviderEvent 标准事件接口。
+- Round 6C：Malformed SSE raw archive 与 retry 边界。
+- Round 6D：Late provider event projection guard。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -32,7 +35,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 6B：ProviderEvent 标准事件接口** 开始。Round 6B/6C/6D 补齐 Phase 2 剩余 provider 验收后，再进入 Round 7 Actor / Role lifecycle。
+下一轮新会话应从 **Round 7A：Actor registry 与 capability contract** 开始。Round 7A/7B/7C/7D/7E 是连续批次，必须按顺序推进 Phase 3 Actor / Role lifecycle 验收，不能各自发散实现。
 
 ---
 
@@ -358,43 +361,242 @@
 
 ---
 
-## Round 7：Actor / Role lifecycle 实施
+## Round 7 连续批次总约束：Actor / Role lifecycle 强迁移
+
+Round 7A/7B/7C/7D/7E 是同一 Phase 3 强迁移的连续批次，不是互相独立的改造任务。每个批次开始时必须先确认自己处在这条链路中，并继承前序批次已经确定的模型、命名和边界。
+
+共同目标：让 runtime 执行身份从 role template 迁移到 actor/capability/assignment/lease 模型，并最终覆盖 `10-refactor-acceptance-criteria.md` 的 Phase 3 全部验收项。
+
+连续性规则：
+
+1. 每个 7x 批次都必须阅读本节总约束、自己的批次提示词、`06-actor-role-lifecycle.md`、`09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md`。
+2. 7B–7E 必须先阅读前序 7x 批次在 `06-actor-role-lifecycle.md`、`09-refactor-plan.md`、`10-refactor-acceptance-criteria.md` 中留下的实现状态和未完成项，不得重新设计一套不兼容模型。
+3. 统一术语：`actor_id` 是 runtime 执行身份；`employee_id` 是产品/公司化表示；`role_profile_ref` / RoleTemplate 只能映射默认 capability/provider preference，不能作为 runtime 执行键；`assignment_id` 表示谁被选中；`lease_id` 表示当前执行窗口。
+4. 每批结束必须更新对应 planning docs，写清：本批完成项、仍依赖后续批次的接口、不能破坏的兼容边界、下一批入口。
+5. 每批只勾选 `10-refactor-acceptance-criteria.md` 中已有证据支撑的 Phase 3 checkbox；没有测试或 grep 证据不得提前勾选。
+6. 不得把 Phase 4 progression policy、Phase 5 deliverable contract 或 Phase 6 replay/resume 的范围提前混入 Round 7；如发现依赖，只记录为后续 phase blocker。
+7. 不得新增 role name -> write root、role name -> provider execution key、role name -> scheduler eligibility 的分支；临时兼容只能存在于治理/展示边界，并必须标明后续移除点。
+8. 每批提交前必须运行本批指定测试和相关 grep；失败不得声称完成。
+
+---
+
+## Round 7A：Actor registry 与 capability contract
 
 ```text
-目标：让 runtime 执行身份从 role template 迁移到 actor/capability/assignment/lease 模型，覆盖 Phase 3 全部验收项。
+你在 D:\Projects\boardroom-os 工作。本轮是 Round 7A/7B/7C/7D/7E 连续批次的第 1 批，目标是建立 Phase 3 的最小 Actor registry 和 RoleTemplate -> Capability contract。不要开始 assignment/lease/provider 全链路迁移。
 
 必读：
-1. doc/refactor/planning/06-actor-role-lifecycle.md
-2. doc/refactor/planning/04-write-surface-policy.md
-3. doc/refactor/planning/05-provider-contract.md
+1. doc/refactor/planning/11-round-prompts.md 的 Round 7 连续批次总约束
+2. doc/refactor/planning/06-actor-role-lifecycle.md
+3. doc/refactor/planning/04-write-surface-policy.md
+4. doc/refactor/planning/09-refactor-plan.md
+5. doc/refactor/planning/10-refactor-acceptance-criteria.md
+6. backend/app/core/constants.py
+7. backend/app/core/reducer.py
+8. backend/app/core/projections.py
+9. backend/app/db/repository.py
+10. backend/tests/test_reducer.py
+11. backend/tests/test_execution_targets.py
+
+任务：
+1. 建立最小 Actor registry：定义 actor lifecycle 状态与事件/投影语义，覆盖 enable/suspend/deactivate/replace。
+2. 将现有 employee projection 与 actor runtime identity 明确分层：employee 可以映射 actor，但 runtime 后续只能以 actor eligibility 作为执行资格。
+3. 建立 RoleTemplate -> CapabilitySet 映射 helper；RoleTemplate 只能输出 capability/provider preference，不能输出 runtime execution key。
+4. 保留现有 employee/role_profile_ref 作为产品输入和兼容读取边界，但不得新增 role_profile_ref 直接决定 runtime 执行资格的路径。
+5. 为 actor enable/suspend/deactivate/replace、RoleTemplate 只映射 capability 补单测。
+6. 更新 `06-actor-role-lifecycle.md`：写清 7A 已落地的数据结构、事件、投影和后续批次依赖。
+7. 更新 `09-refactor-plan.md` 与 `10-refactor-acceptance-criteria.md`：只勾 7A 已有测试证据支撑的 Phase 3 项。
+8. 提交，message 建议：`refactor-actors: add lifecycle registry`。
+
+禁止：
+- 不改 scheduler 主派工算法。
+- 不把 Assignment 与 Lease 一次性做完。
+- 不改 provider selection 行为。
+- 不为通过测试放宽 existing employee lifecycle 断言。
+
+验证：
+- 单测覆盖 actor enable/suspend/deactivate/replace 状态机。
+- 单测覆盖 RoleTemplate 只映射 capability、不作为 runtime execution key。
+- grep 确认 7A 未新增 role name -> write root / execution key 分支。
+- 相关 reducer/projection/repository 测试通过。
+```
+
+---
+
+## Round 7B：Capability-driven Assignment 与 scoped exclusion
+
+```text
+你在 D:\Projects\boardroom-os 工作。本轮是 Round 7A/7B/7C/7D/7E 连续批次的第 2 批，必须继承 7A 的 actor registry 和 RoleTemplate -> Capability contract。目标是把派工选择输入收口为 required capabilities + actor eligibility，并修复 scoped exclusion 与 no eligible actor 显式动作。
+
+必读：
+1. doc/refactor/planning/11-round-prompts.md 的 Round 7 连续批次总约束
+2. doc/refactor/planning/06-actor-role-lifecycle.md 中 7A 实现状态
+3. doc/refactor/planning/04-write-surface-policy.md
 4. doc/refactor/planning/09-refactor-plan.md
 5. doc/refactor/planning/10-refactor-acceptance-criteria.md
 6. backend/app/core/workflow_controller.py
-7. backend/app/core/projections.py
-8. backend/app/core/ticket_handlers.py
-9. backend/app/core/runtime_provider_config.py
-10. backend/tests/ 中 actor、assignment、lease、provider selection 相关测试
+7. backend/app/core/ticket_handlers.py
+8. backend/app/core/execution_targets.py
+9. backend/app/core/runtime_provider_config.py 中 provider health/circuit breaker 读取点
+10. backend/tests/test_scheduler_runner.py
+11. backend/tests/test_api.py 中 retry/rework/excluded_employee_ids 相关测试
 
 任务：
-1. 建立最小 Actor registry，并覆盖 enable/suspend/deactivate/replace 状态机；RoleTemplate 只能映射 capability，不能作为 runtime 执行键。
-2. replace 不能退化成简单新建 employee：旧 actor 被 `REPLACED` / `DEACTIVATED` / `SUSPENDED` 后不得继续 eligible，新 actor 只继承 capability/assignment 资格，不继承旧 lease。
-3. 将派工输入收口为 required capabilities + actor eligibility；不得新增 role name -> write root 或 role name -> execution key 分支。
-4. 将 Assignment 与 Lease 分离：assignment 表示谁被选中，lease 表示当前执行窗口；二者事件、projection 和过期规则必须可独立测试。
-5. 修复或证明 `excluded_employee_ids` 有作用域，不会从旧 retry/rework 污染后续无关派工。
-6. no eligible actor 必须生成显式 action 或 incident，不能 silent stall。
-7. provider preferred/actual provider/model 必须在 actor assignment / execution attempt / result evidence 中完整记录，并与 provider smoke 字段一致。
-8. 更新 actor lifecycle、write-surface、provider contract 文档和 acceptance criteria。
-9. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
+1. 抽出 assignment resolver：输入为 ticket required capabilities、actor registry/projection、actor status、provider health、current active leases、scoped exclusion policy。
+2. 将 ready ticket / scheduler candidate 判断从 role_profile_ref matching 迁移到 actor capability eligibility；role_profile_ref 只能作为 compatibility input 编译 capability。
+3. 定义 `excluded_employee_ids` 的兼容解释和新 scoped exclusion 语义，至少覆盖 attempt/ticket/node/capability/workflow；禁止无作用域复制旧 ticket excluded list。
+4. 修复或证明 retry/rework 的 exclusion 不会污染后续无关派工；必要时将 legacy `excluded_employee_ids` 限定为当前 maker-checker/rework lineage。
+5. no eligible actor 时必须生成显式 action 或 incident payload，包含 required capabilities、候选 actor 排除原因、建议动作（CREATE_ACTOR / REASSIGN_EXECUTOR / REQUEST_HUMAN_DECISION / BLOCK_NODE_NO_CAPABLE_ACTOR）。
+6. 为 capability-driven assignment、scoped exclusion、no eligible actor 显式 action/incident 补单测。
+7. 更新 `06-actor-role-lifecycle.md`、`09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md`，写明 7B 完成项与 7C 对 lease 分离的依赖。
+8. 提交，message 建议：`refactor-actors: assign by capability eligibility`。
+
+禁止：
+- 不把 role_profile_ref 重新包装成 actor execution key。
+- 不用 ticket summary 文本、hardcoded employee id 或 role name fallback 选择 executor。
+- 不改 closeout/fanout/rework progression policy 业务判断；只处理派工 eligibility 和显式 no-eligible 输出。
 
 验证：
-- 单测覆盖 actor enable/suspend/deactivate/replace。
-- 单测覆盖 replace 后旧 actor 不再 eligible、新 actor 不继承旧 lease。
-- 单测覆盖 RoleTemplate 只映射 capability、不作为 runtime 执行键。
+- 单测覆盖派工由 required capabilities + actor eligibility 驱动。
+- 单测覆盖 scoped `excluded_employee_ids` 不污染无关派工。
+- 单测覆盖 no eligible actor 生成显式 action 或 incident，不能 silent stall。
+- grep 确认 scheduler/controller/ticket handler 未新增 role name -> execution key 分支。
+```
+
+---
+
+## Round 7C：Assignment 与 Lease 分离
+
+```text
+你在 D:\Projects\boardroom-os 工作。本轮是 Round 7A/7B/7C/7D/7E 连续批次的第 3 批，必须继承 7A actor registry 和 7B assignment resolver。目标是把 Assignment 与 Lease 分离，并证明 replace 后旧 actor 不再 eligible、新 actor 不继承旧 lease。
+
+必读：
+1. doc/refactor/planning/11-round-prompts.md 的 Round 7 连续批次总约束
+2. doc/refactor/planning/06-actor-role-lifecycle.md 中 7A/7B 实现状态
+3. doc/refactor/planning/05-provider-contract.md 的 ticket_lease_timeout / late event 边界
+4. doc/refactor/planning/09-refactor-plan.md
+5. doc/refactor/planning/10-refactor-acceptance-criteria.md
+6. backend/app/core/ticket_handlers.py
+7. backend/app/core/runtime.py
+8. backend/app/core/context_compiler.py
+9. backend/app/core/projections.py
+10. backend/app/core/reducer.py
+11. backend/tests/test_context_compiler.py
+12. backend/tests/test_scheduler_runner.py
+13. backend/tests/test_reducer.py
+
+任务：
+1. 引入 assignment 与 lease 的独立事件/投影语义：assignment 表示 actor 被选中，lease 表示有限时间执行窗口。
+2. ticket lease/start/timeout 路径必须携带 actor_id、assignment_id、lease_id；旧 `lease_owner` 只能作为兼容展示或迁移字段。
+3. lease timeout 只终止 lease/execution attempt，不得撤销 assignment 历史，也不得恢复过期 actor eligibility。
+4. replace 场景必须证明：旧 actor 被 REPLACED / DEACTIVATED / SUSPENDED 后不再 eligible；新 actor 可继承 capability/assignment 资格，但不继承旧 lease。
+5. context compiler / runtime execution package 读取 assignment/lease identity，不再以 role template 作为 runtime execution identity。
+6. 为 Assignment 与 Lease 分离、lease 过期、replace 后旧 actor 不 eligible、新 actor 不继承旧 lease 补单测。
+7. 更新 `06-actor-role-lifecycle.md`、`09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md`，写明 7C 完成项与 7D provider provenance 依赖。
+8. 提交，message 建议：`refactor-actors: separate assignment leases`。
+
+禁止：
+- 不让 `ASSIGNED` 等同于 `LEASED`。
+- 不让 `LEASED` 等同于 `EXECUTING`。
+- 不允许 late provider completion 自动恢复过期 lease。
+- 不把 replace 实现成简单新建 employee 后继续沿用旧 lease。
+
+验证：
 - 单测覆盖 Assignment 与 Lease 分离及 lease 过期。
-- 单测覆盖 scoped `excluded_employee_ids`。
-- 单测覆盖 no eligible actor 显式 incident/action。
-- 单测覆盖 provider preferred/actual 记录完整。
-- grep 确认没有保留或新增 role name -> write root / execution key 判断，尤其检查 runtime、scheduler、provider selection 路径。
+- 单测覆盖 replace 后旧 actor 不再 eligible、新 actor 不继承旧 lease。
+- 单测覆盖 execution package 中 actor/assignment/lease identity。
+- 相关 scheduler/runtime/context compiler 测试通过。
+```
+
+---
+
+## Round 7D：Provider provenance 贯穿 Actor Assignment / Execution
+
+```text
+你在 D:\Projects\boardroom-os 工作。本轮是 Round 7A/7B/7C/7D/7E 连续批次的第 4 批，必须继承 7A actor registry、7B assignment resolver 和 7C assignment/lease 分离。目标是把 provider preferred/actual provider/model 贯穿 actor assignment、execution attempt 和 result evidence，并与 provider smoke 字段一致。
+
+必读：
+1. doc/refactor/planning/11-round-prompts.md 的 Round 7 连续批次总约束
+2. doc/refactor/planning/06-actor-role-lifecycle.md 中 7A/7B/7C 实现状态
+3. doc/refactor/planning/05-provider-contract.md
+4. doc/refactor/planning/09-refactor-plan.md
+5. doc/refactor/planning/10-refactor-acceptance-criteria.md
+6. backend/app/core/runtime_provider_config.py
+7. backend/app/core/runtime.py
+8. backend/app/core/ticket_handlers.py
+9. backend/app/core/ticket_context_archive.py
+10. backend/tests/test_runtime_provider_center.py
+11. backend/tests/test_scheduler_runner.py 中 provider failover/provenance 相关测试
+12. backend/tests/live/openai_compat_reliability_suite.py
+
+任务：
+1. provider selection 输入从 role binding execution key 迁移到 actor assignment/capability/provider preference；role template 只提供默认 preference，不是不可变执行事实。
+2. actor assignment payload 记录 preferred_provider_id、preferred_model、actual_provider_id、actual_model、selection_reason、fallback_reason/policy_reason、provider health snapshot、cost/latency class（能从现有字段取得的先落地）。
+3. execution attempt / provider audit / result evidence 必须保留同一套 preferred/actual provider/model 字段，并与 provider-only smoke 报告字段命名一致。
+4. provider failover 不得静默伪装成原 provider 成功；actual provider/model 必须反映最终执行 provider。
+5. 更新 runtime/provider tests，覆盖 actor assignment provenance、execution attempt provenance、result evidence provenance 和 failover 字段一致性。
+6. 更新 `05-provider-contract.md`、`06-actor-role-lifecycle.md`、`09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md`，写明 7D 完成项与 7E integration cleanup 依赖。
+7. 提交，message 建议：`refactor-actors: record provider provenance`。
+
+禁止：
+- 不恢复 role name -> provider execution key 分支。
+- 不把 provider fallback 的 actual provider/model 写成 preferred provider/model。
+- 不改 provider-only smoke 的独立性；它仍不得创建 workflow/ticket/lease。
+
+验证：
+- 单测覆盖 provider preferred/actual 在 actor assignment / execution attempt / result evidence 中记录完整。
+- 单测覆盖 provider failover 的 preferred/actual 字段差异与 selection_reason/policy_reason。
+- provider smoke 字段与 runtime provenance 字段一致。
+- grep 确认 provider selection 路径未新增 role name -> execution key 判断。
+```
+
+---
+
+## Round 7E：Phase 3 集成收口与验收
+
+```text
+你在 D:\Projects\boardroom-os 工作。本轮是 Round 7A/7B/7C/7D/7E 连续批次的第 5 批，也是 Phase 3 Actor / Role lifecycle 的集成收口。必须继承 7A–7D 的所有实现状态，不得重新设计模型。目标是清理残余 role-template runtime key、补齐文档和验收证据，然后把下一轮入口交给 Round 8。
+
+必读：
+1. doc/refactor/planning/11-round-prompts.md 的 Round 7 连续批次总约束
+2. doc/refactor/planning/06-actor-role-lifecycle.md 中 7A–7D 实现状态
+3. doc/refactor/planning/04-write-surface-policy.md
+4. doc/refactor/planning/05-provider-contract.md
+5. doc/refactor/planning/09-refactor-plan.md
+6. doc/refactor/planning/10-refactor-acceptance-criteria.md
+7. backend/app/core/workflow_controller.py
+8. backend/app/core/ticket_handlers.py
+9. backend/app/core/runtime.py
+10. backend/app/core/runtime_provider_config.py
+11. backend/app/core/projections.py
+12. backend/tests/ 中 actor、assignment、lease、provider selection、scheduler/runtime 相关测试
+
+任务：
+1. 全面 grep runtime、scheduler、controller、ticket handler、provider selection、context compiler，确认 role name / role_profile_ref 不再作为 runtime execution key、write root 或 scheduler eligibility 分支。
+2. 对确需保留的 role_profile_ref 字段逐一标注其边界：治理模板、产品展示、legacy input 编译 capability、测试 fixture；不得留在 runtime kernel 决策路径。
+3. 补齐或收敛 7A–7D 留下的 Phase 3 测试缺口，确保 actor lifecycle、replace、RoleTemplate capability mapping、assignment/lease、scoped exclusion、no eligible actor、provider provenance 都有测试证据。
+4. 更新 `06-actor-role-lifecycle.md` 的最终实现状态和剩余后续 phase 依赖。
+5. 更新 `04-write-surface-policy.md`：确认 Phase 3 未重新引入 role name -> write root。
+6. 更新 `05-provider-contract.md`：确认 provider provenance 与 actor assignment/execution attempt/result evidence 字段一致。
+7. 更新 `09-refactor-plan.md` 与 `10-refactor-acceptance-criteria.md`：只有在测试/grep 证据存在时勾选 Phase 3 全部 checkbox。
+8. 更新本文件当前状态：Round 7A–7E 已完成后，下一轮应从 Round 8 Progression policy engine 开始。
+9. 提交，message 建议：`refactor-actors: close phase3 acceptance`。
+
+禁止：
+- 不为了让 grep 通过删除仍被测试证明需要的产品/治理字段；正确做法是把它们移出 runtime 决策路径。
+- 不把 Phase 4 progression policy 改造塞进本轮。
+- 不用“计划后续覆盖”冒充 Phase 3 checkbox 完成。
+
+验证：
+- actor lifecycle 全套单测通过。
+- replace 后旧 actor 不再 eligible、新 actor 不继承旧 lease 测试通过。
+- RoleTemplate 只映射 capability、不作为 runtime execution key 测试通过。
+- Assignment 与 Lease 分离及 lease 过期测试通过。
+- scoped `excluded_employee_ids` 测试通过。
+- no eligible actor 显式 action/incident 测试通过。
+- provider preferred/actual 记录完整测试通过。
+- grep 确认没有保留或新增 role name -> write root / execution key 判断，尤其检查 runtime、scheduler、provider selection、context compiler 路径。
+- Phase 3 acceptance criteria 每个勾选项都有测试命令或 grep 证据。
 ```
 
 ---
