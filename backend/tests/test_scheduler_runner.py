@@ -141,6 +141,11 @@ def test_provider_failure_detail_includes_stable_failure_fingerprint() -> None:
     assert ":1" not in first_detail["fingerprint"]
 
 
+def test_runtime_treats_malformed_stream_event_as_retryable_provider_failure() -> None:
+    assert runtime_module._provider_failure_is_retryable("MALFORMED_STREAM_EVENT") is True
+    assert "MALFORMED_STREAM_EVENT" in runtime_module.PROVIDER_FAILOVER_FAILURE_KINDS
+
+
 def test_live_strict_provider_selection_does_not_use_implicit_fallbacks(monkeypatch) -> None:
     monkeypatch.setenv("BOARDROOM_OS_RUNTIME_STRICT_PROVIDER_SELECTION", "1")
     monkeypatch.setattr(
@@ -4647,7 +4652,9 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
             failure_detail={
                 "provider_status_code": 429,
                 "provider_id": "prov_openai_compat",
+                "provider_attempt_count": 5,
             },
+            provider_attempt_count=5,
         )
 
     def _fake_claude(config, rendered_payload):
@@ -4696,7 +4703,15 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_failover"]
     assert ticket_projection["status"] == "COMPLETED"
-    assert openai_attempts["value"] == 10
+    assert openai_attempts["value"] == 1
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_failover")
+    openai_finished = [
+        event
+        for event in provider_events
+        if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"
+        and event["payload"]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    ][-1]
+    assert openai_finished["payload"]["provider_attempt_count"] == 5
     assert open_provider_incidents == []
     assert "preferred_provider_id=prov_openai_compat" in recorded_submit["assumptions"]
     assert "preferred_model=gpt-5.3-codex" in recorded_submit["assumptions"]
@@ -4705,7 +4720,6 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     assert "effective_reasoning_effort=high" in recorded_submit["assumptions"]
     assert "selection_reason=provider_failover" in recorded_submit["assumptions"]
     assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
-    provider_events = _provider_audit_events(repository, "tkt_runner_provider_failover")
     failover_events = [
         event for event in provider_events if event["event_type"] == "PROVIDER_FAILOVER_SELECTED"
     ]
@@ -4964,6 +4978,229 @@ def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(
         "PROVIDER_ATTEMPT_FINISHED",
     ]
     assert provider_events[-1]["payload"]["failure_kind"] == "PROVIDER_AUTH_FAILED"
+
+
+def test_runtime_provider_archives_malformed_stream_event_as_failure_detail_only(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = "wf_runner_provider_malformed_stream_archive"
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "planning", "implementation"],
+                )
+            ],
+            role_bindings=[],
+        )
+    )
+    _seed_worker(repository, employee_id="emp_frontend_malformed_stream_archive", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_malformed_stream_archive",
+        node_id="node_runner_provider_malformed_stream_archive",
+        leased_by="emp_frontend_malformed_stream_archive",
+        configure_provider=False,
+    )
+
+    def _raise_malformed_stream(config, rendered_payload, *, audit_observer=None):
+        archive_ref = config.malformed_stream_event_archiver(
+            {
+                "request_id": "req_malformed_runtime",
+                "provider_response_id": "resp_malformed_runtime",
+                "attempt_id": "provider-attempt-5",
+                "provider": "openai_responses_stream",
+                "model": "gpt-5.3-codex",
+                "raw_byte_count": 37,
+                "parse_error": "Expecting property name",
+                "raw_event_text": '{"type":"response.output_text.delta",',
+            }
+        )
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="MALFORMED_STREAM_EVENT",
+            message="Provider stream emitted malformed SSE JSON.",
+            failure_detail={
+                "provider_response_id": "resp_malformed_runtime",
+                "request_id": "req_malformed_runtime",
+                "attempt_id": "provider-attempt-5",
+                "raw_archive_ref": archive_ref,
+                "raw_byte_count": 37,
+                "parse_error": "Expecting property name",
+                "provider_attempt_count": 5,
+            },
+            provider_attempt_count=5,
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_malformed_stream)
+    recorded_submit: dict[str, object] = {}
+    original_submit = runtime_module.handle_ticket_result_submit
+
+    def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
+        recorded_submit["failure_detail"] = dict(payload.failure_detail or {})
+        recorded_submit["artifact_refs"] = list(payload.artifact_refs)
+        recorded_submit["written_artifacts"] = list(payload.written_artifacts)
+        recorded_submit["verification_evidence_refs"] = list(payload.verification_evidence_refs)
+        return original_submit(
+            repository_arg,
+            payload,
+            developer_inspector_store=developer_inspector_store,
+            artifact_store=artifact_store,
+        )
+
+    monkeypatch.setattr(runtime_module, "handle_ticket_result_submit", _record_submit)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_malformed_stream_archive")
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_malformed_stream_archive")
+
+    raw_archive_ref = recorded_submit["failure_detail"]["raw_archive_ref"]
+    archived_artifact = repository.get_artifact_by_ref(raw_archive_ref)
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_malformed_stream_archive")
+    finished = [event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"][-1]
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_malformed_stream_archive"]
+    assert ticket_projection["status"] == "FAILED"
+    assert terminal_event is not None
+    assert terminal_event["payload"]["failure_kind"] == "MALFORMED_STREAM_EVENT"
+    assert recorded_submit["failure_detail"]["raw_archive_ref"] == raw_archive_ref
+    assert recorded_submit["failure_detail"]["failure_kind"] == "MALFORMED_STREAM_EVENT"
+    assert recorded_submit["failure_detail"]["parse_error"] == "Expecting property name"
+    assert recorded_submit["artifact_refs"] == []
+    assert recorded_submit["written_artifacts"] == []
+    assert recorded_submit["verification_evidence_refs"] == []
+    assert archived_artifact is not None
+    assert archived_artifact["logical_path"].startswith("reports/ops/provider-stream-archives/")
+    assert archived_artifact["retention_class"] == "OPERATIONAL_EVIDENCE"
+    assert finished["payload"]["failure_kind"] == "MALFORMED_STREAM_EVENT"
+    assert finished["payload"]["raw_archive_ref"] == raw_archive_ref
+    assert finished["payload"]["raw_byte_count"] == 37
+    assert finished["payload"]["parse_error"] == "Expecting property name"
+
+
+def test_runtime_provider_malformed_stream_event_uses_configured_failover(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = "wf_runner_provider_malformed_stream_failover"
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "planning", "implementation"],
+                    fallback_provider_ids=[CLAUDE_CODE_PROVIDER_ID],
+                ),
+                RuntimeProviderConfigEntry(
+                    provider_id=CLAUDE_CODE_PROVIDER_ID,
+                    adapter_kind="claude_code_cli",
+                    label="Claude Code CLI",
+                    enabled=True,
+                    command_path="python",
+                    model="claude-sonnet-4-6",
+                    timeout_sec=30.0,
+                    capability_tags=["structured_output", "planning", "implementation", "review"],
+                ),
+            ],
+            role_bindings=[],
+        )
+    )
+    _seed_worker(repository, employee_id="emp_frontend_malformed_stream_failover", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    _seed_runtime_leased_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_runner_provider_malformed_stream_failover",
+        node_id="node_runner_provider_malformed_stream_failover",
+        leased_by="emp_frontend_malformed_stream_failover",
+        configure_provider=False,
+    )
+
+    openai_attempts = {"value": 0}
+    claude_attempts = {"value": 0}
+
+    def _raise_malformed_stream(config, rendered_payload, *, audit_observer=None):
+        openai_attempts["value"] += 1
+        raise OpenAICompatProviderBadResponseError(
+            failure_kind="MALFORMED_STREAM_EVENT",
+            message="Provider stream emitted malformed SSE JSON.",
+            failure_detail={
+                "provider_response_id": "resp_failover_malformed",
+                "request_id": "req_failover_malformed",
+                "raw_archive_ref": "art://provider-raw-stream/wf/tkt/provider-attempt-5",
+                "raw_byte_count": 37,
+                "parse_error": "Expecting property name",
+                "provider_attempt_count": 5,
+            },
+            provider_attempt_count=5,
+        )
+
+    def _fake_claude(config, rendered_payload):
+        claude_attempts["value"] += 1
+        return type(
+            "ClaudeResult",
+            (),
+            {
+                "output_text": json.dumps(
+                    {
+                        "summary": "Claude failover completed after malformed stream.",
+                        "recommended_option_id": "option_a",
+                        "options": [
+                            {
+                                "option_id": "option_a",
+                                "label": "Option A",
+                                "summary": "Recovered by failover.",
+                                "artifact_refs": [],
+                            }
+                        ],
+                    }
+                ),
+                "response_id": None,
+            },
+        )()
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_malformed_stream)
+    monkeypatch.setattr(runtime_module, "invoke_claude_code_response", _fake_claude)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_malformed_stream_failover")
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_malformed_stream_failover")
+    failover_events = [
+        event for event in provider_events if event["event_type"] == "PROVIDER_FAILOVER_SELECTED"
+    ]
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_malformed_stream_failover"]
+    assert ticket_projection["status"] == "COMPLETED"
+    assert openai_attempts["value"] == 1
+    assert claude_attempts["value"] == 1
+    assert len(failover_events) == 1
+    assert failover_events[0]["payload"]["failure_kind"] == "MALFORMED_STREAM_EVENT"
 
 
 def test_runtime_provider_paused_ticket_blocks_runtime_start_without_deterministic_completion(

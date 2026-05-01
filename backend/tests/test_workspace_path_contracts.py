@@ -187,7 +187,25 @@ def test_closeout_final_ref_rejects_docs_archive_and_placeholder(artifact_ref: s
     assert result.status != CloseoutFinalRefStatus.ACCEPTED
 
 
-def test_closeout_final_ref_rejects_superseded_current_ref() -> None:
+def test_provider_raw_stream_archive_is_operational_archive_not_final_evidence() -> None:
+    artifact_ref = "art://provider-raw-stream/wf_1/tkt_1/provider-attempt-5"
+
+    contract = resolve_artifact_ref_contract(
+        artifact_ref,
+        logical_path="reports/ops/provider-stream-archives/wf_1/tkt_1/provider-attempt-5.json",
+    )
+    result = classify_closeout_final_artifact_ref(
+        artifact_ref,
+        current_artifact_refs={artifact_ref},
+        superseded_artifact_refs=set(),
+        placeholder_artifact_refs=set(),
+    )
+
+    assert contract.kind == ArtifactRefKind.ARCHIVE
+    assert contract.is_final_closeout_evidence is False
+    assert result.status == CloseoutFinalRefStatus.ILLEGAL_KIND
+
+
     artifact_ref = "art://workspace/tkt_1/source/src/app/main.py"
 
     result = classify_closeout_final_artifact_ref(

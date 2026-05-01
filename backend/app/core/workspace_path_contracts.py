@@ -206,7 +206,7 @@ def _kind_from_logical_path(path: str) -> ArtifactRefKind:
         return ArtifactRefKind.GOVERNANCE_DOCUMENT
     if path.startswith("10-project/"):
         return ArtifactRefKind.GOVERNANCE_DOCUMENT
-    if path.startswith("90-archive/"):
+    if path.startswith("90-archive/") or path.startswith("reports/ops/provider-stream-archives/"):
         return ArtifactRefKind.ARCHIVE
     return ArtifactRefKind.UNKNOWN
 
@@ -336,6 +336,9 @@ def resolve_artifact_ref_contract(
         return _contract(ArtifactRefKind.UNKNOWN, normalized_ref, None, None)
 
     if normalized_ref.startswith("art://archive/"):
+        return _contract(ArtifactRefKind.ARCHIVE, normalized_ref, None, logical_path)
+
+    if normalized_ref.startswith("art://provider-raw-stream/"):
         return _contract(ArtifactRefKind.ARCHIVE, normalized_ref, None, logical_path)
 
     if normalized_ref.startswith("art://upload-import/"):

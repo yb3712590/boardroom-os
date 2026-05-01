@@ -352,6 +352,8 @@
 - 单测覆盖 old attempt late heartbeat、late completed、late output 三类输入。
 - current ticket projection、runtime node pointer、final evidence set 均不被 late event 改写。
 - provider-only smoke 不受影响。
+
+实施边界补充：当前 provider 实施以 OpenAI Responses streaming 为唯一范围，沿用已落地的 `ProviderRequest -> ProviderEvent stream -> ProviderResult/ProviderFailure` ticket 调用层接入；暂不抽象 Anthropic/Gemini。Provider 本身只处理请求与返回，并按 cc-switch/Codex-like 体验在 provider 内部最多做 5 次标准重试，以健壮拿到正确返回为目标，不创建 ticket、不推进 workflow、不写 projection、不做额外审计动作。超过 5 次仍失败才返回最终 provider failure，由 runtime 现有异常处理、failover、incident 或 recovery 机制消费；runtime 不能伪造 provider success。
 ```
 
 ---

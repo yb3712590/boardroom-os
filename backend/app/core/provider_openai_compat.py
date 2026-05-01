@@ -23,6 +23,7 @@ from app.core.provider_protocol import ProviderEvent, ProviderEventType
 
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 ProviderAuditObserver = Callable[[str, dict[str, object]], None]
+MalformedStreamEventArchiver = Callable[[dict[str, object]], str | None]
 OpenAIClientFactory = Callable[["OpenAICompatProviderConfig"], object]
 PayloadResolver = Callable[[dict[str, Any]], dict[str, Any]]
 OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS = 5
@@ -50,6 +51,7 @@ class OpenAICompatProviderConfig:
     schema_name: str | None = None
     schema_body: dict[str, object] | None = None
     strict: bool = True
+    malformed_stream_event_archiver: MalformedStreamEventArchiver | None = None
 
 
 @dataclass(frozen=True)
@@ -1503,7 +1505,46 @@ def _extract_legacy_streaming_responses_output(
         raise _map_stream_transport_error(exc, accumulator=accumulator) from exc
 
 
-def _parse_sse_event_data(data: str, *, response_id: str | None) -> dict[str, object] | None:
+def _malformed_stream_event_failure_detail(
+    *,
+    config: OpenAICompatProviderConfig,
+    event_recorder: _ProviderEventRecorder,
+    data: str,
+    response_id: str | None,
+    response_error_type: str,
+    parse_error: str,
+) -> dict[str, object]:
+    raw_byte_count = len(data.encode("utf-8"))
+    detail: dict[str, object] = {
+        "provider_response_id": response_id,
+        "request_id": event_recorder.request_id,
+        "attempt_id": event_recorder.attempt_id,
+        "provider": config.provider_type.value,
+        "model": config.model,
+        "response_error_type": response_error_type,
+        "response_error_message": parse_error,
+        "parse_error": parse_error,
+        "raw_event_length": len(data),
+        "raw_byte_count": raw_byte_count,
+    }
+    if config.malformed_stream_event_archiver is not None:
+        archive_payload = {
+            **detail,
+            "raw_event_text": data,
+        }
+        raw_archive_ref = config.malformed_stream_event_archiver(archive_payload)
+        if raw_archive_ref:
+            detail["raw_archive_ref"] = raw_archive_ref
+    return detail
+
+
+def _parse_sse_event_data(
+    data: str,
+    *,
+    config: OpenAICompatProviderConfig,
+    event_recorder: _ProviderEventRecorder,
+    response_id: str | None,
+) -> dict[str, object] | None:
     if data.strip() == "[DONE]":
         return None
     try:
@@ -1512,22 +1553,27 @@ def _parse_sse_event_data(data: str, *, response_id: str | None) -> dict[str, ob
         raise OpenAICompatProviderBadResponseError(
             failure_kind="MALFORMED_STREAM_EVENT",
             message="Provider stream emitted malformed SSE JSON.",
-            failure_detail={
-                "provider_response_id": response_id,
-                "response_error_type": "MalformedSSEJson",
-                "response_error_message": str(exc),
-                "raw_event_length": len(data),
-            },
+            failure_detail=_malformed_stream_event_failure_detail(
+                config=config,
+                event_recorder=event_recorder,
+                data=data,
+                response_id=response_id,
+                response_error_type="MalformedSSEJson",
+                parse_error=str(exc),
+            ),
         ) from exc
     if not isinstance(payload, dict):
         raise OpenAICompatProviderBadResponseError(
             failure_kind="MALFORMED_STREAM_EVENT",
             message="Provider stream emitted a non-object SSE payload.",
-            failure_detail={
-                "provider_response_id": response_id,
-                "response_error_type": "MalformedSSEPayload",
-                "raw_event_length": len(data),
-            },
+            failure_detail=_malformed_stream_event_failure_detail(
+                config=config,
+                event_recorder=event_recorder,
+                data=data,
+                response_id=response_id,
+                response_error_type="MalformedSSEPayload",
+                parse_error="SSE payload must decode to a JSON object.",
+            ),
         )
     return payload
 
@@ -1586,7 +1632,12 @@ def _extract_streaming_responses_output(
             sse_event = decoder.feed_line(line)
             if sse_event is None:
                 continue
-            payload = _parse_sse_event_data(sse_event.data, response_id=accumulator.response_id)
+            payload = _parse_sse_event_data(
+                sse_event.data,
+                config=config,
+                event_recorder=event_recorder,
+                response_id=accumulator.response_id,
+            )
             if payload is None:
                 return accumulator.build_result(finish_state="CLOSED")
             result = accumulator.consume_event(payload)
@@ -1594,7 +1645,12 @@ def _extract_streaming_responses_output(
                 return result
         sse_event = decoder.close()
         if sse_event is not None:
-            payload = _parse_sse_event_data(sse_event.data, response_id=accumulator.response_id)
+            payload = _parse_sse_event_data(
+                sse_event.data,
+                config=config,
+                event_recorder=event_recorder,
+                response_id=accumulator.response_id,
+            )
             if payload is None:
                 return accumulator.build_result(finish_state="CLOSED")
             result = accumulator.consume_event(payload)

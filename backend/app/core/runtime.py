@@ -27,6 +27,12 @@ from app.contracts.commands import (
     TicketStartCommand,
 )
 from app.contracts.runtime import CompiledAuditArtifacts, CompiledExecutionPackage
+from app.core.artifacts import (
+    ARTIFACT_LIFECYCLE_ACTIVE,
+    ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE,
+    ARTIFACT_STATUS_MATERIALIZED,
+    resolve_artifact_retention,
+)
 from app.core.context_compiler import (
     MINIMAL_CONTEXT_COMPILER_VERSION,
     compile_and_persist_execution_artifacts,
@@ -189,6 +195,7 @@ PROVIDER_RETRYABLE_FAILURE_KINDS = {
     "STREAM_IDLE_TIMEOUT",
     "REQUEST_TOTAL_TIMEOUT",
     "PROVIDER_MALFORMED_JSON",
+    "MALFORMED_STREAM_EVENT",
     "NO_JSON_OBJECT",
     "SCHEMA_VALIDATION_FAILED",
 }
@@ -2061,9 +2068,118 @@ def _looks_like_truncated_json(value: str, parse_error: str) -> bool:
     return in_string or bool(stack) or stripped.endswith(("{", "[", ",", ":"))
 
 
+def _provider_raw_stream_archive_ref(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    attempt_id: str,
+) -> str:
+    return (
+        f"art://provider-raw-stream/{quote(workflow_id, safe='')}/"
+        f"{quote(ticket_id, safe='')}/{quote(attempt_id, safe='')}"
+    )
+
+
+def _provider_raw_stream_archive_path(
+    *,
+    workflow_id: str,
+    ticket_id: str,
+    attempt_id: str,
+) -> str:
+    return (
+        "reports/ops/provider-stream-archives/"
+        f"{quote(workflow_id, safe='')}/{quote(ticket_id, safe='')}/"
+        f"{quote(attempt_id, safe='')}.json"
+    )
+
+
+def _build_malformed_stream_event_archiver(
+    repository: ControlPlaneRepository | None,
+    ticket: dict[str, Any] | None,
+) -> Callable[[dict[str, object]], str | None] | None:
+    if repository is None or ticket is None or repository.artifact_store is None:
+        return None
+
+    def _archive(payload: dict[str, object]) -> str | None:
+        workflow_id = str(ticket["workflow_id"])
+        ticket_id = str(ticket["ticket_id"])
+        node_id = str(ticket["node_id"])
+        attempt_id = str(payload.get("attempt_id") or "provider-attempt-unknown")
+        artifact_ref = _provider_raw_stream_archive_ref(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            attempt_id=attempt_id,
+        )
+        logical_path = _provider_raw_stream_archive_path(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            attempt_id=attempt_id,
+        )
+        archived_at = now_local()
+        materialized = repository.artifact_store.materialize_json(
+            logical_path,
+            {
+                "archive_kind": "PROVIDER_RAW_STREAM_EVENT",
+                "failure_kind": "MALFORMED_STREAM_EVENT",
+                "workflow_id": workflow_id,
+                "ticket_id": ticket_id,
+                "node_id": node_id,
+                "archived_at": archived_at.isoformat(),
+                **dict(payload),
+            },
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            artifact_ref=artifact_ref,
+        )
+        settings = get_settings()
+        retention = resolve_artifact_retention(
+            created_at=archived_at,
+            logical_path=logical_path,
+            retention_class=ARTIFACT_RETENTION_OPERATIONAL_EVIDENCE,
+            retention_ttl_sec=None,
+            default_ephemeral_ttl_sec=settings.artifact_ephemeral_default_ttl_sec,
+            default_operational_evidence_ttl_sec=settings.artifact_operational_evidence_default_ttl_sec,
+            default_review_evidence_ttl_sec=settings.artifact_review_evidence_default_ttl_sec,
+        )
+        with repository.transaction() as connection:
+            if repository.get_artifact_by_ref(artifact_ref, connection=connection) is None:
+                repository.save_artifact_record(
+                    connection,
+                    artifact_ref=artifact_ref,
+                    workflow_id=workflow_id,
+                    ticket_id=ticket_id,
+                    node_id=node_id,
+                    logical_path=logical_path,
+                    kind="JSON",
+                    media_type="application/json",
+                    materialization_status=ARTIFACT_STATUS_MATERIALIZED,
+                    lifecycle_status=ARTIFACT_LIFECYCLE_ACTIVE,
+                    storage_relpath=materialized.storage_relpath,
+                    content_hash=materialized.content_hash,
+                    size_bytes=materialized.size_bytes,
+                    retention_class=retention.retention_class,
+                    retention_class_source=retention.retention_class_source,
+                    retention_ttl_sec=retention.retention_ttl_sec,
+                    retention_policy_source=retention.retention_policy_source,
+                    expires_at=retention.expires_at,
+                    deleted_at=None,
+                    deleted_by=None,
+                    delete_reason=None,
+                    created_at=archived_at,
+                    storage_backend=materialized.storage_backend,
+                    storage_object_key=materialized.storage_object_key,
+                    storage_delete_status=materialized.storage_delete_status,
+                )
+                repository.refresh_projections(connection)
+        return artifact_ref
+
+    return _archive
+
+
 def _build_openai_compat_provider_config(
     selection: RuntimeProviderSelection,
     execution_package: CompiledExecutionPackage | None = None,
+    malformed_stream_event_archiver: Callable[[dict[str, object]], str | None] | None = None,
 ) -> OpenAICompatProviderConfig:
     provider = selection.provider
     schema_ref = ""
@@ -2093,6 +2209,7 @@ def _build_openai_compat_provider_config(
             else None
         ),
         strict=True,
+        malformed_stream_event_archiver=malformed_stream_event_archiver,
     )
 
 
@@ -2384,9 +2501,10 @@ def _build_provider_required_unavailable_result(
     provider_attempt_log: list[dict[str, Any]],
     failure_message: str,
     failure_kind: str = "PROVIDER_REQUIRED_UNAVAILABLE",
+    base_failure_detail: dict[str, Any] | None = None,
 ) -> RuntimeExecutionResult:
     failure_detail = _normalize_provider_failure_detail(
-        {},
+        base_failure_detail,
         selection=selection,
         attempt_count=(provider_attempt_log[-1]["attempt_count"] if provider_attempt_log else 0),
         fallback_applied=False,
@@ -2427,7 +2545,11 @@ def _execute_openai_compat_provider(
 ) -> RuntimeExecutionResult:
     if sleep_fn is None:
         sleep_fn = _sleep
-    config = _build_openai_compat_provider_config(selection, execution_package)
+    config = _build_openai_compat_provider_config(
+        selection,
+        execution_package,
+        malformed_stream_event_archiver=_build_malformed_stream_event_archiver(repository, ticket),
+    )
     resolved_candidate_chain = candidate_chain or [selection.provider.provider_id]
 
     def _record_if_enabled(
@@ -2628,6 +2750,9 @@ def _execute_openai_compat_provider(
                         "response_error_type": last_failure_detail.get("response_error_type"),
                         "response_error_code": last_failure_detail.get("response_error_code"),
                         "parse_stage": last_failure_detail.get("parse_stage"),
+                        "raw_archive_ref": last_failure_detail.get("raw_archive_ref"),
+                        "raw_byte_count": last_failure_detail.get("raw_byte_count"),
+                        "parse_error": last_failure_detail.get("parse_error"),
                         "repair_steps": list(last_failure_detail.get("repair_steps") or []),
                         "fingerprint": last_failure_detail.get("fingerprint"),
                         "provider_attempt_count": last_failure_detail.get("provider_attempt_count", attempt_no),
@@ -2664,6 +2789,9 @@ def _execute_openai_compat_provider(
                     "response_error_type": last_failure_detail.get("response_error_type"),
                     "response_error_code": last_failure_detail.get("response_error_code"),
                     "parse_stage": last_failure_detail.get("parse_stage"),
+                    "raw_archive_ref": last_failure_detail.get("raw_archive_ref"),
+                    "raw_byte_count": last_failure_detail.get("raw_byte_count"),
+                    "parse_error": last_failure_detail.get("parse_error"),
                     "repair_steps": list(last_failure_detail.get("repair_steps") or []),
                     "fingerprint": last_failure_detail.get("fingerprint"),
                     "provider_attempt_count": last_failure_detail.get("provider_attempt_count", attempt_no),
@@ -2840,6 +2968,7 @@ def _build_provider_fallback_execution_result(
         provider_attempt_log=provider_attempt_log,
         failure_message=provider_failure.failure_message or fallback_reason,
         failure_kind=provider_failure.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+        base_failure_detail=provider_failure.failure_detail,
     )
 
 
@@ -3175,6 +3304,7 @@ def _execute_runtime_with_provider_if_configured(
                 provider_attempt_log=provider_attempt_log,
                 failure_message=failover_result.failure_message or "Configured provider candidates failed.",
                 failure_kind=failover_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+                base_failure_detail=failover_result.failure_detail,
             )
         return _build_provider_required_unavailable_result(
             selection=selection,
@@ -3182,6 +3312,7 @@ def _execute_runtime_with_provider_if_configured(
             provider_attempt_log=provider_attempt_log,
             failure_message=provider_result.failure_message or "Configured provider candidates were unavailable.",
             failure_kind=provider_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+            base_failure_detail=provider_result.failure_detail,
         )
     if provider_result.failure_kind in PROVIDER_AUTO_PAUSE_FAILURE_KINDS:
         _open_runtime_provider_incident(repository, ticket, provider_result)
@@ -3190,6 +3321,7 @@ def _execute_runtime_with_provider_if_configured(
             candidate_chain=candidate_chain,
             provider_attempt_log=provider_attempt_log,
             failure_message=provider_result.failure_message or "Configured provider candidates were unavailable.",
+            base_failure_detail=provider_result.failure_detail,
         )
     return _build_provider_required_unavailable_result(
         selection=selection,
@@ -3197,6 +3329,7 @@ def _execute_runtime_with_provider_if_configured(
         provider_attempt_log=provider_attempt_log,
         failure_message=provider_result.failure_message or "Provider execution failed.",
         failure_kind=provider_result.failure_kind or "PROVIDER_REQUIRED_UNAVAILABLE",
+        base_failure_detail=provider_result.failure_detail,
     )
 
 

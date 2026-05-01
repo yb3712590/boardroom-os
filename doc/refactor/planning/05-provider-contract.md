@@ -77,7 +77,7 @@ ProviderRequest -> Iterator[ProviderEvent] -> ProviderResult | ProviderFailure
 | `upstream_unavailable` | 429/5xx/网关错误 | retryable with backoff |
 | `first_token_timeout` | 无 first token | retryable |
 | `stream_read_error` | SSE 读取中断 | retryable if partial invalid, terminal if repeated |
-| `malformed_stream_event` | SSE JSON malformed | retryable + raw archive |
+| `malformed_stream_event` | SSE JSON malformed | retryable provider failure；provider 内部保存 raw archive，runtime 只消费 failure kind + archive ref |
 | `empty_assistant_text` | 完成但没有 assistant text | terminal provider_bad_response |
 | `schema_validation_failed` | 文本存在但 schema 不符 | retryable by schema budget，不归入上游不可用 |
 | `write_set_violation` | 输出要求越权写 | terminal contract violation |
@@ -91,6 +91,8 @@ Retry 分两层：
 2. Runtime / ticket recovery retry：provider 5 次内部 attempt 全部失败后只返回最终 `ProviderFailure`；runtime 之后才按既有异常处理、incident、failover 或 recovery 机制处理。
 
 Provider adapter 不能创建 ticket。Ticket recovery 不能伪造 provider success。Provider 内部 retry 不额外写 projection，不创建 workflow/ticket，不做多余审计动作。
+
+Malformed SSE raw archive 属于 provider-owned operational diagnostics：archive payload 必须记录 request id、response id、attempt id、provider/model、raw byte count、parse error 和 raw event text，并只以 `raw_archive_ref` 形式进入 `ProviderFailure.failure_detail` / runtime provider audit。该 archive 不得进入 success result 的 `artifact_refs`、`written_artifacts`、`verification_evidence_refs`，也不得作为 source/test/closeout final evidence。
 
 ## Late Event 规则
 
@@ -151,6 +153,7 @@ Provider 层必须记录：
 4. 禁止把 schema validation failure 简化为 upstream unavailable。
 5. 禁止 request total timeout 和 ticket lease timeout 混用。
 6. 禁止 old attempt 的 late heartbeat 改写 active ticket。
+7. 禁止 malformed SSE raw archive 被当作 source/test/closeout artifact 或 final delivery evidence。
 
 ## 验收标准
 

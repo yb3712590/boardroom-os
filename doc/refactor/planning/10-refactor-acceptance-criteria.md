@@ -37,7 +37,7 @@
 
 - [x] Provider adapter 输出标准 `ProviderEvent`，OpenAI Responses streaming 已通过 `ProviderRequest -> ProviderEvent -> ProviderResult/ProviderFailure` 聚合并接入 ticket provider 调用层。
 - [x] first-token timeout、stream-idle timeout、request-total timeout、ticket lease timeout 被区分。
-- [ ] malformed SSE 有 raw archive 和 retryable 分类；当前 provider adapter 已分类为 `MALFORMED_STREAM_EVENT` 并记录 raw event metadata。
+- [x] malformed SSE 有 raw archive 和 retryable 分类；provider 保存 raw event archive，runtime 保留 `MALFORMED_STREAM_EVENT`，raw archive 只作为 operational diagnostics，不可作为 closeout final evidence。
 - [x] empty assistant text 被分类为 provider bad response。
 - [x] schema validation failure 不被归为 upstream unavailable。
 - [x] 同一 API 配置连续 20 次 streaming smoke 成功率 >= 95% 的独立 smoke 已建立。

@@ -1027,17 +1027,56 @@ def test_invoke_openai_compat_response_maps_stream_http_5xx_to_unavailable() -> 
     assert exc_info.value.failure_detail["provider_status_code"] == 503
 
 
-def test_invoke_openai_compat_response_rejects_malformed_sse_json() -> None:
+def test_malformed_sse_archives_raw_event_and_preserves_failure_kind() -> None:
+    archived_payloads: list[dict[str, object]] = []
+
+    def _archive(payload: dict[str, object]) -> str:
+        archived_payloads.append(dict(payload))
+        return f"art://ops/provider-raw-stream/{payload['attempt_id']}"
+
+    config = OpenAICompatProviderConfig(
+        **{
+            **_config().__dict__,
+            "malformed_stream_event_archiver": _archive,
+        }
+    )
+
     with pytest.raises(OpenAICompatProviderBadResponseError) as exc_info:
         invoke_openai_compat_response(
-            _config(),
+            config,
             _rendered_payload(),
-            transport=_stream_transport('{"type":"response.output_text.delta",'),
+            transport=_stream_transport(
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp_malformed_archive",
+                        "request_id": "req_malformed_archive",
+                    },
+                },
+                '{"type":"response.output_text.delta",',
+            ),
         )
 
     assert exc_info.value.failure_kind == "MALFORMED_STREAM_EVENT"
-    assert exc_info.value.failure_detail["response_error_type"] == "MalformedSSEJson"
-    assert "raw_event_length" in exc_info.value.failure_detail
+    assert exc_info.value.provider_attempt_count == 5
+    assert exc_info.value.failure_detail["raw_archive_ref"] == "art://ops/provider-raw-stream/provider-attempt-5"
+    assert exc_info.value.failure_detail["request_id"] == "req_malformed_archive"
+    assert exc_info.value.failure_detail["provider_response_id"] == "resp_malformed_archive"
+    assert exc_info.value.failure_detail["attempt_id"] == "provider-attempt-5"
+    assert exc_info.value.failure_detail["raw_byte_count"] == len('{"type":"response.output_text.delta",'.encode("utf-8"))
+    assert "Expecting property name" in str(exc_info.value.failure_detail["parse_error"])
+    assert len(archived_payloads) == 5
+    final_archive = archived_payloads[-1]
+    assert final_archive["request_id"] == "req_malformed_archive"
+    assert final_archive["provider_response_id"] == "resp_malformed_archive"
+    assert final_archive["attempt_id"] == "provider-attempt-5"
+    assert final_archive["provider"] == OpenAICompatProviderType.RESPONSES_STREAM.value
+    assert final_archive["model"] == "gpt-5.3-codex"
+    assert final_archive["raw_byte_count"] == len('{"type":"response.output_text.delta",'.encode("utf-8"))
+    assert final_archive["raw_event_text"] == '{"type":"response.output_text.delta",'
+    assert "Expecting property name" in str(final_archive["parse_error"])
+    assert exc_info.value.provider_events[-1].type == ProviderEventType.FAILED_TERMINAL
+    assert exc_info.value.provider_events[-1].error_category == "MALFORMED_STREAM_EVENT"
 
 
 def test_invoke_openai_compat_response_classifies_empty_assistant_text() -> None:
