@@ -377,22 +377,24 @@
 
 任务：
 1. 建立最小 Actor registry，并覆盖 enable/suspend/deactivate/replace 状态机；RoleTemplate 只能映射 capability，不能作为 runtime 执行键。
-2. 将派工输入收口为 required capabilities + actor eligibility；不得新增 role name -> write root 或 role name -> execution key 分支。
-3. 将 Assignment 与 Lease 分离：assignment 表示谁被选中，lease 表示当前执行窗口；二者事件、projection 和过期规则必须可独立测试。
-4. 修复或证明 `excluded_employee_ids` 有作用域，不会从旧 retry/rework 污染后续无关派工。
-5. no eligible actor 必须生成显式 action 或 incident，不能 silent stall。
-6. provider preferred/actual provider/model 必须在 actor assignment / execution attempt / result evidence 中完整记录，并与 provider smoke 字段一致。
-7. 更新 actor lifecycle、write-surface、provider contract 文档和 acceptance criteria。
-8. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
+2. replace 不能退化成简单新建 employee：旧 actor 被 `REPLACED` / `DEACTIVATED` / `SUSPENDED` 后不得继续 eligible，新 actor 只继承 capability/assignment 资格，不继承旧 lease。
+3. 将派工输入收口为 required capabilities + actor eligibility；不得新增 role name -> write root 或 role name -> execution key 分支。
+4. 将 Assignment 与 Lease 分离：assignment 表示谁被选中，lease 表示当前执行窗口；二者事件、projection 和过期规则必须可独立测试。
+5. 修复或证明 `excluded_employee_ids` 有作用域，不会从旧 retry/rework 污染后续无关派工。
+6. no eligible actor 必须生成显式 action 或 incident，不能 silent stall。
+7. provider preferred/actual provider/model 必须在 actor assignment / execution attempt / result evidence 中完整记录，并与 provider smoke 字段一致。
+8. 更新 actor lifecycle、write-surface、provider contract 文档和 acceptance criteria。
+9. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
 
 验证：
 - 单测覆盖 actor enable/suspend/deactivate/replace。
+- 单测覆盖 replace 后旧 actor 不再 eligible、新 actor 不继承旧 lease。
 - 单测覆盖 RoleTemplate 只映射 capability、不作为 runtime 执行键。
 - 单测覆盖 Assignment 与 Lease 分离及 lease 过期。
 - 单测覆盖 scoped `excluded_employee_ids`。
 - 单测覆盖 no eligible actor 显式 incident/action。
 - 单测覆盖 provider preferred/actual 记录完整。
-- grep 确认没有新增 role name -> write root / execution key 判断。
+- grep 确认没有保留或新增 role name -> write root / execution key 判断，尤其检查 runtime、scheduler、provider selection 路径。
 ```
 
 ---
@@ -414,19 +416,21 @@
 9. backend/tests/ 中 progression、graph、workflow autopilot、scheduler 相关测试
 
 任务：
-1. 定义并实现可独立测试的 `decide_next_actions(snapshot, policy)`。
-2. 为 `CREATE_TICKET`、`WAIT`、`REWORK`、`CLOSEOUT`、`INCIDENT`、`NO_ACTION` 输出稳定 reason code。
+1. 定义并实现可独立测试的 `decide_next_actions(snapshot, policy)`；输入只能是结构化 snapshot/policy，不得读取 DB、markdown 正文、provider raw transcript 或 freeform hard_constraints substring。
+2. 为 `CREATE_TICKET`、`WAIT`、`REWORK`、`CLOSEOUT`、`INCIDENT`、`NO_ACTION` 输出稳定 reason code、idempotency key、source graph version、affected node refs 和 expected state transition。
 3. Effective graph pointer 必须不受 orphan pending 干扰；CANCELLED/SUPERSEDED 节点不得参与 effective edges。
-4. 从最小场景迁移 closeout/fanout/rework 判断，旧路径只可作为兼容入口，不能继续承载业务判断。
-5. 删除 substring hint / hardcoded milestone fanout 前必须先补回归测试；会议/架构 gate 不得由字符串提示驱动。
-6. 更新 progression policy、provider late-event、refactor plan 和 acceptance criteria。
-7. 提交，message 建议：`refactor-policy: extract explicit progression decisions`。
+4. 从 controller/runtime/scheduler 迁移 closeout/fanout/rework 判断；旧路径只可作为 policy 调用入口或兼容壳，不能继续承载业务判断。
+5. hardcoded backlog milestone fanout 必须被 policy input / graph patch 替代；删除 substring hint / hardcoded milestone fanout 前必须先补回归测试；会议/架构 gate 不得由字符串提示驱动。
+6. 015 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 必须有 policy 回归测试或明确归入后续 replay 验证，不得遗漏。
+7. 更新 progression policy、provider late-event、refactor plan 和 acceptance criteria。
+8. 提交，message 建议：`refactor-policy: extract explicit progression decisions`。
 
 验证：
-- 相同 snapshot 输出稳定 action proposals。
-- 每个 action kind 都有 reason code 测试。
+- `decide_next_actions(snapshot, policy)` 纯函数测试通过；相同 snapshot + policy 输出稳定 action proposals。
+- `CREATE_TICKET`、`WAIT`、`REWORK`、`CLOSEOUT`、`INCIDENT`、`NO_ACTION` 六类 action 都有 reason code / idempotency key / source graph version 测试。
 - orphan pending 不阻断 graph complete。
 - CANCELLED/SUPERSEDED effective edges 测试通过。
+- scheduler 不再直接做 closeout/fanout/rework 业务判断，只调用 policy 或输出显式 incident/action。
 - grep 确认 substring hint / hardcoded milestone 不再驱动会议、架构 gate 或 backlog fanout。
 ```
 
@@ -450,21 +454,23 @@
 
 任务：
 1. 定义 `DeliverableContract`，能从 PRD acceptance criteria 编译 required capabilities、required source surfaces、required evidence 和 closeout obligations。
-2. Required source surfaces 必须包含路径、capability、evidence 映射；Evidence pack 必须可映射到 acceptance criteria。
+2. Required source surfaces 必须包含路径、capability、evidence 映射；Evidence pack 必须可映射到 acceptance criteria，且每条关键 acceptance 都能追溯到 source/test/check/git/closeout evidence。
 3. checker verdict 与 deliverable contract 解耦；`APPROVED_WITH_NOTES` 不得放行 blocking contract gap。
 4. rework target 必须指向能修复 blocking gap 的 upstream node，而不是默认回到 graph terminal 或 checker。
-5. closeout package 必须包含 contract version 和 final evidence table。
-6. superseded/placeholder/archive/unknown evidence 不得进入 final evidence set；placeholder source/evidence 不能通过 closeout。
-7. 更新 deliverable contract、write-surface、refactor plan 和 acceptance criteria。
-8. 提交，message 建议：`refactor-delivery: enforce deliverable contract closeout`。
+5. failed delivery report 只有在结构化 convergence policy 明确允许时才可放行；不能用 checker notes 或 graph terminal 代替 contract satisfaction。
+6. closeout package 必须包含 contract version 和 final evidence table；final evidence table 必须列出 acceptance criterion、evidence ref、producer ticket、artifact kind 和 legality status。
+7. superseded/placeholder/archive/unknown evidence 不得进入 final evidence set；placeholder source/evidence 不能通过 closeout。
+8. 更新 deliverable contract、write-surface、refactor plan 和 acceptance criteria。
+9. 提交，message 建议：`refactor-delivery: enforce deliverable contract closeout`。
 
 验证：
 - PRD acceptance -> DeliverableContract 编译单测。
 - Required source surfaces path/capability/evidence 映射单测。
-- Evidence pack -> acceptance criteria 映射单测。
+- Evidence pack -> acceptance criteria 映射单测，覆盖关键 acceptance 缺 evidence 的 fail-closed 场景。
 - `APPROVED_WITH_NOTES` blocking gap 回归。
+- failed delivery report 无结构化 convergence policy 时不得放行。
 - closeout package contract version/final evidence table 测试。
-- superseded/placeholder evidence 被拒绝。
+- superseded/placeholder/archive/unknown evidence 被拒绝。
 - 015 中 BR-040/BR-041 placeholder 不能通过。
 ```
 
@@ -485,19 +491,21 @@
 7. backend/tests/ 中 replay、projection、scheduler resume、materialized view 相关测试
 
 任务：
-1. 定义并测试 resume from event id。
-2. 定义并测试 resume from graph version。
-3. 定义并测试 resume from ticket id。
-4. 定义并测试 resume from incident id。
-5. 建立 projection checkpoint 策略，避免每次全量 JSON replay；记录 checkpoint version、event watermark 和 invalidation 规则。
-6. replay 后 doc/materialized view hash 必须可验证；不允许人工补写 projection/index 作为正常路径。
-7. 更新 replay/resume、progression、refactor plan 和 acceptance criteria。
-8. 提交，message 建议：`refactor-replay: add checkpointed resume path`。
+1. 定义并测试 resume from event id；恢复点必须包含 event cursor、projection version 和 replay watermark。
+2. 定义并测试 resume from graph version；恢复后 effective graph pointer 与同一事件集全量 replay 一致。
+3. 定义并测试 resume from ticket id；必须能定位 ticket terminal/in-flight 状态并恢复相关 runtime node view。
+4. 定义并测试 resume from incident id；必须保留 incident status、recovery action lineage 和 source ticket context。
+5. 建立 projection checkpoint 策略，避免每次全量 JSON replay；记录 checkpoint version、event watermark、schema version、invalidated_by 和 hash。
+6. replay 后 artifact/doc/materialized view hash 必须可验证；Round 10 可以先定义 hash contract 与 checkpoint 接口，若 document materializer 留给 Round 10B，必须留下 failing/xfail 标记或明确验收依赖。
+7. 证明正常路径不需要人工补写 projection/index；禁止通过手写 DB row、手工 event 注入或 projection repair 通过测试。
+8. 更新 replay/resume、progression、refactor plan 和 acceptance criteria。
+9. 提交，message 建议：`refactor-replay: add checkpointed resume path`。
 
 验证：
 - resume from event/version/ticket/incident 四类测试通过。
 - projection checkpoint 避免每次全量 JSON replay 的性能/行为测试通过。
-- replay 后 doc/materialized view hash 一致。
+- checkpoint invalidation 测试覆盖 schema/version/hash 不匹配。
+- replay 后 artifact hash 一致；doc/materialized view hash contract 有测试或由 Round 10B 补齐的明确验收链接。
 - 测试证明不需要人工补 projection/index。
 ```
 
@@ -518,17 +526,18 @@
 7. backend/tests/ 中 document/materialized view/replay 相关测试
 
 任务：
-1. 定义 event/process asset -> document view materializer 的输入、输出、hash 和版本规则。
-2. 文档视图不得依赖手工补写文件；必须能从 event log、process asset 和 artifact metadata 重新物化。
-3. replay 后 materialized document hash 必须稳定；缺失 artifact 或非法 process asset 必须 fail-closed 并输出诊断。
-4. 将 document materialization 验证接入 replay bundle/report。
+1. 定义 event/process asset -> document view materializer 的输入、输出、hash 和版本规则，并接入 Round 10 的 checkpoint/hash contract。
+2. 文档视图不得依赖手工补写文件；必须能从 event log、process asset、artifact metadata 和 artifact content 重新物化。
+3. replay 后 materialized document hash 必须稳定；缺失 artifact、非法 process asset、非法 evidence lineage 必须 fail-closed 并输出诊断。
+4. 将 document materialization 验证接入 replay bundle/report，报告必须列出 source event range、process asset refs、artifact refs 和 hash。
 5. 更新 target architecture、deliverable contract、acceptance criteria。
 6. 提交，message 建议：`refactor-replay: materialize document views from events`。
 
 验证：
-- document materializer 单测覆盖正常、缺失 artifact、非法 process asset。
-- replay 后 document view hash 一致。
+- document materializer 单测覆盖正常、缺失 artifact、非法 process asset、非法 evidence lineage。
+- replay 后 document view hash 与全量重物化一致。
 - 无人工文件补写即可重建 document view。
+- replay bundle/report 包含 document materialization hash、source refs 和诊断。
 ```
 
 ---
@@ -548,22 +557,23 @@
 7. D:\Projects\boardroom-os-replay 中 015 replay DB/artifacts/日志
 
 任务：
-1. 导入 015 replay DB/artifacts，不允许人工 DB/projection/event 注入。
+1. 导入 015 replay DB/artifacts，不允许人工 DB/projection/event 注入；导入步骤必须可重复、可脚本化，并记录输入路径、hash 和版本。
 2. 定位并重放关键 provider failure，验证新的 failure taxonomy、raw archive、late event guard 和 retry/recovery 边界。
 3. 重放 BR-032 auth contract mismatch，验证 contract gap 进入正确 incident/rework 路径。
 4. 重放 BR-040/BR-041 placeholder delivery，验证 placeholder source/evidence 被 deliverable contract 阻断。
-5. 重放 orphan pending 场景，验证不阻断 graph complete。
-6. 能生成 closeout，但必须满足 deliverable contract，不得绕过 final evidence table。
-7. 输出新的 replay audit report，并更新 current-state audit、acceptance criteria 和 refactor plan。
-8. 提交，message 建议：`test-replay: validate integration 015 without manual projection repair`。
+5. 重放 orphan pending 场景，验证不阻断 graph complete，且 CANCELLED/SUPERSEDED effective edges 不参与完成判断。
+6. 能生成 closeout，但必须满足 deliverable contract 和 final evidence table；禁止 manual closeout recovery 绕过 contract。
+7. replay audit report 必须区分 provider failure、runtime bug、product defect、contract gap 和 replay/import issue，并列出证据 refs、事件区间、checkpoint/hash。
+8. 更新 current-state audit、acceptance criteria 和 refactor plan。
+9. 提交，message 建议：`test-replay: validate integration 015 without manual projection repair`。
 
 验证：
-- 015 replay DB/artifacts 可导入。
+- 015 replay DB/artifacts 可无人工注入导入，重复导入结果稳定。
 - 关键 provider failure 可定位并重放。
 - BR-032、BR-040、BR-041 回归通过。
-- orphan pending 不阻断 graph complete。
-- closeout 必须经过 deliverable contract。
-- 输出 replay audit report。
+- orphan pending 不阻断 graph complete，CANCELLED/SUPERSEDED effective edges 不参与完成判断。
+- closeout 必须经过 deliverable contract 和 final evidence table。
+- 输出 replay audit report，且报告分类 provider/runtime/product/contract/replay issue。
 ```
 
 ---
@@ -582,25 +592,25 @@
 6. backend/tests/live/ 相关 live harness
 
 任务：
-1. 设计小而完整的后端-only PRD scenario。
-2. 先跑 provider soak，并把 provider noise / provider bad response / timeout / schema failure 与 runtime bug 区分记录。
-3. 再跑 live scenario，禁止人工 DB/projection/event 注入。
-4. 所有 source delivery 必须有非 placeholder source inventory。
-5. 所有关键 acceptance 必须有 evidence refs，并能映射到 deliverable contract。
-6. final closeout package 必须合法，包含 contract version 和 final evidence table。
-7. 必须可从中间 checkpoint resume。
-8. 最终报告必须区分 provider noise、runtime bug、product defect。
+1. 设计小而完整的后端-only PRD scenario，PRD acceptance 必须能编译为 DeliverableContract。
+2. 先跑 provider soak，并把 provider noise / provider bad response / timeout / schema failure 与 runtime bug 区分记录；soak 未过不得启动 clean run。
+3. 再跑 live scenario，禁止人工 DB/projection/event 注入，且运行日志必须记录所有自动 recovery/incident/action。
+4. 所有 source delivery 必须有非 placeholder source inventory，包含 path、artifact_ref、producer ticket、git/test evidence。
+5. 所有关键 acceptance 必须有 evidence refs，并能映射到 deliverable contract 和 final evidence table。
+6. final closeout package 必须合法，包含 contract version、final evidence table、source inventory summary 和 replay bundle ref。
+7. 必须可从中间 checkpoint resume；resume 后 closeout/evidence/hash 与 uninterrupted run 等价。
+8. 最终报告必须区分 provider noise、runtime bug、product defect、contract gap 和 operator/replay issue。
 9. 产出 closeout、evidence、replay bundle，并更新 acceptance criteria、refactor plan 和测试报告。
 10. 提交，message 建议：`test-live: complete backend-only autonomous runtime scenario`。
 
 验证：
-- provider soak 前置通过。
+- provider soak 前置通过，报告 first-token/idle/timeout/schema/malformed 分类。
 - live scenario zero manual intervention。
 - 所有 source delivery 有非 placeholder source inventory。
-- 所有关键 acceptance 有 evidence refs。
-- final closeout package 合法。
-- replay from checkpoint pass。
-- 最终报告区分 provider noise、runtime bug、product defect。
+- 所有关键 acceptance 有 evidence refs，并映射到 DeliverableContract。
+- final closeout package 合法，包含 contract version、final evidence table、source inventory summary。
+- replay from checkpoint pass，且 hash 与 uninterrupted run 等价。
+- 最终报告区分 provider noise、runtime bug、product defect、contract gap 和 operator/replay issue。
 - 工作树干净。
 ```
 
@@ -619,20 +629,22 @@
 5. 最新 backend-only live scenario report
 
 任务：
-1. 逐项核对总验收和 Phase 0-8 验收，标出证据文件、测试命令、commit id。
-2. 如有未勾项，只做最小补齐；不得扩大 scope 或跳过证据。
-3. 确认无人工 DB/projection/event 注入完成 replay/resume。
-4. 确认无 placeholder source/evidence 能通过 deliverable closeout。
-5. 确认 Provider streaming smoke 达到稳定性阈值。
-6. 确认 Runtime kernel 不硬编码 CEO、员工、角色模板或业务 milestone。
-7. 确认 Closeout 证明 PRD acceptance，而不是只证明 graph terminal。
-8. 确认文档视图可从 event/process asset 重新物化。
-9. 更新 acceptance criteria、refactor plan 和最终 handoff。
-10. 提交，message 建议：`refactor-acceptance: close autonomous runtime rebuild criteria`。
+1. 逐项核对总验收和 Phase 0-8 验收，标出证据文件、测试命令、commit id、报告路径和当前状态。
+2. 如有未勾项，只做最小补齐；不得扩大 scope、跳过证据或用“计划覆盖”冒充验收完成。
+3. 确认无人工 DB/projection/event 注入完成 replay/resume，并列出 replay/resume 命令和输入 hash。
+4. 确认无 placeholder source/evidence 能通过 deliverable closeout，并链接阻断测试和 replay/live 证据。
+5. 确认 Provider streaming smoke 达到稳定性阈值，并列出同一 API 配置、success rate、first token p95、idle gap p95、failure counts。
+6. 确认 Runtime kernel 不硬编码 CEO、员工、角色模板或业务 milestone；grep 结果必须覆盖 runtime、scheduler、controller、policy、ticket handlers。
+7. 确认 Closeout 证明 PRD acceptance，而不是只证明 graph terminal；每个 final evidence ref 必须能追溯到 DeliverableContract acceptance。
+8. 确认文档视图可从 event/process asset 重新物化，并列出 materialized view hash、source refs 和 replay report。
+9. 对 Phase 0-8 每个 checkbox 只在证据存在时勾选；缺证据保持未勾并写明 blocker。
+10. 更新 acceptance criteria、refactor plan 和最终 handoff。
+11. 提交，message 建议：`refactor-acceptance: close autonomous runtime rebuild criteria`。
 
 验证：
 - 全部相关 provider/actor/progression/deliverable/replay/live 测试通过。
-- acceptance criteria 每个勾选项都有证据链接或测试命令。
+- acceptance criteria 每个勾选项都有证据链接或测试命令；无证据项不得勾选。
+- final handoff 包含 commit id、报告路径、测试命令、风险和未完成项。
 - 工作树干净。
 ```
 
