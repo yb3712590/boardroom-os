@@ -181,7 +181,7 @@ SUPPORTED_RUNTIME_ROLE_PROFILES = {
     "cto_primary",
 }
 OPENAI_COMPAT_PROVIDER_ID = "prov_openai_compat"
-PROVIDER_MAX_ATTEMPTS = 10
+PROVIDER_MAX_ATTEMPTS = 1
 PROVIDER_RETRYABLE_FAILURE_KINDS = {
     "PROVIDER_RATE_LIMITED",
     "UPSTREAM_UNAVAILABLE",
@@ -2500,19 +2500,9 @@ def _execute_openai_compat_provider(
             )
 
         try:
-            rendered_payload = (
-                execution_package.rendered_execution_payload
-                if attempt_no == 1
-                else append_openai_compat_retry_feedback(
-                    execution_package.rendered_execution_payload,
-                    attempt_no=attempt_no,
-                    failure_kind=last_failure_kind,
-                    failure_message=last_failure_message,
-                )
-            )
             provider_result = _invoke_openai_compat_with_optional_observer(
                 config,
-                rendered_payload,
+                execution_package.rendered_execution_payload,
                 audit_observer=_audit_observer,
             )
             resolved_payload = _resolve_provider_result_payload(execution_package, provider_result)
@@ -2572,6 +2562,8 @@ def _execute_openai_compat_provider(
                     "first_token_elapsed_sec": getattr(provider_result, "first_token_elapsed_sec", None),
                     "last_token_elapsed_sec": getattr(provider_result, "last_token_elapsed_sec", None),
                     "finish_state": getattr(provider_result, "finish_state", "COMPLETED"),
+                    "provider_attempt_count": getattr(provider_result, "provider_attempt_count", attempt_no),
+                    "provider_event_count": len(getattr(provider_result, "provider_events", ()) or ()),
                 },
             )
             return result
@@ -2638,6 +2630,7 @@ def _execute_openai_compat_provider(
                         "parse_stage": last_failure_detail.get("parse_stage"),
                         "repair_steps": list(last_failure_detail.get("repair_steps") or []),
                         "fingerprint": last_failure_detail.get("fingerprint"),
+                        "provider_attempt_count": last_failure_detail.get("provider_attempt_count", attempt_no),
                     },
                 )
                 _record_if_enabled(
@@ -2673,6 +2666,7 @@ def _execute_openai_compat_provider(
                     "parse_stage": last_failure_detail.get("parse_stage"),
                     "repair_steps": list(last_failure_detail.get("repair_steps") or []),
                     "fingerprint": last_failure_detail.get("fingerprint"),
+                    "provider_attempt_count": last_failure_detail.get("provider_attempt_count", attempt_no),
                 },
             )
             return RuntimeExecutionResult(

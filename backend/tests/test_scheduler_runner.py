@@ -38,6 +38,7 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderResult,
     OpenAICompatProviderUnavailableError,
 )
+from app.core.provider_protocol import ProviderEvent, ProviderEventType
 from app.core.runtime_provider_config import (
     CLAUDE_CODE_PROVIDER_ID,
     OPENAI_COMPAT_PROVIDER_ID,
@@ -4217,7 +4218,9 @@ def test_runtime_provider_rate_limited_response_fails_ticket_without_opening_pro
             failure_detail={
                 "provider_status_code": 429,
                 "provider_id": "prov_openai_compat",
+                "provider_attempt_count": 5,
             },
+            provider_attempt_count=5,
         )
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_rate_limited)
@@ -4233,13 +4236,13 @@ def test_runtime_provider_rate_limited_response_fails_ticket_without_opening_pro
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "PROVIDER_RATE_LIMITED"
-    assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert sleep_calls == []
     assert len(open_provider_incidents) == 1
     assert open_provider_incidents[0]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert open_provider_incidents[0]["payload"]["latest_failure_kind"] == "PROVIDER_RATE_LIMITED"
 
 
-def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_opening_provider_incident(
+def test_runtime_provider_unavailable_failure_consumes_provider_final_failure_without_outer_retries(
     client,
     set_ticket_time,
     monkeypatch,
@@ -4289,7 +4292,9 @@ def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_open
             failure_detail={
                 "provider_id": "prov_openai_compat",
                 "provider_transport_error": "ReadTimeout",
+                "provider_attempt_count": 5,
             },
+            provider_attempt_count=5,
         )
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_unavailable)
@@ -4305,29 +4310,110 @@ def test_runtime_provider_unavailable_failure_exhausts_ten_attempts_without_open
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "UPSTREAM_UNAVAILABLE"
-    assert attempt_count["value"] == 10
-    assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert attempt_count["value"] == 1
+    assert sleep_calls == []
     assert len(open_provider_incidents) == 1
     assert open_provider_incidents[0]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert open_provider_incidents[0]["payload"]["latest_failure_kind"] == "UPSTREAM_UNAVAILABLE"
     provider_events = _provider_audit_events(repository, "tkt_runner_provider_retry_exhausted")
-    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_STARTED") == 10
-    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_FINISHED") == 10
-    assert [event["event_type"] for event in provider_events].count("PROVIDER_RETRY_SCHEDULED") == 9
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_STARTED") == 1
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_FINISHED") == 1
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_RETRY_SCHEDULED") == 0
     first_attempt = provider_events[0]["payload"]
     assert first_attempt["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert first_attempt["actual_model"] == "gpt-5.3-codex"
     assert first_attempt["attempt_no"] == 1
-    assert first_attempt["max_attempts"] == 10
+    assert first_attempt["max_attempts"] == 1
     assert first_attempt["retry_backoff_schedule_sec"] == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
     assert first_attempt["request_total_timeout_sec"] is None
-    first_retry = next(event for event in provider_events if event["event_type"] == "PROVIDER_RETRY_SCHEDULED")
-    assert first_retry["payload"]["retry_delay_sec"] == 1.0
     last_finish = [event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"][-1]
-    assert last_finish["payload"]["attempt_no"] == 10
+    assert last_finish["payload"]["attempt_no"] == 1
     assert last_finish["payload"]["status"] == "FAILED"
     assert last_finish["payload"]["failure_kind"] == "UPSTREAM_UNAVAILABLE"
+    assert last_finish["payload"]["provider_attempt_count"] == 5
 
+
+
+def test_runtime_provider_consumes_protocol_final_failure_without_outer_retries(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _project_init(client, "Provider protocol final failure")
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_protocol_final_failure", provider_id="prov_openai_compat")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_protocol_final_failure",
+            node_id="node_runner_provider_protocol_final_failure",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": "tkt_runner_provider_protocol_final_failure",
+            "node_id": "node_runner_provider_protocol_final_failure",
+            "leased_by": "emp_frontend_protocol_final_failure",
+            "lease_timeout_sec": 600,
+            "idempotency_key": "ticket-lease:wf_runner_provider_protocol_final_failure:tkt_runner_provider_protocol_final_failure",
+        },
+    )
+
+    provider_calls = {"value": 0}
+    sleep_calls: list[float] = []
+
+    def _raise_protocol_final_failure(config, rendered_payload, *, audit_observer=None):
+        provider_calls["value"] += 1
+        raise OpenAICompatProviderUnavailableError(
+            failure_kind="UPSTREAM_UNAVAILABLE",
+            message="Provider failed after five internal attempts.",
+            failure_detail={
+                "provider_id": "prov_openai_compat",
+                "provider_transport_error": "HTTPStatusError",
+                "provider_attempt_count": 5,
+            },
+            provider_attempt_count=5,
+            provider_events=(
+                ProviderEvent(
+                    type=ProviderEventType.FAILED_TERMINAL,
+                    provider_name="openai_responses_stream",
+                    model="gpt-5.3-codex",
+                    request_id="req_final_failure",
+                    attempt_id="provider-attempt-5",
+                    monotonic_ts=1.0,
+                    error_category="UPSTREAM_UNAVAILABLE",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_protocol_final_failure)
+    monkeypatch.setattr(runtime_module, "_sleep", sleep_calls.append)
+
+    outcomes = run_leased_ticket_runtime(repository)
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_protocol_final_failure")
+    provider_events = _provider_audit_events(repository, "tkt_runner_provider_protocol_final_failure")
+
+    assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_protocol_final_failure"]
+    assert ticket_projection["status"] == "FAILED"
+    assert provider_calls["value"] == 1
+    assert sleep_calls == []
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_ATTEMPT_STARTED") == 1
+    assert [event["event_type"] for event in provider_events].count("PROVIDER_RETRY_SCHEDULED") == 0
+    finished = [event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"][-1]
+    assert finished["payload"]["attempt_no"] == 1
+    assert finished["payload"]["provider_attempt_count"] == 5
+    assert finished["payload"]["failure_kind"] == "UPSTREAM_UNAVAILABLE"
 
 def test_runtime_provider_malformed_json_retries_before_ticket_failure(
     client,
@@ -4376,7 +4462,9 @@ def test_runtime_provider_malformed_json_retries_before_ticket_failure(
             failure_detail={
                 "parse_stage": "repair_parse",
                 "parse_error": "unterminated string",
+                "provider_attempt_count": 5,
             },
+            provider_attempt_count=5,
         )
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _raise_malformed_json)
@@ -4391,8 +4479,8 @@ def test_runtime_provider_malformed_json_retries_before_ticket_failure(
     assert ticket_projection["status"] == "FAILED"
     assert terminal_event is not None
     assert terminal_event["payload"]["failure_kind"] == "PROVIDER_MALFORMED_JSON"
-    assert attempt_count["value"] == 10
-    assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert attempt_count["value"] == 1
+    assert sleep_calls == []
 
 
 def test_runtime_provider_uses_first_schema_valid_payload_from_multiple_json_objects(
@@ -4662,19 +4750,10 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
 
     def _invoke_retry_then_success(config, rendered_payload):
         attempt_count["value"] += 1
-        if attempt_count["value"] < 10:
-            raise OpenAICompatProviderUnavailableError(
-                failure_kind="UPSTREAM_UNAVAILABLE",
-                message="Provider returned 503.",
-                failure_detail={
-                    "provider_id": "prov_openai_compat",
-                    "provider_status_code": 503,
-                },
-            )
         return OpenAICompatProviderResult(
             output_text=json.dumps(
                 {
-                    "summary": "Provider succeeded after retries.",
+                    "summary": "Provider succeeded after internal retries.",
                     "recommended_option_id": "option_a",
                     "options": [
                         {
@@ -4687,6 +4766,7 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
                 }
             ),
             response_id="resp_retry_success",
+            provider_attempt_count=5,
         )
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _invoke_retry_then_success)
@@ -4697,14 +4777,15 @@ def test_runtime_provider_retries_then_succeeds(client, set_ticket_time, monkeyp
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_retry"]
     assert ticket_projection["status"] == "COMPLETED"
-    assert attempt_count["value"] == 10
-    assert sleep_calls == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert attempt_count["value"] == 1
+    assert sleep_calls == []
     assert repository.list_open_provider_incidents() == []
     provider_events = _provider_audit_events(repository, "tkt_runner_provider_retry")
     finish_events = [
         event for event in provider_events if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"
     ]
-    assert finish_events[-1]["payload"]["attempt_no"] == 10
+    assert finish_events[-1]["payload"]["attempt_no"] == 1
+    assert finish_events[-1]["payload"]["provider_attempt_count"] == 5
     assert finish_events[-1]["payload"]["status"] == "COMPLETED"
     assert finish_events[-1]["payload"]["response_id"] == "resp_retry_success"
 

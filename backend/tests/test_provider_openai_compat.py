@@ -7,7 +7,7 @@ from datetime import datetime
 
 import httpx
 import pytest
-
+from tests.live import openai_compat_reliability_suite as smoke_suite
 from app.contracts.runtime import (
     RenderedExecutionMessage,
     RenderedExecutionPayload,
@@ -18,9 +18,12 @@ from app.core.provider_openai_compat import (
     OpenAICompatProviderAuthError,
     OpenAICompatProviderBadResponseError,
     OpenAICompatProviderConfig,
+    OpenAICompatProviderResult,
     OpenAICompatProviderType,
     OpenAICompatProviderRateLimitedError,
     OpenAICompatProviderUnavailableError,
+    ProviderEvent,
+    ProviderEventType,
     invoke_openai_compat_response,
     list_openai_compat_models,
     load_openai_compat_result_payload,
@@ -185,6 +188,237 @@ def test_invoke_openai_compat_response_uses_streaming_text_request_without_provi
     assert request["model"] == "gpt-5.3-codex"
     assert "text" not in request
     assert request["stream"] is True
+
+
+
+def test_streaming_provider_result_exposes_standard_provider_events() -> None:
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=_stream_transport(
+            {"type": "response.created", "response": {"id": "resp_provider_events", "request_id": "req_provider_events"}},
+            {"type": "response.output_text.delta", "delta": '{"summary"'},
+            {"type": "response.output_text.delta", "delta": ':"standard events"}'},
+            {"type": "response.completed", "response": {"id": "resp_provider_events", "request_id": "req_provider_events"}},
+        ),
+    )
+
+    provider_events = result.provider_events
+    event_types = [event.type for event in provider_events]
+    assert event_types == [
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FIRST_TOKEN,
+        ProviderEventType.CONTENT_DELTA,
+        ProviderEventType.CONTENT_DELTA,
+        ProviderEventType.SCHEMA_CANDIDATE,
+        ProviderEventType.COMPLETED,
+    ]
+    for event in provider_events:
+        assert isinstance(event, ProviderEvent)
+        assert event.provider_name == OpenAICompatProviderType.RESPONSES_STREAM.value
+        assert event.model == "gpt-5.3-codex"
+        assert event.request_id
+        assert event.attempt_id == "provider-attempt-1"
+        assert event.monotonic_ts >= 0
+        assert isinstance(event.raw_byte_count, int)
+        assert isinstance(event.text_char_count, int)
+        assert event.error_category is None
+    first_token = provider_events[2]
+    assert first_token.type == ProviderEventType.FIRST_TOKEN
+    assert first_token.text_char_count == len('{"summary"')
+    assert first_token.raw_byte_count == len('{"summary"'.encode("utf-8"))
+    assert provider_events[-1].request_id == "req_provider_events"
+
+
+def test_streaming_provider_result_exposes_standard_failed_event() -> None:
+    try:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=_stream_transport(
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "id": "resp_standard_failed",
+                        "request_id": "req_standard_failed",
+                        "error": {"type": "server_error", "code": "upstream_error", "message": "boom"},
+                    },
+                }
+            ),
+        )
+    except OpenAICompatProviderUnavailableError as exc:
+        provider_events = exc.provider_events
+        provider_attempt_count = exc.provider_attempt_count
+    else:
+        raise AssertionError("expected provider failure")
+
+    assert [event.type for event in provider_events] == [
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FAILED_RETRYABLE,
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FAILED_RETRYABLE,
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FAILED_RETRYABLE,
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FAILED_RETRYABLE,
+        ProviderEventType.REQUEST_STARTED,
+        ProviderEventType.CONNECTED,
+        ProviderEventType.FAILED_TERMINAL,
+    ]
+    failed = provider_events[-1]
+    assert failed.provider_name == OpenAICompatProviderType.RESPONSES_STREAM.value
+    assert failed.model == "gpt-5.3-codex"
+    assert failed.request_id == "req_standard_failed"
+    assert failed.attempt_id == "provider-attempt-5"
+    assert failed.error_category == "UPSTREAM_UNAVAILABLE"
+    assert provider_attempt_count == 5
+
+
+def test_provider_invocation_retries_retryable_failures_inside_provider_protocol() -> None:
+    attempts = {"value": 0}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        attempts["value"] += 1
+        if attempts["value"] < 5:
+            return httpx.Response(503, json={"error": {"message": "temporarily unavailable"}})
+        return _sse_response(
+            {"type": "response.output_text.delta", "delta": '{"summary":"retried internally"}'},
+            {"type": "response.completed", "response": {"id": "resp_after_internal_retry", "request_id": "req_after_internal_retry"}},
+        )
+
+    result = invoke_openai_compat_response(
+        _config(),
+        _rendered_payload(),
+        transport=httpx.MockTransport(_handler),
+    )
+
+    assert attempts["value"] == 5
+    assert result.response_id == "resp_after_internal_retry"
+    assert result.provider_attempt_count == 5
+    assert [event.type for event in result.provider_events].count(ProviderEventType.REQUEST_STARTED) == 5
+    assert [event.type for event in result.provider_events].count(ProviderEventType.FAILED_RETRYABLE) == 4
+    assert result.provider_events[-1].type == ProviderEventType.COMPLETED
+
+
+def test_provider_smoke_attempt_derives_metrics_from_standard_provider_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_events = (
+        ProviderEvent(
+            type=ProviderEventType.REQUEST_STARTED,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=10.0,
+        ),
+        ProviderEvent(
+            type=ProviderEventType.CONNECTED,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=10.2,
+        ),
+        ProviderEvent(
+            type=ProviderEventType.FIRST_TOKEN,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=10.5,
+            raw_byte_count=2,
+            text_char_count=2,
+        ),
+        ProviderEvent(
+            type=ProviderEventType.CONTENT_DELTA,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=10.5,
+            raw_byte_count=2,
+            text_char_count=2,
+        ),
+        ProviderEvent(
+            type=ProviderEventType.CONTENT_DELTA,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=11.25,
+            raw_byte_count=28,
+            text_char_count=28,
+        ),
+        ProviderEvent(
+            type=ProviderEventType.COMPLETED,
+            provider_name="openai_responses_stream",
+            model="gpt-5.3-codex",
+            request_id="req_smoke_events",
+            attempt_id="provider-attempt-1",
+            monotonic_ts=11.5,
+            raw_byte_count=30,
+            text_char_count=30,
+        ),
+    )
+
+    def _fake_invoke(config, rendered_payload, *, audit_observer=None):
+        return OpenAICompatProviderResult(
+            output_text='{"summary":"smoke from events"}',
+            response_id="resp_smoke_events",
+            request_id="req_smoke_events",
+            text_deltas=(),
+            first_token_elapsed_sec=None,
+            max_stream_idle_gap_sec=None,
+            raw_text_length=0,
+            provider_events=provider_events,
+            provider_attempt_count=1,
+        )
+
+    monkeypatch.setattr(smoke_suite, "invoke_openai_compat_response", _fake_invoke)
+    result = smoke_suite._run_smoke_attempt(
+        identity=smoke_suite.ProviderIdentity(
+            preferred_provider_id="prov_openai_compat",
+            preferred_model="gpt-5.3-codex",
+            actual_provider_id="prov_openai_compat",
+            actual_model="gpt-5.3-codex",
+        ),
+        config=_config(),
+        prompt=smoke_suite.SmokePrompt(prompt_id="small", description="small", task_prompt="Return JSON."),
+        ordinal=1,
+    )
+
+    assert result["status"] == "PASSED"
+    assert result["first_token_elapsed_sec"] == 0.5
+    assert result["max_stream_idle_gap_sec"] == 0.75
+    assert result["stream_byte_count"] == 30
+    assert result["stream_text_char_count"] == 30
+    assert result["failure_category"] is None
+    assert [event["type"] for event in result["provider_events"]] == [event.type.value for event in provider_events]
+
+
+def test_provider_invocation_fails_after_five_internal_attempts() -> None:
+    attempts = {"value": 0}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        attempts["value"] += 1
+        return httpx.Response(503, json={"error": {"message": "still unavailable"}})
+
+    with pytest.raises(OpenAICompatProviderUnavailableError) as exc_info:
+        invoke_openai_compat_response(
+            _config(),
+            _rendered_payload(),
+            transport=httpx.MockTransport(_handler),
+        )
+
+    assert attempts["value"] == 5
+    assert exc_info.value.failure_kind == "UPSTREAM_UNAVAILABLE"
+    assert exc_info.value.failure_detail["provider_attempt_count"] == 5
+    assert [event.type for event in exc_info.value.provider_events].count(ProviderEventType.REQUEST_STARTED) == 5
+    assert exc_info.value.provider_events[-1].type == ProviderEventType.FAILED_TERMINAL
 
 
 def test_invoke_openai_compat_response_uses_official_sdk_create_non_streaming_when_configured() -> None:
@@ -624,7 +858,7 @@ def test_invoke_openai_compat_response_records_stream_idle_gap(
 def test_invoke_openai_compat_response_enforces_request_total_timeout_for_streaming(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monotonic_values = iter([0.0, 0.0, 0.5, 2.0])
+    monotonic_values = iter([0.0, 2.0] * 5)
 
     def _fake_monotonic() -> float:
         try:
@@ -656,6 +890,7 @@ def test_invoke_openai_compat_response_enforces_request_total_timeout_for_stream
 
     assert exc_info.value.failure_kind == "REQUEST_TOTAL_TIMEOUT"
     assert exc_info.value.failure_detail["timeout_phase"] == "request_total"
+    assert exc_info.value.provider_attempt_count == 5
 
 
 def test_invoke_openai_compat_response_raises_first_token_timeout_before_any_stream_output() -> None:

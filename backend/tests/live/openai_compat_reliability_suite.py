@@ -28,6 +28,8 @@ from app.core.output_schemas import (  # noqa: E402
 from app.core.provider_openai_compat import (  # noqa: E402
     OpenAICompatProviderConfig,
     OpenAICompatProviderType,
+    ProviderEvent,
+    ProviderEventType,
     invoke_openai_compat_response,
     resolve_openai_compat_result_payload,
 )
@@ -209,6 +211,62 @@ def _build_rendered_payload(*, prompt: SmokePrompt, ordinal: int, long_request: 
     )
 
 
+
+def _provider_event_report(events: tuple[ProviderEvent, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": event.type.value,
+            "provider_name": event.provider_name,
+            "model": event.model,
+            "request_id": event.request_id,
+            "attempt_id": event.attempt_id,
+            "monotonic_ts": event.monotonic_ts,
+            "raw_byte_count": event.raw_byte_count,
+            "text_char_count": event.text_char_count,
+            "error_category": event.error_category,
+            "response_id": event.response_id,
+            "metadata": dict(event.metadata),
+        }
+        for event in events
+    ]
+
+
+def _provider_event_metrics(events: tuple[ProviderEvent, ...]) -> dict[str, Any]:
+    request_started = next((event for event in events if event.type == ProviderEventType.REQUEST_STARTED), None)
+    first_token = next((event for event in events if event.type == ProviderEventType.FIRST_TOKEN), None)
+    content_events = [event for event in events if event.type == ProviderEventType.CONTENT_DELTA]
+    failed_event = next(
+        (
+            event
+            for event in reversed(events)
+            if event.type in {ProviderEventType.FAILED_RETRYABLE, ProviderEventType.FAILED_TERMINAL}
+        ),
+        None,
+    )
+    idle_gap_sec = None
+    if len(content_events) >= 2:
+        idle_gap_sec = round(
+            max(
+                content_events[index].monotonic_ts - content_events[index - 1].monotonic_ts
+                for index in range(1, len(content_events))
+            ),
+            3,
+        )
+    return {
+        "first_token_elapsed_sec": (
+            round(first_token.monotonic_ts - request_started.monotonic_ts, 3)
+            if first_token is not None and request_started is not None
+            else None
+        ),
+        "max_stream_idle_gap_sec": idle_gap_sec,
+        "stream_text_char_count": sum(event.text_char_count for event in content_events),
+        "stream_byte_count": sum(event.raw_byte_count for event in content_events),
+        "failure_category": failed_event.error_category if failed_event is not None else None,
+        "provider_events": _provider_event_report(events),
+    }
+
+
+
 def _classify_exception(exc: Exception) -> tuple[str, dict[str, Any]]:
     failure_kind = str(getattr(exc, "failure_kind", type(exc).__name__))
     detail = dict(getattr(exc, "failure_detail", {}) or {})
@@ -257,36 +315,45 @@ def _run_smoke_attempt(
             payload_resolver=prompt.payload_resolver,
         )
         duration_sec = round(time.monotonic() - started_at, 3)
+        event_metrics = _provider_event_metrics(tuple(provider_result.provider_events))
         result_entry.update(
             {
                 "status": "PASSED",
                 "response_id": provider_result.response_id,
                 "request_id": provider_result.request_id,
-                "first_token_elapsed_sec": provider_result.first_token_elapsed_sec,
-                "max_stream_idle_gap_sec": provider_result.max_stream_idle_gap_sec,
+                "first_token_elapsed_sec": event_metrics["first_token_elapsed_sec"],
+                "max_stream_idle_gap_sec": event_metrics["max_stream_idle_gap_sec"],
                 "total_duration_sec": duration_sec,
                 "raw_text_length": provider_result.raw_text_length,
                 "text_delta_count": len(provider_result.text_deltas),
-                "stream_text_char_count": sum(len(delta) for delta in provider_result.text_deltas),
-                "stream_byte_count": sum(len(delta.encode("utf-8")) for delta in provider_result.text_deltas),
+                "stream_text_char_count": event_metrics["stream_text_char_count"],
+                "stream_byte_count": event_metrics["stream_byte_count"],
+                "failure_category": event_metrics["failure_category"],
                 "json_candidate_count": resolved.candidate_count,
                 "selected_candidate_index": resolved.selected_candidate_index,
                 "ambiguous_candidate_count": resolved.ambiguous_candidate_count,
                 "repair_steps": list(resolved.repair_steps),
                 "schema_validation_error": resolved.schema_validation_error,
+                "provider_events": event_metrics["provider_events"],
+                "provider_attempt_count": provider_result.provider_attempt_count,
                 "audit_events": audit_events,
             }
         )
     except Exception as exc:
         duration_sec = round(time.monotonic() - started_at, 3)
         failure_kind, detail = _classify_exception(exc)
+        failure_events = tuple(getattr(exc, "provider_events", ()) or ())
+        event_metrics = _provider_event_metrics(failure_events)
         result_entry.update(
             {
                 "status": "FAILED",
                 "failure_kind": failure_kind,
+                "failure_category": event_metrics["failure_category"] or failure_kind,
                 "failure_message": str(exc),
                 "failure_detail": detail,
                 "total_duration_sec": duration_sec,
+                "provider_events": event_metrics["provider_events"],
+                "provider_attempt_count": getattr(exc, "provider_attempt_count", None),
                 "audit_events": audit_events,
             }
         )

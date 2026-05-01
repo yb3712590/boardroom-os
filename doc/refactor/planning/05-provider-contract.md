@@ -25,18 +25,25 @@ Provider adapter 不负责：
 
 ## ProviderEvent
 
+OpenAI-compatible streaming provider 已切到标准事件协议。Provider 模块内部边界是：
+
+```text
+ProviderRequest -> Iterator[ProviderEvent] -> ProviderResult | ProviderFailure
+```
+
+当前实现只覆盖 OpenAI Responses streaming；暂不抽象 Anthropic/Gemini。ticket runtime 调 provider 时必须消费这个协议聚合出的 `ProviderResult` / `ProviderFailure`，而不是直接依赖 provider-specific audit dict。
+
 | Event | 含义 |
 |---|---|
-| `request_started` | 请求已发出，记录 provider request id |
+| `request_started` | provider 内部一次请求 attempt 已发出 |
 | `connected` | HTTP/SSE 连接已建立 |
 | `first_token` | 收到第一段 assistant 内容或等价事件 |
 | `content_delta` | assistant 文本增量 |
-| `tool_delta` | 工具调用增量，若支持 |
 | `heartbeat` | provider 或 adapter 心跳 |
 | `schema_candidate` | 可解析的结构化候选 |
 | `completed` | 正常完成 |
-| `failed_retryable` | 可重试失败 |
-| `failed_terminal` | 不可重试失败 |
+| `failed_retryable` | provider 内部可重试失败 |
+| `failed_terminal` | provider 内部最终失败或不可重试失败 |
 
 所有 event 必须包含：
 
@@ -80,10 +87,10 @@ Provider adapter 不负责：
 
 Retry 分两层：
 
-1. Provider attempt retry：同一 ticket、同一 execution package、同一 input。
-2. Ticket recovery retry：重新编译、换 actor、换 provider 或 patch graph。
+1. Provider 内部 retry：OpenAI Responses streaming provider 采用 Codex-like 体验，最多 5 次标准内部 attempt，同一 execution input 下只为拿到正确 request/response；每次内部 attempt 都产生标准 `ProviderEvent`。
+2. Runtime / ticket recovery retry：provider 5 次内部 attempt 全部失败后只返回最终 `ProviderFailure`；runtime 之后才按既有异常处理、incident、failover 或 recovery 机制处理。
 
-Provider adapter 不能创建 ticket。Ticket recovery 不能伪造 provider success。
+Provider adapter 不能创建 ticket。Ticket recovery 不能伪造 provider success。Provider 内部 retry 不额外写 projection，不创建 workflow/ticket，不做多余审计动作。
 
 ## Late Event 规则
 
@@ -102,7 +109,7 @@ Provider adapter 不能创建 ticket。Ticket recovery 不能伪造 provider suc
 - [x] 默认 20 次短 streaming 请求，覆盖 small / medium / schema prompt，并按 `success rate >= 95%` 判定。
 - [x] 可选 `--include-long-request` 覆盖预计可能超过 300s 的长请求，只放宽 `request_total_timeout_sec`。
 - [x] 报告 `preferred_provider_id/preferred_model` 与 `actual_provider_id/actual_model`。
-- [x] 报告 first token p95、stream idle gap p95、failure counts、response/request id、stream text counters 和 JSON/schema resolver 信息。
+- [x] 报告 first token p95、stream idle gap p95、failure counts、response/request id、stream byte/text counters、failure category、provider attempt count、标准 ProviderEvent 列表和 JSON/schema resolver 信息。
 - [ ] late provider event 不污染 current ticket projection 属于 runtime/ticket recovery 边界，仍在后续 Phase 2/Phase 4 验收。
 
 每个 provider 配置必须有独立 smoke:

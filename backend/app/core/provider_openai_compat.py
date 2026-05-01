@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from time import monotonic as _provider_event_monotonic
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,12 +18,15 @@ from app.contracts.runtime import (
     RenderedExecutionPayloadMeta,
     RenderedExecutionPayloadSummary,
 )
+from app.core.provider_protocol import ProviderEvent, ProviderEventType
 
 
 ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 ProviderAuditObserver = Callable[[str, dict[str, object]], None]
 OpenAIClientFactory = Callable[["OpenAICompatProviderConfig"], object]
 PayloadResolver = Callable[[dict[str, Any]], dict[str, Any]]
+OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS = 5
+OPENAI_COMPAT_INTERNAL_RETRY_DELAY_SEC = 0.0
 
 
 class OpenAICompatProviderType(StrEnum):
@@ -73,6 +77,8 @@ class OpenAICompatProviderResult:
     last_token_elapsed_sec: float | None = None
     max_stream_idle_gap_sec: float | None = None
     events_summary: dict[str, object] = field(default_factory=dict)
+    provider_events: tuple[ProviderEvent, ...] = ()
+    provider_attempt_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -93,10 +99,20 @@ class OpenAICompatConnectivityResult:
 
 
 class OpenAICompatProviderError(RuntimeError):
-    def __init__(self, *, failure_kind: str, message: str, failure_detail: dict[str, object]) -> None:
+    def __init__(
+        self,
+        *,
+        failure_kind: str,
+        message: str,
+        failure_detail: dict[str, object],
+        provider_events: tuple[ProviderEvent, ...] = (),
+        provider_attempt_count: int = 1,
+    ) -> None:
         super().__init__(message)
         self.failure_kind = failure_kind
         self.failure_detail = failure_detail
+        self.provider_events = provider_events
+        self.provider_attempt_count = provider_attempt_count
 
 
 class OpenAICompatProviderRateLimitedError(OpenAICompatProviderError):
@@ -467,14 +483,138 @@ class _SSEDecoder:
         return event
 
 
+
+class _ProviderEventRecorder:
+    def __init__(self, config: OpenAICompatProviderConfig, *, attempt_id: str) -> None:
+        self.config = config
+        self.attempt_id = attempt_id
+        self.request_id = f"req:{attempt_id}"
+        self.response_id: str | None = None
+        self.raw_byte_total = 0
+        self.text_char_total = 0
+        self.events: list[ProviderEvent] = []
+
+    def note_ids(self, *, request_id: str | None = None, response_id: str | None = None) -> None:
+        if request_id:
+            self.request_id = request_id
+        if response_id:
+            self.response_id = response_id
+
+    def emit(
+        self,
+        event_type: ProviderEventType,
+        *,
+        raw_byte_count: int = 0,
+        text_char_count: int = 0,
+        error_category: str | None = None,
+        request_id: str | None = None,
+        response_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        self.note_ids(request_id=request_id, response_id=response_id)
+        self.events.append(
+            ProviderEvent(
+                type=event_type,
+                provider_name=self.config.provider_type.value,
+                model=self.config.model,
+                request_id=self.request_id,
+                attempt_id=self.attempt_id,
+                monotonic_ts=_provider_event_monotonic(),
+                raw_byte_count=int(raw_byte_count),
+                text_char_count=int(text_char_count),
+                error_category=error_category,
+                response_id=self.response_id,
+                metadata=dict(metadata or {}),
+            )
+        )
+
+    def emit_text_delta(self, delta: str, *, first_token: bool, request_id: str | None, response_id: str | None) -> None:
+        raw_byte_count = len(delta.encode("utf-8"))
+        text_char_count = len(delta)
+        self.raw_byte_total += raw_byte_count
+        self.text_char_total += text_char_count
+        if first_token:
+            self.emit(
+                ProviderEventType.FIRST_TOKEN,
+                raw_byte_count=raw_byte_count,
+                text_char_count=text_char_count,
+                request_id=request_id,
+                response_id=response_id,
+            )
+        self.emit(
+            ProviderEventType.CONTENT_DELTA,
+            raw_byte_count=raw_byte_count,
+            text_char_count=text_char_count,
+            request_id=request_id,
+            response_id=response_id,
+        )
+
+    def emit_failure(self, failure_kind: str, *, retryable: bool, request_id: str | None = None, response_id: str | None = None) -> None:
+        self.emit(
+            ProviderEventType.FAILED_RETRYABLE if retryable else ProviderEventType.FAILED_TERMINAL,
+            error_category=failure_kind,
+            request_id=request_id,
+            response_id=response_id,
+        )
+
+    def emit_schema_candidate(self, *, response_id: str | None = None, request_id: str | None = None) -> None:
+        self.emit(
+            ProviderEventType.SCHEMA_CANDIDATE,
+            raw_byte_count=self.raw_byte_total,
+            text_char_count=self.text_char_total,
+            request_id=request_id,
+            response_id=response_id,
+        )
+
+    def emit_completed(self, *, response_id: str | None = None, request_id: str | None = None) -> None:
+        self.emit(
+            ProviderEventType.COMPLETED,
+            raw_byte_count=self.raw_byte_total,
+            text_char_count=self.text_char_total,
+            request_id=request_id,
+            response_id=response_id,
+        )
+
+
+def _provider_failure_is_retryable(failure_kind: str) -> bool:
+    return failure_kind in {
+        "PROVIDER_RATE_LIMITED",
+        "UPSTREAM_UNAVAILABLE",
+        "FIRST_TOKEN_TIMEOUT",
+        "STREAM_IDLE_TIMEOUT",
+        "REQUEST_TOTAL_TIMEOUT",
+        "PROVIDER_MALFORMED_JSON",
+        "MALFORMED_STREAM_EVENT",
+        "NO_JSON_OBJECT",
+        "SCHEMA_VALIDATION_FAILED",
+        "CONNECT_TIMEOUT",
+    }
+
+
+def _attach_provider_error_context(
+    exc: OpenAICompatProviderError,
+    *,
+    provider_events: tuple[ProviderEvent, ...],
+    provider_attempt_count: int,
+) -> OpenAICompatProviderError:
+    exc.provider_events = provider_events
+    exc.provider_attempt_count = provider_attempt_count
+    exc.failure_detail = {
+        **dict(exc.failure_detail),
+        "provider_attempt_count": provider_attempt_count,
+    }
+    return exc
+
 class _ResponsesStreamAccumulator:
     def __init__(
         self,
         *,
         config: OpenAICompatProviderConfig,
+        event_recorder: _ProviderEventRecorder,
         audit_observer: ProviderAuditObserver | None = None,
     ) -> None:
         self.config = config
+        self.event_recorder = event_recorder
         self.audit_observer = audit_observer
         self.response_id: str | None = None
         self.request_id: str | None = None
@@ -528,6 +668,7 @@ class _ResponsesStreamAccumulator:
         self.response_id = self.response_id or _extract_response_id(event)
         event_request_id = _extract_request_id(event)
         self.request_id = self.request_id or event_request_id
+        self.event_recorder.note_ids(request_id=event_request_id, response_id=self.response_id)
         self.events.append(
             {
                 "type": event_type,
@@ -542,6 +683,13 @@ class _ResponsesStreamAccumulator:
                 self.text_deltas.append(delta)
             if delta:
                 output_mark = time.monotonic()
+                is_first_token = self.last_output_at is None
+                self.event_recorder.emit_text_delta(
+                    delta,
+                    first_token=is_first_token,
+                    request_id=event_request_id,
+                    response_id=self.response_id,
+                )
                 if self.last_output_at is None:
                     self.last_output_at = output_mark
                     self.first_token_elapsed_sec = round(output_mark - self.stream_started_at, 3)
@@ -563,7 +711,16 @@ class _ResponsesStreamAccumulator:
                     self.last_output_at = output_mark
             return None
         if event_type in {"response.failed", "error"}:
-            _raise_from_response_error(event, response_id=self.response_id)
+            try:
+                _raise_from_response_error(event, response_id=self.response_id)
+            except OpenAICompatProviderError as exc:
+                self.event_recorder.emit_failure(
+                    exc.failure_kind,
+                    retryable=_provider_failure_is_retryable(exc.failure_kind),
+                    request_id=event_request_id,
+                    response_id=self.response_id,
+                )
+                raise
         if event_type == "response.completed":
             if self.audit_observer is not None:
                 self.audit_observer(
@@ -575,6 +732,8 @@ class _ResponsesStreamAccumulator:
                         "provider_type": self.config.provider_type.value,
                     },
                 )
+            self.event_recorder.emit_schema_candidate(response_id=self.response_id, request_id=event_request_id)
+            self.event_recorder.emit_completed(response_id=self.response_id, request_id=event_request_id)
             return self.build_result(
                 _value_from_object(event, "response"),
                 finish_state="COMPLETED",
@@ -607,6 +766,7 @@ class _ResponsesStreamAccumulator:
                 ),
                 "max_stream_idle_gap_sec": self.max_stream_idle_gap_sec,
                 "events_summary": events_summary,
+                "provider_events": tuple(self.event_recorder.events),
             }
         )
 
@@ -1322,9 +1482,10 @@ def _extract_legacy_streaming_responses_output(
     stream: object,
     *,
     config: OpenAICompatProviderConfig,
+    event_recorder: _ProviderEventRecorder,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
-    accumulator = _ResponsesStreamAccumulator(config=config, audit_observer=audit_observer)
+    accumulator = _ResponsesStreamAccumulator(config=config, event_recorder=event_recorder, audit_observer=audit_observer)
     try:
         for event in stream:
             event_payload = _response_payload(event)
@@ -1414,9 +1575,10 @@ def _extract_streaming_responses_output(
     response: httpx.Response,
     *,
     config: OpenAICompatProviderConfig,
+    event_recorder: _ProviderEventRecorder,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
-    accumulator = _ResponsesStreamAccumulator(config=config, audit_observer=audit_observer)
+    accumulator = _ResponsesStreamAccumulator(config=config, event_recorder=event_recorder, audit_observer=audit_observer)
     decoder = _SSEDecoder()
     try:
         for line in response.iter_lines():
@@ -1498,6 +1660,95 @@ def _map_sdk_exception(exc: BaseException) -> OpenAICompatProviderError:
     )
 
 
+def _invoke_streaming_responses_once(
+    config: OpenAICompatProviderConfig,
+    rendered_payload: RenderedExecutionPayload,
+    *,
+    attempt_no: int,
+    transport: httpx.BaseTransport | None = None,
+    client_factory: OpenAIClientFactory | None = None,
+    audit_observer: ProviderAuditObserver | None = None,
+) -> OpenAICompatProviderResult:
+    event_recorder = _ProviderEventRecorder(config, attempt_id=f"provider-attempt-{attempt_no}")
+    event_recorder.emit(ProviderEventType.REQUEST_STARTED)
+    try:
+        if client_factory is not None and transport is None:
+            client = _client_for(config, transport=transport, client_factory=client_factory)
+            stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
+            event_recorder.emit(ProviderEventType.CONNECTED)
+            enter = getattr(stream, "__enter__", None)
+            exit_ = getattr(stream, "__exit__", None)
+            if callable(enter) and callable(exit_):
+                with stream:
+                    return _extract_legacy_streaming_responses_output(
+                        stream,
+                        config=config,
+                        event_recorder=event_recorder,
+                        audit_observer=audit_observer,
+                    )
+            return _extract_legacy_streaming_responses_output(
+                stream,
+                config=config,
+                event_recorder=event_recorder,
+                audit_observer=audit_observer,
+            )
+
+        client = _ResponsesHttpClient(config, transport=transport)
+        with client.stream(_responses_request_payload(config, rendered_payload, stream=True)) as response:
+            event_recorder.emit(ProviderEventType.CONNECTED)
+            if response.status_code >= 400:
+                _map_provider_error_response(response, streaming=True)
+            return _extract_streaming_responses_output(
+                response,
+                config=config,
+                event_recorder=event_recorder,
+                audit_observer=audit_observer,
+            )
+    except OpenAICompatProviderError as exc:
+        retryable = _provider_failure_is_retryable(exc.failure_kind)
+        if not event_recorder.events or event_recorder.events[-1].error_category != exc.failure_kind:
+            event_recorder.emit_failure(
+                exc.failure_kind,
+                retryable=retryable,
+                request_id=str(exc.failure_detail.get("request_id") or "") or None,
+                response_id=str(exc.failure_detail.get("provider_response_id") or "") or None,
+            )
+        _attach_provider_error_context(
+            exc,
+            provider_events=tuple(event_recorder.events),
+            provider_attempt_count=attempt_no,
+        )
+        raise
+    except httpx.TransportError as exc:
+        mapped = _map_stream_transport_error(exc, accumulator=None)
+        event_recorder.emit_failure(
+            mapped.failure_kind,
+            retryable=_provider_failure_is_retryable(mapped.failure_kind),
+            request_id=str(mapped.failure_detail.get("request_id") or "") or None,
+            response_id=str(mapped.failure_detail.get("provider_response_id") or "") or None,
+        )
+        _attach_provider_error_context(
+            mapped,
+            provider_events=tuple(event_recorder.events),
+            provider_attempt_count=attempt_no,
+        )
+        raise mapped from exc
+    except BaseException as exc:
+        mapped = _map_sdk_exception(exc)
+        event_recorder.emit_failure(
+            mapped.failure_kind,
+            retryable=_provider_failure_is_retryable(mapped.failure_kind),
+            request_id=str(mapped.failure_detail.get("request_id") or "") or None,
+            response_id=str(mapped.failure_detail.get("provider_response_id") or "") or None,
+        )
+        _attach_provider_error_context(
+            mapped,
+            provider_events=tuple(event_recorder.events),
+            provider_attempt_count=attempt_no,
+        )
+        raise mapped from exc
+
+
 def _invoke_streaming_responses(
     config: OpenAICompatProviderConfig,
     rendered_payload: RenderedExecutionPayload,
@@ -1506,6 +1757,8 @@ def _invoke_streaming_responses(
     client_factory: OpenAIClientFactory | None = None,
     audit_observer: ProviderAuditObserver | None = None,
 ) -> OpenAICompatProviderResult:
+    provider_events: list[ProviderEvent] = []
+    last_error: OpenAICompatProviderError | None = None
     if audit_observer is not None:
         audit_observer(
             "request_started",
@@ -1516,75 +1769,69 @@ def _invoke_streaming_responses(
                 "stream_transport": "httpx_sse",
             },
         )
-    try:
-        if client_factory is not None and transport is None:
-            client = _client_for(config, transport=transport, client_factory=client_factory)
-            stream = client.responses.create(**_responses_request_payload(config, rendered_payload, stream=True))
-            enter = getattr(stream, "__enter__", None)
-            exit_ = getattr(stream, "__exit__", None)
-            if callable(enter) and callable(exit_):
-                with stream:
-                    return _extract_legacy_streaming_responses_output(
-                        stream,
-                        config=config,
-                        audit_observer=audit_observer,
-                    )
-            return _extract_legacy_streaming_responses_output(
-                stream,
-                config=config,
+    for attempt_no in range(1, OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS + 1):
+        try:
+            result = _invoke_streaming_responses_once(
+                config,
+                rendered_payload,
+                attempt_no=attempt_no,
+                transport=transport,
+                client_factory=client_factory,
                 audit_observer=audit_observer,
             )
-
-        client = _ResponsesHttpClient(config, transport=transport)
-        with client.stream(_responses_request_payload(config, rendered_payload, stream=True)) as response:
-            if response.status_code >= 400:
-                _map_provider_error_response(response, streaming=True)
-            return _extract_streaming_responses_output(
-                response,
-                config=config,
-                audit_observer=audit_observer,
+            provider_events.extend(result.provider_events)
+            return OpenAICompatProviderResult(
+                **{
+                    **result.__dict__,
+                    "provider_events": tuple(provider_events),
+                    "provider_attempt_count": attempt_no,
+                }
             )
-    except OpenAICompatProviderError as exc:
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": exc.failure_kind,
-                    **dict(exc.failure_detail),
-                    "streaming": True,
-                    "provider_type": config.provider_type.value,
-                    "stream_transport": "httpx_sse",
-                },
-            )
-        raise
-    except httpx.TransportError as exc:
-        mapped = _map_stream_transport_error(exc, accumulator=None)
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": mapped.failure_kind,
-                    **dict(mapped.failure_detail),
-                    "streaming": True,
-                    "provider_type": config.provider_type.value,
-                    "stream_transport": "httpx_sse",
-                },
-            )
-        raise mapped from exc
-    except BaseException as exc:
-        mapped = _map_sdk_exception(exc)
-        if audit_observer is not None:
-            audit_observer(
-                "request_failed",
-                {
-                    "failure_kind": mapped.failure_kind,
-                    **dict(mapped.failure_detail),
-                    "streaming": True,
-                    "provider_type": config.provider_type.value,
-                    "stream_transport": "httpx_sse",
-                },
-            )
-        raise mapped from exc
+        except OpenAICompatProviderError as exc:
+            provider_events.extend(exc.provider_events)
+            last_error = exc
+            if audit_observer is not None and attempt_no >= OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS:
+                audit_observer(
+                    "request_failed",
+                    {
+                        "failure_kind": exc.failure_kind,
+                        **dict(exc.failure_detail),
+                        "streaming": True,
+                        "provider_type": config.provider_type.value,
+                        "stream_transport": "httpx_sse",
+                        "provider_attempt_no": attempt_no,
+                    },
+                )
+            if not _provider_failure_is_retryable(exc.failure_kind) or attempt_no >= OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS:
+                if provider_events:
+                    terminal = provider_events[-1]
+                    if terminal.type == ProviderEventType.FAILED_RETRYABLE:
+                        provider_events[-1] = ProviderEvent(
+                            type=ProviderEventType.FAILED_TERMINAL,
+                            provider_name=terminal.provider_name,
+                            model=terminal.model,
+                            request_id=terminal.request_id,
+                            attempt_id=terminal.attempt_id,
+                            monotonic_ts=terminal.monotonic_ts,
+                            raw_byte_count=terminal.raw_byte_count,
+                            text_char_count=terminal.text_char_count,
+                            error_category=terminal.error_category,
+                            response_id=terminal.response_id,
+                            metadata=terminal.metadata,
+                        )
+                raise _attach_provider_error_context(
+                    exc,
+                    provider_events=tuple(provider_events),
+                    provider_attempt_count=attempt_no,
+                )
+            if OPENAI_COMPAT_INTERNAL_RETRY_DELAY_SEC > 0:
+                time.sleep(OPENAI_COMPAT_INTERNAL_RETRY_DELAY_SEC)
+    assert last_error is not None
+    raise _attach_provider_error_context(
+        last_error,
+        provider_events=tuple(provider_events),
+        provider_attempt_count=OPENAI_COMPAT_INTERNAL_MAX_ATTEMPTS,
+    )
 
 
 def _invoke_non_streaming_responses(

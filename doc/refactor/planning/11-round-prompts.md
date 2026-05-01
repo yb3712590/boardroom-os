@@ -20,6 +20,8 @@
 - Round 2：整理文档入口的最小版本。
 - Round 3：仓库瘦身与目录重组。
 - Round 4：Backend 废弃代码审计与安全删除。
+- Round 5：Directory / Artifact / Write-surface contract 实施。
+- Round 6：Provider-only streaming smoke。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -30,7 +32,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 5：Directory / Artifact / Write-surface contract 实施** 开始。Round 5 只实现 Phase 1 目录、产物、write-set 和 closeout evidence 合法性 contract，不开始 provider、actor lifecycle 或 progression policy 重构。
+下一轮新会话应从 **Round 6B：ProviderEvent 标准事件接口** 开始。Round 6B/6C/6D 补齐 Phase 2 剩余 provider 验收后，再进入 Round 7 Actor / Role lifecycle。
 
 ---
 
@@ -357,29 +359,38 @@
 ## Round 7：Actor / Role lifecycle 实施
 
 ```text
-目标：让派工从 role name 转向 capability。
+目标：让 runtime 执行身份从 role template 迁移到 actor/capability/assignment/lease 模型，覆盖 Phase 3 全部验收项。
 
 必读：
 1. doc/refactor/planning/06-actor-role-lifecycle.md
 2. doc/refactor/planning/04-write-surface-policy.md
-3. doc/refactor/planning/09-refactor-plan.md
-4. doc/refactor/planning/10-refactor-acceptance-criteria.md
-5. backend/app/core/workflow_controller.py
-6. backend/app/core/projections.py
-7. backend/app/core/ticket_handlers.py
+3. doc/refactor/planning/05-provider-contract.md
+4. doc/refactor/planning/09-refactor-plan.md
+5. doc/refactor/planning/10-refactor-acceptance-criteria.md
+6. backend/app/core/workflow_controller.py
+7. backend/app/core/projections.py
+8. backend/app/core/ticket_handlers.py
+9. backend/app/core/runtime_provider_config.py
+10. backend/tests/ 中 actor、assignment、lease、provider selection 相关测试
 
 任务：
-1. 找到 role_profile_ref 作为执行键的路径。
-2. 建立 capability mapping 的最小模型。
-3. 给 excluded_employee_ids 增加作用域设计或测试。
-4. no eligible actor 必须显式 incident/action。
-5. 更新 actor lifecycle 和 write-surface 文档。
-6. 更新 acceptance criteria。
-7. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
+1. 建立最小 Actor registry，并覆盖 enable/suspend/deactivate/replace 状态机；RoleTemplate 只能映射 capability，不能作为 runtime 执行键。
+2. 将派工输入收口为 required capabilities + actor eligibility；不得新增 role name -> write root 或 role name -> execution key 分支。
+3. 将 Assignment 与 Lease 分离：assignment 表示谁被选中，lease 表示当前执行窗口；二者事件、projection 和过期规则必须可独立测试。
+4. 修复或证明 `excluded_employee_ids` 有作用域，不会从旧 retry/rework 污染后续无关派工。
+5. no eligible actor 必须生成显式 action 或 incident，不能 silent stall。
+6. provider preferred/actual provider/model 必须在 actor assignment / execution attempt / result evidence 中完整记录，并与 provider smoke 字段一致。
+7. 更新 actor lifecycle、write-surface、provider contract 文档和 acceptance criteria。
+8. 提交，message 建议：`refactor-actors: introduce capability-driven assignment`。
 
 验证：
-- 新增/更新测试覆盖 no eligible actor。
-- 不再新增 role name -> write root 逻辑。
+- 单测覆盖 actor enable/suspend/deactivate/replace。
+- 单测覆盖 RoleTemplate 只映射 capability、不作为 runtime 执行键。
+- 单测覆盖 Assignment 与 Lease 分离及 lease 过期。
+- 单测覆盖 scoped `excluded_employee_ids`。
+- 单测覆盖 no eligible actor 显式 incident/action。
+- 单测覆盖 provider preferred/actual 记录完整。
+- grep 确认没有新增 role name -> write root / execution key 判断。
 ```
 
 ---
@@ -387,7 +398,7 @@
 ## Round 8：Progression policy engine 抽离
 
 ```text
-目标：把推进规则从 controller/runtime 中抽为显式 policy。
+目标：把推进规则从 controller/runtime 中抽为显式 policy，覆盖 Phase 4 全部验收项。
 
 必读：
 1. doc/refactor/planning/07-progression-policy.md
@@ -397,18 +408,24 @@
 5. backend/app/core/workflow_controller.py
 6. backend/app/core/workflow_autopilot.py
 7. backend/app/core/ceo_proposer.py
+8. backend/app/core/projections.py
+9. backend/tests/ 中 progression、graph、workflow autopilot、scheduler 相关测试
 
 任务：
-1. 定义 decide_next_actions(snapshot, policy)。
-2. 从最小场景开始迁移 closeout/fanout/rework 判断。
-3. 保留旧路径直到测试覆盖。
-4. 删除 substring/hardcoded milestone 前先补测试。
-5. 更新 progression policy 文档和 acceptance criteria。
-6. 提交，message 建议：`refactor-policy: extract explicit progression decisions`。
+1. 定义并实现可独立测试的 `decide_next_actions(snapshot, policy)`。
+2. 为 `CREATE_TICKET`、`WAIT`、`REWORK`、`CLOSEOUT`、`INCIDENT`、`NO_ACTION` 输出稳定 reason code。
+3. Effective graph pointer 必须不受 orphan pending 干扰；CANCELLED/SUPERSEDED 节点不得参与 effective edges。
+4. 从最小场景迁移 closeout/fanout/rework 判断，旧路径只可作为兼容入口，不能继续承载业务判断。
+5. 删除 substring hint / hardcoded milestone fanout 前必须先补回归测试；会议/架构 gate 不得由字符串提示驱动。
+6. 更新 progression policy、provider late-event、refactor plan 和 acceptance criteria。
+7. 提交，message 建议：`refactor-policy: extract explicit progression decisions`。
 
 验证：
 - 相同 snapshot 输出稳定 action proposals。
+- 每个 action kind 都有 reason code 测试。
 - orphan pending 不阻断 graph complete。
+- CANCELLED/SUPERSEDED effective edges 测试通过。
+- grep 确认 substring hint / hardcoded milestone 不再驱动会议、架构 gate 或 backlog fanout。
 ```
 
 ---
@@ -416,7 +433,7 @@
 ## Round 9：Deliverable contract + checker/rework
 
 ```text
-目标：closeout 证明 PRD 满足，而不是 graph 完成。
+目标：closeout 证明 PRD acceptance 满足，而不是只证明 graph terminal，覆盖 Phase 5 全部验收项。
 
 必读：
 1. doc/refactor/planning/08-deliverable-contract.md
@@ -426,18 +443,27 @@
 5. backend/app/core/workflow_completion.py
 6. backend/app/core/ticket_handlers.py
 7. backend/app/core/runtime.py
+8. backend/app/core/output_schemas.py
+9. backend/tests/ 中 deliverable、checker、rework、closeout、artifact legality 相关测试
 
 任务：
-1. 定义 DeliverableContract 结构。
-2. 加 placeholder detection。
-3. 改 checker/rework target 选择。
-4. closeout final refs 只允许 current final evidence。
-5. 更新 deliverable contract 文档和 acceptance criteria。
-6. 提交，message 建议：`refactor-delivery: enforce deliverable contract closeout`。
+1. 定义 `DeliverableContract`，能从 PRD acceptance criteria 编译 required capabilities、required source surfaces、required evidence 和 closeout obligations。
+2. Required source surfaces 必须包含路径、capability、evidence 映射；Evidence pack 必须可映射到 acceptance criteria。
+3. checker verdict 与 deliverable contract 解耦；`APPROVED_WITH_NOTES` 不得放行 blocking contract gap。
+4. rework target 必须指向能修复 blocking gap 的 upstream node，而不是默认回到 graph terminal 或 checker。
+5. closeout package 必须包含 contract version 和 final evidence table。
+6. superseded/placeholder/archive/unknown evidence 不得进入 final evidence set；placeholder source/evidence 不能通过 closeout。
+7. 更新 deliverable contract、write-surface、refactor plan 和 acceptance criteria。
+8. 提交，message 建议：`refactor-delivery: enforce deliverable contract closeout`。
 
 验证：
+- PRD acceptance -> DeliverableContract 编译单测。
+- Required source surfaces path/capability/evidence 映射单测。
+- Evidence pack -> acceptance criteria 映射单测。
+- `APPROVED_WITH_NOTES` blocking gap 回归。
+- closeout package contract version/final evidence table 测试。
+- superseded/placeholder evidence 被拒绝。
 - 015 中 BR-040/BR-041 placeholder 不能通过。
-- APPROVED_WITH_NOTES 不放行 blocker。
 ```
 
 ---
@@ -445,26 +471,62 @@
 ## Round 10：Replay / resume / checkpoint
 
 ```text
-目标：replay/resume 一等化。
+目标：replay/resume 一等化，覆盖 Phase 6 的 resume/checkpoint/materialized view 验收项。
 
 必读：
 1. doc/refactor/planning/10-refactor-acceptance-criteria.md
 2. doc/refactor/planning/07-progression-policy.md
-3. backend/app/core/projections.py
-4. backend/app/core/reducer.py
-5. backend/app/scheduler_runner.py
+3. doc/refactor/planning/08-deliverable-contract.md
+4. backend/app/core/projections.py
+5. backend/app/core/reducer.py
+6. backend/app/scheduler_runner.py
+7. backend/tests/ 中 replay、projection、scheduler resume、materialized view 相关测试
 
 任务：
-1. 定义 resume from event/version/ticket/incident。
-2. 建立 projection checkpoint 策略。
-3. 避免每次全量 JSON replay。
-4. 写 replay consistency tests。
-5. 更新 refactor plan 和 acceptance criteria。
-6. 提交，message 建议：`refactor-replay: add checkpointed resume path`。
+1. 定义并测试 resume from event id。
+2. 定义并测试 resume from graph version。
+3. 定义并测试 resume from ticket id。
+4. 定义并测试 resume from incident id。
+5. 建立 projection checkpoint 策略，避免每次全量 JSON replay；记录 checkpoint version、event watermark 和 invalidation 规则。
+6. replay 后 doc/materialized view hash 必须可验证；不允许人工补写 projection/index 作为正常路径。
+7. 更新 replay/resume、progression、refactor plan 和 acceptance criteria。
+8. 提交，message 建议：`refactor-replay: add checkpointed resume path`。
 
 验证：
-- 不需要人工补 projection。
-- replay 后 materialized view hash 一致。
+- resume from event/version/ticket/incident 四类测试通过。
+- projection checkpoint 避免每次全量 JSON replay 的性能/行为测试通过。
+- replay 后 doc/materialized view hash 一致。
+- 测试证明不需要人工补 projection/index。
+```
+
+---
+
+## Round 10B：Document materialization from events/process assets
+
+```text
+目标：补齐总验收中的“文档视图可从 event/process asset 重新物化”，并把它接入 replay/resume 验证。
+
+必读：
+1. doc/refactor/planning/02-target-architecture.md
+2. doc/refactor/planning/08-deliverable-contract.md
+3. doc/refactor/planning/10-refactor-acceptance-criteria.md
+4. backend/app/core/artifact_store.py
+5. backend/app/core/projections.py
+6. backend/app/core/reducer.py
+7. backend/tests/ 中 document/materialized view/replay 相关测试
+
+任务：
+1. 定义 event/process asset -> document view materializer 的输入、输出、hash 和版本规则。
+2. 文档视图不得依赖手工补写文件；必须能从 event log、process asset 和 artifact metadata 重新物化。
+3. replay 后 materialized document hash 必须稳定；缺失 artifact 或非法 process asset 必须 fail-closed 并输出诊断。
+4. 将 document materialization 验证接入 replay bundle/report。
+5. 更新 target architecture、deliverable contract、acceptance criteria。
+6. 提交，message 建议：`refactor-replay: materialize document views from events`。
+
+验证：
+- document materializer 单测覆盖正常、缺失 artifact、非法 process asset。
+- replay 后 document view hash 一致。
+- 无人工文件补写即可重建 document view。
 ```
 
 ---
@@ -472,25 +534,34 @@
 ## Round 11：015 replay 包验证
 
 ```text
-目标：用 D:\Projects\boardroom-os-replay 验证新规则。
+目标：用 D:\Projects\boardroom-os-replay 验证新规则，覆盖 Phase 7 全部验收项。
 
 必读：
 1. doc/refactor/planning/01-current-state-audit.md
-2. doc/refactor/planning/08-deliverable-contract.md
-3. doc/refactor/planning/10-refactor-acceptance-criteria.md
-4. doc/tests/intergration-test-015-20260429-final.md
+2. doc/refactor/planning/05-provider-contract.md
+3. doc/refactor/planning/07-progression-policy.md
+4. doc/refactor/planning/08-deliverable-contract.md
+5. doc/refactor/planning/10-refactor-acceptance-criteria.md
+6. doc/tests/intergration-test-015-20260429-final.md
+7. D:\Projects\boardroom-os-replay 中 015 replay DB/artifacts/日志
 
 任务：
-1. 导入 015 replay 包。
-2. 重放关键 provider/rework/closeout 路径。
-3. 验证 placeholder、orphan pending、manual closeout recovery 都被新规则处理。
-4. 输出 replay audit report。
-5. 更新 current-state audit、acceptance criteria 和 refactor plan。
-6. 提交，message 建议：`test-replay: validate integration 015 without manual projection repair`。
+1. 导入 015 replay DB/artifacts，不允许人工 DB/projection/event 注入。
+2. 定位并重放关键 provider failure，验证新的 failure taxonomy、raw archive、late event guard 和 retry/recovery 边界。
+3. 重放 BR-032 auth contract mismatch，验证 contract gap 进入正确 incident/rework 路径。
+4. 重放 BR-040/BR-041 placeholder delivery，验证 placeholder source/evidence 被 deliverable contract 阻断。
+5. 重放 orphan pending 场景，验证不阻断 graph complete。
+6. 能生成 closeout，但必须满足 deliverable contract，不得绕过 final evidence table。
+7. 输出新的 replay audit report，并更新 current-state audit、acceptance criteria 和 refactor plan。
+8. 提交，message 建议：`test-replay: validate integration 015 without manual projection repair`。
 
 验证：
-- 无人工 DB/projection 注入。
+- 015 replay DB/artifacts 可导入。
+- 关键 provider failure 可定位并重放。
+- BR-032、BR-040、BR-041 回归通过。
+- orphan pending 不阻断 graph complete。
 - closeout 必须经过 deliverable contract。
+- 输出 replay audit report。
 ```
 
 ---
@@ -498,27 +569,68 @@
 ## Round 12：后端-only live scenario clean run
 
 ```text
-目标：证明新 backend runtime 可以 clean run。此时 frontend 已删除，不再作为 live 成功条件。
+目标：证明新 backend runtime 可以 clean run，覆盖 Phase 8 全部验收项。此时 frontend 已删除，不再作为 live 成功条件。
 
 必读：
 1. doc/refactor/planning/09-refactor-plan.md
 2. doc/refactor/planning/10-refactor-acceptance-criteria.md
 3. doc/refactor/planning/05-provider-contract.md
-4. backend/data/live-tests/ 或当前 live config 目录
+4. doc/refactor/planning/08-deliverable-contract.md
+5. backend/data/live-tests/ 或当前 live config 目录
+6. backend/tests/live/ 相关 live harness
 
 任务：
 1. 设计小而完整的后端-only PRD scenario。
-2. 先跑 provider soak。
-3. 再跑 live scenario。
-4. 禁止人工 DB/projection/event 注入。
-5. 产出 closeout、evidence、replay bundle。
-6. 更新 acceptance criteria、refactor plan 和测试报告。
-7. 提交，message 建议：`test-live: complete backend-only autonomous runtime scenario`。
+2. 先跑 provider soak，并把 provider noise / provider bad response / timeout / schema failure 与 runtime bug 区分记录。
+3. 再跑 live scenario，禁止人工 DB/projection/event 注入。
+4. 所有 source delivery 必须有非 placeholder source inventory。
+5. 所有关键 acceptance 必须有 evidence refs，并能映射到 deliverable contract。
+6. final closeout package 必须合法，包含 contract version 和 final evidence table。
+7. 必须可从中间 checkpoint resume。
+8. 最终报告必须区分 provider noise、runtime bug、product defect。
+9. 产出 closeout、evidence、replay bundle，并更新 acceptance criteria、refactor plan 和测试报告。
+10. 提交，message 建议：`test-live: complete backend-only autonomous runtime scenario`。
 
 验证：
-- final deliverable contract pass。
+- provider soak 前置通过。
+- live scenario zero manual intervention。
+- 所有 source delivery 有非 placeholder source inventory。
+- 所有关键 acceptance 有 evidence refs。
+- final closeout package 合法。
 - replay from checkpoint pass。
-- provider failure attribution clear。
+- 最终报告区分 provider noise、runtime bug、product defect。
+- 工作树干净。
+```
+
+---
+
+## Round 13：总验收收口
+
+```text
+目标：对照 `10-refactor-acceptance-criteria.md` 做最终总验收收口，只修验收缺口，不再引入新架构范围。
+
+必读：
+1. doc/refactor/planning/09-refactor-plan.md
+2. doc/refactor/planning/10-refactor-acceptance-criteria.md
+3. doc/refactor/planning/11-round-prompts.md
+4. 最新 replay audit report
+5. 最新 backend-only live scenario report
+
+任务：
+1. 逐项核对总验收和 Phase 0-8 验收，标出证据文件、测试命令、commit id。
+2. 如有未勾项，只做最小补齐；不得扩大 scope 或跳过证据。
+3. 确认无人工 DB/projection/event 注入完成 replay/resume。
+4. 确认无 placeholder source/evidence 能通过 deliverable closeout。
+5. 确认 Provider streaming smoke 达到稳定性阈值。
+6. 确认 Runtime kernel 不硬编码 CEO、员工、角色模板或业务 milestone。
+7. 确认 Closeout 证明 PRD acceptance，而不是只证明 graph terminal。
+8. 确认文档视图可从 event/process asset 重新物化。
+9. 更新 acceptance criteria、refactor plan 和最终 handoff。
+10. 提交，message 建议：`refactor-acceptance: close autonomous runtime rebuild criteria`。
+
+验证：
+- 全部相关 provider/actor/progression/deliverable/replay/live 测试通过。
+- acceptance criteria 每个勾选项都有证据链接或测试命令。
 - 工作树干净。
 ```
 

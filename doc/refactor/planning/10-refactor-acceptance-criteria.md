@@ -35,7 +35,7 @@
 
 ## Phase 2：Provider adapter 与 streaming soak
 
-- [ ] Provider adapter 输出标准 `ProviderEvent`。
+- [x] Provider adapter 输出标准 `ProviderEvent`，OpenAI Responses streaming 已通过 `ProviderRequest -> ProviderEvent -> ProviderResult/ProviderFailure` 聚合并接入 ticket provider 调用层。
 - [x] first-token timeout、stream-idle timeout、request-total timeout、ticket lease timeout 被区分。
 - [ ] malformed SSE 有 raw archive 和 retryable 分类；当前 provider adapter 已分类为 `MALFORMED_STREAM_EVENT` 并记录 raw event metadata。
 - [x] empty assistant text 被分类为 provider bad response。
