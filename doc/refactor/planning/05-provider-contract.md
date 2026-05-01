@@ -98,10 +98,12 @@ Malformed SSE raw archive 属于 provider-owned operational diagnostics：archiv
 
 如果旧 ticket 已 timed out 或被 replacement supersede：
 
-- late provider heartbeat 可以归档；
-- late provider completed 不能覆盖 current graph pointer；
-- late output 不能生成 completed ticket；
-- 如需利用 late output，必须创建显式 recovery action 并记录 lineage。
+- late provider heartbeat 只能以旧 `attempt_id` 归档或记录为 provider attempt event，不得把 terminal attempt projection 从 `TIMED_OUT` / `FAILED_*` / `COMPLETED` 改回 streaming；
+- late provider completed 不能覆盖 current graph pointer，也不能把 terminal attempt projection 从 `TIMED_OUT` 改成 `COMPLETED`；
+- late output 不能生成 completed ticket、不能写入 current ticket artifact/evidence、不能进入 closeout final evidence set；
+- 如需利用 late output，必须创建显式 recovery action 并记录 lineage。本轮策略是 fail-closed，不自动采用。
+
+Provider attempt lineage 以 provider event payload 的 `attempt_id` 为边界；ticket command contract 暂不新增 `attempt_id` 字段。Runtime 只消费 provider protocol 聚合出的 `ProviderResult` / `ProviderFailure`，不得把旧 attempt 的 late output 伪造成 current ticket success。
 
 ## Streaming Soak Test
 

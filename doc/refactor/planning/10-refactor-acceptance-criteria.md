@@ -41,7 +41,7 @@
 - [x] empty assistant text 被分类为 provider bad response。
 - [x] schema validation failure 不被归为 upstream unavailable。
 - [x] 同一 API 配置连续 20 次 streaming smoke 成功率 >= 95% 的独立 smoke 已建立。
-- [ ] late provider event 不覆盖 current graph pointer。
+- [x] late provider event 不覆盖 current graph pointer；timed-out attempt 后到达的 heartbeat/completed/output 只保留旧 attempt lineage，不改写 current ticket projection、runtime node pointer 或 final evidence。
 
 ## Phase 3：Actor / Role lifecycle
 

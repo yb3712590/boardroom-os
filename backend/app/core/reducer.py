@@ -154,6 +154,14 @@ def _base_incident_projection(event: dict[str, Any], payload: dict[str, Any]) ->
     }
 
 
+PROVIDER_ATTEMPT_TERMINAL_STATES = {
+    "COMPLETED",
+    "FAILED_RETRYABLE",
+    "FAILED_TERMINAL",
+    "TIMED_OUT",
+}
+
+
 def _fallback_attempt_id(payload: dict[str, Any], workflow_id: str | None) -> str:
     ticket_id = str(payload.get("ticket_id") or "unknown-ticket")
     attempt_no = int(payload.get("attempt_no") or 1)
@@ -232,6 +240,10 @@ def rebuild_execution_attempt_projections(events: Iterable[dict]) -> list[dict]:
                 "updated_at": occurred_at,
                 "version": version,
             }
+
+        if str(projection.get("state") or "") in PROVIDER_ATTEMPT_TERMINAL_STATES:
+            projections[attempt_id] = projection
+            continue
 
         if event_type in {EVENT_PROVIDER_FIRST_TOKEN_RECEIVED, EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED}:
             projection = {

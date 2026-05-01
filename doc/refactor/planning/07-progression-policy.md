@@ -72,7 +72,7 @@ Policy engine 输入必须是结构化对象：
 - `CANCELLED` ticket 不参与 effective edges。
 - `FAILED` / `TIMED_OUT` ticket 只有被 recovery action 引用时参与恢复。
 - orphan pending 不能阻断 graph complete。
-- late completed 的 old ticket 不能覆盖 current ticket。
+- late completed/output 的 old provider attempt 只保留 lineage，不参与 current ticket、graph pointer、artifact/evidence 推进。
 
 ## Ready 判断
 

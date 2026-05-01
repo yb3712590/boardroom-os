@@ -56,8 +56,10 @@ from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
 PROVIDER_AUDIT_EVENT_TYPES = {
     "PROVIDER_ATTEMPT_STARTED",
     "PROVIDER_FIRST_TOKEN_RECEIVED",
+    "PROVIDER_ATTEMPT_HEARTBEAT_RECORDED",
     "PROVIDER_RETRY_SCHEDULED",
     "PROVIDER_ATTEMPT_FINISHED",
+    "PROVIDER_ATTEMPT_TIMED_OUT",
     "PROVIDER_FAILOVER_SELECTED",
 }
 
@@ -70,6 +72,28 @@ def _provider_audit_events(repository, ticket_id: str) -> list[dict]:
             if event["event_type"] in PROVIDER_AUDIT_EVENT_TYPES
             and event.get("ticket_id") == ticket_id
         ]
+
+
+def _wait_for_provider_audit_event(
+    repository,
+    ticket_id: str,
+    event_type: str,
+    *,
+    count: int = 1,
+    timeout_sec: float = 2.0,
+) -> list[dict]:
+    deadline = time.monotonic() + timeout_sec
+    events: list[dict] = []
+    while time.monotonic() < deadline:
+        events = [
+            event
+            for event in _provider_audit_events(repository, ticket_id)
+            if event["event_type"] == event_type
+        ]
+        if len(events) >= count:
+            return events
+        time.sleep(0.01)
+    return events
 
 
 def test_provider_failure_detail_marks_missing_selection_without_default_provider() -> None:
@@ -1761,6 +1785,283 @@ def test_scheduler_runner_once_reaps_provider_attempt_timeout(
         assert timeout_events[-1]["payload"]["attempt_id"] == attempts[-1]["attempt_id"]
     finally:
         provider_release.set()
+
+
+def test_late_provider_events_after_timeout_do_not_reopen_attempt_or_complete_ticket(
+    client,
+    set_ticket_time,
+    monkeypatch,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _seed_runtime_workflow(
+        client,
+        "wf_runner_provider_attempt_timeout_late_events",
+        "Late provider attempt events after timeout",
+    )
+    repository = client.app.state.repository
+    ticket_id = "tkt_runner_provider_attempt_timeout_late_events"
+    node_id = "node_runner_provider_attempt_timeout_late_events"
+    _seed_worker(repository, employee_id="emp_frontend_attempt_timeout_late", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    request_total_timeout_sec=0.1,
+                    reasoning_effort="high",
+                )
+            ],
+            role_bindings=[
+                RuntimeProviderRoleBinding(
+                    target_ref="execution_target:frontend_review",
+                    provider_model_entry_refs=[f"{OPENAI_COMPAT_PROVIDER_ID}::gpt-5.3-codex"],
+                )
+            ],
+        )
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    provider_entered = threading.Event()
+    provider_release = threading.Event()
+
+    def _blocking_provider(_config, _rendered_payload, *, audit_observer=None):
+        provider_entered.set()
+        provider_release.wait(timeout=30.0)
+        if audit_observer is not None:
+            audit_observer(
+                "first_token_received",
+                {
+                    "provider_response_id": "resp_attempt_timeout_late_events",
+                    "request_id": "req_attempt_timeout_late_events",
+                },
+            )
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(_mock_provider_payload_for_schema("ui_milestone_review")),
+            response_id="resp_attempt_timeout_late_events",
+            request_id="req_attempt_timeout_late_events",
+        )
+
+    monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _blocking_provider)
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-attempt-timeout-late-dispatch",
+        max_dispatches=10,
+    )
+
+    try:
+        assert provider_entered.wait(timeout=1.0)
+        set_ticket_time("2026-03-28T10:02:00+08:00")
+        run_scheduler_once(
+            repository,
+            idempotency_key="scheduler-runner:test-attempt-timeout-late-reap",
+            max_dispatches=10,
+        )
+        timed_out_attempt = repository.list_execution_attempt_projections(ticket_id=ticket_id)[-1]
+        node_before_late = repository.get_current_node_projection(workflow_id, node_id)
+
+        provider_release.set()
+        finish_events = _wait_for_provider_audit_event(
+            repository,
+            ticket_id,
+            "PROVIDER_ATTEMPT_FINISHED",
+        )
+        heartbeat_events = [
+            event
+            for event in _provider_audit_events(repository, ticket_id)
+            if event["event_type"] == "PROVIDER_ATTEMPT_HEARTBEAT_RECORDED"
+        ]
+        attempts_after_late = repository.list_execution_attempt_projections(ticket_id=ticket_id)
+        ticket_after_late = repository.get_current_ticket_projection(ticket_id)
+        node_after_late = repository.get_current_node_projection(workflow_id, node_id)
+        terminal_completed_events = [
+            event
+            for event in repository.list_events_for_testing()
+            if event["event_type"] == "TICKET_COMPLETED"
+            and event["payload"].get("ticket_id") == ticket_id
+        ]
+
+        assert finish_events
+        assert ticket_after_late["status"] == "FAILED"
+        assert node_after_late == node_before_late
+        assert heartbeat_events
+        assert attempts_after_late[-1]["attempt_id"] == timed_out_attempt["attempt_id"]
+        assert attempts_after_late[-1]["state"] == "TIMED_OUT"
+        assert attempts_after_late[-1]["failure_kind"] == "REQUEST_TOTAL_TIMEOUT"
+        assert attempts_after_late[-1]["last_heartbeat_at"] == timed_out_attempt["last_heartbeat_at"]
+        assert terminal_completed_events == []
+    finally:
+        provider_release.set()
+
+
+def test_superseded_provider_attempt_output_cannot_move_current_graph_pointer(
+    client,
+    set_ticket_time,
+):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _seed_runtime_workflow(
+        client,
+        "wf_runner_provider_attempt_superseded_output",
+        "Superseded provider attempt output",
+    )
+    old_ticket_id = "tkt_runner_provider_attempt_superseded_old"
+    current_ticket_id = "tkt_runner_provider_attempt_superseded_current"
+    node_id = "node_runner_provider_attempt_superseded"
+    old_artifact_ref = "art://runtime/tkt_runner_provider_attempt_superseded_old/option-a.json"
+    repository = client.app.state.repository
+    _seed_worker(repository, employee_id="emp_frontend_superseded_old", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    _seed_worker(repository, employee_id="emp_frontend_superseded_current", provider_id=OPENAI_COMPAT_PROVIDER_ID)
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id=old_ticket_id,
+            node_id=node_id,
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": old_ticket_id,
+            "node_id": node_id,
+            "leased_by": "emp_frontend_superseded_old",
+            "lease_timeout_sec": 600,
+            "idempotency_key": f"ticket-lease:{workflow_id}:{old_ticket_id}",
+        },
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": old_ticket_id,
+            "node_id": node_id,
+            "started_by": "emp_frontend_superseded_old",
+            "idempotency_key": f"ticket-start:{workflow_id}:{old_ticket_id}",
+        },
+    )
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type="PROVIDER_ATTEMPT_STARTED",
+            actor_type="system",
+            actor_id="runtime",
+            workflow_id=workflow_id,
+            idempotency_key=f"provider-attempt-started:{workflow_id}:{old_ticket_id}:1",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "workflow_id": workflow_id,
+                "ticket_id": old_ticket_id,
+                "node_id": node_id,
+                "attempt_id": f"attempt:{workflow_id}:{old_ticket_id}:prov_openai_compat:1",
+                "attempt_no": 1,
+                "attempt_idempotency_key": f"runtime-provider-attempt:{workflow_id}:{old_ticket_id}:prov_openai_compat:1",
+                "provider_policy_ref": "provider-policy:prov_openai_compat:gpt-5.3-codex:high:openai_compat",
+                "deadline_at": "2026-03-28T10:30:00+08:00",
+                "state": "STREAMING",
+                "status": "IN_PROGRESS",
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:30+08:00"),
+        )
+        repository.refresh_projections(connection)
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_CREATED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-seed-ticket-created:{workflow_id}:{current_ticket_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload=_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=current_ticket_id,
+                node_id=node_id,
+                role_profile_ref="ui_designer_primary",
+            ),
+            occurred_at=datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+    current_node_before_late = repository.get_current_node_projection(workflow_id, node_id)
+    assert current_node_before_late["latest_ticket_id"] == current_ticket_id
+
+    late_submit = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json={
+            "workflow_id": workflow_id,
+            "ticket_id": old_ticket_id,
+            "node_id": node_id,
+            "submitted_by": "emp_frontend_superseded_old",
+            "result_status": "completed",
+            "schema_version": "ui_milestone_review_v1",
+            "payload": {
+                "summary": "Old provider output arrived after the graph pointer moved.",
+                "recommended_option_id": "option_a",
+                "options": [
+                    {
+                        "option_id": "option_a",
+                        "label": "Option A",
+                        "summary": "Late old option.",
+                        "artifact_refs": [old_artifact_ref],
+                    }
+                ],
+            },
+            "artifact_refs": [old_artifact_ref],
+            "written_artifacts": [
+                {
+                    "path": "artifacts/ui/superseded/old-option-a.json",
+                    "artifact_ref": old_artifact_ref,
+                    "kind": "JSON",
+                    "content_json": {"option_id": "option_a"},
+                }
+            ],
+            "assumptions": [
+                f"provider_attempt_id=attempt:{workflow_id}:{old_ticket_id}:prov_openai_compat:1"
+            ],
+            "issues": [],
+            "confidence": 0.82,
+            "needs_escalation": False,
+            "summary": "Old provider output arrived after the graph pointer moved.",
+            "idempotency_key": f"ticket-result-submit:{workflow_id}:{old_ticket_id}:late-provider-output",
+        },
+    )
+    old_ticket_after_late = repository.get_current_ticket_projection(old_ticket_id)
+    current_node_after_late = repository.get_current_node_projection(workflow_id, node_id)
+    terminal_completed_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_COMPLETED"
+        and event["payload"].get("ticket_id") == old_ticket_id
+    ]
+
+    assert late_submit.status_code == 200
+    assert late_submit.json()["status"] == "REJECTED"
+    assert "EXECUTING/EXECUTING" in late_submit.json()["reason"]
+    assert old_ticket_after_late["status"] == "EXECUTING"
+    assert current_node_after_late == current_node_before_late
+    assert current_node_after_late["latest_ticket_id"] == current_ticket_id
+    assert terminal_completed_events == []
+    assert repository.list_ticket_artifacts(old_ticket_id) == []
+    assert repository.get_artifact_by_ref(old_artifact_ref) is None
 
 
 def test_scheduler_runner_loop_respects_tick_limit_and_dispatch_budget(client, set_ticket_time):
