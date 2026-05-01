@@ -232,7 +232,7 @@
 
 ---
 
-## Round 6：Provider contract 实施
+## Round 6：Provider contract 实施（已完成：provider-only streaming smoke）
 
 ```text
 目标：重建 provider 稳定性验证，先证明 provider 层，再继续 runtime 重构。
@@ -258,6 +258,98 @@
 验证：
 - provider smoke 可独立运行。
 - 相关 provider/parser 单测通过。
+```
+
+---
+
+## Round 6B：ProviderEvent 标准事件接口
+
+```text
+目标：把 provider adapter 输出从 provider-specific result/audit dict 收口为标准 `ProviderEvent`，但仍不触碰 workflow progression。
+
+必读：
+1. doc/refactor/planning/05-provider-contract.md
+2. doc/refactor/planning/10-refactor-acceptance-criteria.md
+3. backend/app/core/provider_openai_compat.py
+4. backend/app/core/runtime_provider_config.py
+5. backend/tests/test_provider_openai_compat.py
+6. backend/tests/live/openai_compat_reliability_suite.py
+
+任务：
+1. 定义最小 `ProviderEvent` 数据结构，覆盖 `request_started`、`connected`、`first_token`、`content_delta`、`heartbeat`、`schema_candidate`、`completed`、`failed_retryable`、`failed_terminal`。
+2. 每个 event 必须包含 provider name、model、request id、attempt id、monotonic timestamp、raw byte/text char count、error category。
+3. 让 OpenAI-compatible streaming adapter 产生标准事件；可以保留现有 `OpenAICompatProviderResult` 作为聚合结果，但事件必须可独立测试。
+4. 更新 provider-only smoke 报告，使其从标准事件中统计 first token、idle gap、stream bytes/chars、failure category。
+5. 不写 ticket projection，不创建 workflow/ticket，不改 scheduler/progression。
+6. 更新 `05-provider-contract.md` 与 `10-refactor-acceptance-criteria.md`。
+7. 提交，message 建议：`refactor-provider: standardize streaming events`。
+
+验证：
+- provider event 单测覆盖 request_started/connected/first_token/content_delta/completed/failed。
+- provider-only smoke 仍可独立运行。
+- `pytest backend/tests/test_provider_openai_compat.py -q` 通过。
+```
+
+---
+
+## Round 6C：Malformed SSE raw archive 与 retry 边界
+
+```text
+目标：补齐 malformed SSE 的 raw archive 和 provider retryable 分类，不把 malformed stream 简化为普通 bad response。
+
+必读：
+1. doc/refactor/planning/05-provider-contract.md
+2. doc/refactor/planning/10-refactor-acceptance-criteria.md
+3. backend/app/core/provider_openai_compat.py
+4. backend/app/core/runtime.py
+5. backend/app/core/artifact_store.py
+6. backend/tests/test_provider_openai_compat.py
+7. backend/tests/test_scheduler_runner.py 中 provider retry/failure 相关测试
+
+任务：
+1. 为 malformed SSE 保存 raw event archive，记录 request id、response id、attempt id、provider/model、raw byte count、parse error。
+2. 明确 `MALFORMED_STREAM_EVENT` 是否映射为 retryable provider attempt failure，并补齐 runtime retry/failover 测试。
+3. 保证 raw archive 不进入 final delivery evidence，不被当作 source/test/closeout artifact。
+4. provider adapter 不创建 ticket；runtime 只能消费 failure category 和 archive ref，不能伪造 provider success。
+5. 更新 provider contract 和 acceptance criteria。
+6. 提交，message 建议：`refactor-provider: archive malformed stream events`。
+
+验证：
+- malformed SSE 单测证明 raw archive 写入且 failure kind 为 `MALFORMED_STREAM_EVENT`。
+- runtime/provider retry 单测证明该 failure 不被归为 `UPSTREAM_UNAVAILABLE` 或普通 `PROVIDER_BAD_RESPONSE`。
+- artifact legality 测试证明 raw archive 不可作为 closeout final evidence。
+```
+
+---
+
+## Round 6D：Late provider event projection guard
+
+```text
+目标：证明 late provider event 不污染 current ticket projection，并把旧 attempt 输出与 current graph pointer 隔离。
+
+必读：
+1. doc/refactor/planning/05-provider-contract.md
+2. doc/refactor/planning/07-progression-policy.md
+3. doc/refactor/planning/10-refactor-acceptance-criteria.md
+4. backend/app/core/runtime.py
+5. backend/app/core/ticket_handlers.py
+6. backend/app/core/projections.py
+7. backend/tests/test_scheduler_runner.py
+8. backend/tests/test_ticket_graph.py
+
+任务：
+1. 为 timed out / superseded provider attempt 后到达的 heartbeat/completed/output 建立回归测试。
+2. late heartbeat 只能归档或记录为旧 attempt event，不能更新 current ticket projection。
+3. late completed/output 不能把旧 ticket 标为 completed，不能改写 current graph pointer，不能生成 final evidence。
+4. 如需利用 late output，只能产生显式 recovery action，并记录 lineage；本轮先 fail-closed，不做自动采用。
+5. 不扩大 progression policy；只加 provider attempt lineage 和 projection guard。
+6. 更新 provider contract、progression policy 文档和 acceptance criteria。
+7. 提交，message 建议：`refactor-provider: guard late attempt events`。
+
+验证：
+- 单测覆盖 old attempt late heartbeat、late completed、late output 三类输入。
+- current ticket projection、runtime node pointer、final evidence set 均不被 late event 改写。
+- provider-only smoke 不受影响。
 ```
 
 ---
