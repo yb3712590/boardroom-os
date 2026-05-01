@@ -137,6 +137,37 @@ def build_role_template_capability_contract(role_template_ref: str | None) -> di
         "provider_preferences": dict(contract["provider_preferences"]),
     }
 
+def _dedupe_capability_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
+    capabilities: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        capability = str(value or "").strip()
+        if not capability or capability in seen:
+            continue
+        capabilities.append(capability)
+        seen.add(capability)
+    return capabilities
+
+
+def compile_required_capabilities_for_ticket_spec(created_spec: dict[str, Any] | None) -> list[str]:
+    if not isinstance(created_spec, dict):
+        return []
+    execution_contract = created_spec.get("execution_contract")
+    if isinstance(execution_contract, dict):
+        explicit_capabilities = _dedupe_capability_values(
+            list(execution_contract.get("required_capabilities") or [])
+        )
+        if explicit_capabilities:
+            return explicit_capabilities
+
+    role_template_contract = build_role_template_capability_contract(
+        str(created_spec.get("role_profile_ref") or "").strip()
+    )
+    if role_template_contract is not None:
+        return _dedupe_capability_values(list(role_template_contract.get("capability_set") or []))
+    return []
+
+
 EXECUTION_TARGET_DEFINITIONS = (
     ExecutionTargetDefinition(
         execution_target_ref=EXECUTION_TARGET_SCOPE_CONSENSUS,
