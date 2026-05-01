@@ -19,6 +19,7 @@
 - Round 1：写入 12 份规划文档。
 - Round 2：整理文档入口的最小版本。
 - Round 3：仓库瘦身与目录重组。
+- Round 4：Backend 废弃代码审计与安全删除。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -29,7 +30,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 4：Backend 废弃代码审计与安全删除** 开始。Round 4 只审计并删除 backend 中明确废弃、无引用、非核心 runtime 的代码，不开始 provider 或 progression 重构。
+下一轮新会话应从 **Round 5：Directory / Artifact / Write-surface contract 实施** 开始。Round 5 只实现 Phase 1 目录、产物、write-set 和 closeout evidence 合法性 contract，不开始 provider、actor lifecycle 或 progression policy 重构。
 
 ---
 
@@ -138,7 +139,7 @@
 
 ---
 
-## Round 4：Backend 废弃代码审计与安全删除
+## Round 4：Backend 废弃代码审计与安全删除（已完成）
 
 ```text
 你在 refactor/autonomous-runtime-docs 分支。Round 3 已完成，仓库目录已经清爽。目标是审计并删除 backend 中明确废弃、无引用、非核心 runtime 的代码。不要开始 provider 或 progression 重构。
@@ -178,7 +179,60 @@
 
 ---
 
-## Round 5：Provider contract 实施
+## Round 5：Directory / Artifact / Write-surface contract 实施
+
+```text
+你在 refactor/autonomous-runtime-docs 分支。Round 4 已完成，backend 废弃 surface 已审计并安全删除。目标是完成 Phase 1：目录 / 产物 / 写权限 contract 的代码化与测试。不要开始 provider、actor lifecycle 或 progression policy 重构。
+
+必读：
+1. doc/README.md
+2. doc/mainline-truth.md
+3. doc/refactor/planning/00-refactor-north-star.md
+4. doc/refactor/planning/02-target-architecture.md
+5. doc/refactor/planning/03-directory-contract.md
+6. doc/refactor/planning/04-write-surface-policy.md
+7. doc/refactor/planning/08-deliverable-contract.md
+8. doc/refactor/planning/09-refactor-plan.md
+9. doc/refactor/planning/10-refactor-acceptance-criteria.md
+10. backend/app/core/artifacts.py
+11. backend/app/core/artifact_store.py
+12. backend/app/core/artifact_handlers.py
+13. backend/app/core/ticket_artifacts.py
+14. backend/app/core/workspace_path_contracts.py
+15. backend/app/core/project_workspaces.py
+16. backend/app/core/ticket_handlers.py
+17. backend/app/core/workflow_completion.py
+18. backend/tests/ 中 artifact、workspace、ticket-result、closeout 相关测试
+
+任务：
+1. 盘点当前 artifact ref 类型与实际路径映射，至少覆盖 workspace source、tests evidence、runtime delivery/check/closeout、governance document、upload-import artifact。
+2. 将 `03-directory-contract.md` 的 artifact ref -> path 规则落成可独立测试的 contract helper；优先扩展现有 `workspace_path_contracts.py` / artifact helper，不新增大框架。
+3. 将 write-set 判断收口到 capability / execution contract 输入；禁止新增 role name -> write root 分支。
+4. 为 workspace-managed `source_code_delivery` 增加或补齐 contract tests：source 写入、test evidence、git evidence、doc update refs 都必须落在合法目录。
+5. closeout final refs 必须只接受 current delivery/check/verification/closeout evidence；不能引用普通文档、archive、superseded/placeholder/source fallback。
+6. placeholder source/test fallback 必须 fail-closed；不要为了让测试过而放宽 schema 或 checker 口径。
+7. 更新 `doc/refactor/planning/03-directory-contract.md` 与 `04-write-surface-policy.md` 的实现状态。
+8. 更新 `doc/refactor/planning/09-refactor-plan.md` 和 `10-refactor-acceptance-criteria.md` 中 Phase 1 对应项。
+9. 提交，message 建议：`refactor-contracts: enforce artifact write surfaces`。
+
+禁止：
+- 不重构 provider streaming、provider selection 或 model fallback。
+- 不重构 actor lifecycle / hiring / capability assignment 主路径；本轮只阻断 role name 决定 write root 的新增或残留写入面。
+- 不抽离 progression policy，不改 fanout/rework/closeout 推进判断，除非只是接入 final refs 合法性 guard。
+- 不拆 `ticket_handlers.py`、`runtime.py`、`workflow_controller.py` 大模块；如发现拆分点，只记录在 planning docs。
+- 不删除审计证据、replay 证据或 `_frozen` 迁移材料。
+
+验证：
+- 新增/更新目录契约与 write-surface contract tests。
+- 后端相关 pytest smoke，至少覆盖 artifact/workspace/ticket-result/closeout 路径。
+- grep 确认没有新增 role name -> write root 判断。
+- grep 确认 placeholder fallback 不能进入 final evidence。
+- git diff --stat 以 contract helper、测试和 planning docs 为主。
+```
+
+---
+
+## Round 6：Provider contract 实施
 
 ```text
 目标：重建 provider 稳定性验证，先证明 provider 层，再继续 runtime 重构。
@@ -208,7 +262,7 @@
 
 ---
 
-## Round 6：Actor / Role lifecycle 实施
+## Round 7：Actor / Role lifecycle 实施
 
 ```text
 目标：让派工从 role name 转向 capability。
@@ -238,7 +292,7 @@
 
 ---
 
-## Round 7：Progression policy engine 抽离
+## Round 8：Progression policy engine 抽离
 
 ```text
 目标：把推进规则从 controller/runtime 中抽为显式 policy。
@@ -267,7 +321,7 @@
 
 ---
 
-## Round 8：Deliverable contract + checker/rework
+## Round 9：Deliverable contract + checker/rework
 
 ```text
 目标：closeout 证明 PRD 满足，而不是 graph 完成。
@@ -296,7 +350,7 @@
 
 ---
 
-## Round 9：Replay / resume / checkpoint
+## Round 10：Replay / resume / checkpoint
 
 ```text
 目标：replay/resume 一等化。
@@ -323,7 +377,7 @@
 
 ---
 
-## Round 10：015 replay 包验证
+## Round 11：015 replay 包验证
 
 ```text
 目标：用 D:\Projects\boardroom-os-replay 验证新规则。
@@ -349,7 +403,7 @@
 
 ---
 
-## Round 11：后端-only live scenario clean run
+## Round 12：后端-only live scenario clean run
 
 ```text
 目标：证明新 backend runtime 可以 clean run。此时 frontend 已删除，不再作为 live 成功条件。

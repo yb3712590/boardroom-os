@@ -15,7 +15,10 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local Claude/tooling artifacts
 .claude/
+docs/
 
 # Local env
 .env
