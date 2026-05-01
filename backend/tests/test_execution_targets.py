@@ -85,3 +85,24 @@ def test_compile_required_capabilities_uses_role_template_only_as_migration_inpu
         "evidence.write.git",
         "docs.update.delivery",
     ]
+
+
+def test_compile_required_capabilities_uses_execution_target_role_before_ticket_role() -> None:
+    capabilities = compile_required_capabilities_for_ticket_spec(
+        {
+            "role_profile_ref": "frontend_engineer_primary",
+            "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+            "execution_contract": {
+                "execution_target_ref": "execution_target:backend_build",
+                "required_capability_tags": ["structured_output", "implementation"],
+            },
+        }
+    )
+
+    assert capabilities == [
+        "source.modify.backend",
+        "test.run.backend",
+        "evidence.write.test",
+        "evidence.write.git",
+        "docs.update.delivery",
+    ]

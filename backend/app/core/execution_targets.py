@@ -149,6 +149,15 @@ def _dedupe_capability_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
     return capabilities
 
 
+def _capability_values_for_role_template(role_template_ref: str | None) -> list[str]:
+    role_template_contract = build_role_template_capability_contract(
+        str(role_template_ref or "").strip()
+    )
+    if role_template_contract is None:
+        return []
+    return _dedupe_capability_values(list(role_template_contract.get("capability_set") or []))
+
+
 def compile_required_capabilities_for_ticket_spec(created_spec: dict[str, Any] | None) -> list[str]:
     if not isinstance(created_spec, dict):
         return []
@@ -160,12 +169,14 @@ def compile_required_capabilities_for_ticket_spec(created_spec: dict[str, Any] |
         if explicit_capabilities:
             return explicit_capabilities
 
-    role_template_contract = build_role_template_capability_contract(
-        str(created_spec.get("role_profile_ref") or "").strip()
-    )
-    if role_template_contract is not None:
-        return _dedupe_capability_values(list(role_template_contract.get("capability_set") or []))
-    return []
+        execution_target_definition = get_execution_target_definition_by_ref(
+            execution_contract.get("execution_target_ref")
+        )
+        if execution_target_definition is not None:
+            return _capability_values_for_role_template(execution_target_definition.role_profile_ref)
+        return []
+
+    return _capability_values_for_role_template(created_spec.get("role_profile_ref"))
 
 
 EXECUTION_TARGET_DEFINITIONS = (
