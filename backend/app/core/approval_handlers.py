@@ -2309,7 +2309,7 @@ def handle_modify_constraints(
                 causation_hint=f"approval:{payload.approval_id}",
             )
 
-        if review_pack_requires_board_advisory(review_pack):
+        if review_pack_requires_board_advisory(review_pack) and approval["approval_type"] != "REQUIREMENT_ELICITATION":
             try:
                 _enter_board_advisory_change_flow(
                     repository,

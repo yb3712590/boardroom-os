@@ -925,14 +925,14 @@ def _collect_staffing_gap_audit(repository, workflow_id: str) -> dict[str, Any]:
     for row in rows:
         event = repository._convert_event_row(row)
         payload = dict(event.get("payload") or {})
-        if str(payload.get("reason_code") or "").strip() != "NO_ELIGIBLE_WORKER":
+        if str(payload.get("reason_code") or "").strip() != "NO_ELIGIBLE_ACTOR":
             continue
         gaps.append(
             {
                 "ticket_id": str(payload.get("ticket_id") or ""),
                 "node_id": str(payload.get("node_id") or ""),
-                "required_role_profile_ref": str(payload.get("required_role_profile_ref") or ""),
-                "reason_code": "NO_ELIGIBLE_WORKER",
+                "required_capabilities": list(payload.get("required_capabilities") or []),
+                "reason_code": "NO_ELIGIBLE_ACTOR",
             }
         )
     for run in repository.list_ceo_shadow_runs(workflow_id):
@@ -1870,10 +1870,11 @@ def write_audit_summary(paths: ScenarioPaths, *, report: dict[str, Any], snapsho
     )
     if staffing_gaps:
         for item in staffing_gaps:
+            capabilities = ", ".join(str(value) for value in list(item.get("required_capabilities") or []))
             lines.append(
                 "- staffing gap: "
                 f"`{item.get('ticket_id') or 'unknown-ticket'}` "
-                f"`{item.get('required_role_profile_ref') or 'unknown-role'}` "
+                f"`{capabilities or 'unknown-capability'}` "
                 f"`{item.get('reason_code') or 'UNKNOWN'}`"
             )
     else:

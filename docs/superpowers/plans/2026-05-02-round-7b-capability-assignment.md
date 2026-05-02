@@ -1366,7 +1366,7 @@ Expected: commit succeeds.
 - Modify: `doc/refactor/planning/09-refactor-plan.md:66-83`
 - Modify: `doc/refactor/planning/10-refactor-acceptance-criteria.md:46-54`
 
-- [ ] **Step 1: Update actor lifecycle implementation status**
+- [x] **Step 1: Update actor lifecycle implementation status**
 
 In `doc/refactor/planning/06-actor-role-lifecycle.md`, after the Round 7A implementation status block, add:
 
@@ -1384,7 +1384,7 @@ Round 7B 已把 scheduler 派工资格从 `role_profile_ref` / employee role mat
 7B 仍保留现有 `TICKET_LEASED.leased_by` 写入字段来承载 selected `actor_id`，因为 assignment/lease 独立事件、`assignment_id` 和 `lease_id` 是 7C 范围。
 ```
 
-- [ ] **Step 2: Update refactor plan Phase 3**
+- [x] **Step 2: Update refactor plan Phase 3**
 
 In `doc/refactor/planning/09-refactor-plan.md`, update Phase 3 tasks to:
 
@@ -1397,7 +1397,7 @@ In `doc/refactor/planning/09-refactor-plan.md`, update Phase 3 tasks to:
 - [ ] Assignment 与 Lease 分离：Round 7C must introduce independent assignment/lease identity and move current `TICKET_LEASED.leased_by` actor usage to explicit `assignment_id` / `lease_id` semantics.
 ```
 
-- [ ] **Step 3: Update acceptance criteria**
+- [x] **Step 3: Update acceptance criteria**
 
 In `doc/refactor/planning/10-refactor-acceptance-criteria.md`, update Phase 3 lines to:
 
@@ -1429,7 +1429,7 @@ Expected: commit succeeds.
 - Verify all changed files
 - Final commit if earlier task commits were squashed or skipped
 
-- [ ] **Step 1: Run focused Round 7B tests**
+- [x] **Step 1: Run focused Round 7B tests**
 
 Run:
 
@@ -1449,7 +1449,7 @@ pytest backend/tests/test_scheduler_runner.py backend/tests/test_api.py -q
 
 Expected: PASS. If this is too slow or environment-dependent, capture exact failures and rerun the focused failing tests after fixes.
 
-- [ ] **Step 3: Run grep guardrail for role-name fallback**
+- [x] **Step 3: Run grep guardrail for role-name fallback**
 
 Run:
 

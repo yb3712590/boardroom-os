@@ -47,11 +47,16 @@ def resolve_assignment(
         ]
         status = _normalize_string(actor.get("status"))
         status_eligible = status == ACTOR_STATUS_ACTIVE
-        busy = actor_id in active_lease_actor_ids
+        busy_identity_values = {actor_id}
+        employee_id = _normalize_string(actor.get("employee_id"))
+        if employee_id:
+            busy_identity_values.add(employee_id)
+        busy = bool(busy_identity_values & active_lease_actor_ids)
         provider_id = _resolve_provider_id(actor)
         provider_paused = provider_id in paused_provider_ids if provider_id else False
         exclusion_matches = _matching_scoped_exclusions(
             actor_id=actor_id,
+            employee_id=employee_id,
             ticket_id=ticket_id,
             workflow_id=workflow_id,
             node_id=node_id,
@@ -126,6 +131,7 @@ def _build_candidate_summary(candidate_details: list[dict[str, Any]]) -> dict[st
 def _matching_scoped_exclusions(
     *,
     actor_id: str,
+    employee_id: str,
     ticket_id: str,
     workflow_id: str,
     node_id: str,
@@ -134,8 +140,11 @@ def _matching_scoped_exclusions(
     attempt_no: int | None,
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
+    actor_identity_values = {actor_id}
+    if employee_id:
+        actor_identity_values.add(employee_id)
     for exclusion in scoped_exclusions:
-        if _normalize_string(exclusion.get("actor_id")) != actor_id:
+        if _normalize_string(exclusion.get("actor_id")) not in actor_identity_values:
             continue
         if _scoped_exclusion_matches(
             exclusion=exclusion,

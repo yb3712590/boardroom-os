@@ -46,6 +46,7 @@ def client(db_path):
 
 @pytest.fixture
 def set_ticket_time(monkeypatch):
+    import app.core.artifacts as artifacts
     import app.core.artifact_handlers as artifact_handlers
     import app._frozen.worker_runtime.api.worker_runtime as worker_runtime_api
     import app._frozen.worker_admin.core.worker_admin as worker_admin
@@ -68,6 +69,7 @@ def set_ticket_time(monkeypatch):
         return state["value"]
 
     monkeypatch.setattr(ticket_handlers, "now_local", lambda: state["value"])
+    monkeypatch.setattr(artifacts, "now_local", lambda: state["value"])
     monkeypatch.setattr(artifact_handlers, "now_local", lambda: state["value"])
     monkeypatch.setattr(runtime, "now_local", lambda: state["value"])
     monkeypatch.setattr(projections, "now_local", lambda: state["value"])

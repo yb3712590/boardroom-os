@@ -72,14 +72,17 @@
 - [x] 建立 actor registry：Round 7A added independent `ACTOR_*` lifecycle events, replayable `actor_projection`, repository read APIs, and tests proving no `EMPLOYEE_*` bridge.
 - [x] 建立 capability mapping：Round 7A added `build_role_template_capability_contract()` so RoleTemplate emits capability/provider preference only, not runtime execution keys.
 - [x] 定义 actor enable/suspend/deactivate/replace 事件：Round 7A reducer tests cover the actor lifecycle state transitions and replacement lineage.
-- 修复 excluded employee 继承污染。
-- actor pool empty 时生成显式 action/incident。
+- [x] 修复 excluded employee 继承污染：Round 7B adapts legacy `excluded_employee_ids` into scoped exclusions and clears unscoped legacy lists on retry/rework.
+- [x] actor pool empty 时生成显式 action/diagnostic：Round 7B records `EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED` with `NO_ELIGIBLE_ACTOR`, candidate diagnostics, and suggested actions.
+
+Round 7C 仍需把 Assignment 与 Lease 拆为独立 runtime identity；Round 7B 暂时沿用 `TICKET_LEASED.leased_by = actor_id`。
 
 验收：
 
-- 派工由 required capabilities 驱动。
-- 角色名不再决定 write root。
-- no eligible worker 不会 silent stall。
+- [x] 派工由 required capabilities 驱动：Round 7B scheduler consumes `actor_projection` plus compiled `required_capabilities` through `assignment_resolver`.
+- [x] 角色名不再决定 write root。
+- [x] no eligible worker 不会 silent stall：Round 7B emits explicit no-eligible actor scheduler diagnostic with suggested actions.
+- [ ] Assignment 与 Lease 分离：deferred to Round 7C.
 
 ## Phase 4：Progression policy engine 抽离
 

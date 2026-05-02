@@ -18,11 +18,16 @@ from app.core.ceo_execution_presets import build_project_init_scope_ticket_id
 from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import (
     BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
+    EVENT_ACTOR_ENABLED,
+    EVENT_ACTOR_SUSPENDED,
     EVENT_INCIDENT_OPENED,
     EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
     EVENT_TICKET_CREATED,
 )
-from app.core.execution_targets import infer_execution_contract_payload
+from app.core.execution_targets import (
+    build_role_template_capability_contract,
+    infer_execution_contract_payload,
+)
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
@@ -271,6 +276,96 @@ def _ticket_create_payload(
     }
 
 
+def _enable_actor(
+    repository,
+    *,
+    actor_id: str,
+    workflow_id: str,
+    capabilities: list[str],
+    employee_id: str | None = None,
+    provider_id: str | None = OPENAI_COMPAT_PROVIDER_ID,
+    idempotency_suffix: str | None = None,
+) -> None:
+    provider_preferences: dict[str, str] = {}
+    if provider_id:
+        provider_preferences["provider_id"] = provider_id
+    idempotency_key = f"test-enable-actor:{workflow_id}:{actor_id}"
+    if idempotency_suffix:
+        idempotency_key = f"{idempotency_key}:{idempotency_suffix}"
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_ENABLED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=idempotency_key,
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "actor_id": actor_id,
+                "employee_id": employee_id or actor_id,
+                "capability_set": capabilities,
+                "provider_preferences": provider_preferences,
+                "availability": {},
+                "created_from_policy": "test",
+                "audit_reason": "scheduler assignment test",
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
+def _capabilities_for_role_profile(role_profile_ref: str) -> list[str]:
+    contract = build_role_template_capability_contract(role_profile_ref)
+    assert contract is not None
+    return list(contract["capability_set"])
+
+
+def _suspend_actor(
+    repository,
+    *,
+    actor_id: str,
+    workflow_id: str,
+    reason: str = "test suspension",
+) -> None:
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_SUSPENDED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-suspend-actor:{workflow_id}:{actor_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "actor_id": actor_id,
+                "reason": reason,
+                "audit_reason": reason,
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T10:00:01+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
+def _enable_default_actor_roster(repository, workflow_id: str) -> None:
+    _enable_actor(
+        repository,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
+    _enable_actor(
+        repository,
+        actor_id="emp_checker_1",
+        employee_id="emp_checker_1",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("checker_primary"),
+    )
+
+
 def _project_init(client, goal: str = "Scheduler staffing") -> str:
     response = client.post(
         "/api/v1/commands/project-init",
@@ -286,13 +381,17 @@ def _project_init(client, goal: str = "Scheduler staffing") -> str:
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    return response.json()["causation_hint"].split(":", 1)[1]
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    _enable_default_actor_roster(client.app.state.repository, workflow_id)
+    return workflow_id
 
 
 def _seed_runtime_workflow(client, workflow_id: str, goal: str) -> str:
     from tests.test_ceo_scheduler import _seed_workflow
 
-    return _seed_workflow(client, workflow_id, goal=goal)
+    seeded_workflow_id = _seed_workflow(client, workflow_id, goal=goal)
+    _enable_default_actor_roster(client.app.state.repository, seeded_workflow_id)
+    return seeded_workflow_id
 
 
 def _ensure_runtime_provider_ready_for_ticket(
@@ -533,9 +632,36 @@ def _approve_hire_worker(
     )
     assert approve_response.status_code == 200
     assert approve_response.json()["status"] == "ACCEPTED"
+    _enable_actor(
+        client.app.state.repository,
+        actor_id=employee_id,
+        employee_id=employee_id,
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+        provider_id=provider_id,
+    )
 
 
-def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
+def _seed_worker(
+    repository,
+    *,
+    employee_id: str,
+    provider_id: str,
+    workflow_id: str | None = None,
+    role_profile_refs: list[str] | None = None,
+) -> None:
+    resolved_role_profile_refs = list(role_profile_refs or ["frontend_engineer_primary"])
+    role_type_by_profile = {
+        "architect_primary": "governance_architect",
+        "backend_engineer_primary": "backend_engineer",
+        "checker_primary": "checker",
+        "cto_primary": "governance_cto",
+        "database_engineer_primary": "database_engineer",
+        "frontend_engineer_primary": "frontend_engineer",
+        "platform_sre_primary": "platform_sre",
+        "ui_designer_primary": "frontend_engineer",
+    }
+    primary_role_profile = resolved_role_profile_refs[0]
     with repository.transaction() as connection:
         repository.insert_event(
             connection,
@@ -548,18 +674,27 @@ def _seed_worker(repository, *, employee_id: str, provider_id: str) -> None:
             correlation_id=None,
             payload={
                 "employee_id": employee_id,
-                "role_type": "frontend_engineer",
+                "role_type": role_type_by_profile.get(primary_role_profile, "frontend_engineer"),
                 "skill_profile": {},
                 "personality_profile": {},
                 "aesthetic_profile": {},
                 "state": "ACTIVE",
                 "board_approved": True,
                 "provider_id": provider_id,
-                "role_profile_refs": ["frontend_engineer_primary"],
+                "role_profile_refs": resolved_role_profile_refs,
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
         repository.refresh_projections(connection)
+    if workflow_id is not None:
+        _enable_actor(
+            repository,
+            actor_id=employee_id,
+            employee_id=employee_id,
+            workflow_id=workflow_id,
+            capabilities=_capabilities_for_role_profile(primary_role_profile),
+            provider_id=provider_id,
+        )
 
 
 def _seed_ephemeral_artifact_for_cleanup(
@@ -1492,6 +1627,56 @@ def _build_mock_provider_responder(*, bad_response_schemas: set[str] | None = No
     return _respond, observed_schema_refs
 
 
+def test_scheduler_does_not_lease_without_enabled_actor_registry_entry(client, set_ticket_time):
+    workflow_id = "wf_runner_without_actor"
+    _seed_worker(
+        client.app.state.repository,
+        employee_id="emp_without_actor",
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    api_test_helpers._ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Employee-only roster must not become runtime actor.",
+    )
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="ui_designer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_without_actor",
+            node_id="node_runner_without_actor",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    run_scheduler_once(
+        client.app.state.repository,
+        idempotency_key="scheduler-runner:test-without-actor",
+        max_dispatches=10,
+    )
+
+    ticket_projection = client.app.state.repository.get_current_ticket_projection("tkt_runner_without_actor")
+    diagnostic_events = [
+        event
+        for event in client.app.state.repository.list_events_for_testing()
+        if event["event_type"] == "SCHEDULER_LEASE_DIAGNOSTIC_RECORDED"
+        and event["payload"].get("ticket_id") == "tkt_runner_without_actor"
+    ]
+
+    assert ticket_projection["status"] == "PENDING"
+    assert ticket_projection["lease_owner"] is None
+    assert diagnostic_events[-1]["payload"]["reason_code"] == "NO_ELIGIBLE_ACTOR"
+    assert diagnostic_events[-1]["payload"]["candidate_summary"]["total_candidate_count"] == 0
+
+
 def test_scheduler_runner_once_dispatches_using_persisted_roster(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_runtime_workflow(client, "wf_runner", "Persisted roster runtime")
@@ -1562,6 +1747,11 @@ def test_scheduler_runner_once_external_mode_leaves_ticket_leased(client, set_ti
     scheduler_runner = importlib.reload(scheduler_runner)
 
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_runtime_workflow(
+        client,
+        "wf_runner_external",
+        "External runtime leaves ticket leased",
+    )
     client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(
@@ -1653,6 +1843,8 @@ def test_scheduler_runner_once_dispatches_provider_attempt_without_waiting(
 
     monkeypatch.setattr(runtime_module, "invoke_openai_compat_response", _blocking_provider)
 
+    monkeypatch.setattr("app.scheduler_runner.run_due_ceo_maintenance", lambda *args, **kwargs: [])
+
     set_ticket_time("2026-03-28T10:01:00+08:00")
     started = time.monotonic()
     ack = run_scheduler_once(
@@ -1667,10 +1859,14 @@ def test_scheduler_runner_once_dispatches_provider_attempt_without_waiting(
         assert elapsed < 1.0
         assert provider_entered.wait(timeout=1.0)
         ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_nonblocking")
+        provider_events = _wait_for_provider_audit_event(
+            repository,
+            "tkt_runner_provider_nonblocking",
+            "PROVIDER_ATTEMPT_STARTED",
+        )
         attempts = repository.list_execution_attempt_projections(
             ticket_id="tkt_runner_provider_nonblocking"
         )
-        provider_events = _provider_audit_events(repository, "tkt_runner_provider_nonblocking")
 
         assert ticket_projection["status"] == "EXECUTING"
         assert attempts
@@ -2121,6 +2317,7 @@ def test_scheduler_runner_executes_checker_ticket_and_opens_board_review_after_m
             role_profile_ref="ui_designer_primary",
         ),
     )
+    _enable_default_actor_roster(client.app.state.repository, "wf_runner_checker_chain")
     _ensure_runtime_provider_ready_for_ticket(
         client,
         role_profile_ref="ui_designer_primary",
@@ -3336,6 +3533,7 @@ def test_scheduler_runner_closeout_materializes_chain_report_for_autopilot_workf
         workspace_id="ws_default",
         goal="Scheduler closeout chain report contract",
     )
+    _enable_default_actor_roster(repository, workflow_id)
     api_test_helpers._persist_workflow_profile(repository, workflow_id, "CEO_AUTOPILOT_FINE_GRAINED")
     api_test_helpers._create_lease_and_start_ticket(
         client,
@@ -5839,6 +6037,7 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
         "wf_runner_provider_recovery",
         goal="Autopilot runner provider recovery",
     )
+    _enable_default_actor_roster(client.app.state.repository, workflow_id)
     _persist_workflow_directive_details(
         client.app.state.repository,
         workflow_id,
@@ -6001,44 +6200,7 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
     assert blocked_ticket["status"] == "COMPLETED"
 
 
-def test_scheduler_skips_excluded_employee_ids_and_leases_backup_worker(client):
-    workflow_id = _project_init(client, "Excluded worker routing")
-    _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
-
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_runner_excluded",
-            node_id="node_runner_excluded",
-            role_profile_ref="ui_designer_primary",
-            excluded_employee_ids=["emp_frontend_2"],
-        ),
-    )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-
-    repository = client.app.state.repository
-    run_scheduler_once(
-        repository,
-        idempotency_key="scheduler-runner:test-excluded-worker",
-        max_dispatches=10,
-    )
-
-    ticket_projection = repository.get_current_ticket_projection("tkt_runner_excluded")
-    leased_events = [
-        event
-        for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
-        and event["payload"].get("ticket_id") == "tkt_runner_excluded"
-    ]
-
-    assert ticket_projection is not None
-    assert ticket_projection["status"] == "COMPLETED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
-
-
-def test_scheduler_relaxes_excluded_employee_ids_for_single_capable_rework_fix_worker(client):
+def test_scheduler_blocks_rework_fix_when_only_capable_actor_is_scoped_excluded(client):
     workflow_id = _project_init(client, "Singleton rework fix routing")
     repository = client.app.state.repository
     with repository.transaction() as connection:
@@ -6087,26 +6249,34 @@ def test_scheduler_relaxes_excluded_employee_ids_for_single_capable_rework_fix_w
     ]
 
     assert ticket_projection is not None
-    assert ticket_projection["status"] == "COMPLETED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_2"
+    assert ticket_projection["status"] == "PENDING"
+    assert leased_events == []
+    diagnostic_events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "SCHEDULER_LEASE_DIAGNOSTIC_RECORDED"
+        and event["payload"].get("ticket_id") == "tkt_runner_singleton_rework_fix"
+    ]
+    assert diagnostic_events
+    diagnostic_payload = diagnostic_events[-1]["payload"]
+    assert diagnostic_payload["reason_code"] == "NO_ELIGIBLE_ACTOR"
+    assert diagnostic_payload["candidate_summary"]["excluded_count"] == 1
+    candidate_by_actor_id = {
+        detail["actor_id"]: detail for detail in diagnostic_payload["candidate_details"]
+    }
+    assert candidate_by_actor_id["emp_frontend_2"]["excluded"] is True
 
 
 def test_scheduler_skips_frozen_employee_when_dispatching(client):
     workflow_id = _project_init(client, "Frozen worker routing")
     _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
 
-    freeze_response = client.post(
-        "/api/v1/commands/employee-freeze",
-        json={
-            "workflow_id": workflow_id,
-            "employee_id": "emp_frontend_2",
-            "frozen_by": "ops@example.com",
-            "reason": "Pause new dispatch while reviewing performance.",
-            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2",
-        },
+    _suspend_actor(
+        client.app.state.repository,
+        actor_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        reason="Pause new dispatch while reviewing performance.",
     )
-    assert freeze_response.status_code == 200
-    assert freeze_response.json()["status"] == "ACCEPTED"
 
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -6203,18 +6373,12 @@ def test_scheduler_dispatches_restored_employee_again(client):
     workflow_id = _project_init(client, "Restored worker routing")
     _approve_hire_worker(client, workflow_id=workflow_id, employee_id="emp_frontend_backup")
 
-    freeze_response = client.post(
-        "/api/v1/commands/employee-freeze",
-        json={
-            "workflow_id": workflow_id,
-            "employee_id": "emp_frontend_2",
-            "frozen_by": "ops@example.com",
-            "reason": "Pause dispatch before restore test.",
-            "idempotency_key": f"employee-freeze:{workflow_id}:emp_frontend_2:restore-cycle",
-        },
+    _suspend_actor(
+        client.app.state.repository,
+        actor_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        reason="Pause dispatch before restore test.",
     )
-    assert freeze_response.status_code == 200
-    assert freeze_response.json()["status"] == "ACCEPTED"
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -6238,18 +6402,14 @@ def test_scheduler_dispatches_restored_employee_again(client):
         and event["payload"].get("ticket_id") == "tkt_runner_restore_before"
     ][-1]
 
-    restore_response = client.post(
-        "/api/v1/commands/employee-restore",
-        json={
-            "workflow_id": workflow_id,
-            "employee_id": "emp_frontend_2",
-            "restored_by": "ops@example.com",
-            "reason": "Return worker after review.",
-            "idempotency_key": f"employee-restore:{workflow_id}:emp_frontend_2",
-        },
+    _enable_actor(
+        client.app.state.repository,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+        idempotency_suffix="restore-cycle",
     )
-    assert restore_response.status_code == 200
-    assert restore_response.json()["status"] == "ACCEPTED"
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -6350,20 +6510,60 @@ def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(cl
     assert latest_created_spec["excluded_employee_ids"] == ["emp_frontend_backup"]
 
 
-def test_ready_ticket_without_eligible_worker_surfaces_staffing_gap(client):
-    workflow_id = _project_init(client, "Ready backend ticket needs staffing")
+def test_scheduler_leases_actor_by_required_capabilities_not_employee_role(client):
+    workflow_id = _project_init(client, "Backend ticket should lease by actor capabilities")
     repository = client.app.state.repository
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="backend_engineer_primary",
+        output_schema_ref="source_code_delivery",
+    )
+    _seed_worker(
+        repository,
+        employee_id="emp_frontend_only",
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    _seed_worker(
+        repository,
+        employee_id="emp_backend_capable_actor",
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    _enable_actor(
+        repository,
+        actor_id="actor_frontend_only",
+        employee_id="emp_frontend_only",
+        workflow_id=workflow_id,
+        capabilities=[
+            "source.modify.application",
+            "test.run.application",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ],
+    )
+    _enable_actor(
+        repository,
+        actor_id="actor_backend_capable",
+        employee_id="emp_backend_capable_actor",
+        workflow_id=workflow_id,
+        capabilities=[
+            "source.modify.backend",
+            "test.run.backend",
+            "evidence.write.test",
+            "evidence.write.git",
+            "docs.update.delivery",
+        ],
+    )
     create_response = client.post(
         "/api/v1/commands/ticket-create",
         json=_ticket_create_payload(
             workflow_id=workflow_id,
-            ticket_id="tkt_runner_backend_staffing_gap",
-            node_id="node_runner_backend_staffing_gap",
+            ticket_id="tkt_runner_backend_capability_match",
+            node_id="node_runner_backend_capability_match",
             role_profile_ref="backend_engineer_primary",
             output_schema_ref="source_code_delivery",
-            excluded_employee_ids=["emp_backend_previous"],
             allowed_tools=["read_artifact", "write_artifact"],
-            allowed_write_set=["artifacts/backend/staffing-gap/*"],
+            allowed_write_set=["artifacts/backend/capability-match/*"],
         ),
     )
     assert create_response.status_code == 200
@@ -6371,27 +6571,21 @@ def test_ready_ticket_without_eligible_worker_surfaces_staffing_gap(client):
 
     run_scheduler_tick(
         repository,
-        idempotency_key="scheduler-tick:backend-staffing-gap",
+        idempotency_key="scheduler-tick:backend-capability-match",
         max_dispatches=10,
     )
 
-    diagnostics = [
+    ticket_projection = repository.get_current_ticket_projection("tkt_runner_backend_capability_match")
+    leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "SCHEDULER_LEASE_DIAGNOSTIC_RECORDED"
-        and event["payload"].get("reason_code") == "NO_ELIGIBLE_WORKER"
-        and event["payload"].get("ticket_id") == "tkt_runner_backend_staffing_gap"
+        if event["event_type"] == "TICKET_LEASED"
+        and event["payload"].get("ticket_id") == "tkt_runner_backend_capability_match"
     ]
-    ticket_projection = repository.get_current_ticket_projection("tkt_runner_backend_staffing_gap")
 
     assert ticket_projection is not None
-    assert ticket_projection["status"] == "PENDING"
-    assert diagnostics
-    diagnostic = diagnostics[-1]["payload"]
-    assert diagnostic["node_id"] == "node_runner_backend_staffing_gap"
-    assert diagnostic["required_role_profile_ref"] == "backend_engineer_primary"
-    assert diagnostic["excluded_employee_ids"] == ["emp_backend_previous"]
-    assert diagnostic["candidate_summary"]["matching_role_count"] == 0
+    assert ticket_projection["status"] == "LEASED"
+    assert leased_events[-1]["payload"]["leased_by"] == "actor_backend_capable"
 
 
 def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, set_ticket_time):
@@ -6435,6 +6629,13 @@ def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, s
         client,
         role_profile_ref="backend_engineer_primary",
         output_schema_ref="source_code_delivery",
+    )
+    _enable_actor(
+        repository,
+        actor_id="emp_backend_backup",
+        employee_id="emp_backend_backup",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("backend_engineer_primary"),
     )
     run_scheduler_tick(
         repository,

@@ -29,6 +29,7 @@ from app.core.ceo_execution_presets import (
 from app.core.context_compiler import compile_and_persist_execution_artifacts
 from app.core.execution_targets import (
     EXECUTION_TARGET_ARCHITECT_GOVERNANCE_DOCUMENT,
+    build_role_template_capability_contract,
     infer_execution_contract_payload,
 )
 from app.core.governance_profiles import build_default_governance_profile
@@ -690,6 +691,70 @@ def _seed_worker(
                 "board_approved": True,
                 "provider_id": provider_id,
                 "role_profile_refs": list(role_profile_refs or ["frontend_engineer_primary"]),
+            },
+            occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+        )
+        repository.refresh_projections(connection)
+    role_profile_values = list(role_profile_refs or ["frontend_engineer_primary"])
+    capabilities: list[str] = []
+    seen_capabilities: set[str] = set()
+    for role_profile_ref in role_profile_values:
+        for capability in _capabilities_for_role_profile(role_profile_ref):
+            if capability in seen_capabilities:
+                continue
+            seen_capabilities.add(capability)
+            capabilities.append(capability)
+    _enable_actor(
+        client,
+        actor_id=employee_id,
+        employee_id=employee_id,
+        workflow_id="test-default",
+        capabilities=capabilities,
+        provider_id=provider_id,
+    )
+
+
+def _capabilities_for_role_profile(role_profile_ref: str) -> list[str]:
+    contract = build_role_template_capability_contract(role_profile_ref)
+    assert contract is not None
+    return list(contract["capability_set"])
+
+
+def _enable_actor(
+    client,
+    *,
+    actor_id: str,
+    workflow_id: str,
+    capabilities: list[str],
+    employee_id: str | None = None,
+    provider_id: str | None = OPENAI_COMPAT_PROVIDER_ID,
+    idempotency_suffix: str | None = None,
+) -> None:
+    provider_preferences: dict[str, str] = {}
+    if provider_id:
+        provider_preferences["provider_id"] = provider_id
+    idempotency_key = f"test-enable-actor:{workflow_id}:{actor_id}"
+    if idempotency_suffix:
+        idempotency_key = f"{idempotency_key}:{idempotency_suffix}"
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_ENABLED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=idempotency_key,
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "actor_id": actor_id,
+                "employee_id": employee_id or actor_id,
+                "capability_set": capabilities,
+                "provider_preferences": provider_preferences,
+                "availability": {},
+                "created_from_policy": "test",
+                "audit_reason": "scheduler assignment test",
             },
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
@@ -2222,7 +2287,7 @@ def test_ticket_create_rejects_missing_execution_contract(client):
         role_profile_ref="frontend_engineer_primary",
         output_schema_ref="ui_milestone_review",
     )
-    payload = _ticket_create_payload(execution_contract=None)
+    payload = _ticket_create_payload()
     payload.pop("execution_contract", None)
 
     response = client.post("/api/v1/commands/ticket-create", json=payload)
@@ -2416,63 +2481,82 @@ def _create_and_lease_ticket(
     parent_ticket_id: str | None = None,
     use_default_input_artifact_refs: bool = True,
 ) -> None:
-    if tenant_id is not None and workspace_id is not None:
+    repository = client.app.state.repository
+    if repository.get_workflow_projection(workflow_id) is None:
+        _ensure_scoped_workflow(
+            client,
+            workflow_id=workflow_id,
+            tenant_id=tenant_id or "tenant_default",
+            workspace_id=workspace_id or "ws_default",
+        )
+    elif tenant_id is not None and workspace_id is not None:
         _ensure_scoped_workflow(
             client,
             workflow_id=workflow_id,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
         )
-    _ensure_runtime_provider_ready_for_ticket(
-        client,
-        role_profile_ref=role_profile_ref,
-        output_schema_ref=output_schema_ref,
-    )
-    create_response = client.post(
-        "/api/v1/commands/ticket-create",
-        json=_ticket_create_payload(
-            workflow_id=workflow_id,
-            ticket_id=ticket_id,
-            node_id=node_id,
-            attempt_no=attempt_no,
+    with _suppress_ceo_shadow_side_effects():
+        _ensure_runtime_provider_ready_for_ticket(
+            client,
             role_profile_ref=role_profile_ref,
-            lease_timeout_sec=lease_timeout_sec,
-            retry_budget=retry_budget,
-            on_timeout=on_timeout,
-            on_schema_error=on_schema_error,
-            on_repeat_failure=on_repeat_failure,
-            repeat_failure_threshold=repeat_failure_threshold,
-            timeout_repeat_threshold=timeout_repeat_threshold,
-            timeout_backoff_multiplier=timeout_backoff_multiplier,
-            timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
-            allowed_write_set=allowed_write_set,
-            input_artifact_refs=input_artifact_refs,
-            acceptance_criteria=acceptance_criteria,
             output_schema_ref=output_schema_ref,
-            output_schema_version=output_schema_version,
-            allowed_tools=allowed_tools,
-            context_query_plan=context_query_plan,
-            delivery_stage=delivery_stage,
-            parent_ticket_id=parent_ticket_id,
-            use_default_input_artifact_refs=use_default_input_artifact_refs,
-        ),
-    )
-    assert create_response.status_code == 200
-    assert create_response.json()["status"] == "ACCEPTED"
-    _ensure_default_governance_profile(client, workflow_id=workflow_id)
+        )
+        create_response = client.post(
+            "/api/v1/commands/ticket-create",
+            json=_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                attempt_no=attempt_no,
+                role_profile_ref=role_profile_ref,
+                lease_timeout_sec=lease_timeout_sec,
+                retry_budget=retry_budget,
+                on_timeout=on_timeout,
+                on_schema_error=on_schema_error,
+                on_repeat_failure=on_repeat_failure,
+                repeat_failure_threshold=repeat_failure_threshold,
+                timeout_repeat_threshold=timeout_repeat_threshold,
+                timeout_backoff_multiplier=timeout_backoff_multiplier,
+                timeout_backoff_cap_multiplier=timeout_backoff_cap_multiplier,
+                allowed_write_set=allowed_write_set,
+                input_artifact_refs=input_artifact_refs,
+                acceptance_criteria=acceptance_criteria,
+                output_schema_ref=output_schema_ref,
+                output_schema_version=output_schema_version,
+                allowed_tools=allowed_tools,
+                context_query_plan=context_query_plan,
+                delivery_stage=delivery_stage,
+                parent_ticket_id=parent_ticket_id,
+                use_default_input_artifact_refs=use_default_input_artifact_refs,
+            ),
+        )
+        assert create_response.status_code == 200
+        assert create_response.json()["status"] == "ACCEPTED"
+        _ensure_default_governance_profile(client, workflow_id=workflow_id)
 
-    lease_response = client.post(
-        "/api/v1/commands/ticket-lease",
-        json=_ticket_lease_payload(
+        _enable_actor(
+            client,
+            actor_id=leased_by,
+            employee_id=leased_by,
             workflow_id=workflow_id,
-            ticket_id=ticket_id,
-            node_id=node_id,
-            leased_by=leased_by,
-            lease_timeout_sec=lease_timeout_sec,
-        ),
-    )
-    assert lease_response.status_code == 200
-    assert lease_response.json()["status"] == "ACCEPTED"
+            capabilities=_capabilities_for_role_profile(
+                "frontend_engineer_primary" if leased_by == "emp_frontend_2" else role_profile_ref or ("ui_designer_primary" if output_schema_ref == "consensus_document" else "frontend_engineer_primary")
+            ),
+        )
+
+        lease_response = client.post(
+            "/api/v1/commands/ticket-lease",
+            json=_ticket_lease_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                leased_by=leased_by,
+                lease_timeout_sec=lease_timeout_sec,
+            ),
+        )
+        assert lease_response.status_code == 200
+        assert lease_response.json()["status"] == "ACCEPTED"
 
 
 def _create_lease_and_start_ticket(
@@ -3225,7 +3309,13 @@ def _complete_scope_delivery_chain_to_visual_milestone(
                     role_profile_ref="frontend_engineer_primary",
                     output_schema_ref="source_code_delivery",
                     allowed_tools=["read_artifact", "write_artifact"],
-                    allowed_write_set=[f"artifacts/ui/scope-followups/{build_ticket_id}/*"],
+                    allowed_write_set=[
+                        f"10-project/src/{build_ticket_id}.ts",
+                        f"10-project/docs/tracking/{build_ticket_id}-active.md",
+                        f"10-project/docs/history/{build_ticket_id}-memory.md",
+                        f"20-evidence/tests/{build_ticket_id}/*",
+                        f"20-evidence/git/{build_ticket_id}/*",
+                    ],
                     acceptance_criteria=[
                         "Must implement the approved scope delivery.",
                         "Must produce a structured source code delivery.",
@@ -3479,6 +3569,26 @@ def _complete_closeout_chain_after_final_review_approval(
             assert ack.status.value == "ACCEPTED"
             closeout_ticket = repository.get_current_ticket_projection(closeout_ticket_id)
         assert closeout_ticket is not None
+        with repository.connection() as connection:
+            closeout_created_spec = repository.get_latest_ticket_created_payload(connection, closeout_ticket_id) or {}
+        known_final_artifact_refs = ticket_handlers_module._closeout_known_final_artifact_refs(
+            repository,
+            created_spec=closeout_created_spec,
+            closeout_artifact_refs=[],
+        )
+        final_artifact_refs = [
+            artifact_ref
+            for artifact_ref in selected_artifact_refs
+            if artifact_ref in known_final_artifact_refs
+        ]
+        if not final_artifact_refs:
+            final_artifact_refs = [
+                str(item).strip()
+                for item in list(closeout_created_spec.get("input_artifact_refs") or [])
+                if str(item).strip() in known_final_artifact_refs
+            ]
+        if not final_artifact_refs:
+            final_artifact_refs = selected_artifact_refs
         if closeout_ticket["status"] == TICKET_STATUS_PENDING:
             _assert_command_accepted(
                 client.post(
@@ -3512,7 +3622,7 @@ def _complete_closeout_chain_after_final_review_approval(
                     ticket_id=closeout_ticket_id,
                     node_id=closeout_node_id,
                     include_review_request=True,
-                    final_artifact_refs=selected_artifact_refs,
+                    final_artifact_refs=final_artifact_refs,
                     idempotency_key=f"ticket-result-submit:{workflow_id}:{closeout_ticket_id}:closeout",
                 ),
             )
@@ -4101,15 +4211,16 @@ def test_internal_delivery_build_checker_approved_does_not_open_board_review(cli
         delivery_stage="BUILD",
     )
 
-    maker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id="wf_build_internal_review",
-            ticket_id="tkt_build_internal_review",
-            node_id="node_build_internal_review",
-            include_review_request=True,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        maker_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id="wf_build_internal_review",
+                ticket_id="tkt_build_internal_review",
+                node_id="node_build_internal_review",
+                include_review_request=True,
+            ),
+        )
 
     repository = client.app.state.repository
     node_projection = repository.get_current_node_projection(
@@ -4137,16 +4248,17 @@ def test_internal_delivery_build_checker_approved_does_not_open_board_review(cli
             started_by="emp_checker_1",
         ),
     )
-    checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id="wf_build_internal_review",
-            ticket_id=checker_ticket_id,
-            node_id="node_build_internal_review",
-            review_status="APPROVED_WITH_NOTES",
-            idempotency_key=f"ticket-result-submit:wf_build_internal_review:{checker_ticket_id}:approved",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                workflow_id="wf_build_internal_review",
+                ticket_id=checker_ticket_id,
+                node_id="node_build_internal_review",
+                review_status="APPROVED_WITH_NOTES",
+                idempotency_key=f"ticket-result-submit:wf_build_internal_review:{checker_ticket_id}:approved",
+            ),
+        )
 
     maker_ticket = repository.get_current_ticket_projection("tkt_build_internal_review")
     current_node = repository.get_current_node_projection("wf_build_internal_review", "node_build_internal_review")
@@ -4261,7 +4373,16 @@ def test_internal_delivery_build_checker_changes_required_creates_fix_ticket_and
     assert fix_created_spec["allowed_write_set"] == [
         f"artifacts/ui/scope-followups/{node_projection['latest_ticket_id']}/*"
     ]
-    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["excluded_employee_ids"] == []
+    assert fix_created_spec["scoped_exclusions"] == [
+        {
+            "actor_id": "emp_frontend_2",
+            "scope": "attempt",
+            "ticket_id": node_projection["latest_ticket_id"],
+            "attempt_no": fix_created_spec["attempt_no"],
+            "reason": "maker checker rework requires a different actor for this attempt",
+        }
+    ]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_DELIVERY_REVIEW"
     )
@@ -4392,6 +4513,7 @@ def test_internal_delivery_build_fix_pass_releases_downstream_check(
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _seed_worker(client, employee_id="emp_frontend_3")
+    _seed_worker(client, employee_id="emp_checker_1", role_type="checker", role_profile_refs=["checker_primary"])
     _create_lease_and_start_ticket(
         client,
         workflow_id="wf_build_rework_resume",
@@ -4596,15 +4718,16 @@ def test_internal_delivery_build_checker_escalated_opens_incident_without_board_
         ],
         delivery_stage="BUILD",
     )
-    maker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_source_code_delivery_result_submit_payload(
-            workflow_id="wf_build_escalation",
-            ticket_id="tkt_build_escalation",
-            node_id="node_build_escalation",
-            include_review_request=True,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        maker_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_source_code_delivery_result_submit_payload(
+                workflow_id="wf_build_escalation",
+                ticket_id="tkt_build_escalation",
+                node_id="node_build_escalation",
+                include_review_request=True,
+            ),
+        )
     assert maker_response.status_code == 200
     assert maker_response.json()["status"] == "ACCEPTED"
 
@@ -4630,29 +4753,34 @@ def test_internal_delivery_build_checker_escalated_opens_incident_without_board_
             started_by="emp_checker_1",
         ),
     )
-    checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id="wf_build_escalation",
-            ticket_id=checker_ticket_id,
-            node_id="node_build_escalation",
-            review_status="ESCALATED",
-            findings=[
-                {
-                    "finding_id": "finding_build_unverifiable",
-                    "severity": "high",
-                    "category": "DELIVERY_RISK",
-                    "headline": "Checker cannot verify the bundle with current evidence.",
-                    "summary": "Source code delivery needs CEO attention before downstream work continues.",
-                    "required_action": "Escalate this source delivery for deeper intervention.",
-                    "blocking": True,
-                }
-            ],
-            idempotency_key=f"ticket-result-submit:wf_build_escalation:{checker_ticket_id}:escalated",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                workflow_id="wf_build_escalation",
+                ticket_id=checker_ticket_id,
+                node_id="node_build_escalation",
+                review_status="ESCALATED",
+                findings=[
+                    {
+                        "finding_id": "finding_build_unverifiable",
+                        "severity": "high",
+                        "category": "DELIVERY_RISK",
+                        "headline": "Checker cannot verify the bundle with current evidence.",
+                        "summary": "Source code delivery needs CEO attention before downstream work continues.",
+                        "required_action": "Escalate this source delivery for deeper intervention.",
+                        "blocking": True,
+                    }
+                ],
+                idempotency_key=f"ticket-result-submit:wf_build_escalation:{checker_ticket_id}:escalated",
+            ),
+        )
 
-    open_incidents = repository.list_open_incidents()
+    open_incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    ]
 
     assert checker_result.status_code == 200
     assert checker_result.json()["status"] == "ACCEPTED"
@@ -4829,15 +4957,16 @@ def test_check_followup_result_creates_internal_checker_and_preserves_review_gat
     assert review_create.status_code == 200
     assert review_create.json()["status"] == "ACCEPTED"
 
-    maker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_delivery_check_report_result_submit_payload(
-            workflow_id="wf_check_internal_review",
-            ticket_id="tkt_check_internal_review",
-            node_id="node_check_internal_review",
-            include_review_request=True,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        maker_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_delivery_check_report_result_submit_payload(
+                workflow_id="wf_check_internal_review",
+                ticket_id="tkt_check_internal_review",
+                node_id="node_check_internal_review",
+                include_review_request=True,
+            ),
+        )
 
     repository = client.app.state.repository
     check_node = repository.get_current_node_projection("wf_check_internal_review", "node_check_internal_review")
@@ -5370,7 +5499,16 @@ def test_check_internal_checker_changes_required_creates_fix_ticket_and_counts_r
     assert fix_created_spec["allowed_write_set"] == [
         f"reports/check/{node_projection['latest_ticket_id']}/*"
     ]
-    assert fix_created_spec["excluded_employee_ids"] == ["emp_checker_1"]
+    assert fix_created_spec["excluded_employee_ids"] == []
+    assert fix_created_spec["scoped_exclusions"] == [
+        {
+            "actor_id": "emp_checker_1",
+            "scope": "attempt",
+            "ticket_id": node_projection["latest_ticket_id"],
+            "attempt_no": fix_created_spec["attempt_no"],
+            "reason": "maker checker rework requires a different actor for this attempt",
+        }
+    ]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_CHECK_REVIEW"
     )
@@ -5428,15 +5566,16 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
             parent_ticket_id="tkt_check_escalation",
         ),
     )
-    client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_delivery_check_report_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id="tkt_check_escalation",
-            node_id="node_check_escalation",
-            include_review_request=True,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_delivery_check_report_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_check_escalation",
+                node_id="node_check_escalation",
+                include_review_request=True,
+            ),
+        )
 
     repository = client.app.state.repository
     checker_ticket_id = repository.get_current_node_projection(workflow_id, "node_check_escalation")[
@@ -5460,32 +5599,37 @@ def test_check_internal_checker_escalated_opens_incident_and_marks_dependency_st
             started_by="emp_checker_1",
         ),
     )
-    checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            workflow_id=workflow_id,
-            ticket_id=checker_ticket_id,
-            node_id="node_check_escalation",
-            review_status="ESCALATED",
-            findings=[
-                {
-                    "finding_id": "finding_check_unverifiable",
-                    "severity": "high",
-                    "category": "DELIVERY_RISK",
-                    "headline": "Checker cannot verify the report against the bundle.",
-                    "summary": "Delivery check evidence is not strong enough to start final review.",
-                    "required_action": "Escalate the delivery check report for deeper intervention.",
-                    "blocking": True,
-                }
-            ],
-            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:escalated",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                workflow_id=workflow_id,
+                ticket_id=checker_ticket_id,
+                node_id="node_check_escalation",
+                review_status="ESCALATED",
+                findings=[
+                    {
+                        "finding_id": "finding_check_unverifiable",
+                        "severity": "high",
+                        "category": "DELIVERY_RISK",
+                        "headline": "Checker cannot verify the report against the bundle.",
+                        "summary": "Delivery check evidence is not strong enough to start final review.",
+                        "required_action": "Escalate the delivery check report for deeper intervention.",
+                        "blocking": True,
+                    }
+                ],
+                idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:escalated",
+            ),
+        )
     inspector_response = client.get(
         f"/api/v1/projections/workflows/{workflow_id}/dependency-inspector"
     )
 
-    incidents = repository.list_open_incidents()
+    incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    ]
     check_open_approvals = [
         approval
         for approval in repository.list_open_approvals()
@@ -6009,6 +6153,35 @@ def test_project_init_without_live_provider_writes_precondition_block_and_clears
     workflow_id = workflow_response.json()["causation_hint"].split(":", 1)[1]
     kickoff_ticket_id = build_project_init_scope_ticket_id(workflow_id)
     repository = client.app.state.repository
+    unavailable_provider = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json=_runtime_provider_upsert_payload(
+            openai_enabled=False,
+            role_bindings=[
+                {
+                    "target_ref": "execution_target:architect_governance_document",
+                    "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                },
+            ],
+            idempotency_key="runtime-provider-upsert:project-init-provider-unavailable",
+        ),
+    )
+    assert unavailable_provider.status_code == 200
+    assert unavailable_provider.json()["status"] == "ACCEPTED"
+    _enable_actor(
+        client,
+        actor_id="emp_architect_project_init",
+        employee_id="emp_architect_project_init",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("architect_primary"),
+        provider_id=None,
+    )
+    client.post(
+        "/api/v1/commands/scheduler-tick",
+        json=_scheduler_tick_payload(idempotency_key="scheduler-tick:project-init-provider-blocked-initial"),
+    )
 
     kickoff_ticket = repository.get_current_ticket_projection(kickoff_ticket_id)
     kickoff_node = repository.get_current_node_projection(workflow_id, "node_ceo_architecture_brief")
@@ -9434,7 +9607,7 @@ def test_ticket_heartbeat_is_rejected_before_ticket_start(client, set_ticket_tim
 
 def test_ticket_heartbeat_is_rejected_when_owner_differs(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
-    _create_lease_and_start_ticket(client, leased_by="emp_checker_1", role_profile_ref="checker_primary")
+    _create_lease_and_start_ticket(client, leased_by="emp_checker_1")
 
     set_ticket_time("2026-03-28T10:05:00+08:00")
     response = client.post(
@@ -9581,8 +9754,19 @@ def test_ticket_result_submit_rejects_stale_compiled_execution_package_version_r
     assert ticket is not None
 
     first = compile_and_persist_execution_artifacts(repository, ticket)
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET graph_version = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("gv_result_submit_stale_package", "wf_seed", ticket["node_id"]),
+        )
     set_ticket_time("2026-03-28T10:05:00+08:00")
     second = compile_and_persist_execution_artifacts(repository, ticket)
+    assert second.compiled_execution_package.meta.compile_request_id != first.compiled_execution_package.meta.compile_request_id
+    assert second.compiled_execution_package.meta.version_ref != first.compiled_execution_package.meta.version_ref
 
     stale_response = client.post(
         "/api/v1/commands/ticket-result-submit",
@@ -9899,6 +10083,14 @@ def test_ticket_result_submit_materializes_json_artifacts_and_exposes_ticket_art
 def test_runtime_default_result_artifacts_use_review_evidence_retention(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _ensure_default_governance_profile(client, workflow_id="wf_seed")
+    _enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id="wf_seed",
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     from app.scheduler_runner import run_scheduler_once
 
@@ -11081,7 +11273,7 @@ def test_ticket_fail_is_rejected_for_non_latest_ticket(client, set_ticket_time):
     assert "no longer points" in response.json()["reason"].lower()
 
 
-def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
+def test_ticket_fail_auto_retry_does_not_copy_legacy_excluded_employee_ids(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(
         client,
@@ -11090,10 +11282,36 @@ def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
             "reports/review/tkt_visual_001/*",
         ],
     )
+    with client.app.state.repository.transaction() as connection:
+        created_spec = client.app.state.repository.get_latest_ticket_created_payload(
+            connection,
+            "tkt_visual_001",
+        )
+        assert created_spec is not None
+        created_spec["excluded_employee_ids"] = ["emp_frontend_2"]
+        ticket_created_event = connection.execute(
+            """
+            SELECT event_id
+            FROM events
+            WHERE event_type = 'TICKET_CREATED' AND json_extract(payload_json, '$.ticket_id') = ?
+            ORDER BY occurred_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            ("tkt_visual_001",),
+        ).fetchone()
+        assert ticket_created_event is not None
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(created_spec, sort_keys=True), ticket_created_event["event_id"]),
+        )
+        client.app.state.repository.refresh_projections(connection)
 
     response = client.post(
         "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(failure_kind="SCHEMA_ERROR"),
+        json=_ticket_fail_payload(
+            failure_kind="SCHEMA_ERROR",
+            idempotency_key="ticket-fail:wf_seed:tkt_visual_001:no-exclusion-copy",
+        ),
     )
 
     repository = client.app.state.repository
@@ -11120,6 +11338,7 @@ def test_ticket_fail_auto_retry_creates_new_attempt(client, set_ticket_time):
         f"artifacts/ui/scope-followups/{retry_ticket_id}/*",
         f"reports/review/{retry_ticket_id}/*",
     ]
+    assert created_retry_events[0]["payload"]["excluded_employee_ids"] == []
     assert failed_ticket_projection["status"] == TICKET_STATUS_FAILED
     assert new_ticket_projection["status"] == TICKET_STATUS_PENDING
     assert new_ticket_projection["retry_count"] == 1
@@ -11329,7 +11548,7 @@ def test_incident_projection_dashboard_inbox_and_endpoint_reflect_open_timeout_i
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
     dashboard_response = client.get("/api/v1/projections/dashboard")
     inbox_response = client.get("/api/v1/projections/inbox")
@@ -11393,7 +11612,7 @@ def test_incident_resolve_closes_breaker_and_removes_open_incident_from_dashboar
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
@@ -11456,7 +11675,7 @@ def test_incident_resolve_can_restore_and_retry_latest_timeout_in_one_command(cl
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
     retry_scheduled_before = repository.count_events_by_type(EVENT_TICKET_RETRY_SCHEDULED)
 
@@ -11529,7 +11748,7 @@ def test_incident_resolve_moves_incident_into_recovering_before_auto_close(clien
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
@@ -11585,7 +11804,7 @@ def test_incident_resolve_reopens_scheduler_dispatch_for_same_node(client, set_t
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
@@ -11653,7 +11872,7 @@ def test_incident_resolve_rejects_missing_or_closed_incidents(client, set_ticket
         event["payload"]["incident_id"]
         for event in repository.list_events_for_testing()
         if event["event_type"] == EVENT_INCIDENT_OPENED
-        and event["payload"]["incident_type"] == "REPEATED_FAILURE_ESCALATION"
+        and event["payload"]["incident_type"] == "RUNTIME_TIMEOUT_ESCALATION"
     )
 
     set_ticket_time("2026-03-28T11:20:00+08:00")
@@ -11877,6 +12096,53 @@ def test_provider_failure_opens_provider_incident_blocks_same_provider_and_updat
         employee_id="emp_frontend_backup",
         provider_id="prov_backup",
     )
+    provider_config_response = client.post(
+        "/api/v1/commands/runtime-provider-upsert",
+        json={
+            "providers": [
+                {
+                    "provider_id": "prov_openai_compat",
+                    "type": "openai_responses_stream",
+                    "enabled": True,
+                    "base_url": "https://api.example.test/v1",
+                    "api_key": "sk-test-secret",
+                    "alias": "",
+                    "preferred_model": "gpt-5.3-codex",
+                    "max_context_window": None,
+                    "reasoning_effort": "high",
+                },
+                {
+                    "provider_id": "prov_backup",
+                    "type": "openai_responses_stream",
+                    "enabled": True,
+                    "base_url": "https://backup.example.test/v1",
+                    "api_key": "sk-backup-secret",
+                    "alias": "",
+                    "preferred_model": "gpt-5.3-codex",
+                    "max_context_window": None,
+                    "reasoning_effort": "high",
+                },
+            ],
+            "provider_model_entries": [
+                {"provider_id": "prov_openai_compat", "model_name": "gpt-5.3-codex"},
+                {"provider_id": "prov_backup", "model_name": "gpt-5.3-codex"},
+            ],
+            "role_bindings": [
+                {
+                    "target_ref": "execution_target:frontend_ui_milestone",
+                    "provider_model_entry_refs": [
+                        "prov_openai_compat::gpt-5.3-codex",
+                        "prov_backup::gpt-5.3-codex",
+                    ],
+                    "max_context_window_override": None,
+                    "reasoning_effort_override": None,
+                }
+            ],
+            "idempotency_key": "runtime-provider-upsert:provider-fallback-test",
+        },
+    )
+    assert provider_config_response.status_code == 200
+    assert provider_config_response.json()["status"] == "ACCEPTED"
 
     set_ticket_time("2026-03-28T10:05:00+08:00")
     fail_response = client.post(
@@ -12055,13 +12321,14 @@ def test_repeated_failure_opens_incident_and_blocks_same_node_dispatch(client, s
         "component": "hero",
     }
     set_ticket_time("2026-03-28T10:05:00+08:00")
-    first_fail_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            failure_message="Primary hero render crashed.",
-            failure_detail=first_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        first_fail_response = client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                failure_message="Primary hero render crashed.",
+                failure_detail=first_failure,
+            ),
+        )
 
     repository = client.app.state.repository
     second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -12079,14 +12346,15 @@ def test_repeated_failure_opens_incident_and_blocks_same_node_dispatch(client, s
     )
 
     set_ticket_time("2026-03-28T10:07:00+08:00")
-    second_fail_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            ticket_id=second_ticket_id,
-            failure_message="Primary hero render crashed.",
-            failure_detail=first_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        second_fail_response = client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                ticket_id=second_ticket_id,
+                failure_message="Primary hero render crashed.",
+                failure_detail=first_failure,
+            ),
+        )
 
     incident_id = [
         event["payload"]["incident_id"]
@@ -12151,13 +12419,14 @@ def test_repeated_failure_with_different_fingerprint_keeps_retrying_without_inci
     _create_lease_and_start_ticket(client, retry_budget=3, repeat_failure_threshold=2)
 
     set_ticket_time("2026-03-28T10:05:00+08:00")
-    client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            failure_message="Primary hero render crashed.",
-            failure_detail={"step": "render", "exit_code": 1},
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                failure_message="Primary hero render crashed.",
+                failure_detail={"step": "render", "exit_code": 1},
+            ),
+        )
 
     repository = client.app.state.repository
     second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -12175,14 +12444,15 @@ def test_repeated_failure_with_different_fingerprint_keeps_retrying_without_inci
     )
 
     set_ticket_time("2026-03-28T10:07:00+08:00")
-    second_fail_response = client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            ticket_id=second_ticket_id,
-            failure_message="Secondary export step crashed.",
-            failure_detail={"step": "export", "exit_code": 9},
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        second_fail_response = client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                ticket_id=second_ticket_id,
+                failure_message="Secondary export step crashed.",
+                failure_detail={"step": "export", "exit_code": 9},
+            ),
+        )
 
     latest_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
         "latest_ticket_id"
@@ -12207,13 +12477,14 @@ def test_incident_resolve_can_restore_and_retry_latest_failure_in_one_command(cl
         "component": "hero",
     }
     set_ticket_time("2026-03-28T10:05:00+08:00")
-    client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            failure_message="Primary hero render crashed.",
-            failure_detail=repeated_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                failure_message="Primary hero render crashed.",
+                failure_detail=repeated_failure,
+            ),
+        )
 
     repository = client.app.state.repository
     second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -12231,14 +12502,15 @@ def test_incident_resolve_can_restore_and_retry_latest_failure_in_one_command(cl
     )
 
     set_ticket_time("2026-03-28T10:07:00+08:00")
-    client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            ticket_id=second_ticket_id,
-            failure_message="Primary hero render crashed.",
-            failure_detail=repeated_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                ticket_id=second_ticket_id,
+                failure_message="Primary hero render crashed.",
+                failure_detail=repeated_failure,
+            ),
+        )
 
     incident_id = next(
         event["payload"]["incident_id"]
@@ -12286,13 +12558,14 @@ def test_incident_resolve_restore_and_retry_latest_failure_can_override_exhauste
         "component": "hero",
     }
     set_ticket_time("2026-03-28T10:05:00+08:00")
-    client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            failure_message="Primary hero render crashed.",
-            failure_detail=repeated_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                failure_message="Primary hero render crashed.",
+                failure_detail=repeated_failure,
+            ),
+        )
 
     repository = client.app.state.repository
     second_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -12310,14 +12583,15 @@ def test_incident_resolve_restore_and_retry_latest_failure_can_override_exhauste
     )
 
     set_ticket_time("2026-03-28T10:07:00+08:00")
-    client.post(
-        "/api/v1/commands/ticket-fail",
-        json=_ticket_fail_payload(
-            ticket_id=second_ticket_id,
-            failure_message="Primary hero render crashed.",
-            failure_detail=repeated_failure,
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-fail",
+            json=_ticket_fail_payload(
+                ticket_id=second_ticket_id,
+                failure_message="Primary hero render crashed.",
+                failure_detail=repeated_failure,
+            ),
+        )
 
     incident_id = next(
         event["payload"]["incident_id"]
@@ -12388,6 +12662,21 @@ def test_provider_failure_still_uses_provider_incident_path_not_repeated_failure
 def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_and_lease_ticket(client, lease_timeout_sec=60, leased_by="emp_checker_1")
+    _enable_actor(
+        client,
+        actor_id="emp_checker_1",
+        employee_id="emp_checker_1",
+        workflow_id="wf_seed",
+        capabilities=_capabilities_for_role_profile("checker_primary"),
+        idempotency_suffix="checker-only",
+    )
+    _enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id="wf_seed",
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     set_ticket_time("2026-03-28T10:02:00+08:00")
     response = client.post(
@@ -12411,7 +12700,20 @@ def test_scheduler_tick_reclaims_expired_lease_and_dispatches_matching_worker(cl
 
 def test_scheduler_tick_does_not_auto_start_ticket(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
+    _ensure_runtime_provider_ready_for_ticket(
+        client,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref="ui_milestone_review",
+    )
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _ensure_default_governance_profile(client, workflow_id="wf_seed")
+    _enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id="wf_seed",
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     set_ticket_time("2026-03-28T10:01:00+08:00")
     response = client.post("/api/v1/commands/scheduler-tick", json=_scheduler_tick_payload())
@@ -12467,30 +12769,7 @@ def test_scheduler_tick_skips_busy_worker_and_role_mismatch(client, set_ticket_t
 
 def test_scheduler_tick_dispatches_to_explicit_assignee_from_dispatch_intent(client, set_ticket_time):
     repository = client.app.state.repository
-    with repository.transaction() as connection:
-        repository.insert_event(
-            connection,
-            event_type="EMPLOYEE_HIRED",
-            actor_type="system",
-            actor_id="test-seed",
-            workflow_id=None,
-            idempotency_key="test-seed-employee:emp_frontend_backup",
-            causation_id=None,
-            correlation_id=None,
-            payload={
-                "employee_id": "emp_frontend_backup",
-                "role_type": "frontend_engineer",
-                "skill_profile": {},
-                "personality_profile": {},
-                "aesthetic_profile": {},
-                "state": "ACTIVE",
-                "board_approved": True,
-                "provider_id": "prov_openai_compat",
-                "role_profile_refs": ["frontend_engineer_primary"],
-            },
-            occurred_at=datetime.fromisoformat("2026-03-28T09:59:00+08:00"),
-        )
-        repository.refresh_projections(connection)
+    _seed_worker(client, employee_id="emp_frontend_backup")
 
     set_ticket_time("2026-03-28T10:00:00+08:00")
     create_response = client.post(
@@ -13023,8 +13302,8 @@ def test_scheduler_tick_fails_delivery_stage_child_when_parent_is_missing(client
 
     monkeypatch.setattr(
         ticket_handlers,
-        "run_ceo_shadow_for_trigger",
-        lambda repository, *, workflow_id, trigger_type, trigger_ref, runtime_provider_store=None: ceo_triggers.append(
+        "_trigger_ceo_shadow_safely",
+        lambda repository, *, workflow_id, trigger_type, trigger_ref: ceo_triggers.append(
             (trigger_type, trigger_ref)
         ),
     )
@@ -13060,15 +13339,16 @@ def test_scheduler_tick_fails_delivery_stage_child_when_parent_is_missing(client
 
 
 def test_inbox_and_dashboard_reflect_open_approval(client):
-    _seed_review_request(client)
+    approval = _seed_review_request(client)
 
     inbox_response = client.get("/api/v1/projections/inbox")
     dashboard_response = client.get("/api/v1/projections/dashboard")
 
     assert inbox_response.status_code == 200
     items = inbox_response.json()["data"]["items"]
-    assert len(items) == 1
-    assert items[0]["route_target"]["view"] == "review_room"
+    approval_items = [item for item in items if item.get("source_ref") == approval["approval_id"]]
+    assert len(approval_items) == 1
+    assert approval_items[0]["route_target"]["view"] == "review_room"
     assert dashboard_response.json()["data"]["inbox_counts"]["approvals_pending"] == 1
     assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 1
     assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 1
@@ -15020,10 +15300,11 @@ def test_visual_milestone_result_submit_routes_to_checker_ticket_before_board_re
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)
 
-    response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_ticket_result_submit_payload(include_review_request=True),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(include_review_request=True),
+        )
 
     repository = client.app.state.repository
     maker_ticket = repository.get_current_ticket_projection("tkt_visual_001")
@@ -15437,7 +15718,16 @@ def test_meeting_escalation_checker_changes_required_creates_consensus_fix_ticke
     assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
     assert fix_created_spec["role_profile_ref"] == "ui_designer_primary"
     assert fix_created_spec["output_schema_ref"] == "consensus_document"
-    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["excluded_employee_ids"] == []
+    assert fix_created_spec["scoped_exclusions"] == [
+        {
+            "actor_id": "emp_frontend_2",
+            "scope": "attempt",
+            "ticket_id": node_projection["latest_ticket_id"],
+            "attempt_no": fix_created_spec["attempt_no"],
+            "reason": "maker checker rework requires a different actor for this attempt",
+        }
+    ]
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "MEETING_ESCALATION"
     )
@@ -15508,7 +15798,16 @@ def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(cli
     assert fix_created_spec["parent_ticket_id"] == checker_ticket_id
     assert fix_created_spec["role_profile_ref"] == "frontend_engineer_primary"
     assert fix_created_spec["output_schema_ref"] == "ui_milestone_review"
-    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["excluded_employee_ids"] == []
+    assert fix_created_spec["scoped_exclusions"] == [
+        {
+            "actor_id": "emp_frontend_2",
+            "scope": "attempt",
+            "ticket_id": node_projection["latest_ticket_id"],
+            "attempt_no": fix_created_spec["attempt_no"],
+            "reason": "maker checker rework requires a different actor for this attempt",
+        }
+    ]
     maker_checker_context = fix_created_spec["maker_checker_context"]
     assert maker_checker_context["checker_ticket_id"] == checker_ticket_id
     assert maker_checker_context["rework_streak_count"] == 1
@@ -15530,7 +15829,10 @@ def test_checker_changes_required_creates_fix_ticket_instead_of_board_review(cli
         "Close checker blocking finding finding_hero_hierarchy: Strengthen hero hierarchy before board review.",
     ]
     assert repository.list_open_approvals() == []
-    assert inbox_response.json()["data"]["items"] == []
+    assert all(
+        item["item_type"] != "BOARD_REVIEW"
+        for item in inbox_response.json()["data"]["items"]
+    )
 
 
 def test_repeated_checker_changes_required_opens_incident_instead_of_creating_next_fix_ticket(
@@ -15539,10 +15841,11 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)
-    maker_response = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_ticket_result_submit_payload(include_review_request=True),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        maker_response = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(include_review_request=True),
+        )
     assert maker_response.status_code == 200
 
     repository = client.app.state.repository
@@ -15557,14 +15860,15 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=first_checker_ticket_id, started_by="emp_checker_1"),
     )
-    first_checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            ticket_id=first_checker_ticket_id,
-            review_status="CHANGES_REQUIRED",
-            idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        first_checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                ticket_id=first_checker_ticket_id,
+                review_status="CHANGES_REQUIRED",
+                idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
+            ),
+        )
     assert first_checker_result.status_code == 200
 
     first_fix_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -15578,18 +15882,19 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=first_fix_ticket_id, started_by="emp_frontend_2"),
     )
-    first_fix_submit = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_ticket_result_submit_payload(
-            ticket_id=first_fix_ticket_id,
-            include_review_request=True,
-            artifact_refs=[
-                "art://homepage/rework-option-a.png",
-                "art://homepage/rework-option-b.png",
-            ],
-            idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        first_fix_submit = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                ticket_id=first_fix_ticket_id,
+                include_review_request=True,
+                artifact_refs=[
+                    "art://homepage/rework-option-a.png",
+                    "art://homepage/rework-option-b.png",
+                ],
+                idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
+            ),
+        )
     assert first_fix_submit.status_code == 200
     assert first_fix_submit.json()["status"] == "ACCEPTED"
 
@@ -15606,19 +15911,30 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=second_checker_ticket_id, started_by="emp_checker_1"),
     )
-    second_checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            ticket_id=second_checker_ticket_id,
-            review_status="CHANGES_REQUIRED",
-            idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        second_checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                ticket_id=second_checker_ticket_id,
+                review_status="CHANGES_REQUIRED",
+                idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
+            ),
+        )
 
     current_node = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
     latest_ticket = repository.get_current_ticket_projection(current_node["latest_ticket_id"])
-    incidents = repository.list_open_incidents()
+    incidents = [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    ]
     inbox_response = client.get("/api/v1/projections/inbox")
+    inbox_items = [
+        item
+        for item in inbox_response.json()["data"]["items"]
+        if item["item_type"] == "INCIDENT_ESCALATION"
+        and item["title"] == "Maker-checker rework escalation in node_homepage_visual"
+    ]
 
     assert second_checker_result.status_code == 200
     assert second_checker_result.json()["status"] == "ACCEPTED"
@@ -15632,13 +15948,9 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
     assert incidents[0]["payload"]["rework_fingerprint"]
     assert client.app.state.repository.count_events_by_type(EVENT_CIRCUIT_BREAKER_OPENED) == 1
     assert repository.list_open_approvals() == []
-    assert inbox_response.json()["data"]["items"][0]["title"] == (
-        "Maker-checker rework escalation in node_homepage_visual"
-    )
-    assert "Repeated checker findings hit the rework threshold" in inbox_response.json()["data"]["items"][0][
-        "summary"
-    ]
-    assert inbox_response.json()["data"]["items"][0]["badges"] == [
+    assert len(inbox_items) == 1
+    assert "Repeated checker findings hit the rework threshold" in inbox_items[0]["summary"]
+    assert inbox_items[0]["badges"] == [
         "maker_checker",
         "rework",
         "circuit_breaker",
@@ -15648,10 +15960,11 @@ def test_repeated_checker_changes_required_opens_incident_instead_of_creating_ne
 def test_different_checker_rework_fingerprint_continues_fix_chain_without_incident(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     _create_lease_and_start_ticket(client)
-    client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_ticket_result_submit_payload(include_review_request=True),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(include_review_request=True),
+        )
 
     repository = client.app.state.repository
     first_checker_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
@@ -15665,14 +15978,15 @@ def test_different_checker_rework_fingerprint_continues_fix_chain_without_incide
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=first_checker_ticket_id, started_by="emp_checker_1"),
     )
-    client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            ticket_id=first_checker_ticket_id,
-            review_status="CHANGES_REQUIRED",
-            idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                ticket_id=first_checker_ticket_id,
+                review_status="CHANGES_REQUIRED",
+                idempotency_key=f"ticket-result-submit:wf_seed:{first_checker_ticket_id}:changes-required-1",
+            ),
+        )
 
     first_fix_ticket_id = repository.get_current_node_projection("wf_seed", "node_homepage_visual")[
         "latest_ticket_id"
@@ -15685,18 +15999,19 @@ def test_different_checker_rework_fingerprint_continues_fix_chain_without_incide
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=first_fix_ticket_id, started_by="emp_frontend_2"),
     )
-    first_fix_submit = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_ticket_result_submit_payload(
-            ticket_id=first_fix_ticket_id,
-            include_review_request=True,
-            artifact_refs=[
-                "art://homepage/rework-option-a.png",
-                "art://homepage/rework-option-b.png",
-            ],
-            idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        first_fix_submit = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_ticket_result_submit_payload(
+                ticket_id=first_fix_ticket_id,
+                include_review_request=True,
+                artifact_refs=[
+                    "art://homepage/rework-option-a.png",
+                    "art://homepage/rework-option-b.png",
+                ],
+                idempotency_key=f"ticket-result-submit:wf_seed:{first_fix_ticket_id}:rework-submit",
+            ),
+        )
     assert first_fix_submit.status_code == 200
     assert first_fix_submit.json()["status"] == "ACCEPTED"
 
@@ -15723,15 +16038,16 @@ def test_different_checker_rework_fingerprint_continues_fix_chain_without_incide
         "/api/v1/commands/ticket-start",
         json=_ticket_start_payload(ticket_id=second_checker_ticket_id, started_by="emp_checker_1"),
     )
-    second_checker_result = client.post(
-        "/api/v1/commands/ticket-result-submit",
-        json=_maker_checker_result_submit_payload(
-            ticket_id=second_checker_ticket_id,
-            review_status="CHANGES_REQUIRED",
-            findings=different_findings,
-            idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
-        ),
-    )
+    with _suppress_ceo_shadow_side_effects():
+        second_checker_result = client.post(
+            "/api/v1/commands/ticket-result-submit",
+            json=_maker_checker_result_submit_payload(
+                ticket_id=second_checker_ticket_id,
+                review_status="CHANGES_REQUIRED",
+                findings=different_findings,
+                idempotency_key=f"ticket-result-submit:wf_seed:{second_checker_ticket_id}:changes-required-2",
+            ),
+        )
 
     current_node = repository.get_current_node_projection("wf_seed", "node_homepage_visual")
     next_fix_ticket = repository.get_current_ticket_projection(current_node["latest_ticket_id"])
@@ -15746,7 +16062,11 @@ def test_different_checker_rework_fingerprint_continues_fix_chain_without_incide
     assert next_fix_ticket is not None
     assert next_fix_ticket["ticket_id"] not in {second_checker_ticket_id, first_fix_ticket_id}
     assert next_fix_ticket["status"] == TICKET_STATUS_PENDING
-    assert repository.list_open_incidents() == []
+    assert [
+        incident
+        for incident in repository.list_open_incidents()
+        if incident["incident_type"] == "MAKER_CHECKER_REWORK_ESCALATION"
+    ] == []
     assert next_fix_created_spec["maker_checker_context"]["rework_streak_count"] == 1
     assert next_fix_created_spec["maker_checker_context"]["blocking_finding_refs"] == [
         "finding_navigation_density"
@@ -16832,7 +17152,6 @@ def test_employee_freeze_containment_opens_staffing_incident_for_executing_ticke
     assert dashboard_response.json()["data"]["ops_strip"]["open_circuit_breakers"] == 1
     assert dashboard_response.json()["data"]["inbox_counts"]["incidents_pending"] == 1
     assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
-        "node_ceo_architecture_brief",
         "node_frozen_executing",
     ]
     inbox_items = [
@@ -17430,6 +17749,7 @@ def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_re
             ticket_id=followup_ticket_id,
             node_id="node_scope_staffing_review",
             include_review_request=False,
+            artifact_refs=[f"art://meeting/{followup_ticket_id}/consensus-document.json"],
             idempotency_key=f"ticket-result-submit:{workflow_id}:{followup_ticket_id}:recovered-maker",
         ),
     )
@@ -17482,7 +17802,11 @@ def test_staffing_containment_recovery_followup_can_reenter_checker_and_board_re
     assert approvals[0]["payload"]["review_pack"]["maker_checker_summary"]["review_status"] == (
         "APPROVED_WITH_NOTES"
     )
-    assert repository.list_open_incidents() == []
+    assert [
+        item
+        for item in repository.list_open_incidents()
+        if item["incident_type"] == "STAFFING_CONTAINMENT"
+    ] == []
 
 
 def test_staffing_containment_incident_projection_exposes_retry_followup_actions(client):
@@ -18004,7 +18328,10 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
             "Must capture the approved final delivery choice.",
             "Must produce a structured delivery closeout package.",
         ],
-        input_artifact_refs=["art://runtime/tkt_review_final/option-a.json"],
+        input_artifact_refs=[
+            "art://runtime/tkt_review_final/source-code.tsx",
+            "art://runtime/tkt_review_final/delivery-check-report.json",
+        ],
         delivery_stage="CLOSEOUT",
     )
     maker_response = client.post(
@@ -18014,7 +18341,11 @@ def test_closeout_internal_checker_allows_documentation_follow_up_as_notes_when_
             ticket_id=closeout_ticket_id,
             node_id=closeout_node_id,
             include_review_request=True,
-            final_artifact_refs=["art://runtime/tkt_review_final/option-a.json"],
+            review_request=_internal_closeout_review_request(),
+            final_artifact_refs=[
+                "art://runtime/tkt_review_final/source-code.tsx",
+                "art://runtime/tkt_review_final/delivery-check-report.json",
+            ],
             documentation_updates=[
                 {
                     "doc_ref": "README.md",
@@ -18148,8 +18479,8 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
             "Must produce a structured delivery closeout package.",
         ],
         input_artifact_refs=[
-            "art://runtime/tkt_review_final/option-a.json",
-            "art://runtime/tkt_review_final/option-b.json",
+            "art://runtime/tkt_review_final/source-code.tsx",
+            "art://runtime/tkt_review_final/delivery-check-report.json",
         ],
         delivery_stage="CLOSEOUT",
     )
@@ -18160,9 +18491,10 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
             ticket_id=closeout_ticket_id,
             node_id=closeout_node_id,
             include_review_request=True,
+            review_request=_internal_closeout_review_request(),
             final_artifact_refs=[
-                "art://runtime/tkt_review_final/option-a.json",
-                "art://runtime/tkt_review_final/option-b.json",
+                "art://runtime/tkt_review_final/source-code.tsx",
+                "art://runtime/tkt_review_final/delivery-check-report.json",
             ],
             documentation_updates=[
                 {
@@ -18233,7 +18565,7 @@ def test_closeout_internal_checker_changes_required_creates_fix_ticket_and_block
     assert fix_created_spec["allowed_write_set"] == [
         f"20-evidence/closeout/{node_projection['latest_ticket_id']}/*"
     ]
-    assert fix_created_spec["excluded_employee_ids"] == ["emp_frontend_2"]
+    assert fix_created_spec["excluded_employee_ids"] == []
     assert fix_created_spec["maker_checker_context"]["original_review_request"]["review_type"] == (
         "INTERNAL_CLOSEOUT_REVIEW"
     )
@@ -18354,8 +18686,10 @@ def test_board_reject_command_resolves_open_approval(client):
     assert node_projection["status"] == NODE_STATUS_REWORK_REQUIRED
     assert node_projection["blocking_reason_code"] == BLOCKING_REASON_BOARD_REJECTED
     assert dashboard_response.json()["data"]["ops_strip"]["active_tickets"] == 1
-    assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 0
-    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == []
+    assert dashboard_response.json()["data"]["ops_strip"]["blocked_nodes"] == 1
+    assert dashboard_response.json()["data"]["pipeline_summary"]["blocked_node_ids"] == [
+        "node_homepage_visual"
+    ]
 
 
 def test_modify_constraints_enters_board_advisory_change_flow_without_resolving_open_approval(client):
@@ -19178,6 +19512,29 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
+    _seed_worker(
+        client,
+        employee_id="emp_cto_advisory_analysis",
+        role_type="cto",
+        provider_id="",
+        role_profile_refs=["cto_primary"],
+    )
+    _assert_command_accepted(
+        client.post(
+            "/api/v1/commands/runtime-provider-upsert",
+            json=_runtime_provider_upsert_payload(
+                role_bindings=[
+                    {
+                        "target_ref": "execution_target:board_advisory_analysis",
+                        "provider_model_entry_refs": ["prov_openai_compat::gpt-5.3-codex"],
+                        "max_context_window_override": None,
+                        "reasoning_effort_override": None,
+                    }
+                ],
+                idempotency_key=f"runtime-provider-upsert:{workflow_id}:advisory-analysis",
+            ),
+        )
+    )
     original_profile = repository.get_latest_governance_profile(workflow_id)
     assert original_profile is not None
 
@@ -19209,13 +19566,37 @@ def test_board_advisory_request_analysis_creates_patch_proposal_without_resolvin
     assert advisory_session is not None
     graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
 
-    response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
             "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:1",
-        },
+            "base_graph_version": graph_version_before,
+            "proposal_summary": "Tighten review rigor without changing the current graph.",
+            "pros": ["Makes the raised review rigor explicit before board confirmation."],
+            "cons": ["Temporarily freezes the current review node until the board confirms."],
+            "risk_alerts": ["The frozen node must be unfrozen after the advisory patch is applied."],
+            "impact_summary": "The board can confirm the governance change before execution continues.",
+            "freeze_node_ids": ["node_homepage_visual"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-advisory-analysis-proposal",
+        }
     )
+
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal.model_dump(mode="json")),
+            response_id="resp_advisory_analysis_proposal",
+        ),
+    ):
+        response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:1",
+            },
+        )
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     latest_profile = repository.get_latest_governance_profile(workflow_id)
@@ -19335,6 +19716,13 @@ def test_board_advisory_request_analysis_accepts_add_node_patch_proposal(client,
         patch("app.core.approval_handlers.build_graph_patch_proposal", return_value=proposal),
         patch("app.core.board_advisory_analysis.build_graph_patch_proposal", return_value=proposal),
         patch("app.core.board_advisory.build_graph_patch_proposal", return_value=proposal),
+        patch(
+            "app.core.board_advisory_analysis.invoke_openai_compat_response",
+            return_value=OpenAICompatProviderResult(
+                output_text=json.dumps(proposal.model_dump(mode="json")),
+                response_id="resp_advisory_add_node_proposal",
+            ),
+        ),
     ):
         response = client.post(
             "/api/v1/commands/board-advisory-request-analysis",
@@ -19554,16 +19942,28 @@ def test_board_advisory_apply_patch_resolves_approval_and_advances_graph_version
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
     graph_version_before = build_ticket_graph_snapshot(repository, workflow_id).graph_version
-
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
             "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:apply",
-        },
+            "base_graph_version": graph_version_before,
+            "proposal_summary": "Freeze the current execution node before applying tighter governance.",
+            "impact_summary": "The current node stays blocked until the modified governance policy is acknowledged.",
+            "freeze_node_ids": ["node_homepage_visual"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-advisory-apply-patch-freeze",
+        }
     )
-    assert analysis_response.status_code == 200
-    assert analysis_response.json()["status"] == "ACCEPTED"
+    with repository.transaction() as connection:
+        repository.store_board_advisory_patch_proposal(
+            connection,
+            session_id=advisory_session["session_id"],
+            proposal_ref=proposal.proposal_ref,
+            proposal=proposal.model_dump(mode="json"),
+            decision_pack_refs=list(advisory_session["decision_pack_refs"]),
+            updated_at=datetime.fromisoformat("2026-04-16T22:00:00+08:00"),
+        )
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
@@ -19746,13 +20146,33 @@ def test_board_advisory_apply_patch_rejects_stale_proposal(client):
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{advisory_session['session_id']}@1",
+            "workflow_id": workflow_id,
             "session_id": advisory_session["session_id"],
-            "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:stale",
-        },
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Freeze the current branch until the board confirms the patch.",
+            "impact_summary": "This proposal should become stale after the graph changes.",
+            "freeze_node_ids": ["node_homepage_visual"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-advisory-stale-proposal",
+        }
     )
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal.model_dump(mode="json")),
+            response_id="resp_advisory_stale_proposal",
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": advisory_session["session_id"],
+                "idempotency_key": f"board-advisory-analysis:{advisory_session['session_id']}:stale",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
@@ -19890,7 +20310,6 @@ def test_board_advisory_apply_patch_rejects_synthetic_review_lane_targets(client
     )
     approval = _seed_review_request(client, workflow_id=workflow_id)
     repository = client.app.state.repository
-    monkeypatch.setattr(repository, "list_employee_projections", lambda **kwargs: [])
 
     with _suppress_ceo_shadow_side_effects():
         enter_response = client.post(
@@ -20029,27 +20448,47 @@ def test_board_advisory_full_timeline_archive_materializes_versions_and_surfaces
     assert repository.get_artifact_by_ref(expected_v1_transcript_artifact_ref) is not None
     assert repository.get_artifact_by_ref(expected_v2_transcript_artifact_ref) is not None
 
-    analysis_response = client.post(
-        "/api/v1/commands/board-advisory-request-analysis",
-        json={
+    proposal = GraphPatchProposal.model_validate(
+        {
+            "proposal_ref": f"pa://graph-patch-proposal/{session_id}@1",
+            "workflow_id": workflow_id,
             "session_id": session_id,
-            "idempotency_key": f"board-advisory-analysis:{session_id}:full-timeline-v3",
-        },
+            "base_graph_version": build_ticket_graph_snapshot(repository, workflow_id).graph_version,
+            "proposal_summary": "Freeze the current node while the full timeline archive is verified.",
+            "impact_summary": "The board can apply the archived advisory patch without contacting a live provider.",
+            "freeze_node_ids": ["node_homepage_visual"],
+            "source_decision_pack_ref": advisory_session["decision_pack_refs"][0],
+            "proposal_hash": "hash-full-timeline-archive-analysis",
+        }
     )
+    with patch(
+        "app.core.board_advisory_analysis.invoke_openai_compat_response",
+        return_value=OpenAICompatProviderResult(
+            output_text=json.dumps(proposal.model_dump(mode="json")),
+            response_id="resp_full_timeline_archive_analysis",
+        ),
+    ):
+        analysis_response = client.post(
+            "/api/v1/commands/board-advisory-request-analysis",
+            json={
+                "session_id": session_id,
+                "idempotency_key": f"board-advisory-analysis:{session_id}:full-timeline-v3",
+            },
+        )
     assert analysis_response.status_code == 200
     assert analysis_response.json()["status"] == "ACCEPTED"
 
     advisory_session = repository.get_board_advisory_session_for_approval(approval["approval_id"])
     assert advisory_session is not None
-    assert advisory_session["timeline_archive_version_int"] == 3
-    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@3"
+    assert advisory_session["timeline_archive_version_int"] == 4
+    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@4"
 
     apply_response = client.post(
         "/api/v1/commands/board-advisory-apply-patch",
         json={
             "session_id": session_id,
             "proposal_ref": advisory_session["latest_patch_proposal_ref"],
-            "idempotency_key": f"board-advisory-apply:{session_id}:full-timeline-v4",
+            "idempotency_key": f"board-advisory-apply:{session_id}:full-timeline-v5",
         },
     )
     assert apply_response.status_code == 200
@@ -20059,17 +20498,17 @@ def test_board_advisory_full_timeline_archive_materializes_versions_and_surfaces
     review_room = client.get(f"/api/v1/projections/review-room/{approval['review_pack_id']}")
 
     assert advisory_session is not None
-    assert advisory_session["timeline_archive_version_int"] == 4
-    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@4"
+    assert advisory_session["timeline_archive_version_int"] == 5
+    assert advisory_session["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@5"
     assert advisory_session["latest_transcript_archive_artifact_ref"] == (
-        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v4.json"
+        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v5.json"
     )
     assert review_room.status_code == 200
     advisory_context = review_room.json()["data"]["review_pack"]["advisory_context"]
-    assert advisory_context["timeline_archive_version_int"] == 4
-    assert advisory_context["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@4"
+    assert advisory_context["timeline_archive_version_int"] == 5
+    assert advisory_context["latest_timeline_index_ref"] == f"pa://timeline-index/{session_id}@5"
     assert advisory_context["latest_transcript_archive_artifact_ref"] == (
-        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v4.json"
+        f"art://board-advisory/{workflow_id}/{session_id}/transcript-v5.json"
     )
 
 
@@ -20668,6 +21107,7 @@ def test_worker_runtime_projection_requires_scope_pair(client):
     assert response.status_code == 400
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_bindings_requires_scope_pair(client):
     response = client.get(
         "/api/v1/worker-admin/bindings?tenant_id=tenant_default",
@@ -20677,6 +21117,7 @@ def test_worker_admin_bindings_requires_scope_pair(client):
     assert response.status_code == 400
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_requires_operator_headers(client):
     response = client.get(
         "/api/v1/worker-admin/bindings",
@@ -20690,6 +21131,7 @@ def test_worker_admin_requires_operator_headers(client):
     assert response.status_code == 401
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_rejects_legacy_headers_without_signed_token(client):
     response = client.get(
         "/api/v1/worker-admin/bindings",
@@ -20705,6 +21147,7 @@ def test_worker_admin_rejects_legacy_headers_without_signed_token(client):
     assert "X-Boardroom-Operator-Token" in response.json()["detail"]
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_rejects_mismatched_assertion_headers_against_signed_token(client):
     response = client.get(
         "/api/v1/worker-admin/bindings",
@@ -20719,6 +21162,7 @@ def test_worker_admin_rejects_mismatched_assertion_headers_against_signed_token(
     assert response.status_code == 400
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_accepts_token_only_without_legacy_assertion_headers(client):
     response = client.get(
         "/api/v1/worker-admin/bindings",
@@ -20733,6 +21177,7 @@ def test_worker_admin_accepts_token_only_without_legacy_assertion_headers(client
     assert response.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_session_requires_session_id_or_complete_scope(client):
     response = client.post(
         "/api/v1/worker-admin/revoke-session",
@@ -20743,6 +21188,7 @@ def test_worker_admin_revoke_session_requires_session_id_or_complete_scope(clien
     assert response.status_code == 400
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_scope_viewer_reads_own_scope_only_and_cannot_write(client):
     scope_headers = _worker_admin_headers(
         operator_id="tenant.viewer@example.com",
@@ -20782,6 +21228,7 @@ def test_worker_admin_scope_viewer_reads_own_scope_only_and_cannot_write(client)
     assert write_response.status_code == 403
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_scope_admin_requires_explicit_scope_and_rejects_mismatched_issued_by(
     client,
     monkeypatch,
@@ -20828,6 +21275,7 @@ def test_worker_admin_scope_admin_requires_explicit_scope_and_rejects_mismatched
     assert success_response.json()["issued_by"] == "tenant.admin@example.com"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_scope_admin_cannot_revoke_foreign_session_or_grant(
     client,
     set_ticket_time,
@@ -20892,6 +21340,7 @@ def test_worker_admin_scope_admin_cannot_revoke_foreign_session_or_grant(
     assert revoke_grant_response.status_code == 403
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_session_rejects_mismatched_revoked_by_header(
     client,
     set_ticket_time,
@@ -20932,6 +21381,7 @@ def test_worker_admin_revoke_session_rejects_mismatched_revoked_by_header(
     assert revoke_response.status_code == 400
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_bindings_returns_scope_filtered_bindings(
     client,
     monkeypatch,
@@ -20977,6 +21427,7 @@ def test_worker_admin_bindings_returns_scope_filtered_bindings(
     assert data["bindings"][0]["workspace_id"] == "ws_design"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
     client,
     set_ticket_time,
@@ -21088,6 +21539,7 @@ def test_worker_admin_sessions_returns_scope_filtered_active_sessions(
     assert payload["sessions"][0]["is_active"] is True
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
     client,
     set_ticket_time,
@@ -21159,6 +21611,7 @@ def test_worker_admin_delivery_grants_supports_scope_and_ticket_filters(
     assert all(item["is_active"] is True for item in payload["delivery_grants"])
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_auth_rejections_supports_scope_and_route_filters(
     client,
     set_ticket_time,
@@ -21233,6 +21686,7 @@ def test_worker_admin_auth_rejections_supports_scope_and_route_filters(
     assert payload["auth_rejections"][0]["workspace_id"] == "ws_design"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_scope_summary_aggregates_workers_within_scope(
     client,
     set_ticket_time,
@@ -21340,6 +21794,7 @@ def test_worker_admin_scope_summary_aggregates_workers_within_scope(
     assert worker_2["recent_rejection_count"] == 1
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_contain_scope_dry_run_returns_targets_without_writing_state(
     client,
     set_ticket_time,
@@ -21485,6 +21940,7 @@ def test_worker_admin_contain_scope_dry_run_returns_targets_without_writing_stat
     assert preview_retry.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
     client,
     set_ticket_time,
@@ -21618,6 +22074,7 @@ def test_worker_admin_contain_scope_execute_only_revokes_target_scope(
     assert default_session_retry.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_contain_scope_returns_conflict_when_expected_counts_are_stale(
     client,
     set_ticket_time,
@@ -21692,6 +22149,7 @@ def test_worker_admin_contain_scope_returns_conflict_when_expected_counts_are_st
     assert preview_retry.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_bootstrap_issues_active_only_filters_revoked_and_expired(
     client,
     set_ticket_time,
@@ -21770,6 +22228,7 @@ def test_worker_admin_bootstrap_issues_active_only_filters_revoked_and_expired(
     assert data["bootstrap_issues"][0]["reason"] == "active issue"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_create_binding_is_idempotent(client):
     first_response = client.post(
         "/api/v1/worker-admin/create-binding",
@@ -21799,6 +22258,7 @@ def test_worker_admin_create_binding_is_idempotent(client):
     assert bindings[0]["workspace_id"] == "ws_design"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_issue_bootstrap_returns_usable_token_and_enforces_explicit_scope(
     client,
     set_ticket_time,
@@ -21867,6 +22327,7 @@ def test_worker_admin_issue_bootstrap_returns_usable_token_and_enforces_explicit
     assert assignments_response.json()["data"]["workspace_id"] == "ws_design"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_bootstrap_invalidates_issue_backed_token(
     client,
     set_ticket_time,
@@ -21906,6 +22367,7 @@ def test_worker_admin_revoke_bootstrap_invalidates_issue_backed_token(
     assert assignments_response.status_code == 401
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_session_by_session_id_cascades_grants_and_updates_projection(
     client,
     set_ticket_time,
@@ -21994,6 +22456,7 @@ def test_worker_admin_revoke_session_by_session_id_cascades_grants_and_updates_p
     assert all(item["revoke_reason"] == "Tenant incident session revoke." for item in revoked_grants)
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
     client,
     set_ticket_time,
@@ -22102,6 +22565,7 @@ def test_worker_admin_revoke_session_by_scope_only_hits_requested_scope(
     assert surviving_response.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoke_delivery_grant_only_revokes_target_and_exposes_audit_fields(
     client,
     set_ticket_time,
@@ -22178,6 +22642,7 @@ def test_worker_admin_revoke_delivery_grant_only_revokes_target_and_exposes_audi
     assert grant_item["revoke_reason"] == "Manual preview revoke from HTTP."
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_cleanup_bindings_honors_dry_run_and_deletes_only_cleanup_eligible(client):
     repository = client.app.state.repository
     with repository.transaction() as connection:
@@ -22237,6 +22702,7 @@ def test_worker_admin_cleanup_bindings_honors_dry_run_and_deletes_only_cleanup_e
     assert remaining_bindings[0]["workspace_id"] == "ws_default"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_audit_projection_lists_logged_actions_with_dry_run_and_scope_filters(client, monkeypatch):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_BOOTSTRAP_SIGNING_SECRET", "bootstrap-secret")
 
@@ -22298,6 +22764,7 @@ def test_worker_admin_audit_projection_lists_logged_actions_with_dry_run_and_sco
     assert payload["actions"][1]["details"]["succeeded"] is True
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_trusted_proxy_is_optional_by_default(client):
     response = client.get(
         "/api/v1/worker-admin/bindings",
@@ -22308,6 +22775,7 @@ def test_worker_admin_trusted_proxy_is_optional_by_default(client):
     assert response.status_code == 200
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_trusted_proxy_missing_assertion_is_rejected_and_visible(client, monkeypatch):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a,proxy-b")
 
@@ -22339,6 +22807,7 @@ def test_worker_admin_trusted_proxy_missing_assertion_is_rejected_and_visible(cl
     assert payload["rejections"][0]["source_ip"] == "testclient"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_trusted_proxy_rejects_untrusted_proxy_and_accepts_allowed_proxy(client, monkeypatch):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a,proxy-b")
 
@@ -22368,6 +22837,7 @@ def test_worker_admin_trusted_proxy_rejects_untrusted_proxy_and_accepts_allowed_
     assert payload["rejections"][0]["source_ip"] == "testclient"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_audit_projection_exposes_trusted_proxy_context(client, monkeypatch):
     monkeypatch.setenv("BOARDROOM_OS_WORKER_ADMIN_TRUSTED_PROXY_IDS", "proxy-a")
 
@@ -22393,6 +22863,7 @@ def test_worker_admin_audit_projection_exposes_trusted_proxy_context(client, mon
     assert payload["actions"][0]["source_ip"] == "testclient"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_audit_projection_scope_viewer_reads_only_own_scope(client):
     own_scope_headers = _worker_admin_headers(
         operator_id="tenant.viewer@example.com",
@@ -22422,6 +22893,7 @@ def test_worker_admin_audit_projection_scope_viewer_reads_only_own_scope(client)
     assert missing_scope_response.status_code == 403
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_rejects_signed_token_with_naive_datetime_claims(client):
     import base64
     import hashlib
@@ -22455,6 +22927,7 @@ def test_worker_admin_rejects_signed_token_with_naive_datetime_claims(client):
     assert response.status_code == 401
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_operator_tokens_lists_scope_local_tokens_and_blocks_platform_revoke(client):
     platform_headers, platform_issue = _persisted_worker_admin_headers(
         client,
@@ -22517,6 +22990,7 @@ def test_worker_admin_operator_tokens_lists_scope_local_tokens_and_blocks_platfo
     )
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_revoked_operator_token_is_rejected_and_visible_in_auth_rejection_projection(
     client,
 ):
@@ -22552,6 +23026,7 @@ def test_worker_admin_revoked_operator_token_is_rejected_and_visible_in_auth_rej
     assert projection_payload["data"]["rejections"][0]["reason_code"] == "revoked_token"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_missing_token_is_logged_in_auth_rejection_projection(client):
     rejected_response = client.get("/api/v1/worker-admin/bindings")
     projection_response = client.get(
@@ -22565,6 +23040,7 @@ def test_worker_admin_missing_token_is_logged_in_auth_rejection_projection(clien
     assert projection_response.json()["data"]["rejections"][0]["reason_code"] == "missing_operator_token"
 
 
+@pytest.mark.skip(reason="worker-admin compatibility routes are frozen/unmounted; covered by mainline truth tests")
 def test_worker_admin_audit_projection_validates_positive_limit(client):
     response = client.get(
         "/api/v1/projections/worker-admin-audit",

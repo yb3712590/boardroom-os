@@ -48,8 +48,8 @@
 - [x] Actor registry 有 enable/suspend/deactivate/replace 状态机（Round 7A: `pytest backend/tests/test_reducer.py::test_reducer_rebuilds_actor_projection_from_independent_actor_events -q`）。
 - [x] RoleTemplate 只映射 capability，不作为 runtime 执行键（Round 7A: `pytest backend/tests/test_execution_targets.py::test_role_template_capability_contract_does_not_emit_runtime_execution_key -q`）。
 - [ ] Assignment 与 Lease 分离。
-- [ ] `excluded_employee_ids` 有作用域，不会继承污染。
-- [ ] no eligible actor 产生显式 action 或 incident。
+- [x] `excluded_employee_ids` 有作用域，不会继承污染（Round 7B: retry/rework 清空 legacy list，并使用 scoped exclusions）。
+- [x] no eligible actor 产生显式 action 或 incident（Round 7B: scheduler diagnostic `NO_ELIGIBLE_ACTOR` carries candidate details and suggested actions）。
 - [ ] provider preferred/actual 记录完整。
 
 ## Phase 4：Progression policy engine

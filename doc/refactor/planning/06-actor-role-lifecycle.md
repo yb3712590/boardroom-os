@@ -216,8 +216,28 @@ Round 7A 已按强迁移建立独立 Actor registry，`actor_projection` 只由 
 - `backend/tests/test_api.py::test_repository_persists_actor_projection_from_independent_actor_events`
 - `backend/tests/test_execution_targets.py::test_role_template_capability_contract_does_not_emit_runtime_execution_key`
 
+## Round 7B 实现状态
 
-- `excluded_employee_ids` 有明确作用域，不能继承污染后续票。
-- 员工池为空时产生显式 action/incident。
-- late lease/provider event 不污染 current graph pointer。
-- actor lifecycle 全部可从事件重放。
+Round 7B 已把 scheduler runtime eligibility 迁移到 actor capability assignment resolver。Scheduler 现在消费 `actor_projection`、ticket required capabilities、actor status、provider pause state、active leases 和 scoped exclusions；`employee_projection` 与 `role_profile_ref` 不再作为派工兜底路径。
+
+已落地的运行时边界：
+
+- `backend/app/core/assignment_resolver.py` 负责基于 capability 的 actor eligibility、候选诊断和 no-eligible payload。
+- `backend/app/core/execution_targets.py` 只把 legacy ticket / RoleTemplate 输入编译成 `required_capabilities`，RoleTemplate 仍不是 runtime execution key。
+- `backend/app/core/ticket_handlers.py` 的 scheduler tick 从 `actor_projection` 读取候选 actor，并把 resolver 选出的 `actor_id` 写入现有 `TICKET_LEASED.leased_by`；Assignment / Lease 事件拆分仍由 Round 7C 处理。
+- legacy `excluded_employee_ids` 只被适配为 scoped exclusion，支持 `attempt`、`ticket`、`node`、`capability`、`workflow`，retry/rework 不再复制无作用域旧列表。
+- required capability 无可用 actor 时继续写 `EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED`，payload 使用 `reason_code = "NO_ELIGIBLE_ACTOR"`，并包含 `required_capabilities`、`candidate_summary`、`candidate_details` 和建议动作 `CREATE_ACTOR` / `REASSIGN_EXECUTOR` / `REQUEST_HUMAN_DECISION` / `BLOCK_NODE_NO_CAPABLE_ACTOR`。
+
+测试证据：
+
+- `backend/tests/test_assignment_resolver.py`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_does_not_lease_without_enabled_actor_registry_entry`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_leases_actor_by_required_capabilities_not_employee_role`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_blocks_rework_fix_when_only_capable_actor_is_scoped_excluded`
+- `backend/tests/test_api.py` 中 retry/rework scoped exclusion 回归用例
+
+仍留给后续批次：
+
+- Assignment 与 Lease 仍共享现有 `TICKET_LEASED` 事件和 `leased_by` 字段，Round 7C 需要拆成独立 assignment/lease identity。
+- provider preferred vs actual provider/model 的完整审计仍属于后续 provider/lease 收口。
+- late lease/provider event 不污染 current graph pointer 仍由既有 provider/event guardrail 覆盖，未在 7B 中扩大策略范围。

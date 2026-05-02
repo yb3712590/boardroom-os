@@ -471,7 +471,7 @@ def _build_board_advisory_analysis_compile_request(
             "Do not target synthetic review lanes, and do not use edge_additions or edge_removals to wire placeholder nodes in the same patch.",
             "Keep the proposal scoped to the current board advisory session.",
         ],
-        "forced_skill_ids": ["planning_governance"],
+        "forced_skill_ids": [],
         "input_process_asset_refs": process_asset_refs,
         "required_read_refs": [],
         "doc_update_requirements": [],

@@ -65,6 +65,60 @@ def test_resolver_rejects_actor_without_required_capabilities_even_when_availabl
     assert "BLOCK_NODE_NO_CAPABLE_ACTOR" in result.diagnostic_payload["suggested_actions"]
 
 
+def test_resolver_treats_legacy_employee_exclusion_as_actor_employee_exclusion() -> None:
+    actors = [
+        {**_actor("actor_frontend_primary", ["source.modify.application"]), "employee_id": "emp_frontend_2"},
+        {**_actor("actor_frontend_backup", ["source.modify.application"]), "employee_id": "emp_frontend_backup"},
+    ]
+
+    result = resolve_assignment(
+        ticket_id="tkt_frontend",
+        workflow_id="wf_assign",
+        node_id="node_frontend",
+        required_capabilities=["source.modify.application"],
+        actors=actors,
+        active_lease_actor_ids=set(),
+        paused_provider_ids=set(),
+        scoped_exclusions=[
+            {
+                "actor_id": "emp_frontend_2",
+                "scope": "ticket",
+                "ticket_id": "tkt_frontend",
+                "reason": "legacy employee exclusion",
+            }
+        ],
+    )
+    assert result.selected_actor_id == "actor_frontend_backup"
+    primary_detail = next(
+        detail for detail in result.candidate_details if detail["actor_id"] == "actor_frontend_primary"
+    )
+    assert primary_detail["excluded"] is True
+
+
+def test_resolver_treats_active_legacy_employee_lease_as_actor_busy() -> None:
+    actors = [
+        {**_actor("actor_frontend_primary", ["source.modify.application"]), "employee_id": "emp_frontend_2"},
+        {**_actor("actor_frontend_backup", ["source.modify.application"]), "employee_id": "emp_frontend_backup"},
+    ]
+
+    result = resolve_assignment(
+        ticket_id="tkt_frontend",
+        workflow_id="wf_assign",
+        node_id="node_frontend",
+        required_capabilities=["source.modify.application"],
+        actors=actors,
+        active_lease_actor_ids={"emp_frontend_2"},
+        paused_provider_ids=set(),
+        scoped_exclusions=[],
+    )
+
+    assert result.selected_actor_id == "actor_frontend_backup"
+    primary_detail = next(
+        detail for detail in result.candidate_details if detail["actor_id"] == "actor_frontend_primary"
+    )
+    assert primary_detail["busy"] is True
+
+
 def test_resolver_applies_only_matching_scoped_exclusions() -> None:
     actors = [
         _actor("actor_backend_primary", ["source.modify.backend"]),

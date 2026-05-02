@@ -144,6 +144,11 @@ def _ticket_create_payload(
         "output_schema_version": 1,
         "allowed_tools": ["read_artifact", "write_artifact"],
         "allowed_write_set": allowed_write_set or ["artifacts/ui/homepage/*"],
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref=role_profile_ref,
+            output_schema_ref=output_schema_ref,
+        ),
+        "graph_contract": {"lane_kind": "execution"},
         "retry_budget": 1,
         "priority": "high",
         "timeout_sla_sec": 1800,

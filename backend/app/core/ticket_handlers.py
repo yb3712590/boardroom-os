@@ -30,6 +30,7 @@ from app.contracts.commands import (
     TicketWrittenArtifact,
     TicketStartCommand,
 )
+from app.core.assignment_resolver import resolve_assignment
 from app.core.artifact_store import ArtifactStore, MaterializedArtifact, normalize_artifact_logical_path
 from app.core.artifacts import (
     ARTIFACT_LIFECYCLE_ACTIVE,
@@ -88,6 +89,7 @@ from app.core.constants import (
     NODE_STATUS_CANCEL_REQUESTED,
     NODE_STATUS_CANCELLED,
     NODE_STATUS_COMPLETED,
+    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_EXECUTING,
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
@@ -127,6 +129,7 @@ from app.core.ceo_execution_presets import build_internal_governance_review_requ
 from app.core.decomposition import build_decomposition_recovery_plan, build_decomposition_ticket_specs
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.execution_targets import (
+    compile_required_capabilities_for_ticket_spec,
     employee_supports_execution_contract,
     infer_execution_contract_payload,
     resolve_execution_target_ref_from_ticket_spec,
@@ -134,6 +137,7 @@ from app.core.execution_targets import (
 from app.core.incident_followups import resolve_ceo_shadow_source_ticket_context
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
+    build_review_graph_node_id,
     resolve_ticket_graph_identity,
 )
 from app.core.planned_placeholder_gate import PlannedPlaceholderGateBlock
@@ -723,7 +727,10 @@ def _resolve_original_review_request(
     auto_review_request = created_spec.get("auto_review_request")
     if isinstance(auto_review_request, dict):
         parsed_auto_review_request = TicketBoardReviewRequest.model_validate(auto_review_request)
-        if parsed_auto_review_request.review_type.value == "INTERNAL_GOVERNANCE_REVIEW":
+        if parsed_auto_review_request.review_type.value in {
+            "INTERNAL_GOVERNANCE_REVIEW",
+            "INTERNAL_CLOSEOUT_REVIEW",
+        }:
             return parsed_auto_review_request
     maker_checker_context = created_spec.get("maker_checker_context") or {}
     original_review_request = maker_checker_context.get("original_review_request")
@@ -1132,6 +1139,40 @@ def _build_maker_checker_ticket_payload(
     }
 
 
+def _scoped_attempt_exclusion(
+    *,
+    actor_id: str | None,
+    ticket_id: str,
+    attempt_no: int,
+    reason: str,
+) -> dict[str, Any] | None:
+    normalized_actor_id = str(actor_id or "").strip()
+    if not normalized_actor_id:
+        return None
+    return {
+        "actor_id": normalized_actor_id,
+        "scope": "attempt",
+        "ticket_id": ticket_id,
+        "attempt_no": attempt_no,
+        "reason": reason,
+    }
+
+
+def _merge_scoped_exclusions(*values: dict[str, Any] | None) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        normalized = {key: item for key, item in value.items() if item is not None}
+        signature = tuple(sorted((str(key), str(item)) for key, item in normalized.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        merged.append(normalized)
+    return merged
+
+
 def _build_fix_ticket_payload(
     *,
     workflow_id: str,
@@ -1181,18 +1222,24 @@ def _build_fix_ticket_payload(
             for finding in required_fixes
         ]
     )
-    excluded_employee_ids = _dedupe_string_values(
-        list(maker_ticket_spec.get("excluded_employee_ids") or [])
-        + [maker_checker_context.get("maker_completed_by")]
-    )
     next_ticket_id = new_prefixed_id("tkt")
+    next_attempt_no = int(checker_created_spec.get("attempt_no") or 1) + 1
+    scoped_exclusions = _merge_scoped_exclusions(
+        *list(maker_ticket_spec.get("scoped_exclusions") or []),
+        _scoped_attempt_exclusion(
+            actor_id=maker_checker_context.get("maker_completed_by"),
+            ticket_id=next_ticket_id,
+            attempt_no=next_attempt_no,
+            reason="maker checker rework requires a different actor for this attempt",
+        ),
+    )
     maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
     return {
         "ticket_id": next_ticket_id,
         "workflow_id": workflow_id,
         "node_id": node_id,
         "parent_ticket_id": checker_ticket_id,
-        "attempt_no": int(checker_created_spec.get("attempt_no") or 1) + 1,
+        "attempt_no": next_attempt_no,
         "role_profile_ref": str(maker_ticket_spec.get("role_profile_ref") or "ui_designer_primary"),
         "constraints_ref": str(maker_ticket_spec.get("constraints_ref") or ""),
         "input_artifact_refs": input_artifact_refs,
@@ -1231,7 +1278,8 @@ def _build_fix_ticket_payload(
         "auto_review_request": (
             dict(original_review_request) if isinstance(original_review_request, dict) else None
         ),
-        "excluded_employee_ids": excluded_employee_ids,
+        "excluded_employee_ids": [],
+        "scoped_exclusions": scoped_exclusions,
         "escalation_policy": dict(maker_ticket_spec.get("escalation_policy") or {}),
         "ticket_kind": MAKER_REWORK_FIX_TICKET_KIND,
         "graph_contract": {
@@ -3606,6 +3654,7 @@ def _schedule_retry(
         "parent_ticket_id": failed_ticket_id,
         "attempt_no": next_attempt_no,
         "retry_count": next_retry_count,
+        "excluded_employee_ids": [],
         "allowed_write_set": rebind_ticket_id_in_allowed_write_set(
             list(created_spec.get("allowed_write_set") or []),
             previous_ticket_id=failed_ticket_id,
@@ -4603,226 +4652,121 @@ def _dispatch_sort_key(ticket: dict[str, Any]) -> tuple[int, datetime, str]:
     )
 
 
-def _add_worker_candidate(
-    worker_candidates: list[str],
-    worker_by_id: dict[str, set[str]],
-    *,
-    employee_id: str,
-    role_profile_refs: list[str],
-) -> None:
-    if employee_id in worker_by_id:
-        return
-    normalized_role_profiles = set(role_profile_refs)
-    if "frontend_engineer_primary" in normalized_role_profiles:
-        normalized_role_profiles.add("ui_designer_primary")
-    worker_by_id[employee_id] = normalized_role_profiles
-    worker_candidates.append(employee_id)
+def _actor_provider_id(actor: dict[str, Any]) -> str | None:
+    provider_preferences = actor.get("provider_preferences") or {}
+    if isinstance(provider_preferences, dict):
+        provider_id = str(provider_preferences.get("provider_id") or "").strip()
+        if provider_id:
+            return provider_id
+        preferred_provider_id = str(provider_preferences.get("preferred_provider_id") or "").strip()
+        if preferred_provider_id:
+            return preferred_provider_id
+    return None
 
 
-def _resolve_scheduler_workers(
+def _scheduler_actor_candidates(
     repository: ControlPlaneRepository,
     connection,
-    workers: list[SchedulerWorkerCandidate] | None,
-) -> tuple[list[str], dict[str, set[str]]]:
-    worker_candidates: list[str] = []
-    worker_by_id: dict[str, set[str]] = {}
-
-    for employee in repository.list_scheduler_worker_candidates(connection):
-        _add_worker_candidate(
-            worker_candidates,
-            worker_by_id,
-            employee_id=employee["employee_id"],
-            role_profile_refs=list(employee.get("role_profile_refs", [])),
-        )
-
-    for worker in workers or []:
-        _add_worker_candidate(
-            worker_candidates,
-            worker_by_id,
-            employee_id=worker.employee_id,
-            role_profile_refs=list(worker.role_profile_refs),
-        )
-
-    return worker_candidates, worker_by_id
+) -> list[dict[str, Any]]:
+    actors: list[dict[str, Any]] = []
+    for actor in repository.list_actor_projections(connection):
+        normalized_actor = dict(actor)
+        actor_provider_id = _actor_provider_id(normalized_actor)
+        if actor_provider_id is None and normalized_actor.get("employee_id"):
+            employee = repository.get_employee_projection(str(normalized_actor["employee_id"]), connection=connection)
+            if employee is not None and employee.get("provider_id"):
+                provider_preferences = dict(normalized_actor.get("provider_preferences") or {})
+                provider_preferences["provider_id"] = str(employee["provider_id"])
+                normalized_actor["provider_preferences"] = provider_preferences
+        actors.append(normalized_actor)
+    return actors
 
 
-def _worker_is_dispatchable_for_ticket(
+def _active_lease_actor_ids(
     repository: ControlPlaneRepository,
     connection,
     *,
-    worker_id: str,
-    target_role_profile: str,
-    worker_by_id: dict[str, set[str]],
-    busy_workers: set[str],
-) -> bool:
-    return (
-        worker_id not in busy_workers
-        and target_role_profile in worker_by_id.get(worker_id, set())
-        and not _is_provider_paused(
-            repository,
-            connection,
-            _resolve_provider_id_for_ticket(
-                repository,
-                connection,
-                lease_owner=worker_id,
-            ),
-        )
+    now: datetime,
+) -> set[str]:
+    active_ticket_projections = repository.list_ticket_projections_by_statuses(
+        connection,
+        [TICKET_STATUS_LEASED, TICKET_STATUS_EXECUTING],
     )
+    active_actor_ids: set[str] = set()
+    for ticket in active_ticket_projections:
+        lease_owner = str(ticket.get("lease_owner") or "").strip()
+        if not lease_owner:
+            continue
+        if ticket["status"] == TICKET_STATUS_EXECUTING:
+            active_actor_ids.add(lease_owner)
+            continue
+        lease_expires_at = ticket.get("lease_expires_at")
+        if lease_expires_at is not None and lease_expires_at > now:
+            active_actor_ids.add(lease_owner)
+    return active_actor_ids
 
 
-def _build_no_eligible_worker_diagnostic_payload(
+def _paused_provider_ids_for_actors(
     repository: ControlPlaneRepository,
     connection,
-    *,
-    ticket: dict[str, Any],
-    created_spec: dict[str, Any],
-    target_role_profile: str,
-    excluded_employee_ids: set[str],
-    worker_candidates: list[str],
-    worker_by_id: dict[str, set[str]],
-    busy_workers: set[str],
-) -> dict[str, Any]:
-    candidate_details: list[dict[str, Any]] = []
-    matching_role_count = 0
-    excluded_count = 0
-    busy_count = 0
-    provider_paused_count = 0
-    eligible_count = 0
-    for worker_id in worker_candidates:
-        roles = sorted(worker_by_id.get(worker_id, set()))
-        has_required_role = target_role_profile in set(roles)
-        is_excluded = worker_id in excluded_employee_ids
-        is_busy = worker_id in busy_workers
-        provider_id = _resolve_provider_id_for_ticket(
-            repository,
-            connection,
-            lease_owner=worker_id,
-        )
-        provider_paused = _is_provider_paused(repository, connection, provider_id)
-        if has_required_role:
-            matching_role_count += 1
-        if is_excluded:
-            excluded_count += 1
-        if is_busy:
-            busy_count += 1
-        if provider_paused:
-            provider_paused_count += 1
-        eligible = has_required_role and not is_excluded and not is_busy and not provider_paused
-        if eligible:
-            eligible_count += 1
-        candidate_details.append(
+    actors: list[dict[str, Any]],
+) -> set[str]:
+    paused_provider_ids: set[str] = set()
+    for actor in actors:
+        provider_id = _actor_provider_id(actor)
+        if provider_id and _is_provider_paused(repository, connection, provider_id):
+            paused_provider_ids.add(provider_id)
+    return paused_provider_ids
+
+
+def _scoped_exclusions_for_ticket(created_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    scoped_exclusions: list[dict[str, Any]] = [
+        dict(exclusion)
+        for exclusion in (created_spec.get("scoped_exclusions") or [])
+        if isinstance(exclusion, dict)
+    ]
+    ticket_id = str(created_spec.get("ticket_id") or "").strip()
+    node_id = str(created_spec.get("node_id") or "").strip()
+    workflow_id = str(created_spec.get("workflow_id") or "").strip()
+    for employee_id in created_spec.get("excluded_employee_ids") or []:
+        actor_id = str(employee_id or "").strip()
+        if not actor_id or not ticket_id:
+            continue
+        scoped_exclusions.append(
             {
-                "employee_id": worker_id,
-                "role_profile_refs": roles,
-                "has_required_role": has_required_role,
-                "excluded": is_excluded,
-                "busy": is_busy,
-                "provider_id": provider_id,
-                "provider_paused": provider_paused,
-                "eligible": eligible,
+                "actor_id": actor_id,
+                "scope": "ticket",
+                "ticket_id": ticket_id,
+                "node_id": node_id or None,
+                "workflow_id": workflow_id or None,
+                "reason": "legacy excluded_employee_ids ticket scope",
             }
         )
-    return {
-        "ticket_id": str(ticket.get("ticket_id") or ""),
-        "node_id": str(ticket.get("node_id") or created_spec.get("node_id") or ""),
-        "workflow_id": str(ticket.get("workflow_id") or created_spec.get("workflow_id") or ""),
-        "reason_code": "NO_ELIGIBLE_WORKER",
-        "required_role_profile_ref": target_role_profile,
-        "excluded_employee_ids": sorted(excluded_employee_ids),
-        "candidate_summary": {
-            "total_candidate_count": len(worker_candidates),
-            "matching_role_count": matching_role_count,
-            "excluded_count": excluded_count,
-            "busy_count": busy_count,
-            "provider_paused_count": provider_paused_count,
-            "eligible_count": eligible_count,
-        },
-        "candidate_details": candidate_details,
-    }
+    return scoped_exclusions
 
 
-def _record_no_eligible_worker_diagnostic(
+def _record_no_eligible_actor_diagnostic(
     repository: ControlPlaneRepository,
     connection,
     *,
     command_id: str,
     occurred_at: datetime,
     idempotency_key: str,
-    ticket: dict[str, Any],
-    created_spec: dict[str, Any],
-    target_role_profile: str,
-    excluded_employee_ids: set[str],
-    worker_candidates: list[str],
-    worker_by_id: dict[str, set[str]],
-    busy_workers: set[str],
+    diagnostic_payload: dict[str, Any],
 ) -> bool:
-    payload = _build_no_eligible_worker_diagnostic_payload(
-        repository,
-        connection,
-        ticket=ticket,
-        created_spec=created_spec,
-        target_role_profile=target_role_profile,
-        excluded_employee_ids=excluded_employee_ids,
-        worker_candidates=worker_candidates,
-        worker_by_id=worker_by_id,
-        busy_workers=busy_workers,
-    )
     event = repository.insert_event(
         connection,
         event_type=EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED,
         actor_type="system",
         actor_id="scheduler",
-        workflow_id=payload["workflow_id"],
+        workflow_id=str(diagnostic_payload.get("workflow_id") or ""),
         idempotency_key=idempotency_key,
         causation_id=command_id,
-        correlation_id=payload["workflow_id"],
-        payload=payload,
+        correlation_id=str(diagnostic_payload.get("workflow_id") or ""),
+        payload=diagnostic_payload,
         occurred_at=occurred_at,
     )
     return event is not None
-
-
-def _should_relax_singleton_rework_exclusions(
-    repository: ControlPlaneRepository,
-    connection,
-    *,
-    created_spec: dict[str, Any],
-    target_role_profile: str,
-    excluded_employee_ids: set[str],
-    worker_candidates: list[str],
-    worker_by_id: dict[str, set[str]],
-    busy_workers: set[str],
-) -> bool:
-    if _ticket_kind(created_spec) != MAKER_REWORK_FIX_TICKET_KIND or not excluded_employee_ids:
-        return False
-
-    has_non_excluded_candidate = any(
-        worker_id not in excluded_employee_ids
-        and _worker_is_dispatchable_for_ticket(
-            repository,
-            connection,
-            worker_id=worker_id,
-            target_role_profile=target_role_profile,
-            worker_by_id=worker_by_id,
-            busy_workers=busy_workers,
-        )
-        for worker_id in worker_candidates
-    )
-    if has_non_excluded_candidate:
-        return False
-
-    return any(
-        worker_id in excluded_employee_ids
-        and _worker_is_dispatchable_for_ticket(
-            repository,
-            connection,
-            worker_id=worker_id,
-            target_role_profile=target_role_profile,
-            worker_by_id=worker_by_id,
-            busy_workers=busy_workers,
-        )
-        for worker_id in worker_candidates
-    )
 
 
 def run_scheduler_tick(
@@ -5017,23 +4961,9 @@ def run_scheduler_tick(
 
         repository.refresh_projections(connection)
 
-        worker_candidates, worker_by_id = _resolve_scheduler_workers(repository, connection, workers)
-
-        all_busy_tickets = repository.list_ticket_projections_by_statuses(
-            connection,
-            [TICKET_STATUS_LEASED, TICKET_STATUS_EXECUTING],
-        )
-        busy_workers: set[str] = set()
-        for ticket in all_busy_tickets:
-            owner = ticket.get("lease_owner")
-            if owner is None:
-                continue
-            if ticket["status"] == TICKET_STATUS_EXECUTING:
-                busy_workers.add(owner)
-                continue
-            lease_expiry = ticket.get("lease_expires_at")
-            if lease_expiry is not None and lease_expiry > received_at:
-                busy_workers.add(owner)
+        actor_candidates = _scheduler_actor_candidates(repository, connection)
+        busy_actor_ids = _active_lease_actor_ids(repository, connection, now=received_at)
+        paused_provider_ids = _paused_provider_ids_for_actors(repository, connection, actor_candidates)
 
         dispatchable_tickets = sorted(
             repository.list_dispatchable_ticket_projections(connection, received_at),
@@ -5191,146 +5121,32 @@ def run_scheduler_tick(
                 continue
             if not dependency_gates_ready:
                 continue
-            target_role_profile = created_spec.get("role_profile_ref")
-            if not target_role_profile:
+            required_capabilities = compile_required_capabilities_for_ticket_spec(created_spec)
+            if not required_capabilities:
                 continue
             lease_timeout_sec = _resolve_ticket_lease_timeout_sec(created_spec)
-            excluded_employee_ids = {
-                str(employee_id)
-                for employee_id in (created_spec.get("excluded_employee_ids") or [])
-                if employee_id
-            }
-            effective_excluded_employee_ids = (
-                set()
-                if _should_relax_singleton_rework_exclusions(
-                    repository,
-                    connection,
-                    created_spec=created_spec,
-                    target_role_profile=str(target_role_profile),
-                    excluded_employee_ids=excluded_employee_ids,
-                    worker_candidates=worker_candidates,
-                    worker_by_id=worker_by_id,
-                    busy_workers=busy_workers,
-                )
-                else excluded_employee_ids
+            assignment = resolve_assignment(
+                ticket_id=str(ticket["ticket_id"]),
+                workflow_id=str(ticket["workflow_id"]),
+                node_id=str(ticket["node_id"]),
+                required_capabilities=required_capabilities,
+                actors=actor_candidates,
+                active_lease_actor_ids=busy_actor_ids,
+                paused_provider_ids=paused_provider_ids,
+                scoped_exclusions=_scoped_exclusions_for_ticket(created_spec),
+                attempt_no=int(created_spec.get("attempt_no") or 0) or None,
             )
-            selected_worker_id: str | None = None
+            selected_worker_id = assignment.selected_actor_id
             selected_worker_precondition: dict[str, Any] | None = None
-            selected_assignee_employee_id = _resolve_dispatch_assignee_employee_id(created_spec)
-            if selected_assignee_employee_id is not None:
-                if selected_assignee_employee_id not in worker_by_id:
-                    continue
-                if (
-                    selected_assignee_employee_id in busy_workers
-                    or selected_assignee_employee_id in effective_excluded_employee_ids
-                ):
-                    continue
-                selected_assignee = repository.get_employee_projection(
-                    selected_assignee_employee_id,
-                    connection=connection,
-                )
-                if selected_assignee is None:
-                    dispatch_failure_payload = _build_failure_payload(
-                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
-                        failure_message="Dispatch intent assignee is missing from the employee registry.",
-                        failure_detail={
-                            "assignee_employee_id": selected_assignee_employee_id,
-                        },
-                    )
-                elif str(selected_assignee.get("state") or "") != EMPLOYEE_STATE_ACTIVE:
-                    dispatch_failure_payload = _build_failure_payload(
-                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
-                        failure_message="Dispatch intent assignee is not currently active.",
-                        failure_detail={
-                            "assignee_employee_id": selected_assignee_employee_id,
-                            "employee_state": selected_assignee.get("state"),
-                        },
-                    )
-                elif not employee_supports_execution_contract(
-                    employee=selected_assignee,
-                    execution_contract=created_spec.get("execution_contract"),
-                ):
-                    dispatch_failure_payload = _build_failure_payload(
-                        failure_kind=DISPATCH_INTENT_INVALID_FAILURE_KIND,
-                        failure_message="Dispatch intent assignee no longer satisfies the execution contract.",
-                        failure_detail={
-                            "assignee_employee_id": selected_assignee_employee_id,
-                            "execution_contract": created_spec.get("execution_contract"),
-                        },
-                    )
-                elif _is_provider_paused(
+            if selected_worker_id is not None:
+                precondition_result = _evaluate_ticket_execution_precondition(
                     repository,
                     connection,
-                    _resolve_provider_id_for_ticket(
-                        repository,
-                        connection,
-                        lease_owner=selected_assignee_employee_id,
-                    ),
-                ):
-                    continue
-                else:
-                    dispatch_failure_payload = None
-                    selected_worker_id = selected_assignee_employee_id
-                    selected_worker_precondition = _evaluate_ticket_execution_precondition(
-                        repository,
-                        connection,
-                        ticket=ticket,
-                        created_spec=created_spec,
-                        lease_owner=selected_worker_id,
-                    )
-                if dispatch_failure_payload is not None:
-                    failed_event = _build_scheduler_failure_event(
-                        repository,
-                        connection,
-                        command_id=command_id,
-                        occurred_at=received_at,
-                        workflow_id=ticket["workflow_id"],
-                        ticket_id=ticket["ticket_id"],
-                        node_id=ticket["node_id"],
-                        failure_payload=dispatch_failure_payload,
-                        idempotency_key=next_idempotency_key(
-                            f"failed:{ticket['ticket_id']}:dispatch-intent"
-                        ),
-                    )
-                    if failed_event is None:
-                        return _scheduler_duplicate_ack(
-                            command_id=command_id,
-                            idempotency_key=idempotency_key,
-                            received_at=received_at,
-                        )
-                    repository.refresh_projections(connection)
-                    changed_state = True
-                    ceo_failure_triggers.append((ticket["workflow_id"], ticket["ticket_id"]))
-                    continue
-            else:
-                blocked_precondition_result: dict[str, Any] | None = None
-                for worker_id in worker_candidates:
-                    if worker_id in effective_excluded_employee_ids:
-                        continue
-                    if not _worker_is_dispatchable_for_ticket(
-                        repository,
-                        connection,
-                        worker_id=worker_id,
-                        target_role_profile=str(target_role_profile),
-                        worker_by_id=worker_by_id,
-                        busy_workers=busy_workers,
-                    ):
-                        continue
-                    precondition_result = _evaluate_ticket_execution_precondition(
-                        repository,
-                        connection,
-                        ticket=ticket,
-                        created_spec=created_spec,
-                        lease_owner=worker_id,
-                    )
-                    if precondition_result is not None and precondition_result["blocked"]:
-                        if blocked_precondition_result is None:
-                            blocked_precondition_result = precondition_result
-                        continue
-                    selected_worker_id = worker_id
-                    selected_worker_precondition = precondition_result
-                    break
-                if selected_worker_id is None and blocked_precondition_result is not None:
+                    ticket=ticket,
+                    created_spec=created_spec,
+                    lease_owner=selected_worker_id,
+                )
+                if precondition_result is not None and precondition_result["blocked"]:
                     _sync_ticket_execution_precondition_state(
                         repository,
                         connection,
@@ -5339,27 +5155,22 @@ def run_scheduler_tick(
                         workflow_id=ticket["workflow_id"],
                         ticket=ticket,
                         node_id=ticket["node_id"],
-                        precondition_result=blocked_precondition_result,
+                        precondition_result=precondition_result,
                         actor_id="scheduler",
                     )
                     changed_state = True
                     continue
-            if selected_worker_id is None:
-                recorded = _record_no_eligible_worker_diagnostic(
+                selected_worker_precondition = precondition_result
+            else:
+                recorded = _record_no_eligible_actor_diagnostic(
                     repository,
                     connection,
                     command_id=command_id,
                     occurred_at=received_at,
                     idempotency_key=next_idempotency_key(
-                        f"lease-diagnostic:{ticket['ticket_id']}:no-eligible-worker"
+                        f"lease-diagnostic:{ticket['ticket_id']}:no-eligible-actor"
                     ),
-                    ticket=ticket,
-                    created_spec=created_spec,
-                    target_role_profile=str(target_role_profile),
-                    excluded_employee_ids=effective_excluded_employee_ids,
-                    worker_candidates=worker_candidates,
-                    worker_by_id=worker_by_id,
-                    busy_workers=busy_workers,
+                    diagnostic_payload=dict(assignment.diagnostic_payload or {}),
                 )
                 if not recorded:
                     return _scheduler_duplicate_ack(
@@ -5411,7 +5222,7 @@ def run_scheduler_tick(
                     received_at=received_at,
                 )
 
-            busy_workers.add(selected_worker_id)
+            busy_actor_ids.add(selected_worker_id)
             dispatched += 1
             changed_state = True
 
@@ -6590,6 +6401,34 @@ def handle_ticket_cancel(
         causation_hint=f"ticket:{payload.ticket_id}",
     )
 
+def _review_lane_ticket_create_gate_status(
+    repository: ControlPlaneRepository,
+    workflow_id: str,
+    graph_node_id: str,
+    *,
+    connection: sqlite3.Connection,
+) -> str | None:
+    review_node = repository.get_runtime_node_projection(
+        workflow_id,
+        build_review_graph_node_id(graph_node_id),
+        connection=connection,
+    )
+    if review_node is None:
+        return None
+    review_status = str(review_node.get("status") or "").strip()
+    if review_status not in {NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW, NODE_STATUS_REWORK_REQUIRED}:
+        return None
+    review_ticket_id = str(review_node.get("latest_ticket_id") or "").strip()
+    if not review_ticket_id:
+        return None
+    review_ticket = repository.get_current_ticket_projection(review_ticket_id, connection=connection)
+    if review_ticket is None:
+        return None
+    if str(review_ticket.get("status") or "").strip() != review_status:
+        return None
+    return review_status
+
+
 
 def handle_ticket_create(
     repository: ControlPlaneRepository,
@@ -6646,8 +6485,25 @@ def handle_ticket_create(
         if (
             node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED
             and current_runtime_node is not None
-            and current_runtime_node["status"] != NODE_STATUS_REWORK_REQUIRED
+            and current_runtime_node["status"] not in {NODE_STATUS_REWORK_REQUIRED, NODE_STATUS_COMPLETED}
         ):
+            review_gate_status = _review_lane_ticket_create_gate_status(
+                repository,
+                payload.workflow_id,
+                str(node_view.graph_node_id or payload.node_id),
+                connection=connection,
+            )
+            if review_gate_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Node {payload.node_id} cannot accept a new ticket while status is "
+                        f"{NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW}."
+                    ),
+                )
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
@@ -6658,10 +6514,48 @@ def handle_ticket_create(
                     f"{current_runtime_node['status']}."
                 ),
             )
+        if (
+            node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED
+            and current_runtime_node is not None
+            and current_runtime_node["status"] == NODE_STATUS_COMPLETED
+        ):
+            review_gate_status = _review_lane_ticket_create_gate_status(
+                repository,
+                payload.workflow_id,
+                str(node_view.graph_node_id or payload.node_id),
+                connection=connection,
+            )
+            if review_gate_status == NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Node {payload.node_id} cannot accept a new ticket while status is "
+                        f"{NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW}."
+                    ),
+                )
+            if review_gate_status != NODE_STATUS_REWORK_REQUIRED:
+                return _rejected_ack(
+                    command_id=command_id,
+                    idempotency_key=payload.idempotency_key,
+                    received_at=received_at,
+                    ticket_id=payload.ticket_id,
+                    reason=(
+                        f"Node {payload.node_id} cannot accept a new ticket while status is "
+                        f"{current_runtime_node['status']}."
+                    ),
+                )
 
         workflow = repository.get_workflow_projection(payload.workflow_id, connection=connection)
         tenant_id, workspace_id = resolve_workflow_scope(workflow)
         try:
+            payload_fields = set(payload.model_fields_set)
+            if "execution_contract" not in payload_fields:
+                raise ValueError("Ticket payload requires execution_contract.")
+            if "graph_contract" not in payload_fields:
+                raise ValueError("Ticket payload requires graph_contract.lane_kind.")
             event_payload = _ensure_ticket_execution_contract_payload(payload.model_dump(mode="json"))
         except ValueError as exc:
             return _rejected_ack(

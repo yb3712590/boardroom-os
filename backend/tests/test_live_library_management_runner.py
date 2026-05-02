@@ -567,8 +567,8 @@ def test_write_audit_summary_renders_staffing_gap_and_hire_action(tmp_path: Path
                     {
                         "ticket_id": "tkt_br004_rework",
                         "node_id": "node_br004",
-                        "required_role_profile_ref": "backend_engineer_primary",
-                        "reason_code": "NO_ELIGIBLE_WORKER",
+                        "required_capabilities": ["source.modify.backend"],
+                        "reason_code": "NO_ELIGIBLE_ACTOR",
                     }
                 ],
                 "hire_actions": [
@@ -587,7 +587,7 @@ def test_write_audit_summary_renders_staffing_gap_and_hire_action(tmp_path: Path
     body = target_path.read_text(encoding="utf-8")
     assert "## Staffing Gap Audit" in body
     assert "tkt_br004_rework" in body
-    assert "backend_engineer_primary" in body
+    assert "source.modify.backend" in body
     assert "emp_backend_backup" in body
 
 
