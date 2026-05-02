@@ -41,6 +41,9 @@ from tests.test_api import (
     _ticket_result_submit_payload,
     _ticket_lease_payload,
     _ticket_start_payload,
+    _ticket_start_payload_for_projection,
+    _enable_actor,
+    _capabilities_for_role_profile,
 )
 from tests.test_scheduler_runner import (
     _build_mock_provider_responder,
@@ -242,6 +245,13 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
     repository = client.app.state.repository
 
     _persist_autopilot_workflow_profile(repository, workflow_id)
+    _enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     create_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -265,13 +275,10 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
 
     start_response = client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": leased_ticket["ticket_id"],
-            "node_id": leased_ticket["node_id"],
-            "started_by": leased_ticket["lease_owner"],
-            "idempotency_key": f"ticket-start:{workflow_id}:{leased_ticket['ticket_id']}",
-        },
+        json=_ticket_start_payload_for_projection(
+            leased_ticket,
+            idempotency_key=f"ticket-start:{workflow_id}:{leased_ticket['ticket_id']}",
+        ),
     )
     fail_response = client.post(
         "/api/v1/commands/ticket-fail",
@@ -279,7 +286,7 @@ def test_autopilot_auto_advance_resolves_provider_incident_and_retries_latest_fa
             "workflow_id": workflow_id,
             "ticket_id": leased_ticket["ticket_id"],
             "node_id": leased_ticket["node_id"],
-            "failed_by": leased_ticket["lease_owner"],
+            "failed_by": leased_ticket["actor_id"],
             "failure_kind": "UPSTREAM_UNAVAILABLE",
             "failure_message": "Provider transport failed unexpectedly.",
             "failure_detail": {
@@ -396,15 +403,12 @@ def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipel
 
     start_response = client.post(
         "/api/v1/commands/ticket-start",
-        json=_ticket_start_payload(
-            workflow_id=workflow_id,
-            ticket_id=leased_ticket["ticket_id"],
-            node_id=leased_ticket["node_id"],
-            started_by=leased_ticket["lease_owner"],
-            expected_ticket_version=int(leased_ticket["version"]),
-            expected_node_version=int(current_node["version"]),
-            expected_runtime_node_version=int(current_runtime_node["version"]),
-        ),
+        json={
+            **_ticket_start_payload_for_projection(leased_ticket),
+            "expected_ticket_version": int(leased_ticket["version"]),
+            "expected_node_version": int(current_node["version"]),
+            "expected_runtime_node_version": int(current_runtime_node["version"]),
+        },
     )
     fail_response = client.post(
         "/api/v1/commands/ticket-fail",
@@ -412,7 +416,7 @@ def test_autopilot_ticket_fail_with_pending_retry_does_not_open_ceo_shadow_pipel
             "workflow_id": workflow_id,
             "ticket_id": leased_ticket["ticket_id"],
             "node_id": leased_ticket["node_id"],
-            "failed_by": leased_ticket["lease_owner"],
+            "failed_by": leased_ticket["actor_id"],
             "failure_kind": "PROVIDER_BAD_RESPONSE",
             "failure_message": "Provider returned truncated JSON.",
             "idempotency_key": f"ticket-fail:{workflow_id}:{leased_ticket['ticket_id']}:retry-guard",
@@ -471,6 +475,13 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
     )
     repository = client.app.state.repository
     _persist_autopilot_workflow_profile(repository, workflow_id)
+    _enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     create_source_response = client.post(
         "/api/v1/commands/ticket-create",
@@ -494,13 +505,10 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
 
     start_source_response = client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": source_ticket["ticket_id"],
-            "node_id": source_ticket["node_id"],
-            "started_by": source_ticket["lease_owner"],
-            "idempotency_key": f"ticket-start:{workflow_id}:{source_ticket['ticket_id']}",
-        },
+        json=_ticket_start_payload_for_projection(
+            source_ticket,
+            idempotency_key=f"ticket-start:{workflow_id}:{source_ticket['ticket_id']}",
+        ),
     )
 
     incident_id = "inc_autopilot_provider_source_completed"
@@ -553,7 +561,7 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
             connection,
             event_type=EVENT_TICKET_COMPLETED,
             actor_type="worker",
-            actor_id=str(source_ticket["lease_owner"]),
+            actor_id=str(source_ticket["actor_id"]),
             workflow_id=workflow_id,
             idempotency_key=f"test-ticket-completed:{workflow_id}:{source_ticket['ticket_id']}",
             causation_id=None,
@@ -561,6 +569,9 @@ def test_autopilot_auto_advance_restores_provider_incident_when_source_ticket_al
             payload={
                 "ticket_id": source_ticket["ticket_id"],
                 "node_id": source_ticket["node_id"],
+                "actor_id": source_ticket["actor_id"],
+                "assignment_id": source_ticket["assignment_id"],
+                "lease_id": source_ticket["lease_id"],
                 "completion_summary": "Primary provider failed, fallback succeeded, ticket still completed.",
                 "artifact_refs": [],
                 "produced_process_assets": [],

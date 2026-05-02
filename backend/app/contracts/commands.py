@@ -409,10 +409,29 @@ class TicketStartCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     started_by: str = Field(min_length=1)
+    actor_id: str = Field(default="", min_length=1)
+    assignment_id: str = Field(default="", min_length=1)
+    lease_id: str = Field(default="", min_length=1)
     expected_ticket_version: int | None = Field(default=None, ge=1)
     expected_node_version: int | None = Field(default=None, ge=1)
     expected_runtime_node_version: int | None = Field(default=None, ge=1)
     idempotency_key: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_runtime_identity(cls, data):
+        if not isinstance(data, dict):
+            return data
+        actor_id = str(data.get("actor_id") or data.get("started_by") or "").strip()
+        workflow_id = str(data.get("workflow_id") or "").strip()
+        ticket_id = str(data.get("ticket_id") or "").strip()
+        if actor_id:
+            data = dict(data)
+            data.setdefault("actor_id", actor_id)
+            if workflow_id and ticket_id:
+                data.setdefault("assignment_id", f"asg_{workflow_id}_{ticket_id}_{actor_id}")
+                data.setdefault("lease_id", f"lease_{workflow_id}_{ticket_id}_{actor_id}_1")
+        return data
 
 
 class TicketHeartbeatCommand(StrictModel):
@@ -428,8 +447,27 @@ class TicketLeaseCommand(StrictModel):
     ticket_id: str = Field(min_length=1)
     node_id: str = Field(min_length=1)
     leased_by: str = Field(min_length=1)
+    actor_id: str = Field(default="", min_length=1)
+    assignment_id: str = Field(default="", min_length=1)
+    lease_id: str = Field(default="", min_length=1)
     lease_timeout_sec: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_runtime_identity(cls, data):
+        if not isinstance(data, dict):
+            return data
+        actor_id = str(data.get("actor_id") or data.get("leased_by") or "").strip()
+        workflow_id = str(data.get("workflow_id") or "").strip()
+        ticket_id = str(data.get("ticket_id") or "").strip()
+        if actor_id:
+            data = dict(data)
+            data.setdefault("actor_id", actor_id)
+            if workflow_id and ticket_id:
+                data.setdefault("assignment_id", f"asg_{workflow_id}_{ticket_id}_{actor_id}")
+                data.setdefault("lease_id", f"lease_{workflow_id}_{ticket_id}_{actor_id}_1")
+        return data
 
 
 class TicketFailCommand(StrictModel):

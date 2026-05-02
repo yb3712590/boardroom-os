@@ -446,10 +446,16 @@ def _build_board_advisory_analysis_compile_request(
         raise RuntimeError(
             "Board advisory analysis compile request requires a board-approved contract-matching executor."
         )
+    analysis_actor_id = executor.employee_id
+    analysis_assignment_id = f"asg_{workflow_id}_{ticket_id}_{analysis_actor_id}"
+    analysis_lease_id = f"lease_{workflow_id}_{ticket_id}_{analysis_actor_id}_1"
     ticket_stub = {
         "workflow_id": workflow_id,
         "ticket_id": source_ticket_id,
         "node_id": source_node_id,
+        "actor_id": analysis_actor_id,
+        "assignment_id": analysis_assignment_id,
+        "lease_id": analysis_lease_id,
         "blocking_reason_code": None,
     }
     created_spec = {
@@ -537,7 +543,10 @@ def _build_board_advisory_analysis_compile_request(
             output_schema_version=GRAPH_PATCH_PROPOSAL_SCHEMA_VERSION,
         ),
         worker_binding=CompileRequestWorkerBinding(
-            lease_owner=executor.employee_id,
+            actor_id=analysis_actor_id,
+            assignment_id=analysis_assignment_id,
+            lease_id=analysis_lease_id,
+            lease_owner=analysis_actor_id,
             employee_id=executor.employee_id,
             employee_role_type=executor.role_type,
             tenant_id=str(workflow.get("tenant_id") or DEFAULT_TENANT_ID),

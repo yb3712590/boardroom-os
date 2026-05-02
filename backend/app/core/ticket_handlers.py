@@ -60,6 +60,8 @@ from app.core.constants import (
     EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_HEARTBEAT_RECORDED,
+    EVENT_TICKET_ASSIGNED,
+    EVENT_TICKET_LEASE_GRANTED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -458,6 +460,9 @@ def _insert_ticket_cancelled_event(
     cancelled_by: str,
     reason: str,
     idempotency_key: str,
+    actor_id: str | None = None,
+    assignment_id: str | None = None,
+    lease_id: str | None = None,
 ) -> None:
     event_row = repository.insert_event(
         connection,
@@ -472,6 +477,9 @@ def _insert_ticket_cancelled_event(
             "ticket_id": ticket_id,
             "node_id": node_id,
             "cancelled_by": cancelled_by,
+            "actor_id": actor_id,
+            "assignment_id": assignment_id,
+            "lease_id": lease_id,
             "reason": reason,
         },
         occurred_at=occurred_at,
@@ -2441,9 +2449,20 @@ def _resolve_provider_id_for_ticket(
         if provider_id:
             return str(provider_id)
 
-    resolved_owner = lease_owner or (str(ticket["lease_owner"]) if ticket and ticket.get("lease_owner") else None)
-    if resolved_owner is None:
+    resolved_owner = lease_owner or (
+        str(ticket.get("actor_id") or ticket.get("lease_owner") or "") if ticket else ""
+    )
+    if not resolved_owner:
         return None
+
+    actor = repository.get_actor_projection(resolved_owner, connection=connection)
+    if actor is not None:
+        provider_id = _actor_provider_id(actor)
+        if provider_id:
+            return provider_id
+        employee_id = str(actor.get("employee_id") or "").strip()
+        if employee_id:
+            resolved_owner = employee_id
 
     employee = repository.get_employee_projection(resolved_owner, connection=connection)
     if employee is None or not employee.get("provider_id"):
@@ -4694,15 +4713,15 @@ def _active_lease_actor_ids(
     )
     active_actor_ids: set[str] = set()
     for ticket in active_ticket_projections:
-        lease_owner = str(ticket.get("lease_owner") or "").strip()
-        if not lease_owner:
+        actor_id = str(ticket.get("actor_id") or "").strip()
+        if not actor_id:
             continue
         if ticket["status"] == TICKET_STATUS_EXECUTING:
-            active_actor_ids.add(lease_owner)
+            active_actor_ids.add(actor_id)
             continue
         lease_expires_at = ticket.get("lease_expires_at")
         if lease_expires_at is not None and lease_expires_at > now:
-            active_actor_ids.add(lease_owner)
+            active_actor_ids.add(actor_id)
     return active_actor_ids
 
 
@@ -4818,6 +4837,9 @@ def run_scheduler_tick(
                 payload={
                     "ticket_id": ticket["ticket_id"],
                     "node_id": ticket["node_id"],
+                    "actor_id": ticket.get("actor_id"),
+                    "assignment_id": ticket.get("assignment_id"),
+                    "lease_id": ticket.get("lease_id"),
                     **timeout_payload,
                 },
                 occurred_at=received_at,
@@ -4904,6 +4926,9 @@ def run_scheduler_tick(
                 payload={
                     "ticket_id": ticket["ticket_id"],
                     "node_id": ticket["node_id"],
+                    "actor_id": ticket.get("actor_id"),
+                    "assignment_id": ticket.get("assignment_id"),
+                    "lease_id": ticket.get("lease_id"),
                     **timeout_payload,
                 },
                 occurred_at=received_at,
@@ -5195,9 +5220,39 @@ def run_scheduler_tick(
                 changed_state = True
                 continue
 
+            assignment_id = f"asg_{ticket['workflow_id']}_{ticket['ticket_id']}_{selected_worker_id}"
+            lease_id = f"lease_{ticket['workflow_id']}_{ticket['ticket_id']}_{selected_worker_id}_{int(created_spec.get('attempt_no') or 1)}"
+            assignment_event = repository.insert_event(
+                connection,
+                event_type=EVENT_TICKET_ASSIGNED,
+                actor_type="system",
+                actor_id="scheduler",
+                workflow_id=ticket["workflow_id"],
+                idempotency_key=next_idempotency_key(
+                    f"assign:{ticket['ticket_id']}:{selected_worker_id}"
+                ),
+                causation_id=command_id,
+                correlation_id=ticket["workflow_id"],
+                payload={
+                    "ticket_id": ticket["ticket_id"],
+                    "node_id": ticket["node_id"],
+                    "assignment_id": assignment_id,
+                    "actor_id": selected_worker_id,
+                    "required_capabilities": required_capabilities,
+                    "assignment_reason": "capability_match",
+                },
+                occurred_at=received_at,
+            )
+            if assignment_event is None:
+                return _scheduler_duplicate_ack(
+                    command_id=command_id,
+                    idempotency_key=idempotency_key,
+                    received_at=received_at,
+                )
+
             lease_event = repository.insert_event(
                 connection,
-                event_type=EVENT_TICKET_LEASED,
+                event_type=EVENT_TICKET_LEASE_GRANTED,
                 actor_type="system",
                 actor_id="scheduler",
                 workflow_id=ticket["workflow_id"],
@@ -5209,7 +5264,9 @@ def run_scheduler_tick(
                 payload={
                     "ticket_id": ticket["ticket_id"],
                     "node_id": ticket["node_id"],
-                    "leased_by": selected_worker_id,
+                    "assignment_id": assignment_id,
+                    "actor_id": selected_worker_id,
+                    "lease_id": lease_id,
                     "lease_timeout_sec": lease_timeout_sec,
                     "lease_expires_at": (received_at + timedelta(seconds=lease_timeout_sec)).isoformat(),
                 },
@@ -6367,6 +6424,9 @@ def handle_ticket_cancel(
                 cancelled_by=payload.cancelled_by,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
+                actor_id=current_ticket.get("actor_id"),
+                assignment_id=current_ticket.get("assignment_id"),
+                lease_id=current_ticket.get("lease_id"),
             )
 
         repository.refresh_projections(connection)
@@ -6733,40 +6793,37 @@ def handle_ticket_lease(
                 ),
             )
 
-        current_owner = current_ticket.get("lease_owner")
+        current_actor_id = str(current_ticket.get("actor_id") or "").strip()
+        current_lease_id = str(current_ticket.get("lease_id") or "").strip()
         current_expiry = current_ticket.get("lease_expires_at")
         lease_is_active = current_expiry is not None and current_expiry > received_at
         if current_ticket["status"] == TICKET_STATUS_LEASED and lease_is_active:
-            if current_owner != payload.leased_by:
+            if current_actor_id != payload.actor_id or current_lease_id != payload.lease_id:
                 return _rejected_ack(
                     command_id=command_id,
                     idempotency_key=payload.idempotency_key,
                     received_at=received_at,
                     ticket_id=payload.ticket_id,
                     reason=(
-                        f"Ticket {payload.ticket_id} is currently leased by {current_owner} until "
+                        f"Ticket {payload.ticket_id} already has active lease {current_lease_id} until "
                         f"{current_expiry.isoformat()}."
                     ),
                 )
 
-        if not _employee_is_active(
-            repository,
-            connection,
-            employee_id=payload.leased_by,
-        ):
+        actor_projection = repository.get_actor_projection(payload.actor_id, connection=connection)
+        if actor_projection is None or actor_projection.get("status") != "ACTIVE":
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
-                reason=f"Worker {payload.leased_by} is not active.",
+                reason=f"Actor {payload.actor_id} is not active.",
             )
 
-        provider_id = _resolve_provider_id_for_ticket(
-            repository,
-            connection,
-            lease_owner=payload.leased_by,
-        )
+        provider_id = _actor_provider_id(actor_projection)
+        if not provider_id and actor_projection.get("employee_id"):
+            employee = repository.get_employee_projection(str(actor_projection["employee_id"]), connection=connection)
+            provider_id = str(employee.get("provider_id")) if employee is not None and employee.get("provider_id") else None
         if _is_provider_paused(repository, connection, provider_id):
             return _rejected_ack(
                 command_id=command_id,
@@ -6785,7 +6842,7 @@ def handle_ticket_lease(
             connection,
             ticket=current_ticket,
             created_spec=created_spec,
-            lease_owner=payload.leased_by,
+            lease_owner=payload.actor_id,
         )
         if precondition_result is not None and _sync_ticket_execution_precondition_state(
             repository,
@@ -6806,11 +6863,39 @@ def handle_ticket_lease(
                 reason=str(precondition_result["provider_reason"]),
             )
 
+        assignment_event = repository.insert_event(
+            connection,
+            event_type=EVENT_TICKET_ASSIGNED,
+            actor_type="worker",
+            actor_id=payload.actor_id,
+            workflow_id=payload.workflow_id,
+            idempotency_key=f"{payload.idempotency_key}:assignment",
+            causation_id=command_id,
+            correlation_id=payload.workflow_id,
+            payload={
+                "ticket_id": payload.ticket_id,
+                "node_id": payload.node_id,
+                "actor_id": payload.actor_id,
+                "assignment_id": payload.assignment_id,
+                "required_capabilities": list((created_spec or {}).get("required_capabilities") or []),
+                "assignment_reason": "manual_lease",
+            },
+            occurred_at=received_at,
+        )
+        if assignment_event is None:
+            return _duplicate_ack(
+                command_id=command_id,
+                idempotency_key=payload.idempotency_key,
+                received_at=received_at,
+                ticket_id=payload.ticket_id,
+                action="ticket-lease",
+            )
+
         event_row = repository.insert_event(
             connection,
-            event_type=EVENT_TICKET_LEASED,
+            event_type=EVENT_TICKET_LEASE_GRANTED,
             actor_type="worker",
-            actor_id=payload.leased_by,
+            actor_id=payload.actor_id,
             workflow_id=payload.workflow_id,
             idempotency_key=payload.idempotency_key,
             causation_id=command_id,
@@ -6819,6 +6904,9 @@ def handle_ticket_lease(
                 "ticket_id": payload.ticket_id,
                 "node_id": payload.node_id,
                 "leased_by": payload.leased_by,
+                "actor_id": payload.actor_id,
+                "assignment_id": payload.assignment_id,
+                "lease_id": payload.lease_id,
                 "lease_timeout_sec": payload.lease_timeout_sec,
                 "lease_expires_at": lease_expires_at.isoformat(),
             },
@@ -7026,18 +7114,21 @@ def handle_ticket_start(
                 ),
             )
 
-        lease_owner = current_ticket.get("lease_owner")
+        current_actor_id = str(current_ticket.get("actor_id") or "").strip()
+        current_assignment_id = str(current_ticket.get("assignment_id") or "").strip()
+        current_lease_id = str(current_ticket.get("lease_id") or "").strip()
         lease_expires_at = current_ticket.get("lease_expires_at")
-        if lease_owner != payload.started_by:
+        if (
+            current_actor_id != payload.actor_id
+            or current_assignment_id != payload.assignment_id
+            or current_lease_id != payload.lease_id
+        ):
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
-                reason=(
-                    f"Ticket {payload.ticket_id} is leased by {lease_owner}; "
-                    f"{payload.started_by} cannot start it."
-                ),
+                reason="Ticket lease identity does not match the requested actor assignment lease.",
             )
         if lease_expires_at is None or lease_expires_at <= received_at:
             return _rejected_ack(
@@ -7048,25 +7139,20 @@ def handle_ticket_start(
                 reason=f"Ticket {payload.ticket_id} lease is missing or expired.",
             )
 
-        if lease_owner is None or not _employee_is_active(
-            repository,
-            connection,
-            employee_id=str(lease_owner),
-        ):
+        actor_projection = repository.get_actor_projection(payload.actor_id, connection=connection)
+        if actor_projection is None or actor_projection.get("status") != "ACTIVE":
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
-                reason=f"Worker {lease_owner} is not active.",
+                reason=f"Actor {payload.actor_id} is not active.",
             )
 
-        provider_id = _resolve_provider_id_for_ticket(
-            repository,
-            connection,
-            ticket=current_ticket,
-            lease_owner=lease_owner,
-        )
+        provider_id = _actor_provider_id(actor_projection)
+        if not provider_id and actor_projection.get("employee_id"):
+            employee = repository.get_employee_projection(str(actor_projection["employee_id"]), connection=connection)
+            provider_id = str(employee.get("provider_id")) if employee is not None and employee.get("provider_id") else None
         if _is_provider_paused(repository, connection, provider_id) and not _allow_paused_provider_start(
             provider_id
         ):
@@ -7087,7 +7173,7 @@ def handle_ticket_start(
             connection,
             ticket=current_ticket,
             created_spec=created_spec,
-            lease_owner=str(lease_owner),
+            lease_owner=payload.actor_id,
         )
         if precondition_result is not None and _sync_ticket_execution_precondition_state(
             repository,
@@ -7121,6 +7207,9 @@ def handle_ticket_start(
                 "ticket_id": payload.ticket_id,
                 "node_id": payload.node_id,
                 "started_by": payload.started_by,
+                "actor_id": payload.actor_id,
+                "assignment_id": payload.assignment_id,
+                "lease_id": payload.lease_id,
             },
             occurred_at=received_at,
         )
@@ -7209,15 +7298,15 @@ def handle_ticket_heartbeat(
                 ),
             )
 
-        lease_owner = current_ticket.get("lease_owner")
-        if lease_owner != payload.reported_by:
+        actor_id = str(current_ticket.get("actor_id") or "").strip()
+        if actor_id != payload.reported_by:
             return _rejected_ack(
                 command_id=command_id,
                 idempotency_key=payload.idempotency_key,
                 received_at=received_at,
                 ticket_id=payload.ticket_id,
                 reason=(
-                    f"Ticket {payload.ticket_id} is leased by {lease_owner}; "
+                    f"Ticket {payload.ticket_id} is leased by {actor_id}; "
                     f"{payload.reported_by} cannot report heartbeat."
                 ),
             )
@@ -7355,6 +7444,9 @@ def handle_ticket_fail(
                 "ticket_id": payload.ticket_id,
                 "node_id": payload.node_id,
                 "failed_by": payload.failed_by,
+                "actor_id": current_ticket.get("actor_id"),
+                "assignment_id": current_ticket.get("assignment_id"),
+                "lease_id": current_ticket.get("lease_id"),
                 **failure_payload,
             },
             occurred_at=received_at,
@@ -7567,6 +7659,9 @@ def handle_ticket_result_submit(
                 cancelled_by=payload.submitted_by,
                 reason="Late result arrived after cancellation was requested.",
                 idempotency_key=payload.idempotency_key,
+                actor_id=current_ticket.get("actor_id"),
+                assignment_id=current_ticket.get("assignment_id"),
+                lease_id=current_ticket.get("lease_id"),
             )
             repository.refresh_projections(connection)
         return CommandAckEnvelope(
@@ -8252,10 +8347,13 @@ def _complete_ticket_locked(
             "ticket_id": payload.ticket_id,
             "node_id": payload.node_id,
             "completion_summary": payload.completion_summary,
-                "artifact_refs": payload.artifact_refs,
-                "written_artifacts": [
-                    item.model_dump(mode="json") for item in payload.written_artifacts
-                ],
+            "actor_id": current_ticket.get("actor_id"),
+            "assignment_id": current_ticket.get("assignment_id"),
+            "lease_id": current_ticket.get("lease_id"),
+            "artifact_refs": payload.artifact_refs,
+            "written_artifacts": [
+                item.model_dump(mode="json") for item in payload.written_artifacts
+            ],
             "verification_evidence_refs": list(payload.verification_evidence_refs),
             "git_commit_record": (
                 payload.git_commit_record.model_dump(mode="json")

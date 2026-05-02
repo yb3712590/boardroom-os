@@ -196,7 +196,7 @@ def _build_workforce_summary(repository: ControlPlaneRepository) -> WorkforceSum
     contained_workers: set[str] = set()
     workers_in_rework_loop: set[str] = set()
     for ticket in busy_tickets:
-        owner = ticket.get("lease_owner")
+        owner = ticket.get("actor_id") or ticket.get("lease_owner")
         if owner is None:
             continue
         if ticket["status"] == "CANCEL_REQUESTED":
@@ -1413,7 +1413,7 @@ def build_workforce_projection(repository: ControlPlaneRepository) -> WorkforceP
 
     active_ticket_by_worker: dict[str, dict[str, Any]] = {}
     for ticket in busy_tickets:
-        owner = ticket.get("lease_owner")
+        owner = ticket.get("actor_id") or ticket.get("lease_owner")
         if owner is None:
             continue
         if ticket["status"] == "LEASED":

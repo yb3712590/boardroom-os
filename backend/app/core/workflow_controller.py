@@ -827,14 +827,14 @@ def _active_board_approved_employees(
 def _busy_worker_ids(connection) -> set[str]:
     rows = connection.execute(
         """
-        SELECT lease_owner
+        SELECT actor_id
         FROM ticket_projection
         WHERE status IN ('LEASED', 'EXECUTING')
-          AND lease_owner IS NOT NULL
-          AND TRIM(lease_owner) != ''
+          AND actor_id IS NOT NULL
+          AND TRIM(actor_id) != ''
         """
     ).fetchall()
-    return {str(row["lease_owner"]) for row in rows}
+    return {str(row["actor_id"]) for row in rows}
 
 
 def _provider_paused_for_employee(

@@ -227,7 +227,7 @@ def list_workflow_ticket_snapshots(
                     or None
                 ),
                 lease_owner=(
-                    str(current_ticket.get("lease_owner") or "").strip() or None
+                    str(current_ticket.get("actor_id") or current_ticket.get("lease_owner") or "").strip() or None
                 ),
                 expected_artifact_scope=(
                     list(display_spec.get("allowed_write_set") or [])
@@ -300,7 +300,7 @@ def _build_runtime_relation(
         role_profile_ref=(str(graph_node.role_profile_ref or "").strip() or None),
         output_schema_ref=(str(graph_node.output_schema_ref or "").strip() or None),
         delivery_stage=(str(graph_node.delivery_stage or "").strip().upper() or None),
-        lease_owner=(str(ticket_projection.get("lease_owner") or "").strip() or None),
+        lease_owner=(str(ticket_projection.get("actor_id") or ticket_projection.get("lease_owner") or "").strip() or None),
         sort_updated_at=ticket_projection.get("updated_at"),
     )
 

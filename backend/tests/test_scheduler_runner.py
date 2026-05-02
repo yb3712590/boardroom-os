@@ -19,10 +19,14 @@ from app.core.ceo_scheduler import SCHEDULER_IDLE_MAINTENANCE_TRIGGER
 from app.core.constants import (
     BLOCKING_REASON_CONTEXT_COMPILATION_BLOCKED,
     EVENT_ACTOR_ENABLED,
+    EVENT_ACTOR_REPLACED,
     EVENT_ACTOR_SUSPENDED,
     EVENT_INCIDENT_OPENED,
     EVENT_SCHEDULER_ORCHESTRATION_RECORDED,
+    EVENT_TICKET_ASSIGNED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_LEASED,
+    EVENT_TICKET_LEASE_GRANTED,
 )
 from app.core.execution_targets import (
     build_role_template_capability_contract,
@@ -349,6 +353,35 @@ def _suspend_actor(
         repository.refresh_projections(connection)
 
 
+def _replace_actor(
+    repository,
+    *,
+    actor_id: str,
+    replacement_actor_id: str,
+    workflow_id: str,
+    reason: str = "test replacement",
+) -> None:
+    with repository.transaction() as connection:
+        repository.insert_event(
+            connection,
+            event_type=EVENT_ACTOR_REPLACED,
+            actor_type="system",
+            actor_id="test-seed",
+            workflow_id=workflow_id,
+            idempotency_key=f"test-replace-actor:{workflow_id}:{actor_id}:{replacement_actor_id}",
+            causation_id=None,
+            correlation_id=workflow_id,
+            payload={
+                "actor_id": actor_id,
+                "replacement_actor_id": replacement_actor_id,
+                "replacement_reason": reason,
+                "replacement_plan": {"handoff": "new_assignment_required"},
+            },
+            occurred_at=datetime.fromisoformat("2026-04-01T10:00:02+08:00"),
+        )
+        repository.refresh_projections(connection)
+
+
 def _enable_default_actor_roster(repository, workflow_id: str) -> None:
     _enable_actor(
         repository,
@@ -509,14 +542,13 @@ def _seed_runtime_leased_ticket(
     )
     lease_response = client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": ticket_id,
-            "node_id": node_id,
-            "leased_by": leased_by,
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=ticket_id,
+            node_id=node_id,
+            leased_by=leased_by,
+            lease_timeout_sec=600,
+        ),
     )
     assert lease_response.status_code == 200
     assert lease_response.json()["status"] == "ACCEPTED"
@@ -649,6 +681,7 @@ def _seed_worker(
     provider_id: str,
     workflow_id: str | None = None,
     role_profile_refs: list[str] | None = None,
+    enable_actor: bool = True,
 ) -> None:
     resolved_role_profile_refs = list(role_profile_refs or ["frontend_engineer_primary"])
     role_type_by_profile = {
@@ -686,12 +719,12 @@ def _seed_worker(
             occurred_at=datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
         )
         repository.refresh_projections(connection)
-    if workflow_id is not None:
+    if enable_actor:
         _enable_actor(
             repository,
             actor_id=employee_id,
             employee_id=employee_id,
-            workflow_id=workflow_id,
+            workflow_id=workflow_id or "wf_test_actor_registry",
             capabilities=_capabilities_for_role_profile(primary_role_profile),
             provider_id=provider_id,
         )
@@ -883,6 +916,7 @@ def _seed_delivery_chain_for_recovery(
         workspace_id="ws_default",
         goal=f"Recovery chain seed for {workflow_id}",
     )
+    _enable_default_actor_roster(client.app.state.repository, workflow_id)
 
     build_node_id = f"node_followup_{build_ticket_id.removeprefix('tkt_')}"
     check_node_id = f"node_followup_{check_ticket_id.removeprefix('tkt_')}"
@@ -1030,7 +1064,7 @@ def _complete_recovered_delivery_chain_to_final_review_approval(
                     workflow_id=workflow_id,
                     ticket_id=ticket_id,
                     node_id=node_id,
-                    started_by=ticket["lease_owner"] or worker_id,
+                    started_by=ticket["actor_id"] or worker_id,
                 ),
             )
             assert response.status_code == 200
@@ -1633,6 +1667,7 @@ def test_scheduler_does_not_lease_without_enabled_actor_registry_entry(client, s
         client.app.state.repository,
         employee_id="emp_without_actor",
         provider_id=OPENAI_COMPAT_PROVIDER_ID,
+        enable_actor=False,
     )
     api_test_helpers._ensure_scoped_workflow(
         client,
@@ -1781,11 +1816,112 @@ def test_scheduler_runner_once_external_mode_leaves_ticket_leased(client, set_ti
 
     assert ack.status.value == "ACCEPTED"
     assert ticket_projection["status"] == "LEASED"
-    assert ticket_projection["lease_owner"] == "emp_frontend_2"
+    assert ticket_projection["actor_id"] == "emp_frontend_2"
+    assert ticket_projection["assignment_id"] == "asg_wf_runner_external_tkt_runner_external_emp_frontend_2"
+    assert ticket_projection["lease_id"] == "lease_wf_runner_external_tkt_runner_external_emp_frontend_2_1"
+    assert ticket_projection["lease_owner"] is None
     assert node_projection["status"] == "PENDING"
     assert latest_bundle is None
     assert latest_manifest is None
     assert latest_execution_package is None
+
+    ticket_events = [
+        event
+        for event in events
+        if event.get("ticket_id") == "tkt_runner_external"
+    ]
+    event_types = [event["event_type"] for event in ticket_events]
+    assert EVENT_TICKET_ASSIGNED in event_types
+    assert EVENT_TICKET_LEASE_GRANTED in event_types
+    assert EVENT_TICKET_LEASED not in event_types
+
+    assignment_event = next(event for event in ticket_events if event["event_type"] == EVENT_TICKET_ASSIGNED)
+    lease_event = next(event for event in ticket_events if event["event_type"] == EVENT_TICKET_LEASE_GRANTED)
+    assert assignment_event["payload"]["assignment_id"] == ticket_projection["assignment_id"]
+    assert assignment_event["payload"]["actor_id"] == "emp_frontend_2"
+    assert lease_event["payload"]["lease_id"] == ticket_projection["lease_id"]
+    assert lease_event["payload"]["assignment_id"] == ticket_projection["assignment_id"]
+    assert lease_event["payload"]["actor_id"] == "emp_frontend_2"
+
+
+def test_scheduler_replacement_actor_gets_new_assignment_without_old_lease(client, set_ticket_time, monkeypatch):
+    monkeypatch.setenv("BOARDROOM_OS_RUNTIME_EXECUTION_MODE", "EXTERNAL")
+    scheduler_runner = importlib.import_module("app.scheduler_runner")
+    scheduler_runner = importlib.reload(scheduler_runner)
+
+    workflow_id = "wf_runner_actor_replace"
+    repository = client.app.state.repository
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    _seed_runtime_workflow(
+        client,
+        workflow_id,
+        "Replacement actor must receive a fresh lease.",
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_replace_old",
+            node_id="node_runner_replace_old",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:01:00+08:00")
+    scheduler_runner.run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-replace-old",
+        max_dispatches=10,
+    )
+    old_ticket = repository.get_current_ticket_projection("tkt_runner_replace_old")
+    assert old_ticket["actor_id"] == "emp_frontend_2"
+    old_lease_id = old_ticket["lease_id"]
+
+    _enable_actor(
+        repository,
+        actor_id="actor_frontend_replacement",
+        employee_id="emp_frontend_replacement",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
+    _replace_actor(
+        repository,
+        actor_id="emp_frontend_2",
+        replacement_actor_id="actor_frontend_replacement",
+        workflow_id=workflow_id,
+    )
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_replace_new",
+            node_id="node_runner_replace_new",
+            role_profile_ref="ui_designer_primary",
+        ),
+    )
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
+    scheduler_runner.run_scheduler_once(
+        repository,
+        idempotency_key="scheduler-runner:test-replace-new",
+        max_dispatches=10,
+    )
+
+    new_ticket = repository.get_current_ticket_projection("tkt_runner_replace_new")
+    old_actor = repository.get_actor_projection("emp_frontend_2")
+    new_lease = repository.get_lease_projection(new_ticket["lease_id"])
+    events = [
+        event
+        for event in repository.list_events_for_testing()
+        if event.get("ticket_id") == "tkt_runner_replace_new"
+    ]
+
+    assert old_actor["status"] == "REPLACED"
+    assert new_ticket["actor_id"] == "actor_frontend_replacement"
+    assert new_ticket["lease_id"] != old_lease_id
+    assert new_lease["actor_id"] == "actor_frontend_replacement"
+    assert new_lease["lease_id"] == new_ticket["lease_id"]
+    assert all(event["payload"].get("lease_id") != old_lease_id for event in events)
 
 
 def test_scheduler_runner_once_dispatches_provider_attempt_without_waiting(
@@ -2134,24 +2270,22 @@ def test_superseded_provider_attempt_output_cannot_move_current_graph_pointer(
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": old_ticket_id,
-            "node_id": node_id,
-            "leased_by": "emp_frontend_superseded_old",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{old_ticket_id}",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=old_ticket_id,
+            node_id=node_id,
+            leased_by="emp_frontend_superseded_old",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": f"ticket-lease:{workflow_id}:{old_ticket_id}"},
     )
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": old_ticket_id,
-            "node_id": node_id,
-            "started_by": "emp_frontend_superseded_old",
-            "idempotency_key": f"ticket-start:{workflow_id}:{old_ticket_id}",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=old_ticket_id,
+            node_id=node_id,
+            started_by="emp_frontend_superseded_old",
+        ) | {"idempotency_key": f"ticket-start:{workflow_id}:{old_ticket_id}"},
     )
     with repository.transaction() as connection:
         repository.insert_event(
@@ -2697,7 +2831,7 @@ def test_scheduler_runner_marks_started_then_failed_for_unsupported_compiled_exe
     assert failed_events[-1]["payload"]["failure_detail"]["compiler_version"] == "context-compiler.min.v1"
 
 
-def test_scheduler_runner_fails_closed_when_ticket_create_spec_disappears(client, set_ticket_time):
+def test_scheduler_runner_fails_closed_when_ticket_create_spec_disappears(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post(
         "/api/v1/commands/ticket-create",
@@ -2708,27 +2842,27 @@ def test_scheduler_runner_fails_closed_when_ticket_create_spec_disappears(client
             role_profile_ref="ui_designer_primary",
         ),
     )
+    _enable_default_actor_roster(client.app.state.repository, "wf_runner_missing_spec")
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": "wf_runner_missing_spec",
-            "ticket_id": "tkt_runner_missing_spec",
-            "node_id": "node_runner_missing_spec",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_missing_spec:tkt_runner_missing_spec",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id="wf_runner_missing_spec",
+            ticket_id="tkt_runner_missing_spec",
+            node_id="node_runner_missing_spec",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runner_missing_spec:tkt_runner_missing_spec"},
     )
 
     repository = client.app.state.repository
-    with repository.transaction() as connection:
-        connection.execute(
-            """
-            DELETE FROM events
-            WHERE event_type = 'TICKET_CREATED' AND json_extract(payload_json, '$.ticket_id') = ?
-            """,
-            ("tkt_runner_missing_spec",),
-        )
+    original_get_latest_ticket_created_payload = repository.get_latest_ticket_created_payload
+
+    def _missing_created_spec(connection, ticket_id):
+        if ticket_id == "tkt_runner_missing_spec":
+            return None
+        return original_get_latest_ticket_created_payload(connection, ticket_id)
+
+    monkeypatch.setattr(repository, "get_latest_ticket_created_payload", _missing_created_spec)
 
     run_scheduler_once(
         repository,
@@ -2883,7 +3017,8 @@ def test_scheduler_runner_execution_events_are_visible_in_stream(client, set_tic
         body = "".join(response.iter_text())
 
     assert response.status_code == 200
-    assert "TICKET_LEASED" in body
+    assert "TICKET_ASSIGNED" in body
+    assert "TICKET_LEASE_GRANTED" in body
     assert "TICKET_STARTED" in body
     assert "TICKET_COMPLETED" in body
 
@@ -2896,6 +3031,13 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     monkeypatch.setenv("BOARDROOM_OS_PROVIDER_OPENAI_COMPAT_MODEL", "gpt-5.3-codex")
     repository = client.app.state.repository
     _seed_worker(repository, employee_id="emp_frontend_live", provider_id="prov_openai_compat")
+    _enable_actor(
+        repository,
+        actor_id="emp_frontend_live",
+        employee_id="emp_frontend_live",
+        workflow_id=workflow_id,
+        capabilities=_capabilities_for_role_profile("frontend_engineer_primary"),
+    )
 
     client.post(
         "/api/v1/commands/ticket-create",
@@ -2908,14 +3050,13 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_live",
-            "node_id": "node_runner_provider_live",
-            "leased_by": "emp_frontend_live",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_live:tkt_runner_provider_live",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_live",
+            node_id="node_runner_provider_live",
+            leased_by="emp_frontend_live",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runner_provider_live:tkt_runner_provider_live"},
     )
 
     called_ticket_ids: list[str] = []
@@ -2952,6 +3093,17 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_live")
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_live"]
+    assert outcomes[0].actor_id == "emp_frontend_live"
+    assert outcomes[0].assignment_id == f"asg_{workflow_id}_tkt_runner_provider_live_emp_frontend_live"
+    assert outcomes[0].lease_id == f"lease_{workflow_id}_tkt_runner_provider_live_emp_frontend_live_1"
+    started_event = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == "TICKET_STARTED" and event.get("ticket_id") == "tkt_runner_provider_live"
+    ][0]
+    assert started_event["payload"]["actor_id"] == "emp_frontend_live"
+    assert started_event["payload"]["assignment_id"] == outcomes[0].assignment_id
+    assert started_event["payload"]["lease_id"] == outcomes[0].lease_id
     assert called_ticket_ids == ["tkt_runner_provider_live"]
     assert ticket_projection["status"] == "COMPLETED"
 
@@ -2976,14 +3128,13 @@ def test_runtime_completes_governance_document_ticket_on_live_role(client, set_t
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": "wf_runtime_governance_doc",
-            "ticket_id": "tkt_runtime_governance_doc",
-            "node_id": "node_runtime_governance_doc",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runtime_governance_doc:tkt_runtime_governance_doc",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id="wf_runtime_governance_doc",
+            ticket_id="tkt_runtime_governance_doc",
+            node_id="node_runtime_governance_doc",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runtime_governance_doc:tkt_runtime_governance_doc"},
     )
 
     outcomes = run_leased_ticket_runtime(repository)
@@ -3013,6 +3164,7 @@ def test_runtime_governance_document_completion_routes_to_internal_governance_ch
         workspace_id="ws_default",
         goal="Governance document completion should route to an internal checker.",
     )
+    _enable_default_actor_roster(repository, "wf_runtime_governance_gate")
 
     create_payload = _ticket_create_payload(
         workflow_id="wf_runtime_governance_gate",
@@ -3091,14 +3243,13 @@ def test_runtime_governance_document_completion_routes_to_internal_governance_ch
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": "wf_runtime_governance_gate",
-            "ticket_id": "tkt_runtime_governance_gate",
-            "node_id": "node_runtime_governance_gate",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runtime_governance_gate:tkt_runtime_governance_gate",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id="wf_runtime_governance_gate",
+            ticket_id="tkt_runtime_governance_gate",
+            node_id="node_runtime_governance_gate",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runtime_governance_gate:tkt_runtime_governance_gate"},
     )
 
     outcomes = run_leased_ticket_runtime(repository)
@@ -3300,14 +3451,13 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_saved",
-            "node_id": "node_runner_provider_saved",
-            "leased_by": "emp_frontend_saved_config",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_saved:tkt_runner_provider_saved",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_saved",
+            node_id="node_runner_provider_saved",
+            leased_by="emp_frontend_saved_config",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runner_provider_saved:tkt_runner_provider_saved"},
     )
 
     called_ticket_ids: list[str] = []
@@ -3399,14 +3549,13 @@ def test_runtime_prefers_role_binding_over_employee_provider(client, set_ticket_
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_provider_binding",
-            "node_id": "node_runner_provider_binding",
-            "leased_by": "emp_frontend_bound",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_provider_binding:tkt_runner_provider_binding",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_provider_binding",
+            node_id="node_runner_provider_binding",
+            leased_by="emp_frontend_bound",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runner_provider_binding:tkt_runner_provider_binding"},
     )
 
     monkeypatch.setattr(
@@ -4002,14 +4151,13 @@ def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
     if scope_ticket["status"] == "PENDING":
         lease_response = client.post(
             "/api/v1/commands/ticket-lease",
-            json={
-                "workflow_id": workflow_id,
-                "ticket_id": scope_ticket_id,
-                "node_id": "node_scope_decision",
-                "leased_by": "emp_frontend_2",
-                "lease_timeout_sec": 600,
-                "idempotency_key": f"ticket-lease:{workflow_id}:{scope_ticket_id}",
-            },
+            json=api_test_helpers._ticket_lease_payload(
+                workflow_id=workflow_id,
+                ticket_id=scope_ticket_id,
+                node_id="node_scope_decision",
+                leased_by="emp_frontend_2",
+                lease_timeout_sec=600,
+            ) | {"idempotency_key": f"ticket-lease:{workflow_id}:{scope_ticket_id}"},
         )
         assert lease_response.status_code == 200
         if lease_response.json()["status"] != "ACCEPTED":
@@ -4021,13 +4169,12 @@ def test_scheduler_runner_skips_idle_ceo_maintenance_when_ticket_is_executing(
     if scope_ticket["status"] == "LEASED":
         start_response = client.post(
             "/api/v1/commands/ticket-start",
-            json={
-                "workflow_id": workflow_id,
-                "ticket_id": scope_ticket_id,
-                "node_id": "node_scope_decision",
-                "started_by": scope_ticket["lease_owner"] or "emp_frontend_2",
-                "idempotency_key": f"ticket-start:{workflow_id}:{scope_ticket_id}",
-            },
+            json=api_test_helpers._ticket_start_payload(
+                workflow_id=workflow_id,
+                ticket_id=scope_ticket_id,
+                node_id="node_scope_decision",
+                started_by=scope_ticket["actor_id"] or "emp_frontend_2",
+            ) | {"idempotency_key": f"ticket-start:{workflow_id}:{scope_ticket_id}"},
         )
         assert start_response.status_code == 200
         assert start_response.json()["status"] == "ACCEPTED"
@@ -4081,6 +4228,9 @@ def test_scheduler_runner_records_orchestration_trace_in_execution_order(client,
                 "node_id": "node_trace_001",
                 "graph_node_id": "node_trace_001",
                 "lease_owner": "emp_frontend_2",
+                "actor_id": "emp_frontend_2",
+                "assignment_id": "asg_wf_trace_001_tkt_trace_001_emp_frontend_2",
+                "lease_id": "lease_wf_trace_001_tkt_trace_001_emp_frontend_2_1",
                 "action": "start",
                 "start_ack_status": "ACCEPTED",
                 "final_ack_status": "accepted",
@@ -4121,6 +4271,9 @@ def test_scheduler_runner_records_orchestration_trace_in_execution_order(client,
             "node_id": "node_trace_001",
             "graph_node_id": "node_trace_001",
             "lease_owner": "emp_frontend_2",
+            "actor_id": "emp_frontend_2",
+            "assignment_id": "asg_wf_trace_001_tkt_trace_001_emp_frontend_2",
+            "lease_id": "lease_wf_trace_001_tkt_trace_001_emp_frontend_2_1",
             "action": "start",
             "start_ack_status": "ACCEPTED",
             "final_ack_status": "accepted",
@@ -4195,6 +4348,9 @@ def test_scheduler_runner_records_runtime_skip_reason_for_missing_graph_contract
             "ticket_id": ticket_id,
             "node_id": node_id,
             "graph_node_id": None,
+            "actor_id": "emp_frontend_skip",
+            "assignment_id": f"asg_{workflow_id}_{ticket_id}_emp_frontend_skip",
+            "lease_id": f"lease_{workflow_id}_{ticket_id}_emp_frontend_skip_1",
             "ticket_status": "LEASED",
             "runtime_node_status": None,
             "reason_code": "GRAPH_CONTRACT_MISSING",
@@ -4274,13 +4430,15 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
 
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": build_ticket_id,
-            "node_id": build_ticket["node_id"],
-            "started_by": build_ticket["lease_owner"],
-            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=build_ticket_id,
+            node_id=build_ticket["node_id"],
+            started_by=build_ticket["actor_id"],
+            actor_id=build_ticket["actor_id"],
+            assignment_id=build_ticket["assignment_id"],
+            lease_id=build_ticket["lease_id"],
+        ) | {"idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}"},
     )
 
     set_ticket_time("2026-03-28T10:31:00+08:00")
@@ -4293,27 +4451,29 @@ def test_timeout_incident_recovery_on_build_chain_still_reaches_closeout_complet
     second_ticket = repository.get_current_ticket_projection(second_ticket_id)
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": second_ticket_id,
-            "node_id": second_ticket["node_id"],
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=second_ticket_id,
+            node_id=second_ticket["node_id"],
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}"},
     )
+    second_ticket = repository.get_current_ticket_projection(second_ticket_id)
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": second_ticket_id,
-            "node_id": second_ticket["node_id"],
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=second_ticket_id,
+            node_id=second_ticket["node_id"],
+            started_by=second_ticket["actor_id"],
+            actor_id=second_ticket["actor_id"],
+            assignment_id=second_ticket["assignment_id"],
+            lease_id=second_ticket["lease_id"],
+        ) | {"idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}"},
     )
 
-    set_ticket_time("2026-03-28T11:18:00+08:00")
+    set_ticket_time("2026-03-28T11:05:00+08:00")
     client.post(
         "/api/v1/commands/scheduler-tick",
         json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:mainline-timeout-second"},
@@ -4413,13 +4573,12 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     first_ticket = repository.get_current_ticket_projection(build_ticket_id)
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": build_ticket_id,
-            "node_id": first_ticket["node_id"],
-            "started_by": first_ticket["lease_owner"],
-            "idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=build_ticket_id,
+            node_id=first_ticket["node_id"],
+            started_by=first_ticket["actor_id"],
+        ) | {"idempotency_key": f"ticket-start:{workflow_id}:{build_ticket_id}"},
     )
     client.post(
         "/api/v1/commands/ticket-fail",
@@ -4427,7 +4586,7 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
             "workflow_id": workflow_id,
             "ticket_id": build_ticket_id,
             "node_id": first_ticket["node_id"],
-            "failed_by": first_ticket["lease_owner"],
+            "failed_by": first_ticket["actor_id"],
             "failure_kind": "RUNTIME_ERROR",
             "failure_message": "Primary hero render crashed.",
             "failure_detail": repeated_failure,
@@ -4439,24 +4598,22 @@ def test_repeated_failure_incident_recovery_on_build_chain_still_reaches_closeou
     second_ticket = repository.get_current_ticket_projection(second_ticket_id)
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": second_ticket_id,
-            "node_id": second_ticket["node_id"],
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=second_ticket_id,
+            node_id=second_ticket["node_id"],
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": f"ticket-lease:{workflow_id}:{second_ticket_id}"},
     )
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": second_ticket_id,
-            "node_id": second_ticket["node_id"],
-            "started_by": "emp_frontend_2",
-            "idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=second_ticket_id,
+            node_id=second_ticket["node_id"],
+            started_by="emp_frontend_2",
+        ) | {"idempotency_key": f"ticket-start:{workflow_id}:{second_ticket_id}"},
     )
     client.post(
         "/api/v1/commands/ticket-fail",
@@ -5843,24 +6000,22 @@ def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success
 
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": "wf_runner_recovery",
-            "ticket_id": "tkt_runner_recovery",
-            "node_id": "node_runner_recovery",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:wf_runner_recovery:tkt_runner_recovery",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id="wf_runner_recovery",
+            ticket_id="tkt_runner_recovery",
+            node_id="node_runner_recovery",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:wf_runner_recovery:tkt_runner_recovery"},
     )
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": "wf_runner_recovery",
-            "ticket_id": "tkt_runner_recovery",
-            "node_id": "node_runner_recovery",
-            "started_by": "emp_frontend_2",
-            "idempotency_key": "ticket-start:wf_runner_recovery:tkt_runner_recovery",
-        },
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id="wf_runner_recovery",
+            ticket_id="tkt_runner_recovery",
+            node_id="node_runner_recovery",
+            started_by="emp_frontend_2",
+        ) | {"idempotency_key": "ticket-start:wf_runner_recovery:tkt_runner_recovery"},
     )
 
     set_ticket_time("2026-03-28T10:31:00+08:00")
@@ -5874,20 +6029,23 @@ def test_scheduler_runner_auto_closes_recovering_incident_after_followup_success
         "wf_runner_recovery",
         "node_runner_recovery",
     )["latest_ticket_id"]
+    second_ticket = repository.get_current_ticket_projection(second_ticket_id)
 
     set_ticket_time("2026-03-28T10:32:00+08:00")
     client.post(
         "/api/v1/commands/ticket-start",
-        json={
-            "workflow_id": "wf_runner_recovery",
-            "ticket_id": second_ticket_id,
-            "node_id": "node_runner_recovery",
-            "started_by": "emp_frontend_2",
-                "idempotency_key": f"ticket-start:wf_runner_recovery:{second_ticket_id}",
-            },
-        )
+        json=api_test_helpers._ticket_start_payload(
+            workflow_id="wf_runner_recovery",
+            ticket_id=second_ticket_id,
+            node_id=second_ticket["node_id"],
+            started_by=second_ticket["actor_id"],
+            actor_id=second_ticket["actor_id"],
+            assignment_id=second_ticket["assignment_id"],
+            lease_id=second_ticket["lease_id"],
+        ) | {"idempotency_key": f"ticket-start:wf_runner_recovery:{second_ticket_id}"},
+    )
 
-    set_ticket_time("2026-03-28T11:18:00+08:00")
+    set_ticket_time("2026-03-28T11:05:00+08:00")
     client.post(
         "/api/v1/commands/scheduler-tick",
         json={"max_dispatches": 10, "idempotency_key": "scheduler-tick:runner-recovery-second"},
@@ -6078,7 +6236,7 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
             "workflow_id": workflow_id,
             "ticket_id": source_ticket["ticket_id"],
             "node_id": source_ticket["node_id"],
-            "started_by": source_ticket["lease_owner"],
+            "started_by": source_ticket["actor_id"],
             "idempotency_key": f"ticket-start:{workflow_id}:{source_ticket['ticket_id']}",
         },
     )
@@ -6132,7 +6290,7 @@ def test_scheduler_runner_auto_recovers_open_provider_incident_for_autopilot_wor
             connection,
             event_type="TICKET_COMPLETED",
             actor_type="worker",
-            actor_id=str(source_ticket["lease_owner"]),
+            actor_id=str(source_ticket["actor_id"]),
             workflow_id=workflow_id,
             idempotency_key=f"test-ticket-completed:{workflow_id}:{source_ticket['ticket_id']}",
             causation_id=None,
@@ -6244,7 +6402,7 @@ def test_scheduler_blocks_rework_fix_when_only_capable_actor_is_scoped_excluded(
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_singleton_rework_fix"
     ]
 
@@ -6301,13 +6459,13 @@ def test_scheduler_skips_frozen_employee_when_dispatching(client):
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_frozen"
     ]
 
     assert ticket_projection is not None
     assert ticket_projection["status"] == "COMPLETED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+    assert leased_events[-1]["payload"]["actor_id"] == "emp_frontend_backup"
 
 
 def test_scheduler_reassigns_requeued_ticket_after_freeze(client, set_ticket_time):
@@ -6326,15 +6484,16 @@ def test_scheduler_reassigns_requeued_ticket_after_freeze(client, set_ticket_tim
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_requeued_after_freeze",
-            "node_id": "node_runner_requeued_after_freeze",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:freeze-requeued:emp_frontend_2",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_requeued_after_freeze",
+            node_id="node_runner_requeued_after_freeze",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=1,
+        ) | {"idempotency_key": "ticket-lease:freeze-requeued:emp_frontend_2"},
     )
+
+    set_ticket_time("2026-03-28T10:02:00+08:00")
 
     freeze_response = client.post(
         "/api/v1/commands/employee-freeze",
@@ -6350,7 +6509,13 @@ def test_scheduler_reassigns_requeued_ticket_after_freeze(client, set_ticket_tim
     assert freeze_response.json()["status"] == "ACCEPTED"
 
     repository = client.app.state.repository
-    run_scheduler_once(
+    _suspend_actor(
+        repository,
+        actor_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        reason="Reassign current leased ticket after freeze.",
+    )
+    run_scheduler_tick(
         repository,
         idempotency_key="scheduler-runner:test-requeued-after-freeze",
         max_dispatches=10,
@@ -6360,13 +6525,13 @@ def test_scheduler_reassigns_requeued_ticket_after_freeze(client, set_ticket_tim
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_requeued_after_freeze"
     ]
 
     assert ticket_projection is not None
-    assert ticket_projection["status"] == "COMPLETED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_backup"
+    assert ticket_projection["status"] == "LEASED"
+    assert leased_events[-1]["payload"]["actor_id"] == "emp_frontend_backup"
 
 
 def test_scheduler_dispatches_restored_employee_again(client):
@@ -6398,7 +6563,7 @@ def test_scheduler_dispatches_restored_employee_again(client):
     before_restore_lease = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_restore_before"
     ][-1]
 
@@ -6428,12 +6593,12 @@ def test_scheduler_dispatches_restored_employee_again(client):
     after_restore_lease = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_restore_after"
     ][-1]
 
-    assert before_restore_lease["payload"]["leased_by"] == "emp_frontend_backup"
-    assert after_restore_lease["payload"]["leased_by"] == "emp_frontend_2"
+    assert before_restore_lease["payload"]["actor_id"] == "emp_frontend_backup"
+    assert after_restore_lease["payload"]["actor_id"] == "emp_frontend_2"
 
 
 def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(client, set_ticket_time):
@@ -6452,14 +6617,13 @@ def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(cl
     )
     client.post(
         "/api/v1/commands/ticket-lease",
-        json={
-            "workflow_id": workflow_id,
-            "ticket_id": "tkt_runner_restored_requeued",
-            "node_id": "node_runner_restored_requeued",
-            "leased_by": "emp_frontend_2",
-            "lease_timeout_sec": 600,
-            "idempotency_key": "ticket-lease:restored-requeued:emp_frontend_2",
-        },
+        json=api_test_helpers._ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_runner_restored_requeued",
+            node_id="node_runner_restored_requeued",
+            leased_by="emp_frontend_2",
+            lease_timeout_sec=600,
+        ) | {"idempotency_key": "ticket-lease:restored-requeued:emp_frontend_2"},
     )
     client.post(
         "/api/v1/commands/employee-freeze",
@@ -6501,12 +6665,12 @@ def test_scheduler_redispatches_restored_requeued_ticket_to_original_employee(cl
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_restored_requeued"
     ]
 
     assert ticket_projection["status"] == "COMPLETED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_frontend_2"
+    assert leased_events[-1]["payload"]["actor_id"] == "emp_frontend_2"
     assert latest_created_spec["excluded_employee_ids"] == ["emp_frontend_backup"]
 
 
@@ -6579,13 +6743,13 @@ def test_scheduler_leases_actor_by_required_capabilities_not_employee_role(clien
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_backend_capability_match"
     ]
 
     assert ticket_projection is not None
     assert ticket_projection["status"] == "LEASED"
-    assert leased_events[-1]["payload"]["leased_by"] == "actor_backend_capable"
+    assert leased_events[-1]["payload"]["actor_id"] == "actor_backend_capable"
 
 
 def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, set_ticket_time):
@@ -6648,7 +6812,7 @@ def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, s
     leased_events = [
         event
         for event in repository.list_events_for_testing()
-        if event["event_type"] == "TICKET_LEASED"
+        if event["event_type"] == "TICKET_LEASE_GRANTED"
         and event["payload"].get("ticket_id") == "tkt_runner_backend_auto_hire"
     ]
     runs = repository.list_ceo_shadow_runs(workflow_id)
@@ -6660,4 +6824,4 @@ def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, s
     assert hired_employee["role_profile_refs"] == ["backend_engineer_primary"]
     assert ticket_projection is not None
     assert ticket_projection["status"] == "LEASED"
-    assert leased_events[-1]["payload"]["leased_by"] == "emp_backend_backup"
+    assert leased_events[-1]["payload"]["actor_id"] == "emp_backend_backup"

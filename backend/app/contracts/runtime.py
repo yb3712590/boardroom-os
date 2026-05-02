@@ -64,6 +64,9 @@ class CompileRequestControlRefs(StrictModel):
 
 
 class CompileRequestWorkerBinding(TenantWorkspaceScope):
+    actor_id: str = Field(min_length=1)
+    assignment_id: str = Field(min_length=1)
+    lease_id: str = Field(min_length=1)
     lease_owner: str = Field(min_length=1)
     employee_id: str = Field(min_length=1)
     employee_role_type: str = Field(min_length=1)
@@ -430,6 +433,9 @@ class CompiledExecutionPackageMeta(TenantWorkspaceScope):
     version_ref: str | None = None
     version_int: int | None = Field(default=None, ge=1)
     supersedes_ref: str | None = None
+    actor_id: str = Field(min_length=1)
+    assignment_id: str = Field(min_length=1)
+    lease_id: str = Field(min_length=1)
     lease_owner: str = Field(min_length=1)
     compiler_version: str = Field(min_length=1)
     ticket_projection_version: int | None = Field(default=None, ge=1)

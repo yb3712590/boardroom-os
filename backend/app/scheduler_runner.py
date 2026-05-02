@@ -42,6 +42,9 @@ def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
             node_id = outcome.get("node_id")
             graph_node_id = outcome.get("graph_node_id")
             lease_owner = outcome.get("lease_owner")
+            actor_id = outcome.get("actor_id")
+            assignment_id = outcome.get("assignment_id")
+            lease_id = outcome.get("lease_id")
             action = outcome.get("action")
             ticket_status = outcome.get("ticket_status")
             start_ack = outcome.get("start_ack")
@@ -57,6 +60,9 @@ def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
             node_id = getattr(outcome, "node_id", None)
             graph_node_id = getattr(outcome, "graph_node_id", None)
             lease_owner = getattr(outcome, "lease_owner", None)
+            actor_id = getattr(outcome, "actor_id", None)
+            assignment_id = getattr(outcome, "assignment_id", None)
+            lease_id = getattr(outcome, "lease_id", None)
             action = getattr(outcome, "action", None)
             ticket_status = getattr(outcome, "ticket_status", None)
             start_ack = getattr(outcome, "start_ack", None)
@@ -74,6 +80,9 @@ def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
             "node_id": node_id,
             "graph_node_id": graph_node_id,
             "lease_owner": lease_owner,
+            "actor_id": actor_id,
+            "assignment_id": assignment_id,
+            "lease_id": lease_id,
             "action": action,
             "start_ack_status": _enum_value(start_ack_status),
             "final_ack_status": _enum_value(final_ack_status),
@@ -85,6 +94,9 @@ def _serialize_runtime_outcomes(runtime_outcomes) -> dict:
                     "ticket_id": ticket_id,
                     "node_id": node_id,
                     "graph_node_id": graph_node_id,
+                    "actor_id": actor_id,
+                    "assignment_id": assignment_id,
+                    "lease_id": lease_id,
                     "ticket_status": ticket_status,
                     "runtime_node_status": runtime_node_status,
                     "reason_code": reason_code,

@@ -75,14 +75,14 @@
 - [x] 修复 excluded employee 继承污染：Round 7B adapts legacy `excluded_employee_ids` into scoped exclusions and clears unscoped legacy lists on retry/rework.
 - [x] actor pool empty 时生成显式 action/diagnostic：Round 7B records `EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED` with `NO_ELIGIBLE_ACTOR`, candidate diagnostics, and suggested actions.
 
-Round 7C 仍需把 Assignment 与 Lease 拆为独立 runtime identity；Round 7B 暂时沿用 `TICKET_LEASED.leased_by = actor_id`。
+Round 7C 已把 Assignment 与 Lease 拆为独立 runtime identity；`TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` 及 assignment/lease projections 已落地，ticket lease/start/timeout、scheduler dispatch、context compiler 和 execution package meta 均携带 `actor_id` / `assignment_id` / `lease_id`。`lease_owner` 只保留为 legacy display/migration alias，不再驱动新 runtime execution identity。
 
 验收：
 
 - [x] 派工由 required capabilities 驱动：Round 7B scheduler consumes `actor_projection` plus compiled `required_capabilities` through `assignment_resolver`.
 - [x] 角色名不再决定 write root。
 - [x] no eligible worker 不会 silent stall：Round 7B emits explicit no-eligible actor scheduler diagnostic with suggested actions.
-- [ ] Assignment 与 Lease 分离：deferred to Round 7C.
+- [x] Assignment 与 Lease 分离：Round 7C introduced `TICKET_ASSIGNED` and `TICKET_LEASE_GRANTED`, assignment/lease projections, ticket `actor_id` / `assignment_id` / `lease_id`, and runtime/context compiler identity propagation.
 
 ## Phase 4：Progression policy engine 抽离
 

@@ -496,17 +496,25 @@ def _require_ticket_create_spec(
 
 def _require_worker_binding(
     repository: ControlPlaneRepository,
-    lease_owner: str | None,
+    ticket: dict[str, Any],
     connection: sqlite3.Connection | None = None,
-) -> tuple[str, dict[str, Any]]:
-    if lease_owner is None:
-        raise ValueError("Ticket lease owner is missing for runtime compilation.")
+) -> tuple[str, str, str, dict[str, Any], dict[str, Any] | None]:
+    actor_id = str(ticket.get("actor_id") or "").strip()
+    assignment_id = str(ticket.get("assignment_id") or "").strip()
+    lease_id = str(ticket.get("lease_id") or "").strip()
+    if not actor_id or not assignment_id or not lease_id:
+        raise ValueError("Ticket actor assignment lease identity is missing for runtime compilation.")
 
-    employee = repository.get_employee_projection(lease_owner, connection=connection)
-    if employee is None:
-        raise ValueError(f"Employee {lease_owner} is missing from employee_projection.")
+    actor = repository.get_actor_projection(actor_id, connection=connection)
+    if actor is None:
+        raise ValueError(f"Actor {actor_id} is missing from actor_projection.")
 
-    return lease_owner, employee
+    employee = None
+    employee_id = str(actor.get("employee_id") or actor_id).strip()
+    if employee_id:
+        employee = repository.get_employee_projection(employee_id, connection=connection)
+
+    return actor_id, assignment_id, lease_id, actor, employee
 
 
 def _build_compiled_role(compile_request: CompileRequest) -> CompiledRole:
@@ -731,6 +739,9 @@ def _build_execution_package_meta(compile_request: CompileRequest) -> CompiledEx
         graph_version=compile_request.meta.graph_version,
         asset_digest=compile_request.meta.asset_digest,
         idempotency_key=compile_request.meta.idempotency_key,
+        actor_id=compile_request.worker_binding.actor_id,
+        assignment_id=compile_request.worker_binding.assignment_id,
+        lease_id=compile_request.worker_binding.lease_id,
         lease_owner=compile_request.worker_binding.lease_owner,
         tenant_id=compile_request.meta.tenant_id,
         workspace_id=compile_request.meta.workspace_id,
@@ -1852,9 +1863,9 @@ def build_compile_request(
         connection=connection,
     )
     governance_mode_slice = governance_profile_to_mode_slice(governance_profile)
-    lease_owner, employee = _require_worker_binding(
+    actor_id, assignment_id, lease_id, actor, employee = _require_worker_binding(
         repository,
-        ticket.get("lease_owner"),
+        ticket,
         connection=connection,
     )
 
@@ -2014,11 +2025,16 @@ def build_compile_request(
         f"compile:{ticket['workflow_id']}:{ticket['ticket_id']}:{graph_version}:{asset_digest}"
     )
 
+    employee_role_type = _role_type_for_profile(
+        str(created_spec.get("role_profile_ref") or ""),
+        fallback=str((employee or {}).get("role_type") or "unknown"),
+    )
+    employee_profiles = employee or {}
     normalized_profiles = normalize_persona_profiles(
-        str(employee.get("role_type") or "unknown"),
-        skill_profile=employee.get("skill_profile_json"),
-        personality_profile=employee.get("personality_profile_json"),
-        aesthetic_profile=employee.get("aesthetic_profile_json"),
+        employee_role_type,
+        skill_profile=employee_profiles.get("skill_profile_json"),
+        personality_profile=employee_profiles.get("personality_profile_json"),
+        aesthetic_profile=employee_profiles.get("aesthetic_profile_json"),
     )
     org_context = _build_org_context(
         repository,
@@ -2064,9 +2080,12 @@ def build_compile_request(
             output_schema_version=int(created_spec.get("output_schema_version") or 0),
         ),
         worker_binding=CompileRequestWorkerBinding(
-            lease_owner=lease_owner,
-            employee_id=lease_owner,
-            employee_role_type=str(employee.get("role_type") or "unknown"),
+            actor_id=actor_id,
+            assignment_id=assignment_id,
+            lease_id=lease_id,
+            lease_owner=actor_id,
+            employee_id=str(actor.get("employee_id") or actor_id),
+            employee_role_type=employee_role_type,
             tenant_id=tenant_id,
             workspace_id=workspace_id,
             skill_profile=normalized_profiles["skill_profile"],

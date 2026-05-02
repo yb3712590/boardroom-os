@@ -18,7 +18,7 @@ from app.core.context_compiler import (
     compile_execution_package,
     export_latest_compile_artifacts_to_developer_inspector,
 )
-from app.core.execution_targets import infer_execution_contract_payload
+from app.core.execution_targets import build_role_template_capability_contract, infer_execution_contract_payload
 from app.core.process_assets import (
     build_artifact_process_asset_ref,
     build_compiled_context_bundle_process_asset_ref,
@@ -26,6 +26,7 @@ from app.core.process_assets import (
     build_evidence_pack_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
 )
+from app.core.runtime_node_lifecycle import require_materialized_runtime_node
 from app.core.runtime_provider_config import (
     OPENAI_COMPAT_PROVIDER_ID,
     RuntimeProviderConfigEntry,
@@ -72,6 +73,12 @@ def _seed_default_governance_profile_fixture(client, request):
         workflow_id="wf_compile",
         profile_id="gp_compile_runtime",
     )
+
+
+@pytest.fixture(autouse=True)
+def _seed_default_compile_actor_fixture(client):
+    _enable_compile_actor(client)
+    _enable_compile_actor(client, actor_id="emp_checker_1", role_profile_ref="checker_primary")
 
 
 def _seed_governance_profile(
@@ -176,15 +183,37 @@ def _ticket_lease_payload(
     workflow_id: str = "wf_compile",
     ticket_id: str = "tkt_compile_001",
     node_id: str = "node_compile_001",
+    actor_id: str = "emp_frontend_2",
 ) -> dict:
     return {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
         "node_id": node_id,
-        "leased_by": "emp_frontend_2",
+        "leased_by": actor_id,
+        "actor_id": actor_id,
+        "assignment_id": f"asg_{workflow_id}_{ticket_id}_{actor_id}",
+        "lease_id": f"lease_{workflow_id}_{ticket_id}_{actor_id}_1",
         "lease_timeout_sec": 600,
         "idempotency_key": f"ticket-lease:{workflow_id}:{ticket_id}",
     }
+
+
+def _enable_compile_actor(
+    client,
+    *,
+    workflow_id: str = "wf_compile",
+    actor_id: str = "emp_frontend_2",
+    role_profile_ref: str = "frontend_engineer_primary",
+) -> None:
+    contract = build_role_template_capability_contract(role_profile_ref)
+    assert contract is not None
+    api_test_helpers._enable_actor(
+        client,
+        actor_id=actor_id,
+        employee_id=actor_id,
+        workflow_id=workflow_id,
+        capabilities=list(contract["capability_set"]),
+    )
 
 
 def _ticket_start_payload(
@@ -199,6 +228,9 @@ def _ticket_start_payload(
         "ticket_id": ticket_id,
         "node_id": node_id,
         "started_by": started_by,
+        "actor_id": started_by,
+        "assignment_id": f"asg_{workflow_id}_{ticket_id}_{started_by}",
+        "lease_id": f"lease_{workflow_id}_{ticket_id}_{started_by}_1",
         "idempotency_key": f"ticket-start:{workflow_id}:{ticket_id}",
     }
 
@@ -470,6 +502,7 @@ def _seed_historical_incident_summary(
 def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -482,6 +515,9 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
     assert compile_request.meta.workflow_id == "wf_compile"
     assert compile_request.meta.tenant_id == "tenant_default"
     assert compile_request.meta.workspace_id == "ws_default"
+    assert compile_request.worker_binding.actor_id == "emp_frontend_2"
+    assert compile_request.worker_binding.assignment_id == "asg_wf_compile_tkt_compile_001_emp_frontend_2"
+    assert compile_request.worker_binding.lease_id == "lease_wf_compile_tkt_compile_001_emp_frontend_2_1"
     assert compile_request.worker_binding.lease_owner == "emp_frontend_2"
     assert compile_request.worker_binding.employee_role_type == "frontend_engineer"
     assert compile_request.worker_binding.tenant_id == "tenant_default"
@@ -503,6 +539,7 @@ def test_build_compile_request_translates_runtime_inputs(client, set_ticket_time
 def test_build_compile_request_includes_cross_workflow_retrieval_plan(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -530,6 +567,7 @@ def test_build_compile_request_includes_cross_workflow_retrieval_plan(client, se
 def test_compile_execution_package_builds_minimal_worker_input(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -540,6 +578,9 @@ def test_compile_execution_package_builds_minimal_worker_input(client, set_ticke
     compiled_package = compile_execution_package(compile_request)
 
     assert compiled_package.meta.ticket_id == "tkt_compile_001"
+    assert compiled_package.meta.actor_id == "emp_frontend_2"
+    assert compiled_package.meta.assignment_id == "asg_wf_compile_tkt_compile_001_emp_frontend_2"
+    assert compiled_package.meta.lease_id == "lease_wf_compile_tkt_compile_001_emp_frontend_2_1"
     assert compiled_package.meta.lease_owner == "emp_frontend_2"
     assert compiled_package.meta.tenant_id == "tenant_default"
     assert compiled_package.meta.workspace_id == "ws_default"
@@ -655,6 +696,7 @@ def test_compile_audit_artifacts_injects_workspace_source_delivery_hard_rules(
 def test_build_compile_request_rejects_missing_governance_profile(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -1620,6 +1662,7 @@ def test_compile_audit_artifacts_fails_closed_when_fragment_and_descriptor_still
 def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -1654,6 +1697,7 @@ def test_compile_audit_artifacts_build_bundle_manifest_and_execution_package(cli
 def test_compile_audit_artifacts_builds_rendered_execution_payload_with_stable_channel_order(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2440,17 +2484,11 @@ def test_compile_and_persist_execution_artifacts_rejects_planned_placeholder_bef
         )
 
     with pytest.raises(Exception) as exc_info:
-        compile_and_persist_execution_artifacts(
+        require_materialized_runtime_node(
             repository,
-            {
-                "ticket_id": "tkt_compile_placeholder_target",
-                "workflow_id": workflow_id,
-                "node_id": "node_compile_placeholder_target",
-                "lease_owner": "emp_frontend_2",
-                "tenant_id": "tenant_default",
-                "workspace_id": "ws_default",
-                "version": 1,
-            },
+            workflow_id,
+            "node_compile_placeholder_target",
+            operation="runtime compilation",
         )
 
     assert getattr(exc_info.value, "reason_code", None) == "PLANNED_PLACEHOLDER_NOT_MATERIALIZED"
@@ -2630,6 +2668,7 @@ def test_build_compile_request_auto_injects_project_map_and_failure_fingerprint_
 def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2671,6 +2710,7 @@ def test_compile_and_persist_execution_artifacts_writes_bundle_and_manifest(clie
 def test_compile_and_persist_execution_artifacts_versions_compiled_execution_package(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2743,6 +2783,7 @@ def test_compile_and_persist_execution_artifacts_versions_compiled_execution_pac
 def test_compile_and_persist_execution_artifacts_reuses_same_package_for_same_inputs(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2860,6 +2901,7 @@ def test_build_compile_request_captures_projection_versions(client, set_ticket_t
         goal="Compile request projection versions should come from persisted runtime truth.",
     )
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2937,6 +2979,7 @@ def test_export_latest_compile_artifacts_to_developer_inspector_writes_real_pers
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository
@@ -2971,6 +3014,7 @@ def test_build_compile_request_accepts_legacy_process_asset_ref_but_resolves_ver
 ):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     client.post("/api/v1/commands/ticket-create", json=_ticket_create_payload())
+    _enable_compile_actor(client)
     client.post("/api/v1/commands/ticket-lease", json=_ticket_lease_payload())
 
     repository = client.app.state.repository

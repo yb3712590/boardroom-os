@@ -1608,7 +1608,7 @@ def sync_active_worktree_index(
                 continue
 
             status = str(ticket.get("status") or "").strip()
-            worker = str(ticket.get("lease_owner") or "").strip() or (_latest_started_by(
+            worker = str(ticket.get("actor_id") or ticket.get("lease_owner") or "").strip() or (_latest_started_by(
                 repository,
                 connection=resolved_connection,
                 ticket_id=ticket_id,

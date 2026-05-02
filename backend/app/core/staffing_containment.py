@@ -208,7 +208,12 @@ def contain_employee_active_tickets(
         [TICKET_STATUS_LEASED, TICKET_STATUS_EXECUTING, TICKET_STATUS_CANCEL_REQUESTED],
     )
     for ticket in active_tickets:
-        if str(ticket.get("lease_owner") or "") != employee_id:
+        actor_id = str(ticket.get("actor_id") or "").strip()
+        actor_employee_id = ""
+        if actor_id:
+            actor = repository.get_actor_projection(actor_id, connection=connection)
+            actor_employee_id = str((actor or {}).get("employee_id") or actor_id).strip()
+        if actor_employee_id != employee_id:
             continue
         status = str(ticket["status"])
         if status == TICKET_STATUS_LEASED:

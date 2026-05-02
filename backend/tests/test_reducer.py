@@ -32,10 +32,12 @@ from app.core.constants import (
     EVENT_SYSTEM_INITIALIZED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_CANCEL_REQUESTED,
+    EVENT_TICKET_ASSIGNED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_HEARTBEAT_RECORDED,
+    EVENT_TICKET_LEASE_GRANTED,
     EVENT_TICKET_LEASED,
     EVENT_TICKET_RETRY_SCHEDULED,
     EVENT_TICKET_STARTED,
@@ -61,8 +63,10 @@ from app.core.constants import (
 )
 from app.core.reducer import (
     rebuild_actor_projections,
+    rebuild_assignment_projections,
     rebuild_employee_projections,
     rebuild_incident_projections,
+    rebuild_lease_projections,
     rebuild_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
@@ -353,7 +357,122 @@ def test_reducer_rebuilds_actor_projection_from_independent_actor_events():
     assert by_id["actor_backend_2"]["lifecycle_reason"] == "Retire temporary replacement."
 
 
-def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_executing_completed():
+def test_reducer_keeps_assignment_history_separate_from_lease_timeout():
+    created_event = {
+        "sequence_no": 1,
+        "event_type": EVENT_TICKET_CREATED,
+        "workflow_id": "wf_assignment",
+        "occurred_at": datetime.fromisoformat("2026-05-02T10:00:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_assignment_1",
+                "node_id": "node_assignment_1",
+                "retry_budget": 1,
+                "timeout_sla_sec": 1800,
+                "priority": "high",
+            }
+        ),
+    }
+    assigned_event = {
+        "sequence_no": 2,
+        "event_type": EVENT_TICKET_ASSIGNED,
+        "workflow_id": "wf_assignment",
+        "occurred_at": datetime.fromisoformat("2026-05-02T10:01:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "assignment_id": "asg_actor_backend_1",
+                "ticket_id": "tkt_assignment_1",
+                "node_id": "node_assignment_1",
+                "actor_id": "actor_backend_1",
+                "required_capabilities": ["source.modify.backend", "test.run.backend"],
+                "assignment_reason": "capability_match",
+            }
+        ),
+    }
+    lease_granted_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_LEASE_GRANTED,
+        "workflow_id": "wf_assignment",
+        "occurred_at": datetime.fromisoformat("2026-05-02T10:02:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "lease_id": "lease_actor_backend_1_attempt_1",
+                "assignment_id": "asg_actor_backend_1",
+                "ticket_id": "tkt_assignment_1",
+                "node_id": "node_assignment_1",
+                "actor_id": "actor_backend_1",
+                "lease_timeout_sec": 600,
+                "lease_expires_at": "2026-05-02T10:12:00+08:00",
+            }
+        ),
+    }
+    timed_out_event = {
+        "sequence_no": 4,
+        "event_type": EVENT_TICKET_TIMED_OUT,
+        "workflow_id": "wf_assignment",
+        "occurred_at": datetime.fromisoformat("2026-05-02T10:13:00+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_assignment_1",
+                "node_id": "node_assignment_1",
+                "actor_id": "actor_backend_1",
+                "assignment_id": "asg_actor_backend_1",
+                "lease_id": "lease_actor_backend_1_attempt_1",
+                "failure_kind": "TIMEOUT_SLA_EXCEEDED",
+                "failure_message": "Lease expired before completion.",
+                "failure_fingerprint": "timeout:fingerprint",
+            }
+        ),
+    }
+
+    assignment_projection = rebuild_assignment_projections(
+        [created_event, assigned_event, lease_granted_event, timed_out_event]
+    )[0]
+    lease_projection = rebuild_lease_projections(
+        [created_event, assigned_event, lease_granted_event, timed_out_event]
+    )[0]
+    ticket_projection = rebuild_ticket_projections(
+        [created_event, assigned_event, lease_granted_event, timed_out_event]
+    )[0]
+
+    assert assignment_projection == {
+        "assignment_id": "asg_actor_backend_1",
+        "workflow_id": "wf_assignment",
+        "ticket_id": "tkt_assignment_1",
+        "node_id": "node_assignment_1",
+        "actor_id": "actor_backend_1",
+        "required_capabilities": ["source.modify.backend", "test.run.backend"],
+        "status": "ASSIGNED",
+        "assignment_reason": "capability_match",
+        "assigned_at": "2026-05-02T10:01:00+08:00",
+        "updated_at": "2026-05-02T10:01:00+08:00",
+        "version": 2,
+    }
+    assert lease_projection == {
+        "lease_id": "lease_actor_backend_1_attempt_1",
+        "assignment_id": "asg_actor_backend_1",
+        "workflow_id": "wf_assignment",
+        "ticket_id": "tkt_assignment_1",
+        "node_id": "node_assignment_1",
+        "actor_id": "actor_backend_1",
+        "status": "TIMED_OUT",
+        "lease_timeout_sec": 600,
+        "lease_expires_at": "2026-05-02T10:12:00+08:00",
+        "started_at": None,
+        "closed_at": "2026-05-02T10:13:00+08:00",
+        "failure_kind": "TIMEOUT_SLA_EXCEEDED",
+        "updated_at": "2026-05-02T10:13:00+08:00",
+        "version": 4,
+    }
+    assert ticket_projection["status"] == TICKET_STATUS_TIMED_OUT
+    assert ticket_projection["actor_id"] == "actor_backend_1"
+    assert ticket_projection["assignment_id"] == "asg_actor_backend_1"
+    assert ticket_projection["lease_id"] == "lease_actor_backend_1_attempt_1"
+    assert ticket_projection["lease_owner"] is None
+    assert ticket_projection["lease_expires_at"] is None
+
+
+def test_reducer_rebuilds_ticket_and_node_lifecycle_projection():
     created_event = {
         "sequence_no": 1,
         "event_type": EVENT_TICKET_CREATED,
@@ -369,23 +488,41 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             }
         ),
     }
-    leased_event = {
+    assigned_event = {
         "sequence_no": 2,
-        "event_type": EVENT_TICKET_LEASED,
+        "event_type": EVENT_TICKET_ASSIGNED,
+        "workflow_id": "wf_123",
+        "occurred_at": datetime.fromisoformat("2026-03-28T10:02:30+08:00"),
+        "payload_json": json.dumps(
+            {
+                "ticket_id": "tkt_001",
+                "node_id": "node_homepage_visual",
+                "actor_id": "emp_frontend_2",
+                "assignment_id": "asg_wf_123_tkt_001_emp_frontend_2",
+                "required_capabilities": ["source.modify.frontend"],
+                "assignment_reason": "capability_match",
+            }
+        ),
+    }
+    leased_event = {
+        "sequence_no": 3,
+        "event_type": EVENT_TICKET_LEASE_GRANTED,
         "workflow_id": "wf_123",
         "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
         "payload_json": json.dumps(
             {
                 "ticket_id": "tkt_001",
                 "node_id": "node_homepage_visual",
-                "leased_by": "emp_frontend_2",
+                "actor_id": "emp_frontend_2",
+                "assignment_id": "asg_wf_123_tkt_001_emp_frontend_2",
+                "lease_id": "lease_wf_123_tkt_001_emp_frontend_2_1",
                 "lease_timeout_sec": 600,
                 "lease_expires_at": "2026-03-28T10:13:00+08:00",
             }
         ),
     }
     started_event = {
-        "sequence_no": 3,
+        "sequence_no": 4,
         "event_type": EVENT_TICKET_STARTED,
         "workflow_id": "wf_123",
         "occurred_at": datetime.fromisoformat("2026-03-28T10:04:00+08:00"),
@@ -394,11 +531,14 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
                 "ticket_id": "tkt_001",
                 "node_id": "node_homepage_visual",
                 "started_by": "emp_frontend_2",
+                "actor_id": "emp_frontend_2",
+                "assignment_id": "asg_wf_123_tkt_001_emp_frontend_2",
+                "lease_id": "lease_wf_123_tkt_001_emp_frontend_2_1",
             }
         ),
     }
     completed_event = {
-        "sequence_no": 4,
+        "sequence_no": 5,
         "event_type": EVENT_TICKET_COMPLETED,
         "workflow_id": "wf_123",
         "occurred_at": datetime.fromisoformat("2026-03-28T10:05:00+08:00"),
@@ -421,18 +561,24 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
     assert pending_ticket["lease_expires_at"] is None
     assert pending_node["status"] == NODE_STATUS_PENDING
 
-    leased_ticket = rebuild_ticket_projections([created_event, leased_event])[0]
-    leased_node = rebuild_node_projections([created_event, leased_event])[0]
+    leased_ticket = rebuild_ticket_projections([created_event, assigned_event, leased_event])[0]
+    leased_node = rebuild_node_projections([created_event, assigned_event, leased_event])[0]
     assert leased_ticket["status"] == TICKET_STATUS_LEASED
-    assert leased_ticket["lease_owner"] == "emp_frontend_2"
+    assert leased_ticket["actor_id"] == "emp_frontend_2"
+    assert leased_ticket["assignment_id"] == "asg_wf_123_tkt_001_emp_frontend_2"
+    assert leased_ticket["lease_id"] == "lease_wf_123_tkt_001_emp_frontend_2_1"
+    assert leased_ticket["lease_owner"] is None
     assert leased_ticket["lease_expires_at"] == "2026-03-28T10:13:00+08:00"
     assert leased_ticket["heartbeat_timeout_sec"] == 600
     assert leased_node["status"] == NODE_STATUS_PENDING
 
-    executing_ticket = rebuild_ticket_projections([created_event, leased_event, started_event])[0]
-    executing_node = rebuild_node_projections([created_event, leased_event, started_event])[0]
+    executing_ticket = rebuild_ticket_projections([created_event, assigned_event, leased_event, started_event])[0]
+    executing_node = rebuild_node_projections([created_event, assigned_event, leased_event, started_event])[0]
     assert executing_ticket["status"] == TICKET_STATUS_EXECUTING
-    assert executing_ticket["lease_owner"] == "emp_frontend_2"
+    assert executing_ticket["actor_id"] == "emp_frontend_2"
+    assert executing_ticket["assignment_id"] == "asg_wf_123_tkt_001_emp_frontend_2"
+    assert executing_ticket["lease_id"] == "lease_wf_123_tkt_001_emp_frontend_2_1"
+    assert executing_ticket["lease_owner"] is None
     assert executing_ticket["lease_expires_at"] == "2026-03-28T10:13:00+08:00"
     assert executing_ticket["started_at"] == "2026-03-28T10:04:00+08:00"
     assert executing_ticket["last_heartbeat_at"] == "2026-03-28T10:04:00+08:00"
@@ -440,10 +586,10 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
     assert executing_node["status"] == NODE_STATUS_EXECUTING
 
     ticket_projections = rebuild_ticket_projections(
-        [created_event, leased_event, started_event, completed_event]
+        [created_event, assigned_event, leased_event, started_event, completed_event]
     )
     node_projections = rebuild_node_projections(
-        [created_event, leased_event, started_event, completed_event]
+        [created_event, assigned_event, leased_event, started_event, completed_event]
     )
 
     assert ticket_projections == [
@@ -455,6 +601,9 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "workspace_id": "ws_default",
             "status": TICKET_STATUS_COMPLETED,
             "lease_owner": None,
+            "actor_id": "emp_frontend_2",
+            "assignment_id": "asg_wf_123_tkt_001_emp_frontend_2",
+            "lease_id": "lease_wf_123_tkt_001_emp_frontend_2_1",
             "lease_expires_at": None,
             "started_at": None,
             "last_heartbeat_at": None,
@@ -469,7 +618,7 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "last_failure_fingerprint": None,
             "blocking_reason_code": None,
             "updated_at": "2026-03-28T10:05:00+08:00",
-            "version": 4,
+            "version": 5,
         }
     ]
     assert node_projections == [
@@ -480,7 +629,7 @@ def test_reducer_rebuilds_ticket_and_node_projection_through_pending_leased_exec
             "status": NODE_STATUS_COMPLETED,
             "blocking_reason_code": None,
             "updated_at": "2026-03-28T10:05:00+08:00",
-            "version": 4,
+            "version": 5,
         }
     ]
 

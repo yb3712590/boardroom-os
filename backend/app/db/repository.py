@@ -102,9 +102,11 @@ from app.core.versioning import (
 )
 from app.core.reducer import (
     rebuild_actor_projections,
+    rebuild_assignment_projections,
     rebuild_employee_projections,
     rebuild_execution_attempt_projections,
     rebuild_incident_projections,
+    rebuild_lease_projections,
     rebuild_node_projections,
     rebuild_process_asset_index,
     rebuild_runtime_node_projections,
@@ -142,6 +144,8 @@ class ControlPlaneRepository:
             self._ensure_approval_projection_shape(connection)
             self._ensure_workflow_projection_shape(connection)
             self._ensure_ticket_projection_shape(connection)
+            self._ensure_assignment_projection_shape(connection)
+            self._ensure_lease_projection_shape(connection)
             self._ensure_node_projection_shape(connection)
             self._ensure_runtime_node_projection_shape(connection)
             self._ensure_execution_attempt_projection_shape(connection)
@@ -377,6 +381,9 @@ class ControlPlaneRepository:
                     tenant_id,
                     workspace_id,
                     status,
+                    actor_id,
+                    assignment_id,
+                    lease_id,
                     lease_owner,
                     lease_expires_at,
                     started_at,
@@ -393,7 +400,7 @@ class ControlPlaneRepository:
                     blocking_reason_code,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["ticket_id"],
@@ -402,6 +409,9 @@ class ControlPlaneRepository:
                     projection["tenant_id"],
                     projection["workspace_id"],
                     projection["status"],
+                    projection.get("actor_id"),
+                    projection.get("assignment_id"),
+                    projection.get("lease_id"),
                     projection.get("lease_owner"),
                     projection.get("lease_expires_at"),
                     projection.get("started_at"),
@@ -420,6 +430,89 @@ class ControlPlaneRepository:
                     projection["version"],
                 ),
             )
+
+    def replace_assignment_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM assignment_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO assignment_projection (
+                    assignment_id,
+                    workflow_id,
+                    ticket_id,
+                    node_id,
+                    actor_id,
+                    required_capabilities_json,
+                    status,
+                    assignment_reason,
+                    assigned_at,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["assignment_id"],
+                    projection["workflow_id"],
+                    projection["ticket_id"],
+                    projection["node_id"],
+                    projection["actor_id"],
+                    json.dumps(list(projection.get("required_capabilities") or []), sort_keys=True),
+                    projection["status"],
+                    projection.get("assignment_reason"),
+                    projection["assigned_at"],
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
+    def replace_lease_projections(
+        self,
+        connection: sqlite3.Connection,
+        projections: list[dict[str, Any]],
+    ) -> None:
+        connection.execute("DELETE FROM lease_projection")
+        for projection in projections:
+            connection.execute(
+                """
+                INSERT INTO lease_projection (
+                    lease_id,
+                    assignment_id,
+                    workflow_id,
+                    ticket_id,
+                    node_id,
+                    actor_id,
+                    status,
+                    lease_timeout_sec,
+                    lease_expires_at,
+                    started_at,
+                    closed_at,
+                    failure_kind,
+                    updated_at,
+                    version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    projection["lease_id"],
+                    projection["assignment_id"],
+                    projection["workflow_id"],
+                    projection["ticket_id"],
+                    projection["node_id"],
+                    projection["actor_id"],
+                    projection["status"],
+                    projection.get("lease_timeout_sec"),
+                    projection.get("lease_expires_at"),
+                    projection.get("started_at"),
+                    projection.get("closed_at"),
+                    projection.get("failure_kind"),
+                    projection["updated_at"],
+                    projection["version"],
+                ),
+            )
+
 
     def replace_node_projections(
         self,
@@ -758,6 +851,8 @@ class ControlPlaneRepository:
         events = self.list_all_events(connection)
         self.replace_workflow_projections(connection, rebuild_workflow_projections(events))
         self.replace_ticket_projections(connection, rebuild_ticket_projections(events))
+        self.replace_assignment_projections(connection, rebuild_assignment_projections(events))
+        self.replace_lease_projections(connection, rebuild_lease_projections(events))
         self.replace_node_projections(connection, rebuild_node_projections(events))
         self.replace_runtime_node_projections(connection, rebuild_runtime_node_projections(events))
         self.replace_execution_attempt_projections(connection, rebuild_execution_attempt_projections(events))
@@ -988,6 +1083,54 @@ class ControlPlaneRepository:
             if row is None:
                 return None
             return self._convert_ticket_projection_row(row)
+
+    def get_assignment_projection(
+        self,
+        assignment_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM assignment_projection WHERE assignment_id = ?",
+                (assignment_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_assignment_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM assignment_projection WHERE assignment_id = ?",
+                (assignment_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_assignment_projection_row(row)
+
+    def get_lease_projection(
+        self,
+        lease_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any] | None:
+        if connection is not None:
+            row = connection.execute(
+                "SELECT * FROM lease_projection WHERE lease_id = ?",
+                (lease_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_lease_projection_row(row)
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(
+                "SELECT * FROM lease_projection WHERE lease_id = ?",
+                (lease_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._convert_lease_projection_row(row)
 
     def get_latest_incident_for_ticket(
         self,
@@ -1522,7 +1665,7 @@ class ControlPlaneRepository:
                 (
                     SELECT COUNT(*)
                     FROM ticket_projection
-                    WHERE ticket_projection.lease_owner = worker_bootstrap_state.worker_id
+                    WHERE COALESCE(NULLIF(TRIM(ticket_projection.actor_id), ''), ticket_projection.lease_owner) = worker_bootstrap_state.worker_id
                       AND ticket_projection.tenant_id = worker_bootstrap_state.tenant_id
                       AND ticket_projection.workspace_id = worker_bootstrap_state.workspace_id
                       AND ticket_projection.status IN (?, ?, ?)
@@ -6426,6 +6569,29 @@ class ControlPlaneRepository:
         converted["version"] = int(converted["version"])
         return converted
 
+    def _convert_assignment_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        converted["required_capabilities"] = json.loads(converted.get("required_capabilities_json") or "[]")
+        converted.pop("required_capabilities_json", None)
+        for field in ("assigned_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
+    def _convert_lease_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        converted = dict(row)
+        for field in ("lease_expires_at", "started_at", "closed_at", "updated_at"):
+            if converted.get(field):
+                converted[field] = datetime.fromisoformat(converted[field])
+        converted["lease_timeout_sec"] = (
+            int(converted["lease_timeout_sec"])
+            if converted.get("lease_timeout_sec") is not None
+            else None
+        )
+        converted["version"] = int(converted.get("version") or 0)
+        return converted
+
     def _convert_node_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         if converted.get("updated_at"):
@@ -7313,7 +7479,9 @@ class ControlPlaneRepository:
             "node_id": "TEXT",
             "tenant_id": "TEXT",
             "workspace_id": "TEXT",
-            "status": "TEXT",
+            "actor_id": "TEXT",
+            "assignment_id": "TEXT",
+            "lease_id": "TEXT",
             "lease_owner": "TEXT",
             "lease_expires_at": "TEXT",
             "started_at": "TEXT",
@@ -7341,6 +7509,62 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_ticket_projection_status ON ticket_projection(status)"
+        )
+
+    def _ensure_assignment_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assignment_projection (
+                assignment_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                required_capabilities_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                assignment_reason TEXT,
+                assigned_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assignment_projection_ticket ON assignment_projection(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assignment_projection_actor ON assignment_projection(actor_id)"
+        )
+
+    def _ensure_lease_projection_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lease_projection (
+                lease_id TEXT PRIMARY KEY,
+                assignment_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                ticket_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                lease_timeout_sec INTEGER,
+                lease_expires_at TEXT,
+                started_at TEXT,
+                closed_at TEXT,
+                failure_kind TEXT,
+                updated_at TEXT NOT NULL,
+                version INTEGER NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lease_projection_assignment ON lease_projection(assignment_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lease_projection_ticket ON lease_projection(ticket_id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lease_projection_actor_status ON lease_projection(actor_id, status)"
         )
 
     def _ensure_node_projection_shape(self, connection: sqlite3.Connection) -> None:

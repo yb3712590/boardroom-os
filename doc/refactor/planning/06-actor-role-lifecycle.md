@@ -224,7 +224,7 @@ Round 7B 已把 scheduler runtime eligibility 迁移到 actor capability assignm
 
 - `backend/app/core/assignment_resolver.py` 负责基于 capability 的 actor eligibility、候选诊断和 no-eligible payload。
 - `backend/app/core/execution_targets.py` 只把 legacy ticket / RoleTemplate 输入编译成 `required_capabilities`，RoleTemplate 仍不是 runtime execution key。
-- `backend/app/core/ticket_handlers.py` 的 scheduler tick 从 `actor_projection` 读取候选 actor，并把 resolver 选出的 `actor_id` 写入现有 `TICKET_LEASED.leased_by`；Assignment / Lease 事件拆分仍由 Round 7C 处理。
+- `backend/app/core/ticket_handlers.py` 的 scheduler tick 从 `actor_projection` 读取候选 actor；7C 已把 resolver 选出的 actor 写入独立 `TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` identity。
 - legacy `excluded_employee_ids` 只被适配为 scoped exclusion，支持 `attempt`、`ticket`、`node`、`capability`、`workflow`，retry/rework 不再复制无作用域旧列表。
 - required capability 无可用 actor 时继续写 `EVENT_SCHEDULER_LEASE_DIAGNOSTIC_RECORDED`，payload 使用 `reason_code = "NO_ELIGIBLE_ACTOR"`，并包含 `required_capabilities`、`candidate_summary`、`candidate_details` 和建议动作 `CREATE_ACTOR` / `REASSIGN_EXECUTOR` / `REQUEST_HUMAN_DECISION` / `BLOCK_NODE_NO_CAPABLE_ACTOR`。
 
@@ -236,8 +236,32 @@ Round 7B 已把 scheduler runtime eligibility 迁移到 actor capability assignm
 - `backend/tests/test_scheduler_runner.py::test_scheduler_blocks_rework_fix_when_only_capable_actor_is_scoped_excluded`
 - `backend/tests/test_api.py` 中 retry/rework scoped exclusion 回归用例
 
+## Round 7C 实现状态
+
+Round 7C 已把 Assignment 与 Lease 拆成一等 runtime identity。Assignment 表示 actor 被选中，Lease 表示有限时间执行窗口；`lease_owner` 只作为历史展示 / 迁移 alias，不再驱动 scheduler、runtime start 或 context compiler 的执行身份。
+
+已落地的运行时边界：
+
+- `EVENT_TICKET_ASSIGNED` 写入 `assignment_id`、`actor_id`、`required_capabilities` 和 assignment reason；`assignment_projection` 独立重放，不会因 lease timeout 被撤销。
+- `EVENT_TICKET_LEASE_GRANTED` 写入 `lease_id`、`assignment_id`、`actor_id`、lease timeout 和 expiry；`lease_projection` 在 start / complete / fail / timeout / cancel 上更新状态。
+- `ticket_projection` denormalize 当前 `actor_id`、`assignment_id`、`lease_id`；`lease_owner` 对新路径保持空。
+- ticket lease / start / timeout payload 都携带 `actor_id`、`assignment_id`、`lease_id`。
+- scheduler active lease 检查使用 `actor_id`，replace 后旧 actor `REPLACED` 不再 eligible，新 actor 必须获得新的 assignment 和 lease，不继承旧 lease。
+- context compiler 和 compiled execution package meta 使用 actor / assignment / lease identity；RoleTemplate 仍只提供 capability/persona 输入，不作为 runtime execution identity。
+
+测试证据：
+
+- `backend/tests/test_reducer.py::test_reducer_keeps_assignment_history_separate_from_lease_timeout`
+- `backend/tests/test_api.py::test_repository_persists_assignment_and_lease_projections`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_runner_once_external_mode_leaves_ticket_leased`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_replacement_actor_gets_new_assignment_without_old_lease`
+- `backend/tests/test_api.py::test_ticket_lease_moves_ticket_to_leased_and_keeps_node_pending`
+- `backend/tests/test_api.py::test_ticket_start_moves_ticket_and_node_to_executing`
+- `backend/tests/test_api.py::test_scheduler_tick_times_out_executing_ticket_and_creates_retry`
+- `backend/tests/test_context_compiler.py::test_build_compile_request_translates_runtime_inputs`
+- `backend/tests/test_context_compiler.py::test_compile_execution_package_builds_minimal_worker_input`
+
 仍留给后续批次：
 
-- Assignment 与 Lease 仍共享现有 `TICKET_LEASED` 事件和 `leased_by` 字段，Round 7C 需要拆成独立 assignment/lease identity。
 - provider preferred vs actual provider/model 的完整审计仍属于后续 provider/lease 收口。
-- late lease/provider event 不污染 current graph pointer 仍由既有 provider/event guardrail 覆盖，未在 7B 中扩大策略范围。
+- 旧 worker/admin surface 中的 `lease_owner` 展示字段需要在后续冻结模块拆分时继续收口为 display alias。

@@ -918,7 +918,8 @@ def _validate_ticket_scope_and_ownership(
             tenant_id=principal.tenant_id,
             workspace_id=principal.workspace_id,
         )
-    if ticket.get("lease_owner") != principal.worker_id or ticket["status"] not in ACTIVE_WORKER_TICKET_STATUSES:
+    ticket_owner = str(ticket.get("actor_id") or ticket.get("lease_owner") or "").strip()
+    if ticket_owner != principal.worker_id or ticket["status"] not in ACTIVE_WORKER_TICKET_STATUSES:
         _raise_worker_auth_error(
             status_code=403,
             detail=f"Worker '{principal.worker_id}' does not currently own ticket '{ticket['ticket_id']}'.",
@@ -1187,7 +1188,7 @@ def list_worker_assignments(
             owned_tickets = [
                 ticket
                 for ticket in tickets
-                if ticket.get("lease_owner") == principal.worker_id
+                if str(ticket.get("actor_id") or ticket.get("lease_owner") or "").strip() == principal.worker_id
                 and ticket["status"] in ACTIVE_WORKER_TICKET_STATUSES
             ]
             scoped_tickets: list[dict[str, Any]] = []

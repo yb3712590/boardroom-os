@@ -99,9 +99,11 @@ def _find_owner_employee(
     current_ticket: dict[str, Any] | None,
     role_profile_ref: str | None,
 ) -> dict[str, Any] | None:
-    lease_owner = str((current_ticket or {}).get("lease_owner") or "").strip()
-    if lease_owner:
-        matched = _find_employee_by_id(employees, lease_owner)
+    current_owner = str(
+        (current_ticket or {}).get("actor_id") or (current_ticket or {}).get("lease_owner") or ""
+    ).strip()
+    if current_owner:
+        matched = _find_employee_by_id(employees, current_owner)
         if matched is not None:
             return matched
 

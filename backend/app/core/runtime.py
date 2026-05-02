@@ -131,6 +131,9 @@ class RuntimeExecutionOutcome:
     node_id: str
     graph_node_id: str | None
     lease_owner: str
+    actor_id: str
+    assignment_id: str
+    lease_id: str
     action: str
     start_ack: CommandAckEnvelope | None
     final_ack: CommandAckEnvelope | None
@@ -245,7 +248,7 @@ def _runtime_sort_key(ticket: dict[str, Any]) -> tuple:
 
 
 def _build_start_idempotency_key(ticket: dict[str, Any]) -> str:
-    return f"runtime-start:{ticket['workflow_id']}:{ticket['ticket_id']}:{ticket['lease_owner']}"
+    return f"runtime-start:{ticket['workflow_id']}:{ticket['ticket_id']}:{ticket['lease_id']}"
 
 
 def _build_result_submit_idempotency_key(ticket: dict[str, Any], result_status: str) -> str:
@@ -308,10 +311,19 @@ def _resolve_ticket_provider_id(
     repository: ControlPlaneRepository,
     ticket: dict[str, Any],
 ) -> str | None:
-    lease_owner = ticket.get("lease_owner")
-    if lease_owner is None:
+    actor_id = str(ticket.get("actor_id") or "").strip()
+    if not actor_id:
         return None
-    employee = repository.get_employee_projection(str(lease_owner))
+    actor = repository.get_actor_projection(actor_id)
+    if actor is None:
+        return None
+    provider_preferences = dict(actor.get("provider_preferences") or {})
+    if provider_preferences.get("provider_id"):
+        return str(provider_preferences["provider_id"])
+    employee_id = str(actor.get("employee_id") or "").strip()
+    if not employee_id:
+        return None
+    employee = repository.get_employee_projection(employee_id)
     if employee is None or not employee.get("provider_id"):
         return None
     return str(employee["provider_id"])
@@ -340,7 +352,10 @@ def _build_runtime_skip_outcome(
         ticket_id=str(ticket["ticket_id"]),
         node_id=str(ticket["node_id"]),
         graph_node_id=graph_node_id,
-        lease_owner=str(ticket.get("lease_owner") or ""),
+        lease_owner=str(ticket.get("actor_id") or ticket.get("lease_owner") or ""),
+        actor_id=str(ticket.get("actor_id") or ""),
+        assignment_id=str(ticket.get("assignment_id") or ""),
+        lease_id=str(ticket.get("lease_id") or ""),
         action=_RUNTIME_ACTION_SKIP,
         start_ack=None,
         final_ack=None,
@@ -356,9 +371,11 @@ def _classify_runtime_ticket(
     ticket: dict[str, Any],
 ) -> _RuntimeExecutionCandidate | RuntimeExecutionOutcome:
     now = now_local()
-    lease_owner = ticket.get("lease_owner")
+    actor_id = ticket.get("actor_id")
+    assignment_id = ticket.get("assignment_id")
+    lease_id = ticket.get("lease_id")
     lease_expires_at = ticket.get("lease_expires_at")
-    if lease_owner is None or lease_expires_at is None or lease_expires_at <= now:
+    if not actor_id or not assignment_id or not lease_id or lease_expires_at is None or lease_expires_at <= now:
         return _build_runtime_skip_outcome(
             ticket,
             reason_code=_RUNTIME_SKIP_REASON_LEASE_EXPIRED_OR_MISSING,
@@ -1307,7 +1324,7 @@ def _execute_meeting_runtime(
                 connection,
                 event_type=EVENT_MEETING_ROUND_COMPLETED,
                 actor_type="runtime",
-                actor_id=str(ticket.get("lease_owner") or "runtime"),
+                actor_id=str(ticket.get("actor_id") or "runtime"),
                 workflow_id=str(ticket["workflow_id"]),
                 idempotency_key=f"meeting-round:{meeting_id}:{index + 1}:{ticket['ticket_id']}",
                 causation_id=None,
@@ -1339,7 +1356,7 @@ def _execute_meeting_runtime(
                 connection,
                 event_type=EVENT_MEETING_CONCLUDED,
                 actor_type="runtime",
-                actor_id=str(ticket.get("lease_owner") or "runtime"),
+                actor_id=str(ticket.get("actor_id") or "runtime"),
                 workflow_id=str(ticket["workflow_id"]),
                 idempotency_key=f"meeting-concluded:{meeting_id}:{ticket['ticket_id']}:no-consensus",
                 causation_id=None,
@@ -1392,7 +1409,7 @@ def _execute_meeting_runtime(
             connection,
             event_type=EVENT_MEETING_CONCLUDED,
             actor_type="runtime",
-            actor_id=str(ticket.get("lease_owner") or "runtime"),
+            actor_id=str(ticket.get("actor_id") or "runtime"),
             workflow_id=str(ticket["workflow_id"]),
             idempotency_key=f"meeting-concluded:{meeting_id}:{ticket['ticket_id']}:consensus",
             causation_id=None,
@@ -3729,7 +3746,7 @@ def reap_timed_out_provider_attempts(repository: ControlPlaneRepository) -> list
             repository,
             _build_runtime_result_submit_command(
                 ticket=ticket,
-                submitted_by=str(ticket.get("lease_owner") or "runtime"),
+                submitted_by=str(ticket.get("actor_id") or "runtime"),
                 execution_package=None,
                 execution_result=execution_result,
                 created_spec=None,
@@ -3754,7 +3771,10 @@ def run_leased_ticket_runtime(
 
     for candidate in runtime_candidates:
         ticket = candidate.ticket
-        lease_owner = str(ticket["lease_owner"])
+        actor_id = str(ticket["actor_id"])
+        assignment_id = str(ticket["assignment_id"])
+        lease_id = str(ticket["lease_id"])
+        lease_owner = actor_id
         developer_inspector_refs = _build_runtime_developer_inspector_refs(str(ticket["ticket_id"]))
         start_ack: CommandAckEnvelope | None = None
         if bool(candidate.created_spec.get(_RUNTIME_CREATED_SPEC_MISSING_SENTINEL)):
@@ -3774,6 +3794,9 @@ def run_leased_ticket_runtime(
                             "ticket_id": str(ticket["ticket_id"]),
                             "node_id": str(ticket["node_id"]),
                             "started_by": lease_owner,
+                            "actor_id": actor_id,
+                            "assignment_id": assignment_id,
+                            "lease_id": lease_id,
                         },
                         occurred_at=occurred_at,
                     )
@@ -3809,6 +3832,9 @@ def run_leased_ticket_runtime(
                     node_id=str(runtime_ticket["node_id"]),
                     graph_node_id=candidate.graph_node_id,
                     lease_owner=lease_owner,
+                    actor_id=actor_id,
+                    assignment_id=assignment_id,
+                    lease_id=lease_id,
                     action=candidate.action,
                     start_ack=None,
                     final_ack=None,
@@ -3832,6 +3858,9 @@ def run_leased_ticket_runtime(
                     ticket_id=ticket["ticket_id"],
                     node_id=ticket["node_id"],
                     started_by=lease_owner,
+                    actor_id=actor_id,
+                    assignment_id=assignment_id,
+                    lease_id=lease_id,
                     expected_ticket_version=int(ticket["version"]),
                     expected_node_version=(
                         int(current_node["version"])
@@ -3855,6 +3884,9 @@ def run_leased_ticket_runtime(
                         node_id=str(ticket["node_id"]),
                         graph_node_id=candidate.graph_node_id,
                         lease_owner=lease_owner,
+                        actor_id=actor_id,
+                        assignment_id=assignment_id,
+                        lease_id=lease_id,
                         action=candidate.action,
                         start_ack=start_ack,
                         final_ack=None,
@@ -3903,6 +3935,9 @@ def run_leased_ticket_runtime(
                         node_id=str(runtime_ticket["node_id"]),
                         graph_node_id=candidate.graph_node_id,
                         lease_owner=lease_owner,
+                        actor_id=actor_id,
+                        assignment_id=assignment_id,
+                        lease_id=lease_id,
                         action=candidate.action,
                         start_ack=start_ack,
                         final_ack=None,
@@ -3933,6 +3968,9 @@ def run_leased_ticket_runtime(
                         node_id=str(ticket["node_id"]),
                         graph_node_id=candidate.graph_node_id,
                         lease_owner=lease_owner,
+                        actor_id=actor_id,
+                        assignment_id=assignment_id,
+                        lease_id=lease_id,
                         action=candidate.action,
                         start_ack=start_ack,
                         final_ack=None,
@@ -3968,6 +4006,9 @@ def run_leased_ticket_runtime(
                     node_id=str(ticket["node_id"]),
                     graph_node_id=candidate.graph_node_id,
                     lease_owner=lease_owner,
+                    actor_id=actor_id,
+                    assignment_id=assignment_id,
+                    lease_id=lease_id,
                     action=candidate.action,
                     start_ack=start_ack,
                     final_ack=final_ack,
@@ -3995,6 +4036,9 @@ def run_leased_ticket_runtime(
                 node_id=str(runtime_ticket["node_id"]),
                 graph_node_id=candidate.graph_node_id,
                 lease_owner=lease_owner,
+                actor_id=actor_id,
+                assignment_id=assignment_id,
+                lease_id=lease_id,
                 action=candidate.action,
                 start_ack=start_ack,
                 final_ack=final_ack,

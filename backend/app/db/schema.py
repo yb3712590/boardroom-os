@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS ticket_projection (
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     status TEXT NOT NULL,
+    actor_id TEXT,
+    assignment_id TEXT,
+    lease_id TEXT,
     lease_owner TEXT,
     lease_expires_at TEXT,
     started_at TEXT,
@@ -70,6 +73,37 @@ CREATE TABLE IF NOT EXISTS ticket_projection (
     last_failure_message TEXT,
     last_failure_fingerprint TEXT,
     blocking_reason_code TEXT,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS assignment_projection (
+    assignment_id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    required_capabilities_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    assignment_reason TEXT,
+    assigned_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lease_projection (
+    lease_id TEXT PRIMARY KEY,
+    assignment_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    lease_timeout_sec INTEGER,
+    lease_expires_at TEXT,
+    started_at TEXT,
+    closed_at TEXT,
+    failure_kind TEXT,
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL
 );

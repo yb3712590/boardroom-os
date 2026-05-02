@@ -109,14 +109,12 @@ def _lease_ticket_for_test(
     return _assert_command_status(
         client.post(
             "/api/v1/commands/ticket-lease",
-            json={
-                "workflow_id": workflow_id,
-                "ticket_id": ticket_id,
-                "node_id": node_id,
-                "leased_by": leased_by,
-                "lease_timeout_sec": 600,
-                "idempotency_key": idempotency_key,
-            },
+            json=api_test_helpers._ticket_lease_payload(
+                workflow_id=workflow_id,
+                ticket_id=ticket_id,
+                node_id=node_id,
+                leased_by=leased_by,
+            ) | {"idempotency_key": idempotency_key},
         ),
         expected_status=expected_status,
         expected_reason_contains=expected_reason_contains,
@@ -134,16 +132,15 @@ def _start_ticket_for_test(
     expected_status: str = "ACCEPTED",
     expected_reason_contains: str | None = None,
 ) -> dict:
+    ticket = client.app.state.repository.get_current_ticket_projection(ticket_id)
+    assert ticket is not None
     return _assert_command_status(
         client.post(
             "/api/v1/commands/ticket-start",
-            json={
-                "workflow_id": workflow_id,
-                "ticket_id": ticket_id,
-                "node_id": node_id,
-                "started_by": started_by,
-                "idempotency_key": idempotency_key,
-            },
+            json=api_test_helpers._ticket_start_payload_for_projection(
+                ticket,
+                idempotency_key=idempotency_key,
+            ),
         ),
         expected_status=expected_status,
         expected_reason_contains=expected_reason_contains,
@@ -210,7 +207,24 @@ def _project_init(client, goal: str = "CEO shadow test") -> str:
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ACCEPTED"
-    return response.json()["causation_hint"].split(":", 1)[1]
+    workflow_id = response.json()["causation_hint"].split(":", 1)[1]
+    api_test_helpers._enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=api_test_helpers._capabilities_for_role_profile("frontend_engineer_primary"),
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    api_test_helpers._enable_actor(
+        client,
+        actor_id="emp_checker_1",
+        employee_id="emp_checker_1",
+        workflow_id=workflow_id,
+        capabilities=api_test_helpers._capabilities_for_role_profile("checker_primary"),
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    return workflow_id
 
 
 def _seed_workflow(client, workflow_id: str, goal: str = "Seeded CEO workflow") -> str:
@@ -245,6 +259,22 @@ def _seed_workflow(client, workflow_id: str, goal: str = "Seeded CEO workflow") 
             ),
         )
         repository.refresh_projections(connection)
+    api_test_helpers._enable_actor(
+        client,
+        actor_id="emp_frontend_2",
+        employee_id="emp_frontend_2",
+        workflow_id=workflow_id,
+        capabilities=api_test_helpers._capabilities_for_role_profile("frontend_engineer_primary"),
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
+    api_test_helpers._enable_actor(
+        client,
+        actor_id="emp_checker_1",
+        employee_id="emp_checker_1",
+        workflow_id=workflow_id,
+        capabilities=api_test_helpers._capabilities_for_role_profile("checker_primary"),
+        provider_id=OPENAI_COMPAT_PROVIDER_ID,
+    )
     return workflow_id
 
 
@@ -650,6 +680,14 @@ def _seed_board_approved_employee(
             occurred_at=datetime.fromisoformat("2026-04-04T18:00:00+08:00"),
         )
         repository.refresh_projections(connection)
+    api_test_helpers._enable_actor(
+        client,
+        actor_id=employee_id,
+        employee_id=employee_id,
+        workflow_id="wf_test_actor_registry",
+        capabilities=api_test_helpers._capabilities_for_role_profile(role_profile_refs[0]),
+        provider_id=provider_id,
+    )
 
 
 def _create_and_complete_ticket(
