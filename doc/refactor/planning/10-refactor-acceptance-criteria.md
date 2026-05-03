@@ -63,8 +63,16 @@
 - [x] hardcoded backlog milestone fanout 被 policy/graph patch 替代（Round 8C policy 单测覆盖 handoff fanout、graph patch fanout、milestone-only no fanout；controller fanout 只由 validated backlog handoff 或 structured graph patch plan 编译为 policy input）。
 - [x] closeout readiness 和 duplicate closeout 由 policy proposal 决定（Round 8D policy 单测覆盖 `CLOSEOUT` stable metadata、duplicate closeout `NO_ACTION`、open incident/approval/gate issue/illegal evidence blockers；controller 只编译 readiness input）。
 - [x] retry/restore/rework/incident followup 有结构化 policy 回归（Round 8D policy 单测覆盖 checker blocking finding、retry budget exhausted、restore-needed missing ticket id、completed-ticket reuse gate、superseded/invalidated lineage、retryable terminal target、unrecoverable failure kind 和 BR-100 loop threshold）。
+- [x] CREATE_TICKET / WAIT / REWORK / CLOSEOUT / INCIDENT / NO_ACTION 六类 action 都有 reason code、idempotency key、source graph version、affected node refs 和 expected state transition 验收测试（`backend/tests/test_workflow_progression.py::test_phase4_action_proposals_expose_required_acceptance_metadata`）。
+- [x] scheduler/controller/proposer 不再直接做 closeout/fanout/rework 业务判断；旧路径只保留 policy input compiler、policy call、proposal execution shell、API display 或 explicit no-op/incident（Round 8E 五组 pytest + grep 无旧 helper/substr gate 命中）。
 
-8D 说明：BR-100 full replay 需要 Phase 7 replay DB；本阶段覆盖结构化 `loop_ref=BR-100` threshold 等价输入。Scheduler/controller/proposer 残余兼容壳仍留给 Round 8E 统一 grep 和收口，因此 Phase 4 “Scheduler 不再做业务判断”总项尚未勾选。
+Round 8E 证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py backend/tests/test_ticket_graph.py backend/tests/test_workflow_autopilot.py backend/tests/test_ceo_scheduler.py backend/tests/test_scheduler_runner.py -q` -> `333 passed, 1 warning`。
+- `rg -n "pause.*fanout|fanout.*pause|hard_constraints.*architect|hard_constraints.*meeting|_build_autopilot_closeout_batch|_workflow_is_closeout_candidate|_workflow_has_existing_closeout_ticket|_workflow_runtime_graph_is_complete" backend/app/core backend/app/scheduler_runner.py` -> 无命中。
+- `rg -n "_build_backlog_followup_batch|_build_required_governance_ticket_batch|_resolve_required_governance_ticket_payload|_resolve_followup_ticket_payload" backend/app/core backend/tests` -> 无 runtime/helper 命中。
+
+015 映射：stale gate 由 `test_policy_runtime_pointer_selects_current_and_missing_pointer_blocks_reduction` 覆盖结构化 current pointer 等价；orphan pending 由 `test_policy_orphan_pending_does_not_block_graph_complete` 覆盖；restore-needed missing ticket id 由 `test_policy_restore_needed_missing_ticket_id_opens_incident` 覆盖；BR-100 loop 由 `test_policy_br100_loop_threshold_opens_incident` / `test_policy_br100_loop_below_threshold_requests_rework` 覆盖结构化 threshold 等价。BR-100 full replay 需要 Phase 7 replay DB/event import，Phase 4 不勾 Phase 7 项。
 
 ## Phase 5：Deliverable contract
 

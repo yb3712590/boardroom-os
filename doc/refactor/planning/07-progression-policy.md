@@ -60,10 +60,37 @@ decide_next_actions(snapshot, policy) -> ActionProposal[]
 - `REWORK`、`CLOSEOUT`、`INCIDENT` proposal 都有稳定 reason code、idempotency key、source graph version、affected node refs 和 expected state transition 单测。
 - `workflow_controller.py` 不再调用 `resolve_workflow_closeout_completion()` 做 closeout 推进裁决；它只读取 DB/artifact index 编译 closeout/recovery policy input，final evidence 只传 legality summary，不把 artifact 正文交给 policy。
 - Closeout graph complete 来自 `evaluate_progression_graph(progression_snapshot).graph_complete`，不得用 stale snapshot nodes 覆盖 effective graph pointer。
-- CEO proposer / validator 已接受 `CLOSEOUT` policy proposal，并把其中 `ticket_payload` 当 create-ticket execution shell；旧 `_build_autopilot_closeout_batch()` 只保留为 Round 8E 兼容壳。
+- CEO proposer / validator 已接受 `CLOSEOUT` policy proposal，并把其中 `ticket_payload` 当 create-ticket execution shell；Round 8E 继续删除旧 closeout fallback。
 - `workflow_auto_advance.py` 和 incident detail projection 的 recommended followup action 改为复用 `recommended_incident_followup_action_from_policy_input()`；需要 DB 查询的 source-ticket/provider context 只作为结构化 input compiler。
 
-8D 仍未完成 Round 8E 的 scheduler/controller/proposer 总收口：旧 closeout fallback、backlog followup retry execution shell、projection display 分支和 runtime incident execution 分支仍需在 8E 统一 grep、删减或标注为纯 input compiler / execution shell。
+8D 当时仍未完成 Round 8E 的 scheduler/controller/proposer 总收口：旧 closeout fallback、backlog followup retry execution shell、projection display 分支和 runtime incident execution 分支仍需在 8E 统一 grep、删减或标注为纯 input compiler / execution shell。8E 已按下文完成该收口。
+
+## Round 8E 实现状态
+
+8E 已完成 Phase 4 集成收口，不修改 8A-8D 的 `ProgressionSnapshot` / `ProgressionPolicy` / `ActionProposal` contract：
+
+- `workflow_controller.py` 保留 DB/artifact 读取、graph snapshot 编译、governance/fanout/recovery/closeout policy input compiler 和 API display 字段；`controller_state` 的推进状态从 `decide_next_actions()` 的 primary proposal 映射，policy 之后不再用 closeout gate、governance plan 或 followup plan 自行 fallback 推进。
+- `requires_architect` / `requires_meeting` 只作为 structured governance policy input 和 display 字段，不参与 runtime route；legacy `hard_constraints` substring 不再驱动 architect/meeting gate。
+- `ceo_proposer.py` 删除旧 closeout helper 和旧 backlog/governance deterministic create-ticket helper；`CREATE_TICKET` / `CLOSEOUT` 执行只消费 `progression_policy_proposals` 的 `ticket_payload`，没有 policy proposal 时只返回 `NO_ACTION` 或显式 validation rejection。
+- `_build_policy_create_ticket_batch()` 是 proposer 的 policy create-ticket execution shell；它只做 payload contract 校验和 action batch 包装，不重新判断 graph complete、duplicate closeout、backlog dependency、restore/rework 或 governance gate。
+- `ceo_scheduler.py` 的 graph health fallback 只看 `controller_state.state == "GRAPH_HEALTH_WAIT"`；不再扫描 `recommended_actions` / finding 文本中的 `pause fanout` substring。
+- `scheduler_runner.py` 保持 orchestration shell：CEO maintenance、scheduler tick、runtime execution、artifact cleanup；没有加入 closeout/fanout/rework 判断。
+- `workflow_auto_advance.py` 只把 runtime/source-ticket context 编译成 restore/recovery policy incident 输入；不直接决定 closeout/rework/restore。
+- `projections.py` 中 closeout、meeting、rework、restore 相关逻辑仅用于 dashboard/inbox/workforce summary/API display，projection 输出不得反向决定 policy action。
+
+8E 验收证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py backend/tests/test_ticket_graph.py backend/tests/test_workflow_autopilot.py backend/tests/test_ceo_scheduler.py backend/tests/test_scheduler_runner.py -q`：`333 passed, 1 warning`。
+- `rg -n "pause.*fanout|fanout.*pause|hard_constraints.*architect|hard_constraints.*meeting|_build_autopilot_closeout_batch|_workflow_is_closeout_candidate|_workflow_has_existing_closeout_ticket|_workflow_runtime_graph_is_complete" backend/app/core backend/app/scheduler_runner.py`：无命中。
+- `rg -n "_build_backlog_followup_batch|_build_required_governance_ticket_batch|_resolve_required_governance_ticket_payload|_resolve_followup_ticket_payload" backend/app/core backend/tests`：无 runtime/helper 命中。
+- `rg -n "progression_policy_proposals|decide_next_actions|ProgressionActionType\.(CREATE_TICKET|WAIT|REWORK|CLOSEOUT|INCIDENT|NO_ACTION)" backend/app/core backend/tests`：命中 policy 调用、proposal execution shell 和六类 action 测试。
+
+015 等价覆盖状态：
+
+- stale gate：`test_policy_runtime_pointer_selects_current_and_missing_pointer_blocks_reduction` 覆盖 runtime current pointer 优先和缺 explicit pointer 触发 `progression.incident.graph_reduction_issue`；完整 stale gate replay 仍归 Phase 7，因为需要导入 015 replay DB/event。
+- orphan pending：`test_policy_orphan_pending_does_not_block_graph_complete` 覆盖 stale/orphan pending 不阻断 graph complete，且 stale orphan 不进入 ready ticket。
+- restore-needed missing ticket id：`test_policy_restore_needed_missing_ticket_id_opens_incident` 覆盖 `progression.incident.restore_needed_missing_ticket_id`。
+- BR-100 loop：`test_policy_br100_loop_threshold_opens_incident` 和 `test_policy_br100_loop_below_threshold_requests_rework` 覆盖结构化 `loop_ref=BR-100` threshold 等价输入；完整 BR-100 replay 仍归 Phase 7，因为需要 015 replay DB/event import、历史 maker/checker/rework 序列和 replay report。
 
 ## 输入
 
@@ -217,5 +244,8 @@ Rework target 必须指向能修复问题的 upstream node，而不是默认把 
 
 - Round 8B：已把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
 - Round 8C：已把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch，并删除 substring hint / hardcoded milestone fanout 作为推进依据。
-- Round 8D：已把 closeout、rework、retry/restore、BR-100 loop 和 incident follow-up 推进判断迁入 policy；旧入口只作为 input compiler、execution shell 或 8E 兼容壳。
-- Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断和兼容展示壳，并补齐 Phase 4 全部验收证据。
+- Round 8D：已把 closeout、rework、retry/restore、BR-100 loop 和 incident follow-up 推进判断迁入 policy；旧入口只作为 input compiler、execution shell 或待 8E 收口的兼容壳。
+- Round 8E：已收口 controller/runtime/scheduler/proposer 旧业务判断和兼容展示壳，并补齐 Phase 4 全部验收证据。
+- Phase 5 仍负责 Deliverable contract + checker/rework，不在 Phase 4 用 graph terminal 代替 PRD acceptance。
+- Phase 6 仍负责 replay/resume/checkpoint，不在 Phase 4 处理 replay DB 导入或 checkpoint。
+- Phase 7 仍负责 015 full replay；Phase 4 仅提供 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 的 policy 等价测试。

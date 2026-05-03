@@ -115,23 +115,7 @@ def _snapshot_graph_health_requires_pause(snapshot: dict[str, Any]) -> bool:
         controller_state = controller_state_view(snapshot)
     except ValueError:
         controller_state = {}
-    if str(controller_state.get("state") or "").strip() == "GRAPH_HEALTH_WAIT":
-        return True
-
-    graph_health_report = (snapshot.get("projection_snapshot") or {}).get("graph_health_report") or {}
-    if str(graph_health_report.get("overall_health") or "").strip() != "CRITICAL":
-        return False
-    phrases: list[str] = []
-    phrases.extend(str(item or "") for item in list(graph_health_report.get("recommended_actions") or []))
-    for finding in list(graph_health_report.get("findings") or []):
-        if not isinstance(finding, dict):
-            continue
-        if str(finding.get("severity") or "").strip() != "CRITICAL":
-            continue
-        phrases.append(str(finding.get("suggested_action") or ""))
-        phrases.append(str(finding.get("description") or ""))
-    haystack = " ".join(phrases).lower()
-    return "pause" in haystack and ("fanout" in haystack or "graph health" in haystack)
+    return str(controller_state.get("state") or "").strip() == "GRAPH_HEALTH_WAIT"
 
 
 def _needs_deterministic_fallback_after_validation(

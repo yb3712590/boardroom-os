@@ -109,6 +109,8 @@ Round 8B 对齐：progression policy 的 effective graph pointer 只接受结构
 
 Round 8D 对齐：closeout / rework / restore policy 只消费结构化 terminal state、retry budget、failure kind、lineage、completed-ticket reuse gate、incident followup action 和 final evidence legality summary。Provider raw transcript、malformed SSE raw archive、late output 正文或 artifact/markdown 正文不得作为 rework/closeout 推进依据。需要判断 provider incident 是否可 retry 时，旧入口只能把 source ticket terminal failure kind 编译成 policy input；推荐 followup action 由 progression policy helper 输出。
 
+Round 8E 对齐：late provider event/current pointer 与 progression policy graph pointer 边界一致。Late heartbeat、completed、output 只能记录在旧 provider attempt lineage 或 provider audit 中；不得改写 current ticket projection、runtime node `latest_ticket_id`、effective graph pointer、ready/blocked/complete index，也不得进入 closeout/rework/restore policy 的 current input。Policy 只消费结构化 runtime current pointer、`REPLACES` lineage、terminal state 和 compiled recovery/closeout facts；如果缺少 explicit current pointer，policy 输出 graph reduction incident，而不是用 late event 的时间戳或正文猜 current。
+
 ## Streaming Soak Test
 
 当前实现状态（2026-05-01）：
@@ -119,6 +121,7 @@ Round 8D 对齐：closeout / rework / restore policy 只消费结构化 terminal
 - [x] 报告 `preferred_provider_id/preferred_model` 与 `actual_provider_id/actual_model`。
 - [x] 报告 first token p95、stream idle gap p95、failure counts、response/request id、stream byte/text counters、failure category、provider attempt count、标准 ProviderEvent 列表和 JSON/schema resolver 信息。
 - [x] late provider event 不污染 current ticket projection 属于 runtime/ticket recovery 边界；Round 8B policy 已与 current pointer 规则对齐，old attempt late output 不参与 effective pointer 或 graph complete。
+- [x] Round 8E 确认 late heartbeat/completed/output 不改 current projection，不参与 effective graph pointer、closeout/rework/restore policy；缺 explicit pointer 时由 policy graph reduction incident 处理。
 
 每个 provider 配置必须有独立 smoke:
 
@@ -180,3 +183,4 @@ Provider 层必须记录：
 - Provider retry 和 ticket recovery 的事件边界清晰。
 - 015 中的 provider 失败类型能被重新分类并解释。
 - Round 8D：provider incident followup recommendation 由结构化 policy helper 输出；restore-needed missing ticket id 和 retry budget exhausted 有 policy 等价测试。
+- Round 8E：late provider event/current pointer 与 progression graph pointer 边界一致；late event 不参与 closeout/rework/restore policy current input。

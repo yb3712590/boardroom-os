@@ -1250,6 +1250,133 @@ def test_policy_keeps_blocked_index_for_in_flight_blocked_nodes() -> None:
     assert evaluation.blocked_node_refs == ["graph:node_running_blocked"]
 
 
+def test_phase4_action_proposals_expose_required_acceptance_metadata() -> None:
+    ticket_payload = {
+        "workflow_id": "wf_policy_contract",
+        "node_id": "node_phase4_acceptance",
+        "role_profile_ref": "frontend_engineer_primary",
+        "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        "summary": "Produce the Phase 4 acceptance fixture.",
+    }
+    graph_complete_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:delivery",
+                "ticket_id": "tkt_delivery_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    cases = [
+        (
+            ProgressionActionType.CREATE_TICKET,
+            _minimal_progression_snapshot(),
+            ProgressionPolicy.model_validate(
+                {
+                    "policy_ref": "policy:phase4-acceptance",
+                    "create_ticket_candidates": [
+                        {
+                            "candidate_ref": "phase4:create-ticket",
+                            "node_ref": "graph:create-ticket",
+                            "ticket_payload": ticket_payload,
+                        }
+                    ],
+                }
+            ),
+        ),
+        (
+            ProgressionActionType.WAIT,
+            _minimal_progression_snapshot(
+                approvals=[{"approval_id": "approval_phase4", "node_ref": "graph:wait"}]
+            ),
+            ProgressionPolicy(policy_ref="policy:phase4-acceptance"),
+        ),
+        (
+            ProgressionActionType.REWORK,
+            _minimal_progression_snapshot(),
+            ProgressionPolicy.model_validate(
+                {
+                    "policy_ref": "policy:phase4-acceptance",
+                    "recovery": {
+                        "actions": [
+                            {
+                                "action_ref": "phase4:rework",
+                                "node_ref": "graph:rework",
+                                "ticket_id": "tkt_phase4_check",
+                                "target_ticket_id": "tkt_phase4_delivery",
+                                "finding_kind": "checker_blocking_finding",
+                            }
+                        ]
+                    },
+                }
+            ),
+        ),
+        (
+            ProgressionActionType.CLOSEOUT,
+            graph_complete_snapshot,
+            ProgressionPolicy.model_validate(
+                {
+                    "policy_ref": "policy:phase4-acceptance",
+                    "closeout": {
+                        "readiness": {
+                            "effective_graph_complete": True,
+                            "closeout_parent_ticket_id": "tkt_delivery_done",
+                            "final_evidence_legality_summary": {
+                                "status": "ACCEPTED",
+                                "illegal_ref_count": 0,
+                            },
+                            "ticket_payload": {
+                                **ticket_payload,
+                                "node_id": "node_phase4_closeout",
+                                "output_schema_ref": DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+                                "parent_ticket_id": "tkt_delivery_done",
+                            },
+                        }
+                    },
+                }
+            ),
+        ),
+        (
+            ProgressionActionType.INCIDENT,
+            _minimal_progression_snapshot(),
+            ProgressionPolicy.model_validate(
+                {
+                    "policy_ref": "policy:phase4-acceptance",
+                    "recovery": {
+                        "actions": [
+                            {
+                                "action_ref": "phase4:incident",
+                                "node_ref": "graph:incident",
+                                "ticket_id": "tkt_phase4_failed",
+                                "terminal_state": "FAILED",
+                                "failure_kind": "SCHEMA_ERROR",
+                                "retry_count": 1,
+                                "retry_budget": 1,
+                            }
+                        ]
+                    },
+                }
+            ),
+        ),
+        (
+            ProgressionActionType.NO_ACTION,
+            _minimal_progression_snapshot(),
+            ProgressionPolicy(policy_ref="policy:phase4-acceptance"),
+        ),
+    ]
+
+    for expected_action_type, snapshot, policy in cases:
+        proposal = decide_next_actions(snapshot, policy)[0]
+
+        assert proposal.action_type == expected_action_type
+        assert proposal.metadata.reason_code
+        assert proposal.metadata.idempotency_key
+        assert proposal.metadata.source_graph_version == snapshot.graph_version
+        assert proposal.metadata.affected_node_refs is not None
+        assert proposal.metadata.expected_state_transition
+
+
 def test_action_metadata_is_stable_for_all_round8a_action_types() -> None:
     expected_transitions = {
         ProgressionActionType.CREATE_TICKET: "TICKET_CREATED",

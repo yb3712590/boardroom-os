@@ -20,6 +20,7 @@ from app.core.process_assets import (
     build_evidence_pack_process_asset_ref,
     build_source_code_delivery_process_asset_ref,
 )
+from app.core.execution_targets import infer_execution_contract_payload
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_auto_advance import auto_advance_workflow_to_next_stop
 from tests.test_api import (
@@ -1611,8 +1612,7 @@ def test_autopilot_closeout_batch_blocks_failed_delivery_check_report(client):
             ),
         )
 
-    batch = ceo_proposer._build_autopilot_closeout_batch(
-        repository,
+    batch = ceo_proposer._build_policy_create_ticket_batch(
         {
             "workflow": {
                 "workflow_id": workflow_id,
@@ -1644,7 +1644,7 @@ def test_autopilot_closeout_batch_blocks_failed_delivery_check_report(client):
     assert batch is None
 
 
-def test_autopilot_closeout_batch_uses_runtime_graph_when_snapshot_has_orphan_pending_node(client):
+def test_autopilot_closeout_batch_requires_policy_proposal_when_snapshot_has_orphan_pending_node(client):
     from app.core import ceo_proposer
 
     workflow_id = "wf_autopilot_closeout_orphan_pending"
@@ -1686,8 +1686,7 @@ def test_autopilot_closeout_batch_uses_runtime_graph_when_snapshot_has_orphan_pe
         ),
     )
 
-    batch = ceo_proposer._build_autopilot_closeout_batch(
-        repository,
+    legacy_batch = ceo_proposer._build_policy_create_ticket_batch(
         {
             "workflow": {
                 "workflow_id": workflow_id,
@@ -1712,12 +1711,65 @@ def test_autopilot_closeout_batch_uses_runtime_graph_when_snapshot_has_orphan_pe
         "Create closeout after the runtime graph is complete.",
     )
 
+    policy_ticket_payload = {
+        "workflow_id": workflow_id,
+        "node_id": "node_ceo_delivery_closeout",
+        "role_profile_ref": "frontend_engineer_primary",
+        "output_schema_ref": "delivery_closeout_package",
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref="delivery_closeout_package",
+        ),
+        "dispatch_intent": {
+            "assignee_employee_id": "emp_closeout_frontend",
+            "selection_reason": "Collect final delivery evidence into one auditable closeout package.",
+            "dependency_gate_refs": ["tkt_closeout_orphan_build"],
+        },
+        "summary": "Prepare the final delivery closeout package.",
+        "parent_ticket_id": "tkt_closeout_orphan_build",
+    }
+    policy_batch = ceo_proposer._build_policy_create_ticket_batch(
+        {
+            "workflow": {
+                "workflow_id": workflow_id,
+                "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+                "north_star_goal": "Close out after runtime graph completion.",
+            },
+            "approvals": [],
+            "incidents": [],
+            "ticket_summary": {"active_count": 1},
+            "nodes": [
+                {"node_id": "node_closeout_orphan_build", "status": "COMPLETED"},
+                {"node_id": "node_stale_orphan", "status": "PENDING"},
+            ],
+            "progression_policy_proposals": [
+                {
+                    "action_type": "CLOSEOUT",
+                    "metadata": {
+                        "reason_code": "progression.closeout.create_ready",
+                        "idempotency_key": "progression:CLOSEOUT:gv_orphan:policy:round8e:abc",
+                        "source_graph_version": "gv_orphan",
+                        "affected_node_refs": ["node_closeout_orphan_build"],
+                        "expected_state_transition": "CLOSEOUT_REQUESTED",
+                        "policy_ref": "policy:round8e",
+                    },
+                    "payload": {
+                        "ticket_payload": policy_ticket_payload,
+                        "closeout_parent_ticket_id": "tkt_closeout_orphan_build",
+                    },
+                }
+            ],
+        },
+        "Create closeout after policy marks the effective graph complete.",
+    )
+
     assert build_response.status_code == 200
     assert build_response.json()["status"] == "ACCEPTED"
-    assert batch is not None
-    assert len(batch.actions) == 1
-    assert batch.actions[0].payload.output_schema_ref == "delivery_closeout_package"
-    assert batch.actions[0].payload.parent_ticket_id == "tkt_closeout_orphan_build"
+    assert legacy_batch is None
+    assert policy_batch is not None
+    assert len(policy_batch.actions) == 1
+    assert policy_batch.actions[0].payload.output_schema_ref == "delivery_closeout_package"
+    assert policy_batch.actions[0].payload.parent_ticket_id == "tkt_closeout_orphan_build"
 
 
 def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():

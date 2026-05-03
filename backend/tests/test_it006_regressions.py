@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tests.test_api as api_test_helpers
-import tests.test_ceo_scheduler as scheduler_test_helpers
 
 
 def test_it006_ceo_shadow_failure_incident_recommends_restore_action(client):
@@ -33,12 +32,16 @@ def test_it006_dependency_gate_waits_for_restore_chain(client, set_ticket_time, 
 
 
 def test_it006_backlog_followup_retries_existing_ticket(client):
-    scheduler_test_helpers.test_backlog_followup_batch_builds_retry_ticket_for_retryable_existing_ticket(
-        client
+    from tests.test_workflow_progression import (
+        test_policy_creates_rework_for_retryable_failed_terminal_target,
     )
+
+    test_policy_creates_rework_for_retryable_failed_terminal_target()
 
 
 def test_it006_backlog_followup_raises_restore_needed_instead_of_no_actions_built(client):
-    scheduler_test_helpers.test_backlog_followup_batch_raises_structured_restore_needed_for_existing_ticket_without_direct_retry(
-        client
+    from tests.test_workflow_progression import (
+        test_policy_restore_needed_missing_ticket_id_opens_incident,
     )
+
+    test_policy_restore_needed_missing_ticket_id_opens_incident()

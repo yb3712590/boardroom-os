@@ -29,6 +29,11 @@
 - Round 7C：Assignment / Lease identity split。
 - Round 7D：Provider provenance 强迁移。
 - Round 7E：Phase 3 集成收口与验收。
+- Round 8A：Progression policy contract 与纯函数骨架。
+- Round 8B：Effective graph pointer / ready blocked complete 收口。
+- Round 8C：Governance / fanout structured policy input。
+- Round 8D：Closeout / recovery / incident followup policy route。
+- Round 8E：Controller / runtime / scheduler policy 收口与 Phase 4 验收。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -39,7 +44,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 8A：Progression policy contract 与纯函数骨架** 开始。Round 8A–8E 是 Phase 4 Progression policy engine 的连续批次，后续不得在 Phase 4 中重新引入 role name / role_profile_ref / `role_bindings` 作为 runtime execution key、write root、scheduler eligibility 或 provider failover chain；推进规则必须逐步收口到显式 policy。
+下一轮新会话应从 **Round 9：Deliverable contract + checker/rework** 开始。Round 8A–8E 已完成 Phase 4 Progression policy engine 收口；后续不得重新引入 role name / role_profile_ref / `role_bindings` 作为 runtime execution key、write root、scheduler eligibility 或 provider failover chain，也不得把 closeout/fanout/rework 推进判断移回 controller/scheduler/proposer。
 
 ---
 

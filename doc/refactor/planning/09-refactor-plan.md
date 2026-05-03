@@ -98,7 +98,7 @@ Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignmen
 - [x] Round 8C：governance chain、required architect governance gate、meeting requirement、backlog handoff fanout 和 fanout graph patch plan 由结构化 policy input 驱动。
 - [x] Round 8C：移除 freeform `hard_constraints` substring gate 和 hardcoded backlog milestone fanout 作为推进依据；`hard_constraints` 只保留为 snapshot/display 字段。
 - [x] Round 8D：closeout readiness、duplicate closeout、closeout blocker、rework、retry/restore、completed-ticket reuse gate、superseded/invalidated lineage、incident followup action 和 BR-100 loop threshold 由结构化 policy input / proposal 驱动。
-- [ ] 迁移 controller/runtime/scheduler/CEO proposer 主路径业务判断。
+- [x] Round 8E：迁移 controller/runtime/scheduler/CEO proposer 主路径业务判断；旧路径只保留 input compiler、policy call、proposal execution shell、API display 或显式 no-op/incident。
 
 验收：
 
@@ -107,10 +107,16 @@ Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignmen
 - [x] Round 8B：effective graph pointer、orphan pending、CANCELLED/SUPERSEDED effective edge 排除、approval/incident/in-flight/blocked/graph reduction/stale-orphan reason code 有 policy 单测；ticket graph facade 通过 policy 回填 ready/blocked/in-flight indexes。
 - [x] Round 8C：structured governance/fanout policy 单测覆盖 legacy hint ignored、architect gate、meeting wait、backlog handoff fanout、graph patch fanout 和 milestone-only no fanout；scheduler/controller governance/fanout 关键词回归通过。
 - [x] Round 8D：structured closeout/recovery policy 单测覆盖 closeout metadata、duplicate closeout `NO_ACTION`、closeout blockers、checker blocking rework、retry budget exhausted、restore-needed missing ticket id、completed-ticket reuse gate、superseded/invalidated lineage、retryable terminal target、unrecoverable failure kind 和 BR-100 loop threshold。
-- 015 的 stale gate、orphan pending、restore-needed missing ticket id 有 policy 回归；BR-100 loop 有结构化 threshold 等价 policy 回归，完整 replay DB 验证仍归 Phase 7。
-- Scheduler 不再做业务判断。
+- [x] Round 8E：015 的 stale gate、orphan pending、restore-needed missing ticket id 有 policy 回归；BR-100 loop 有结构化 threshold 等价 policy 回归，完整 replay DB 验证仍归 Phase 7。
+- [x] Round 8E：Scheduler 不再做 closeout/fanout/rework 业务判断；只看 policy/controller explicit state 或输出显式 action/incident。
 
-8D 边界：governance chain、architect/meeting gate、backlog fanout、closeout、rework、retry/restore、incident followup 和 BR-100 loop threshold 已由 policy proposal / helper 驱动。Controller 仍负责读取 DB/artifact index 并编译 structured input；CEO proposer/validator/auto-advance/projection 中仍有 8E 前兼容壳或 display/execution shell。Scheduler/controller/proposer 的残余业务判断、失败票 recovery meeting 和 runtime incident execution 总收口留给 8E。
+8E 收口证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py backend/tests/test_ticket_graph.py backend/tests/test_workflow_autopilot.py backend/tests/test_ceo_scheduler.py backend/tests/test_scheduler_runner.py -q` -> `333 passed, 1 warning`。
+- `rg -n "pause.*fanout|fanout.*pause|hard_constraints.*architect|hard_constraints.*meeting|_build_autopilot_closeout_batch|_workflow_is_closeout_candidate|_workflow_has_existing_closeout_ticket|_workflow_runtime_graph_is_complete" backend/app/core backend/app/scheduler_runner.py` -> 无命中。
+- `rg -n "_build_backlog_followup_batch|_build_required_governance_ticket_batch|_resolve_required_governance_ticket_payload|_resolve_followup_ticket_payload" backend/app/core backend/tests` -> 无 runtime/helper 命中。
+
+Phase 4 边界：governance chain、architect/meeting gate、backlog fanout、closeout、rework、retry/restore、incident followup 和 BR-100 loop threshold 已由 policy proposal / helper 驱动。Controller 负责读取 DB/artifact index 并编译 structured input；CEO proposer/validator/auto-advance/projection 只作为 proposal execution shell、policy helper caller 或 API display。Phase 5 deliverable contract、Phase 6 replay/resume/checkpoint 和 Phase 7 015 full replay 未在本阶段完成。
 
 ## Phase 5：Deliverable contract + checker/rework 重建
 

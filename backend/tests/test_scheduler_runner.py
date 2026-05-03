@@ -3565,7 +3565,7 @@ def test_runtime_uses_saved_runtime_provider_config_when_env_is_missing(
     assert ticket_projection["status"] == "COMPLETED"
 
 
-def test_runtime_prefers_role_binding_over_employee_provider(client, set_ticket_time, monkeypatch):
+def test_runtime_uses_employee_provider_over_legacy_role_binding(client, set_ticket_time, monkeypatch):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_id = _seed_runtime_workflow(client, "wf_runner_provider_binding", "Role binding provider runtime")
     repository = client.app.state.repository
@@ -3628,7 +3628,10 @@ def test_runtime_prefers_role_binding_over_employee_provider(client, set_ticket_
     monkeypatch.setattr(
         runtime_module,
         "invoke_openai_compat_response",
-        lambda *args, **kwargs: pytest.fail("runtime should not pick OpenAI when a role binding points to Claude"),
+        lambda *args, **kwargs: OpenAICompatProviderResult(
+            output_text='{"summary":"OpenAI handled the runtime ticket.","recommended_option_id":"option_a","options":[{"option_id":"option_a","label":"Option A","summary":"OpenAI-backed option.","artifact_refs":["art://runtime/provider-openai/option-a.json"]}]}',
+            response_id="resp_employee_provider",
+        ),
     )
 
     def _fake_claude(*args, **kwargs):
@@ -3645,9 +3648,16 @@ def test_runtime_prefers_role_binding_over_employee_provider(client, set_ticket_
 
     outcomes = run_leased_ticket_runtime(repository)
     ticket_projection = repository.get_current_ticket_projection("tkt_runner_provider_binding")
+    provider_finish_events = [
+        event
+        for event in _provider_audit_events(repository, "tkt_runner_provider_binding")
+        if event["event_type"] == "PROVIDER_ATTEMPT_FINISHED"
+    ]
 
     assert [outcome.ticket_id for outcome in outcomes] == ["tkt_runner_provider_binding"]
     assert ticket_projection["status"] == "COMPLETED"
+    assert provider_finish_events[-1]["payload"]["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert provider_finish_events[-1]["payload"]["response_id"] == "resp_employee_provider"
 
 
 def test_scheduler_runner_completes_consensus_document_ticket_with_local_runtime(client, set_ticket_time):
@@ -3908,9 +3918,15 @@ def test_scheduler_runner_idle_ceo_maintenance_hires_architect_for_controller_ga
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:scheduler-architect-gate",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_minimum_governance_chain(
@@ -4062,9 +4078,15 @@ def test_scheduler_runner_idle_ceo_maintenance_creates_architect_governance_tick
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:scheduler-architect-doc-gate",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     _seed_board_approved_employee(
         client,
@@ -5585,7 +5607,7 @@ def test_runtime_without_configured_provider_blocks_lease_instead_of_using_deter
         workflow_id=workflow_id,
         ticket_id="tkt_runner_provider_required",
         node_id="node_runner_provider_required",
-        role_profile_ref="ui_designer_primary",
+        role_profile_ref="frontend_engineer_primary",
         output_schema_ref="ui_milestone_review",
     )
     lease_response = client.post(
@@ -5606,7 +5628,12 @@ def test_runtime_without_configured_provider_blocks_lease_instead_of_using_deter
     assert lease_response.json()["status"] == "REJECTED"
     assert "config is incomplete" in str(lease_response.json()["reason"] or "").lower()
     assert ticket_projection["status"] == "PENDING"
+    assert ticket_projection["blocking_reason_code"] == "PROVIDER_REQUIRED"
     assert repository.list_open_provider_incidents() == []
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, "tkt_runner_provider_required")
+
+    assert terminal_event is None
 
 
 def test_runtime_provider_auth_failure_fails_closed_without_provider_failover(

@@ -205,19 +205,7 @@ def workflow_controller_effect(snapshot: dict[str, Any]) -> str:
 def _graph_health_requires_pause(graph_health_report: dict[str, Any] | None) -> bool:
     if not isinstance(graph_health_report, dict):
         return False
-    if str(graph_health_report.get("overall_health") or "").strip() != "CRITICAL":
-        return False
-    phrases: list[str] = []
-    phrases.extend(str(item or "") for item in list(graph_health_report.get("recommended_actions") or []))
-    for finding in list(graph_health_report.get("findings") or []):
-        if not isinstance(finding, dict):
-            continue
-        if str(finding.get("severity") or "").strip() != "CRITICAL":
-            continue
-        phrases.append(str(finding.get("suggested_action") or ""))
-        phrases.append(str(finding.get("description") or ""))
-    haystack = " ".join(phrases).lower()
-    return "pause" in haystack and ("fanout" in haystack or "graph health" in haystack)
+    return str(graph_health_report.get("overall_health") or "").strip() == "CRITICAL"
 
 
 def _normalize_topic(value: str) -> str:
@@ -1695,6 +1683,14 @@ def _closeout_parent_ticket_id(
             ).strip()
             if maker_ticket_id:
                 return maker_ticket_id
+    for ticket in sorted(
+        completed_tickets,
+        key=lambda item: (str(item.get("updated_at") or ""), str(item.get("ticket_id") or "")),
+        reverse=True,
+    ):
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        created_spec = created_specs_by_ticket.get(ticket_id) or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
         if output_schema_ref in {
             SOURCE_CODE_DELIVERY_SCHEMA_REF,
             DELIVERY_CHECK_REPORT_SCHEMA_REF,
@@ -2252,10 +2248,9 @@ def build_workflow_controller_view(
     graph_blocked_node_ids = list(graph_index_summary.get("blocked_node_ids") or [])
     graph_in_flight_ticket_ids = list(graph_index_summary.get("in_flight_ticket_ids") or [])
     graph_has_reduction_issues = int(graph_index_summary.get("reduction_issue_count") or 0) > 0
-    # Round 8B compatibility shell: graph ready/blocked/in-flight indexes are now
-    # compiled by progression policy through ticket_graph. Controller-specific
-    # fanout, governance, meeting, closeout, and recovery states remain here until
-    # the Round 8E controller/scheduler consolidation.
+    # Graph ready/blocked/in-flight indexes are compiled by progression policy
+    # through ticket_graph. Controller-specific branches below are limited to
+    # input compilation, dispatch guards, and API display state.
     hard_constraints = _load_workflow_hard_constraints(connection, workflow_id)
     governance_requirements = _load_workflow_governance_requirements(connection, workflow_id)
     structured_progression_policy_input = _load_workflow_progression_policy_input(connection, workflow_id)
@@ -2508,20 +2503,6 @@ def build_workflow_controller_view(
             employees=employees,
             policy_meeting_candidates=policy_meeting_candidates,
         )
-    elif closeout_gate_issue:
-        controller_state = {
-            "state": (
-                "CHECK_FAILED"
-                if str(closeout_gate_issue.get("reason_code") or "").strip()
-                in {"delivery_check_failed", "delivery_check_blocking_findings"}
-                else "CLOSEOUT_GATE_BLOCKED"
-            ),
-            "recommended_action": "NO_ACTION",
-            "blocking_reason": (
-                "Closeout gate is blocked by "
-                f"{closeout_gate_issue.get('reason_code')}."
-            ),
-        }
     elif contract_issues:
         first_issue = contract_issues[0]
         controller_state = {
@@ -2574,55 +2555,6 @@ def build_workflow_controller_view(
             employees=employees,
             policy_meeting_candidates=policy_meeting_candidates,
         )
-    elif required_governance_ticket_plan is not None:
-        missing_assignee = _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
-        required_role_profile_ref = str(
-            ((required_governance_ticket_plan.get("ticket_payload") or {}).get("role_profile_ref") or "")
-        ).strip()
-        if missing_assignee:
-            controller_state = {
-                "state": (
-                    "ARCHITECT_REQUIRED"
-                    if required_role_profile_ref == "architect_primary"
-                    else "STAFFING_REQUIRED"
-                ),
-                "recommended_action": "HIRE_EMPLOYEE",
-                "blocking_reason": (
-                    f"The governance-first progression requires {required_role_profile_ref} before "
-                    "the next governance ticket can be assigned."
-                ),
-            }
-        else:
-            controller_state = {
-                "state": "GOVERNANCE_REQUIRED",
-                "recommended_action": (
-                    "CREATE_TICKET"
-                    if required_governance_ticket_plan.get("existing_ticket_id") is None
-                    else "NO_ACTION"
-                ),
-                "blocking_reason": (
-                    "The governance-first progression requires "
-                    f"{required_governance_ticket_plan['ticket_payload']['output_schema_ref']} before implementation fanout."
-                    if required_governance_ticket_plan.get("existing_ticket_id") is None
-                    else (
-                        "The next governance ticket already exists and must finish or be recovered before the progression continues."
-                    )
-                ),
-            }
-    elif followup_ticket_plans:
-        if staffing_gaps:
-            controller_state = {
-                "state": "STAFFING_REQUIRED",
-                "recommended_action": "HIRE_EMPLOYEE",
-                "blocking_reason": "At least one required implementation capability is missing from the active roster.",
-            }
-        else:
-            controller_state = {
-                "state": "READY_FOR_FANOUT",
-                "recommended_action": "CREATE_TICKET",
-                "blocking_reason": None,
-            }
-
     combined_meeting_candidates = list(meeting_candidates)
     if controller_meeting_candidate is not None:
         combined_meeting_candidates.append(controller_meeting_candidate)
