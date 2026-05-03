@@ -37,6 +37,7 @@
 - Round 9A：DeliverableContract 与 evaluator 骨架。
 - Round 9B：Source surface / evidence pack mapping。
 - Round 9C：Checker verdict / convergence policy gate。
+- Round 9D：Rework target upstream routing。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -47,7 +48,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 9D：Rework target upstream routing** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行。后续不得重新设计 9A/9B/9C 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary 或 convergence policy 规则，也不得把 checker verdict、graph terminal、checker notes freeform 文本或 closeout final refs 主路径当成 contract satisfaction。
+下一轮新会话应从 **Round 9E：Closeout final evidence 与 Phase 5 验收** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行；Round 9D 已把 blocking contract gap 编译为 Phase 4 recovery input，并将 rework target 指向 upstream source surface / producer ticket / producer node，缺 current producer ticket 时输出 incident/action。后续不得重新设计 9A/9B/9C/9D 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary、convergence policy 或 rework target 语义，也不得把 checker verdict、graph terminal、checker notes freeform 文本或 closeout final refs 主路径当成 contract satisfaction。
 
 ---
 

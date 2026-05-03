@@ -136,6 +136,7 @@ from app.core.deliverable_contract import (
     DeliverableEvaluation,
     DeliverableEvaluationPolicy,
     compile_closeout_evidence_pack,
+    compile_contract_rework_recovery_actions,
     compile_deliverable_contract,
     checker_contract_gate,
     evaluate_deliverable_contract,
@@ -819,6 +820,21 @@ def _extract_blocking_checker_findings(checker_payload: dict[str, Any]) -> list[
                 "required_action": str(finding.get("required_action") or "").strip(),
                 "severity": str(finding.get("severity") or "").strip(),
                 "category": str(finding.get("category") or "").strip(),
+                **(
+                    {"contract_finding_id": str(finding.get("contract_finding_id") or "").strip()}
+                    if str(finding.get("contract_finding_id") or "").strip()
+                    else {}
+                ),
+                **(
+                    {"contract_reason_code": str(finding.get("contract_reason_code") or "").strip()}
+                    if str(finding.get("contract_reason_code") or "").strip()
+                    else {}
+                ),
+                **(
+                    {"contract_rework_target": dict(finding.get("contract_rework_target"))}
+                    if isinstance(finding.get("contract_rework_target"), dict)
+                    else {}
+                ),
             }
         )
     return blocking_findings
@@ -1019,7 +1035,7 @@ def _contract_evaluation_from_delivery_check_rework_findings(
     graph_version: str,
     maker_ticket_id: str,
     rework_findings: list[dict[str, Any]],
-) -> DeliverableEvaluation:
+) -> tuple[DeliverableContract, DeliverableEvaluation, Any]:
     findings = [
         {
             "finding_id": str(finding.get("finding_id") or "").strip(),
@@ -1066,28 +1082,49 @@ def _contract_evaluation_from_delivery_check_rework_findings(
             "source": "ticket_handlers.failed_delivery_check_report",
         },
     )
-    return evaluate_deliverable_contract(
+    evidence_pack = compile_closeout_evidence_pack(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        final_evidence_refs=[f"ticket://{maker_ticket_id}/failed-delivery-report"],
+        closeout_summary={
+            "source": "ticket_handlers.failed_delivery_check_report",
+            "maker_ticket_id": maker_ticket_id,
+        },
+    )
+    evaluation = evaluate_deliverable_contract(
         contract,
-        compile_closeout_evidence_pack(
-            workflow_id=workflow_id,
-            graph_version=graph_version,
-            final_evidence_refs=[f"ticket://{maker_ticket_id}/failed-delivery-report"],
-            closeout_summary={
-                "source": "ticket_handlers.failed_delivery_check_report",
-                "maker_ticket_id": maker_ticket_id,
-            },
-        ),
+        evidence_pack,
         DeliverableEvaluationPolicy(
             policy_ref="policy:round9c.failed_delivery_report",
             require_final_evidence=True,
         ),
     )
+    return contract, evaluation, evidence_pack
 
 
 def _contract_gate_rework_findings(
     gate,
     fallback_findings: list[dict[str, Any]],
+    *,
+    contract_rework_actions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    targets_by_finding: dict[str, dict[str, Any]] = {}
+    for action in list(contract_rework_actions or []):
+        if not isinstance(action, dict):
+            continue
+        target = action.get("contract_rework_target")
+        if not isinstance(target, dict):
+            continue
+        for finding in list(action.get("blocking_findings") or []):
+            if not isinstance(finding, dict):
+                continue
+            finding_id = str(finding.get("finding_id") or "").strip()
+            if finding_id and finding_id not in targets_by_finding:
+                targets_by_finding[finding_id] = dict(target)
+            reason_code = str(finding.get("reason_code") or "").strip()
+            if reason_code and reason_code not in targets_by_finding:
+                targets_by_finding[reason_code] = dict(target)
+    fallback_target = next(iter(targets_by_finding.values()), None)
     if not gate.blocking_findings:
         return fallback_findings
     if fallback_findings:
@@ -1101,6 +1138,19 @@ def _contract_gate_rework_findings(
             {
                 **finding,
                 **contract_metadata,
+                **(
+                    {
+                        "contract_rework_target": (
+                            targets_by_finding.get(str(finding.get("finding_id") or "").strip())
+                            or fallback_target
+                        )
+                    }
+                    if (
+                        targets_by_finding.get(str(finding.get("finding_id") or "").strip())
+                        or fallback_target
+                    )
+                    else {}
+                ),
                 "blocking": True,
             }
             for finding in fallback_findings
@@ -1132,6 +1182,21 @@ def _contract_gate_rework_findings(
                 "blocking": True,
                 "contract_finding_id": finding.finding_id,
                 "contract_reason_code": finding.reason_code,
+                **(
+                    {
+                        "contract_rework_target": (
+                            targets_by_finding.get(finding.finding_id)
+                            or targets_by_finding.get(finding.reason_code)
+                            or fallback_target
+                        )
+                    }
+                    if (
+                        targets_by_finding.get(finding.finding_id)
+                        or targets_by_finding.get(finding.reason_code)
+                        or fallback_target
+                    )
+                    else {}
+                ),
             }
         )
     return rework_findings
@@ -1165,11 +1230,32 @@ def _force_failed_delivery_check_to_rework(
     ).strip()
     if not workflow_id:
         workflow_id = "workflow-unknown"
-    evaluation = _contract_evaluation_from_delivery_check_rework_findings(
+    graph_version = resolve_workflow_graph_version(repository, workflow_id)
+    contract, evaluation, evidence_pack = _contract_evaluation_from_delivery_check_rework_findings(
         workflow_id=workflow_id,
-        graph_version=resolve_workflow_graph_version(repository, workflow_id),
+        graph_version=graph_version,
         maker_ticket_id=maker_ticket_id,
         rework_findings=rework_findings,
+    )
+    contract_rework_actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        current_graph_pointers=[
+            {
+                "producer_ticket_id": maker_ticket_id,
+                "producer_node_ref": str(maker_ticket_spec.get("node_id") or created_spec.get("node_id") or "").strip(),
+                "current_graph_pointer": {
+                    "graph_node_id": str(
+                        maker_ticket_spec.get("node_id") or created_spec.get("node_id") or ""
+                    ).strip(),
+                    "latest_ticket_id": maker_ticket_id,
+                    "graph_version": graph_version,
+                },
+            }
+        ],
+        checker_ticket_id=str(created_spec.get("ticket_id") or "").strip(),
+        checker_node_ref=str(created_spec.get("node_id") or "").strip(),
     )
     convergence_policy_payload = checker_result_payload.get("convergence_policy")
     convergence_policy = (
@@ -1193,9 +1279,14 @@ def _force_failed_delivery_check_to_rework(
             f"{summary} Delivery check report is fail-closed and must be reworked."
         ).strip(),
         "review_status": "CHANGES_REQUIRED",
-        "findings": _contract_gate_rework_findings(gate, rework_findings),
+        "findings": _contract_gate_rework_findings(
+            gate,
+            rework_findings,
+            contract_rework_actions=contract_rework_actions,
+        ),
         "fail_closed_delivery_check_rework_applied": True,
         "deliverable_contract_gate": gate.model_dump(mode="json"),
+        "contract_rework_actions": contract_rework_actions,
     }
 
 
@@ -1357,6 +1448,15 @@ def _build_fix_ticket_payload(
 ) -> dict[str, Any]:
     maker_checker_context = checker_created_spec.get("maker_checker_context") or {}
     maker_ticket_spec = dict(maker_checker_context.get("maker_ticket_spec") or {})
+    contract_rework_target = next(
+        (
+            dict(finding.get("contract_rework_target"))
+            for finding in blocking_findings
+            if isinstance(finding.get("contract_rework_target"), dict)
+            and str((finding.get("contract_rework_target") or {}).get("producer_ticket_id") or "").strip()
+        ),
+        {},
+    )
     original_review_request = maker_checker_context.get("original_review_request")
     context_query_plan = dict(maker_ticket_spec.get("context_query_plan") or {})
     max_context_tokens = int(context_query_plan.get("max_context_tokens") or 0)
@@ -1405,11 +1505,19 @@ def _build_fix_ticket_payload(
         ),
     )
     maker_ticket_id = str(maker_checker_context.get("maker_ticket_id") or "").strip()
+    rework_parent_ticket_id = (
+        str(contract_rework_target.get("producer_ticket_id") or "").strip()
+        or checker_ticket_id
+    )
+    rework_node_id = (
+        str(contract_rework_target.get("producer_node_ref") or "").strip()
+        or node_id
+    )
     return {
         "ticket_id": next_ticket_id,
         "workflow_id": workflow_id,
-        "node_id": node_id,
-        "parent_ticket_id": checker_ticket_id,
+        "node_id": rework_node_id,
+        "parent_ticket_id": rework_parent_ticket_id,
         "attempt_no": next_attempt_no,
         "role_profile_ref": str(maker_ticket_spec.get("role_profile_ref") or "ui_designer_primary"),
         "constraints_ref": str(maker_ticket_spec.get("constraints_ref") or ""),
@@ -1468,6 +1576,11 @@ def _build_fix_ticket_payload(
             "required_fixes": required_fixes,
             "rework_fingerprint": rework_fingerprint,
             "rework_streak_count": rework_streak_count,
+            **(
+                {"contract_rework_target": contract_rework_target}
+                if contract_rework_target
+                else {}
+            ),
         },
     }
 

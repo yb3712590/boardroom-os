@@ -244,7 +244,6 @@ Integrated gates:
 
 Still deferred:
 
-- Round 9D must route blocking contract gaps to the upstream node/ticket/source surface that can fix them.
 - Round 9E must build the final evidence table and closeout package contract version surface.
 
 9C verification:
@@ -252,3 +251,31 @@ Still deferred:
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q` -> `42 passed, 1 warning`.
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q` -> `3 passed`.
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_output_schemas.py -q` -> `40 passed`.
+
+## Round 9D implementation status
+
+Round 9D routes blocking contract gaps to upstream rework targets without changing the Phase 4 `ActionProposal` contract.
+
+Implemented additions:
+
+- `compile_contract_rework_recovery_actions()` compiles blocking `ContractFinding` rows into existing `ProgressionPolicy.recovery.actions`.
+- Each compiled action carries `source_surface_ref`, `producer_ticket_id`, `producer_node_ref`, `required_capability`, `missing_evidence_kind`, `acceptance_ref`, `current_graph_pointer` and `contract_finding_id`.
+- Source/test/git/check evidence gaps prefer the current producer ticket/node for the source surface. Checker-only defects target the checker node only when the missing evidence kind is `maker_checker_verdict`.
+- Placeholder, superseded, archive and stale-pointer evidence are invalid lineage only. They cannot become current producer evidence.
+- If no current producer ticket is available, the compiled action is `contract_gap_missing_current_producer`; progression turns it into an incident instead of guessing a target.
+
+Integrated paths:
+
+- `workflow_progression.py` maps `finding_kind=deliverable_contract_gap` to `progression.rework.deliverable_contract_gap`, and `contract_gap_missing_current_producer` to `progression.incident.contract_gap_missing_current_producer`.
+- `ticket_handlers.py` preserves structured contract rework target metadata when failed delivery reports are forced back to rework, and builds the fix ticket against the upstream producer ticket/node.
+- `workflow_completion.py` carries contract gate blocking findings and compiled recovery actions into the closeout gate issue.
+- `workflow_controller.py` remains an input compiler and policy caller. It does not parse checker notes or artifact bodies to choose rework targets.
+
+Still deferred:
+
+- Round 9E must build the closeout final evidence table and expose the contract version in closeout packages.
+
+9D verification:
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_progression.py -q` covers upstream source target, missing test evidence target, checker-only target, missing current producer incident, controller recovery input, and BR-040/BR-041 placeholder equivalence.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework -q` covers failed delivery checker rework and convergence fallback paths.

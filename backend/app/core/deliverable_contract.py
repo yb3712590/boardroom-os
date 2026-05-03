@@ -1041,6 +1041,386 @@ def _contract_satisfying_evidence(evidence_pack: EvidencePack) -> list[EvidenceI
     ]
 
 
+def _surface_by_id(contract: DeliverableContract) -> dict[str, RequiredSourceSurface]:
+    return {surface.surface_id: surface for surface in contract.required_source_surfaces}
+
+
+def _required_evidence_by_id(contract: DeliverableContract) -> dict[str, RequiredEvidence]:
+    return {required.evidence_id: required for required in contract.required_evidence}
+
+
+def _record_ref(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _first_ref(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> str:
+    refs = _stable_unique_strings(values)
+    return refs[0] if refs else ""
+
+
+def _current_pointer_is_usable(pointer: dict[str, Any]) -> bool:
+    current_pointer = pointer.get("current_graph_pointer")
+    current_pointer = current_pointer if isinstance(current_pointer, dict) else {}
+    status = _record_ref(
+        pointer.get("current_pointer_status")
+        or pointer.get("pointer_status")
+        or current_pointer.get("current_pointer_status")
+    ).upper()
+    if status and status in _INVALID_CURRENT_POINTER_STATUSES:
+        return False
+    return bool(_contract_target_ticket_id_from_pointer(pointer))
+
+
+def _contract_target_ticket_id_from_pointer(pointer: dict[str, Any]) -> str:
+    current_pointer = pointer.get("current_graph_pointer")
+    current_pointer = current_pointer if isinstance(current_pointer, dict) else {}
+    return (
+        _record_ref(pointer.get("producer_ticket_id"))
+        or _record_ref(pointer.get("ticket_id"))
+        or _record_ref(pointer.get("current_ticket_id"))
+        or _record_ref(pointer.get("latest_ticket_id"))
+        or _record_ref(current_pointer.get("latest_ticket_id"))
+        or _record_ref(current_pointer.get("ticket_id"))
+    )
+
+
+def _contract_target_node_ref_from_pointer(pointer: dict[str, Any]) -> str:
+    current_pointer = pointer.get("current_graph_pointer")
+    current_pointer = current_pointer if isinstance(current_pointer, dict) else {}
+    return (
+        _record_ref(pointer.get("producer_node_ref"))
+        or _record_ref(pointer.get("node_ref"))
+        or _record_ref(pointer.get("graph_node_id"))
+        or _record_ref(pointer.get("node_id"))
+        or _record_ref(current_pointer.get("graph_node_id"))
+        or _record_ref(current_pointer.get("node_ref"))
+        or _record_ref(current_pointer.get("node_id"))
+    )
+
+
+def _contract_pointer_surface_ref(pointer: dict[str, Any]) -> str:
+    return (
+        _record_ref(pointer.get("source_surface_ref"))
+        or _record_ref(pointer.get("surface_ref"))
+        or _first_ref(pointer.get("source_surface_refs") if isinstance(pointer.get("source_surface_refs"), list) else [])
+    )
+
+
+def _contract_pointer_acceptance_ref(pointer: dict[str, Any]) -> str:
+    return (
+        _record_ref(pointer.get("acceptance_ref"))
+        or _record_ref(pointer.get("acceptance_criteria_ref"))
+        or _first_ref(
+            pointer.get("acceptance_criteria_refs")
+            if isinstance(pointer.get("acceptance_criteria_refs"), list)
+            else []
+        )
+    )
+
+
+def _current_pointer_for_gap(
+    *,
+    current_graph_pointers: list[dict[str, Any]],
+    source_surface_ref: str,
+    acceptance_ref: str,
+) -> dict[str, Any] | None:
+    for pointer in current_graph_pointers:
+        if not isinstance(pointer, dict) or not _current_pointer_is_usable(pointer):
+            continue
+        pointer_surface = _contract_pointer_surface_ref(pointer)
+        pointer_acceptance = _contract_pointer_acceptance_ref(pointer)
+        if source_surface_ref and not pointer_surface:
+            continue
+        if pointer_surface and source_surface_ref and pointer_surface != source_surface_ref:
+            continue
+        if pointer_acceptance and acceptance_ref and pointer_acceptance != acceptance_ref:
+            continue
+        return pointer
+    return None
+
+
+def _accepted_current_evidence_for_gap(
+    *,
+    evidence_pack: EvidencePack,
+    source_surface_ref: str,
+    acceptance_ref: str,
+    preferred_kinds: list[str],
+) -> EvidenceItem | None:
+    candidates = [
+        evidence
+        for evidence in _contract_satisfying_evidence(evidence_pack)
+        if (
+            not source_surface_ref
+            or source_surface_ref in evidence.source_surface_refs
+        )
+        and (
+            not acceptance_ref
+            or acceptance_ref in evidence.acceptance_criteria_refs
+        )
+        and evidence.producer_ticket_id
+    ]
+    if not candidates:
+        return None
+    by_kind = {kind: index for index, kind in enumerate(preferred_kinds)}
+    fallback_order = len(preferred_kinds) + 1
+    return sorted(
+        candidates,
+        key=lambda evidence: (
+            by_kind.get(evidence.evidence_kind, fallback_order),
+            evidence.producer_ticket_id or "",
+            evidence.producer_node_ref or "",
+            evidence.evidence_ref,
+        ),
+    )[0]
+
+
+def _invalid_lineage_refs_for_gap(
+    *,
+    evidence_pack: EvidencePack,
+    source_surface_ref: str,
+    acceptance_ref: str,
+) -> list[str]:
+    return _stable_unique_strings(
+        [
+            evidence.evidence_ref
+            for evidence in evidence_pack.evidence
+            if _evidence_invalid_reasons(evidence)
+            and (
+                not source_surface_ref
+                or source_surface_ref in evidence.source_surface_refs
+            )
+            and (
+                not acceptance_ref
+                or acceptance_ref in evidence.acceptance_criteria_refs
+            )
+        ]
+    )
+
+
+def _finding_gap_records(
+    *,
+    contract: DeliverableContract,
+    finding: ContractFinding,
+) -> list[dict[str, str]]:
+    required_by_id = _required_evidence_by_id(contract)
+    records: list[dict[str, str]] = []
+    if finding.reason_code == "acceptance_missing_required_evidence":
+        for item in list(finding.metadata.get("missing_by_acceptance_surface") or []):
+            if not isinstance(item, dict):
+                continue
+            acceptance_ref = _record_ref(item.get("acceptance_ref"))
+            surface_ref = _record_ref(item.get("surface_ref"))
+            for missing_kind in _stable_unique_strings(
+                item.get("missing_evidence_kinds")
+                if isinstance(item.get("missing_evidence_kinds"), list)
+                else []
+            ):
+                records.append(
+                    {
+                        "acceptance_ref": acceptance_ref,
+                        "source_surface_ref": surface_ref,
+                        "missing_evidence_kind": missing_kind,
+                    }
+                )
+    if not records and finding.required_evidence_refs:
+        for required_ref in finding.required_evidence_refs:
+            required = required_by_id.get(required_ref)
+            if required is None:
+                continue
+            records.append(
+                {
+                    "acceptance_ref": _first_ref(required.acceptance_criteria_refs)
+                    or _first_ref(finding.acceptance_criteria_refs),
+                    "source_surface_ref": _first_ref(required.source_surface_refs)
+                    or _first_ref(finding.source_surface_refs),
+                    "missing_evidence_kind": required.evidence_kind,
+                }
+            )
+    if not records and finding.evidence_refs:
+        evidence_kind = _record_ref(
+            finding.metadata.get("evidence_kind")
+            or finding.metadata.get("missing_evidence_kind")
+        )
+        records.append(
+            {
+                "acceptance_ref": _first_ref(finding.acceptance_criteria_refs),
+                "source_surface_ref": _first_ref(finding.source_surface_refs),
+                "missing_evidence_kind": evidence_kind or "source_inventory",
+            }
+        )
+    if not records:
+        missing_kinds = _stable_unique_strings(
+            finding.metadata.get("missing_evidence_kinds")
+            if isinstance(finding.metadata.get("missing_evidence_kinds"), list)
+            else []
+        )
+        records.append(
+            {
+                "acceptance_ref": _first_ref(finding.acceptance_criteria_refs),
+                "source_surface_ref": _first_ref(finding.source_surface_refs),
+                "missing_evidence_kind": missing_kinds[0] if missing_kinds else "",
+            }
+        )
+    return records
+
+
+def _contract_rework_target_for_gap(
+    *,
+    contract: DeliverableContract,
+    evidence_pack: EvidencePack,
+    source_surface_ref: str,
+    acceptance_ref: str,
+    missing_evidence_kind: str,
+    current_graph_pointers: list[dict[str, Any]],
+    checker_ticket_id: str | None,
+    checker_node_ref: str | None,
+) -> tuple[dict[str, JsonValue], list[str]]:
+    surfaces = _surface_by_id(contract)
+    surface = surfaces.get(source_surface_ref)
+    required_capability = _first_ref(surface.owning_capabilities if surface is not None else [])
+    current_pointer = _current_pointer_for_gap(
+        current_graph_pointers=current_graph_pointers,
+        source_surface_ref=source_surface_ref,
+        acceptance_ref=acceptance_ref,
+    )
+    target: dict[str, JsonValue] = {
+        "source_surface_ref": source_surface_ref,
+        "required_capability": required_capability,
+        "missing_evidence_kind": missing_evidence_kind,
+        "acceptance_ref": acceptance_ref,
+    }
+    if current_pointer is not None:
+        target.update(
+            {
+                "producer_ticket_id": _contract_target_ticket_id_from_pointer(current_pointer),
+                "producer_node_ref": _contract_target_node_ref_from_pointer(current_pointer),
+                "current_graph_pointer": _plain(
+                    current_pointer.get("current_graph_pointer")
+                    if isinstance(current_pointer.get("current_graph_pointer"), dict)
+                    else current_pointer
+                ),
+            }
+        )
+        return target, []
+
+    if (
+        missing_evidence_kind == "maker_checker_verdict"
+        and checker_ticket_id
+        and not source_surface_ref
+    ):
+        target.update(
+            {
+                "producer_ticket_id": _record_ref(checker_ticket_id),
+                "producer_node_ref": _record_ref(checker_node_ref),
+                "current_graph_pointer": {
+                    "graph_node_id": _record_ref(checker_node_ref),
+                    "latest_ticket_id": _record_ref(checker_ticket_id),
+                },
+            }
+        )
+        return target, []
+
+    evidence = _accepted_current_evidence_for_gap(
+        evidence_pack=evidence_pack,
+        source_surface_ref=source_surface_ref,
+        acceptance_ref=acceptance_ref,
+        preferred_kinds=["source_inventory", "git_closeout", "unit_test", "integration_test", "runtime_smoke"],
+    )
+    if evidence is not None:
+        target.update(
+            {
+                "producer_ticket_id": _record_ref(evidence.producer_ticket_id),
+                "producer_node_ref": _record_ref(evidence.producer_node_ref),
+                "current_graph_pointer": {
+                    "graph_node_id": _record_ref(evidence.producer_node_ref),
+                    "latest_ticket_id": _record_ref(evidence.producer_ticket_id),
+                    "evidence_ref": evidence.evidence_ref,
+                },
+            }
+        )
+        return target, []
+
+    return target, _invalid_lineage_refs_for_gap(
+        evidence_pack=evidence_pack,
+        source_surface_ref=source_surface_ref,
+        acceptance_ref=acceptance_ref,
+    )
+
+
+def compile_contract_rework_recovery_actions(
+    *,
+    contract: DeliverableContract,
+    evaluation: DeliverableEvaluation,
+    evidence_pack: EvidencePack,
+    current_graph_pointers: list[dict[str, JsonValue]] | None = None,
+    checker_ticket_id: str | None = None,
+    checker_node_ref: str | None = None,
+) -> list[dict[str, JsonValue]]:
+    actions: list[dict[str, JsonValue]] = []
+    seen_refs: set[str] = set()
+    pointers = [
+        dict(pointer)
+        for pointer in list(current_graph_pointers or [])
+        if isinstance(pointer, dict)
+    ]
+    for finding in evaluation.findings:
+        if not finding.blocking:
+            continue
+        for gap in _finding_gap_records(contract=contract, finding=finding):
+            target, invalid_lineage_refs = _contract_rework_target_for_gap(
+                contract=contract,
+                evidence_pack=evidence_pack,
+                source_surface_ref=gap["source_surface_ref"],
+                acceptance_ref=gap["acceptance_ref"],
+                missing_evidence_kind=gap["missing_evidence_kind"],
+                current_graph_pointers=pointers,
+                checker_ticket_id=checker_ticket_id,
+                checker_node_ref=checker_node_ref,
+            )
+            producer_ticket_id = _record_ref(target.get("producer_ticket_id"))
+            producer_node_ref = _record_ref(target.get("producer_node_ref"))
+            action_ref = "contract-gap:{finding_id}:{surface}:{acceptance}:{kind}".format(
+                finding_id=finding.finding_id,
+                surface=gap["source_surface_ref"] or "no-surface",
+                acceptance=gap["acceptance_ref"] or "no-acceptance",
+                kind=gap["missing_evidence_kind"] or "unknown-kind",
+            )
+            if action_ref in seen_refs:
+                continue
+            seen_refs.add(action_ref)
+            blocking_finding = {
+                "finding_id": finding.finding_id,
+                "reason_code": finding.reason_code,
+                "summary": finding.summary,
+                "blocking": finding.blocking,
+                "acceptance_criteria_refs": list(finding.acceptance_criteria_refs),
+                "required_evidence_refs": list(finding.required_evidence_refs),
+                "evidence_refs": list(finding.evidence_refs),
+                "source_surface_refs": list(finding.source_surface_refs),
+            }
+            action: dict[str, JsonValue] = {
+                "action_ref": action_ref,
+                "node_ref": producer_node_ref or gap["source_surface_ref"] or gap["acceptance_ref"],
+                "finding_kind": (
+                    "deliverable_contract_gap"
+                    if producer_ticket_id
+                    else "contract_gap_missing_current_producer"
+                ),
+                "blocking_findings": [blocking_finding],
+                "contract_finding_id": finding.finding_id,
+                "contract_reason_code": finding.reason_code,
+                "contract_rework_target": target,
+                "invalidated_lineage_refs": invalid_lineage_refs,
+            }
+            if producer_ticket_id:
+                action["ticket_id"] = producer_ticket_id
+                action["target_ticket_id"] = producer_ticket_id
+            else:
+                action["missing_current_producer"] = True
+            actions.append(action)
+    return sorted(actions, key=_stable_json)
+
+
 def _required_evidence_is_satisfied(
     required: RequiredEvidence,
     evidence_pack: EvidencePack,

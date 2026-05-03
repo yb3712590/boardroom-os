@@ -5351,6 +5351,17 @@ def test_check_internal_checker_approval_on_failed_report_creates_fix_ticket(cli
     assert fix_ticket["status"] == TICKET_STATUS_PENDING
     assert fix_created_spec is not None
     assert fix_created_spec["output_schema_ref"] == "delivery_check_report"
+    assert fix_created_spec["parent_ticket_id"] == "tkt_check_fail_closed_rework"
+    assert fix_created_spec["node_id"] == "node_check_fail_closed_rework"
+    assert fix_created_spec["maker_checker_context"]["contract_rework_target"]["producer_ticket_id"] == (
+        "tkt_check_fail_closed_rework"
+    )
+    assert fix_created_spec["maker_checker_context"]["contract_rework_target"]["producer_node_ref"] == (
+        "node_check_fail_closed_rework"
+    )
+    assert fix_created_spec["maker_checker_context"]["contract_rework_target"]["missing_evidence_kind"] == (
+        "risk_disposition"
+    )
     assert fix_created_spec["maker_checker_context"]["blocking_finding_refs"] == [
         "finding_missing_security_evidence"
     ]

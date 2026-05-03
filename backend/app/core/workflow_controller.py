@@ -1844,6 +1844,7 @@ def _build_recovery_policy_input(
     ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
     followup_ticket_plans: list[dict[str, Any]],
     ticket_graph_snapshot: TicketGraphSnapshot | None,
+    closeout_gate_issue: dict[str, Any] | None = None,
     structured_recovery_policy_input: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     recovery_policy = dict(structured_recovery_policy_input or {})
@@ -1857,6 +1858,20 @@ def _build_recovery_policy_input(
         for action in actions
         if str(action.get("action_ref") or "").strip()
     }
+    if isinstance(closeout_gate_issue, dict):
+        details = closeout_gate_issue.get("details")
+        details = details if isinstance(details, dict) else {}
+        for item in list(details.get("contract_rework_actions") or []):
+            if not isinstance(item, dict):
+                continue
+            action = dict(item)
+            action_ref = str(action.get("action_ref") or "").strip()
+            if not action_ref:
+                continue
+            if action_ref in seen_action_refs:
+                continue
+            actions.append(action)
+            seen_action_refs.add(action_ref)
     node_refs_by_ticket_id = _ticket_graph_node_refs_by_ticket_id(ticket_graph_snapshot)
     effective_current_ticket_ids = (
         set(node_refs_by_ticket_id)
@@ -2436,6 +2451,7 @@ def build_workflow_controller_view(
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
         followup_ticket_plans=followup_ticket_plans,
         ticket_graph_snapshot=ticket_graph_snapshot,
+        closeout_gate_issue=closeout_gate_issue,
         structured_recovery_policy_input=(
             structured_progression_policy_input.get("recovery")
             if isinstance(structured_progression_policy_input.get("recovery"), dict)
@@ -2443,7 +2459,7 @@ def build_workflow_controller_view(
         ),
     )
     progression_policy = ProgressionPolicy(
-        policy_ref=f"progression-policy:{workflow_id}:{graph_version}:8d",
+        policy_ref=f"progression-policy:{workflow_id}:{graph_version}:9d",
         governance=governance_policy_input,
         fanout=fanout_policy_input,
         closeout=closeout_policy_input,

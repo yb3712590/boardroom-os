@@ -1373,6 +1373,41 @@ def _recovery_policy_proposal(
     ):
         node_ref = _recovery_action_node_ref(action)
         ticket_id = _record_ref(action.get("ticket_id"))
+        finding_kind = _record_ref(action.get("finding_kind"))
+        blocking_findings = [
+            dict(item)
+            for item in list(action.get("blocking_findings") or [])
+            if isinstance(item, dict) and bool(item.get("blocking", True))
+        ]
+        contract_rework_target = (
+            dict(action.get("contract_rework_target"))
+            if isinstance(action.get("contract_rework_target"), dict)
+            else {}
+        )
+        if bool(action.get("missing_current_producer")) or finding_kind == "contract_gap_missing_current_producer":
+            return ActionProposal(
+                action_type=ProgressionActionType.INCIDENT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.INCIDENT,
+                    reason_code="progression.incident.contract_gap_missing_current_producer",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="INCIDENT_OPENED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "incident_type": _record_ref(action.get("incident_type"))
+                    or "CONTRACT_GAP_MISSING_CURRENT_PRODUCER",
+                    "finding_kind": finding_kind,
+                    "blocking_findings": blocking_findings,
+                    "contract_rework_target": contract_rework_target,
+                    "invalidated_lineage_refs": _stable_unique_strings(
+                        list(action.get("invalidated_lineage_refs") or [])
+                    ),
+                    "recovery_action": dict(action),
+                },
+            )
         if bool(action.get("restore_needed")) and not ticket_id:
             return ActionProposal(
                 action_type=ProgressionActionType.INCIDENT,
@@ -1531,18 +1566,15 @@ def _recovery_policy_proposal(
                     },
                 )
 
-        finding_kind = _record_ref(action.get("finding_kind"))
-        blocking_findings = [
-            dict(item)
-            for item in list(action.get("blocking_findings") or [])
-            if isinstance(item, dict) and bool(item.get("blocking", True))
-        ]
         if finding_kind or blocking_findings:
-            reason_code = (
-                "progression.rework.checker_blocking_finding"
-                if finding_kind == "checker_blocking_finding" or blocking_findings
-                else f"progression.rework.{finding_kind}"
-            )
+            if finding_kind == "deliverable_contract_gap":
+                reason_code = "progression.rework.deliverable_contract_gap"
+            elif finding_kind == "checker_blocking_finding" or (
+                blocking_findings and not finding_kind
+            ):
+                reason_code = "progression.rework.checker_blocking_finding"
+            else:
+                reason_code = f"progression.rework.{finding_kind}"
             return ActionProposal(
                 action_type=ProgressionActionType.REWORK,
                 metadata=build_action_metadata(
@@ -1558,6 +1590,10 @@ def _recovery_policy_proposal(
                     "target_ticket_id": _record_ref(action.get("target_ticket_id")) or ticket_id,
                     "finding_kind": finding_kind,
                     "blocking_findings": blocking_findings,
+                    "contract_rework_target": contract_rework_target,
+                    "invalidated_lineage_refs": _stable_unique_strings(
+                        list(action.get("invalidated_lineage_refs") or [])
+                    ),
                     "recovery_action": dict(action),
                 },
             )

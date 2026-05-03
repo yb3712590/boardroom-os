@@ -20,6 +20,7 @@ from app.core.workflow_progression import (
     resolve_workflow_progression_adapter,
     select_governance_role_and_assignee,
 )
+from app.core.workflow_controller import _build_recovery_policy_input
 
 
 def test_resolve_workflow_progression_adapter_uses_profile_specific_adapter() -> None:
@@ -1160,6 +1161,188 @@ def test_policy_superseded_or_invalidated_lineage_blocks_reuse() -> None:
     assert proposal.metadata.affected_node_refs == ["graph:delivery"]
     assert proposal.payload["completed_ticket_reuse_gate"]["reason_code"] == "completed_ticket_superseded"
     assert proposal.payload["superseded_lineage_refs"] == ["tkt_completed"]
+
+
+def test_policy_contract_gap_rework_uses_upstream_contract_target() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round9d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "contract-gap:cf_missing_unit",
+                        "node_ref": "node_source_current",
+                        "ticket_id": "tkt_source_current",
+                        "target_ticket_id": "tkt_source_current",
+                        "finding_kind": "deliverable_contract_gap",
+                        "blocking_findings": [
+                            {
+                                "finding_id": "cf_missing_unit",
+                                "reason_code": "acceptance_missing_required_evidence",
+                                "blocking": True,
+                            }
+                        ],
+                        "contract_rework_target": {
+                            "source_surface_ref": "surface.backend",
+                            "producer_ticket_id": "tkt_source_current",
+                            "producer_node_ref": "node_source_current",
+                            "required_capability": "source.modify.backend",
+                            "missing_evidence_kind": "unit_test",
+                            "acceptance_ref": "AC-source",
+                            "current_graph_pointer": {
+                                "graph_node_id": "node_source_current",
+                                "latest_ticket_id": "tkt_source_current",
+                            },
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.deliverable_contract_gap"
+    assert proposal.metadata.affected_node_refs == ["node_source_current"]
+    assert proposal.payload["target_ticket_id"] == "tkt_source_current"
+    assert proposal.payload["contract_rework_target"]["missing_evidence_kind"] == "unit_test"
+    assert proposal.payload["contract_rework_target"]["producer_ticket_id"] == "tkt_source_current"
+
+
+def test_policy_contract_gap_missing_current_producer_opens_incident() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round9d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "contract-gap:cf_missing_current_producer",
+                        "node_ref": "surface.backend",
+                        "finding_kind": "contract_gap_missing_current_producer",
+                        "missing_current_producer": True,
+                        "blocking_findings": [
+                            {
+                                "finding_id": "cf_missing_current_producer",
+                                "reason_code": "acceptance_missing_required_evidence",
+                                "blocking": True,
+                            }
+                        ],
+                        "contract_rework_target": {
+                            "source_surface_ref": "surface.backend",
+                            "required_capability": "source.modify.backend",
+                            "missing_evidence_kind": "integration_test",
+                            "acceptance_ref": "AC-source",
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.INCIDENT
+    assert proposal.metadata.reason_code == "progression.incident.contract_gap_missing_current_producer"
+    assert proposal.metadata.affected_node_refs == ["surface.backend"]
+    assert proposal.payload["incident_type"] == "CONTRACT_GAP_MISSING_CURRENT_PRODUCER"
+    assert proposal.payload["contract_rework_target"]["source_surface_ref"] == "surface.backend"
+
+
+def test_controller_recovery_input_compiles_contract_gate_issue_into_recovery_action() -> None:
+    recovery_input = _build_recovery_policy_input(
+        tickets=[],
+        created_specs_by_ticket={},
+        ticket_terminal_events_by_ticket={},
+        followup_ticket_plans=[],
+        ticket_graph_snapshot=None,
+        closeout_gate_issue={
+            "reason_code": "convergence_policy_required",
+            "ticket_id": "tkt_checker",
+            "details": {
+                "maker_ticket_id": "tkt_maker",
+                "blocking_findings": [
+                    {
+                        "finding_id": "cf_missing_risk",
+                        "reason_code": "missing_required_evidence",
+                        "blocking": True,
+                        "acceptance_criteria_refs": ["AC-risk"],
+                        "source_surface_refs": [],
+                        "metadata": {"missing_evidence_kinds": ["risk_disposition"]},
+                    }
+                ],
+                "contract_rework_actions": [
+                    {
+                        "action_ref": "contract-gap:cf_missing_risk:no-surface:AC-risk:risk_disposition",
+                        "node_ref": "node_maker",
+                        "ticket_id": "tkt_maker",
+                        "target_ticket_id": "tkt_maker",
+                        "finding_kind": "deliverable_contract_gap",
+                        "blocking_findings": [
+                            {
+                                "finding_id": "cf_missing_risk",
+                                "reason_code": "missing_required_evidence",
+                                "blocking": True,
+                            }
+                        ],
+                        "contract_rework_target": {
+                            "producer_ticket_id": "tkt_maker",
+                            "producer_node_ref": "node_maker",
+                            "missing_evidence_kind": "risk_disposition",
+                            "acceptance_ref": "AC-risk",
+                        },
+                    }
+                ],
+            },
+        },
+    )
+
+    assert recovery_input["actions"][0]["finding_kind"] == "deliverable_contract_gap"
+    assert recovery_input["actions"][0]["target_ticket_id"] == "tkt_maker"
+    assert recovery_input["actions"][0]["contract_rework_target"]["producer_node_ref"] == "node_maker"
+
+
+def test_policy_checker_only_contract_defect_targets_checker_node() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round9d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "contract-gap:cf_checker_only",
+                        "node_ref": "node_checker",
+                        "ticket_id": "tkt_checker",
+                        "target_ticket_id": "tkt_checker",
+                        "finding_kind": "deliverable_contract_gap",
+                        "blocking_findings": [
+                            {
+                                "finding_id": "cf_checker_only",
+                                "reason_code": "missing_required_evidence",
+                                "blocking": True,
+                            }
+                        ],
+                        "contract_rework_target": {
+                            "producer_ticket_id": "tkt_checker",
+                            "producer_node_ref": "node_checker",
+                            "missing_evidence_kind": "maker_checker_verdict",
+                            "acceptance_ref": "AC-checker",
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.deliverable_contract_gap"
+    assert proposal.metadata.affected_node_refs == ["node_checker"]
+    assert proposal.payload["target_ticket_id"] == "tkt_checker"
+    assert proposal.payload["contract_rework_target"]["producer_node_ref"] == "node_checker"
 
 
 def test_policy_br100_loop_threshold_opens_incident() -> None:

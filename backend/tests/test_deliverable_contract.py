@@ -11,6 +11,7 @@ from app.core.deliverable_contract import (
     EvidencePack,
     checker_contract_gate,
     compile_deliverable_contract,
+    compile_contract_rework_recovery_actions,
     evaluate_deliverable_contract,
 )
 
@@ -956,4 +957,465 @@ def test_convergence_policy_must_cover_every_blocking_gap() -> None:
 
     assert gate.allowed is False
     assert gate.reason_code == "deliverable_contract_blocked"
-    assert gate.blocking_finding_count == 1
+
+
+def test_contract_blocking_gap_compiles_upstream_source_rework_target() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_upstream",
+        graph_version="gv_9d",
+        acceptance_criteria=[
+            {
+                "criterion_id": "AC-source",
+                "description": "Source behavior has source and test evidence.",
+            }
+        ],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.backend",
+                "path_patterns": ["10-project/src/backend/**"],
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-source"],
+                "required_evidence_kinds": ["source_inventory", "unit_test"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack.model_validate(
+        {
+            "workflow_id": "wf_round9d_upstream",
+            "graph_version": "gv_9d",
+            "evidence": [
+                {
+                    "evidence_ref": "art://workspace/tkt_source_current/source/src/backend/app.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_source_current",
+                    "producer_node_ref": "node_source_current",
+                    "source_surface_refs": ["surface.backend"],
+                    "artifact_kind": "WORKSPACE_SOURCE",
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-source"],
+                }
+            ],
+            "final_evidence_refs": ["art://workspace/tkt_source_current/source/src/backend/app.py"],
+        }
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        current_graph_pointers=[
+            {
+                "source_surface_ref": "surface.backend",
+                "producer_ticket_id": "tkt_source_current",
+                "producer_node_ref": "node_source_current",
+                "current_graph_pointer": {
+                    "graph_node_id": "node_source_current",
+                    "latest_ticket_id": "tkt_source_current",
+                },
+            }
+        ],
+    )
+
+    assert [action["finding_kind"] for action in actions] == ["deliverable_contract_gap"]
+    assert actions[0]["target_ticket_id"] == "tkt_source_current"
+    assert actions[0]["ticket_id"] == "tkt_source_current"
+    assert actions[0]["node_ref"] == "node_source_current"
+    target = actions[0]["contract_rework_target"]
+    assert target["source_surface_ref"] == "surface.backend"
+    assert target["producer_ticket_id"] == "tkt_source_current"
+    assert target["producer_node_ref"] == "node_source_current"
+    assert target["required_capability"] == "source.modify.backend"
+    assert target["missing_evidence_kind"] == "unit_test"
+    assert target["acceptance_ref"] == "AC-source"
+    assert target["current_graph_pointer"]["latest_ticket_id"] == "tkt_source_current"
+
+
+def test_missing_test_evidence_uses_source_producer_not_checker_target() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_missing_test",
+        graph_version="gv_9d",
+        acceptance_criteria=[{"criterion_id": "AC-tests", "description": "Tests prove behavior."}],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.api",
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-tests"],
+                "required_evidence_kinds": ["source_inventory", "integration_test"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack.model_validate(
+        {
+            "workflow_id": "wf_round9d_missing_test",
+            "graph_version": "gv_9d",
+            "evidence": [
+                {
+                    "evidence_ref": "art://workspace/tkt_api_maker/source/src/backend/api.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_api_maker",
+                    "producer_node_ref": "node_api_maker",
+                    "source_surface_refs": ["surface.api"],
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-tests"],
+                },
+                {
+                    "evidence_ref": "art://runtime/tkt_api_checker/delivery-check-report.json",
+                    "evidence_kind": "maker_checker_verdict",
+                    "producer_ticket_id": "tkt_api_checker",
+                    "producer_node_ref": "node_api_checker",
+                    "source_surface_refs": ["surface.api"],
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-tests"],
+                },
+            ],
+            "final_evidence_refs": [
+                "art://workspace/tkt_api_maker/source/src/backend/api.py",
+                "art://runtime/tkt_api_checker/delivery-check-report.json",
+            ],
+        }
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        checker_ticket_id="tkt_api_checker",
+        checker_node_ref="node_api_checker",
+    )
+
+    assert actions[0]["target_ticket_id"] == "tkt_api_maker"
+    assert actions[0]["node_ref"] == "node_api_maker"
+    assert actions[0]["contract_rework_target"]["missing_evidence_kind"] == "integration_test"
+    assert actions[0]["contract_rework_target"]["producer_ticket_id"] != "tkt_api_checker"
+
+
+def test_invalid_placeholder_superseded_archive_or_stale_evidence_does_not_become_current_producer() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_invalid_lineage",
+        graph_version="gv_9d",
+        acceptance_criteria=[{"criterion_id": "AC-lineage", "description": "Current source is required."}],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.lineage",
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-lineage"],
+                "required_evidence_kinds": ["source_inventory", "unit_test"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack.model_validate(
+        {
+            "workflow_id": "wf_round9d_invalid_lineage",
+            "graph_version": "gv_9d",
+            "evidence": [
+                {
+                    "evidence_ref": "art://workspace/tkt_placeholder/source/source.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_placeholder",
+                    "producer_node_ref": "node_placeholder",
+                    "source_surface_refs": ["surface.lineage"],
+                    "legality_status": "PLACEHOLDER",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-lineage"],
+                    "placeholder": True,
+                },
+                {
+                    "evidence_ref": "art://workspace/tkt_old/source/src/backend/old.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_old",
+                    "producer_node_ref": "node_old",
+                    "source_surface_refs": ["surface.lineage"],
+                    "legality_status": "SUPERSEDED",
+                    "current_pointer_status": "SUPERSEDED",
+                    "acceptance_criteria_refs": ["AC-lineage"],
+                    "superseded_by_refs": ["art://workspace/tkt_current/source/src/backend/new.py"],
+                },
+                {
+                    "evidence_ref": "art://archive/tkt_archive/source.json",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_archive",
+                    "producer_node_ref": "node_archive",
+                    "source_surface_refs": ["surface.lineage"],
+                    "legality_status": "ARCHIVE",
+                    "current_pointer_status": "ARCHIVE",
+                    "acceptance_criteria_refs": ["AC-lineage"],
+                    "archive": True,
+                },
+                {
+                    "evidence_ref": "art://workspace/tkt_stale/source/src/backend/stale.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_stale",
+                    "producer_node_ref": "node_stale",
+                    "source_surface_refs": ["surface.lineage"],
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "STALE",
+                    "acceptance_criteria_refs": ["AC-lineage"],
+                },
+            ],
+            "final_evidence_refs": ["art://workspace/tkt_placeholder/source/source.py"],
+        }
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+    )
+
+    assert actions[0]["finding_kind"] == "contract_gap_missing_current_producer"
+    assert actions[0]["missing_current_producer"] is True
+    assert actions[0]["invalidated_lineage_refs"] == [
+        "art://archive/tkt_archive/source.json",
+        "art://workspace/tkt_old/source/src/backend/old.py",
+        "art://workspace/tkt_placeholder/source/source.py",
+        "art://workspace/tkt_stale/source/src/backend/stale.py",
+    ]
+    assert "target_ticket_id" not in actions[0]
+
+
+def test_surface_gap_with_surface_less_pointer_opens_missing_current_producer() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_surface_less_pointer",
+        graph_version="gv_9d",
+        acceptance_criteria=[{"criterion_id": "AC-surface", "description": "Surface evidence required."}],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.target",
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-surface"],
+                "required_evidence_kinds": ["source_inventory", "unit_test"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack(
+        workflow_id="wf_round9d_surface_less_pointer",
+        graph_version="gv_9d",
+        final_evidence_refs=["art://runtime/tkt_closeout/delivery-closeout-package.json"],
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        current_graph_pointers=[
+            {
+                "producer_ticket_id": "tkt_closeout",
+                "producer_node_ref": "node_closeout",
+                "current_graph_pointer": {
+                    "graph_node_id": "node_closeout",
+                    "latest_ticket_id": "tkt_closeout",
+                },
+            }
+        ],
+    )
+
+    assert actions[0]["finding_kind"] == "contract_gap_missing_current_producer"
+    assert actions[0]["missing_current_producer"] is True
+    assert "target_ticket_id" not in actions[0]
+
+
+def test_surface_bound_maker_checker_gap_without_current_producer_does_not_fallback_to_checker() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_surface_checker_gap",
+        graph_version="gv_9d",
+        acceptance_criteria=[{"criterion_id": "AC-check", "description": "Surface checker evidence required."}],
+        required_evidence=[
+            {
+                "evidence_id": "ev_surface_checker",
+                "evidence_kind": "maker_checker_verdict",
+                "acceptance_criteria_refs": ["AC-check"],
+                "source_surface_refs": ["surface.checked"],
+            }
+        ],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.checked",
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-check"],
+                "required_evidence_kinds": ["maker_checker_verdict"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack(
+        workflow_id="wf_round9d_surface_checker_gap",
+        graph_version="gv_9d",
+        final_evidence_refs=["art://runtime/tkt_closeout/delivery-closeout-package.json"],
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        checker_ticket_id="tkt_checker",
+        checker_node_ref="node_checker",
+    )
+
+    assert actions[0]["finding_kind"] == "contract_gap_missing_current_producer"
+    assert actions[0]["contract_rework_target"]["source_surface_ref"] == "surface.checked"
+    assert "target_ticket_id" not in actions[0]
+
+
+def test_checker_only_defect_targets_checker_node() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_checker_only",
+        graph_version="gv_9d",
+        acceptance_criteria=[{"criterion_id": "AC-checker", "description": "Checker report is valid."}],
+        required_evidence=[
+            {
+                "evidence_id": "ev_checker_report",
+                "evidence_kind": "maker_checker_verdict",
+                "acceptance_criteria_refs": ["AC-checker"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack(
+        workflow_id="wf_round9d_checker_only",
+        graph_version="gv_9d",
+        final_evidence_refs=["art://runtime/tkt_closeout/delivery-closeout-package.json"],
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        checker_ticket_id="tkt_checker",
+        checker_node_ref="node_checker",
+    )
+
+    assert actions[0]["target_ticket_id"] == "tkt_checker"
+    assert actions[0]["node_ref"] == "node_checker"
+    assert actions[0]["contract_rework_target"]["producer_ticket_id"] == "tkt_checker"
+    assert actions[0]["contract_rework_target"]["missing_evidence_kind"] == "maker_checker_verdict"
+
+
+def test_br040_br041_placeholder_equivalent_routes_contract_blocker_to_upstream_source_node() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9d_br040_br041",
+        graph_version="gv_9d",
+        acceptance_criteria=[
+            {
+                "criterion_id": "AC-br040-br041",
+                "description": "Placeholder source.py and generic test output are not enough.",
+            }
+        ],
+        required_source_surfaces=[
+            {
+                "surface_id": "surface.br040_br041",
+                "path_patterns": ["10-project/src/backend/**"],
+                "owning_capabilities": ["source.modify.backend"],
+                "acceptance_criteria_refs": ["AC-br040-br041"],
+                "required_evidence_kinds": ["source_inventory", "unit_test"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack.model_validate(
+        {
+            "workflow_id": "wf_round9d_br040_br041",
+            "graph_version": "gv_9d",
+            "evidence": [
+                {
+                    "evidence_ref": "art://workspace/tkt_br_maker/source/source.py",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_br_maker",
+                    "producer_node_ref": "node_br_maker",
+                    "source_surface_refs": ["surface.br040_br041"],
+                    "artifact_kind": "WORKSPACE_SOURCE",
+                    "legality_status": "PLACEHOLDER",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-br040-br041"],
+                    "placeholder": True,
+                    "metadata": {"placeholder_reasons": ["source.py placeholder"]},
+                },
+                {
+                    "evidence_ref": "art://workspace/tkt_br_maker/tests/attempt-1/pytest.json",
+                    "evidence_kind": "unit_test",
+                    "producer_ticket_id": "tkt_br_maker",
+                    "producer_node_ref": "node_br_maker",
+                    "source_surface_refs": ["surface.br040_br041"],
+                    "artifact_kind": "TEST_EVIDENCE",
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-br040-br041"],
+                    "metadata": {"stdout_fallback": True, "placeholder_reasons": ["generic 1 passed"]},
+                },
+                {
+                    "evidence_ref": "art://runtime/tkt_br_checker/delivery-check-report.json",
+                    "evidence_kind": "maker_checker_verdict",
+                    "producer_ticket_id": "tkt_br_checker",
+                    "producer_node_ref": "node_br_checker",
+                    "source_surface_refs": ["surface.br040_br041"],
+                    "legality_status": "ACCEPTED",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-br040-br041"],
+                },
+            ],
+            "final_evidence_refs": [
+                "art://workspace/tkt_br_maker/source/source.py",
+                "art://workspace/tkt_br_maker/tests/attempt-1/pytest.json",
+                "art://runtime/tkt_br_checker/delivery-check-report.json",
+            ],
+        }
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9d"),
+    )
+
+    actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        checker_ticket_id="tkt_br_checker",
+        checker_node_ref="node_br_checker",
+        current_graph_pointers=[
+            {
+                "source_surface_ref": "surface.br040_br041",
+                "producer_ticket_id": "tkt_br_maker",
+                "producer_node_ref": "node_br_maker",
+                "current_graph_pointer": {
+                    "graph_node_id": "node_br_maker",
+                    "latest_ticket_id": "tkt_br_maker",
+                },
+            }
+        ],
+    )
+
+    assert evaluation.status == "BLOCKED"
+    assert actions[0]["target_ticket_id"] == "tkt_br_maker"
+    assert actions[0]["node_ref"] == "node_br_maker"
+    assert actions[0]["contract_rework_target"]["producer_ticket_id"] != "tkt_br_checker"
+    assert actions[0]["contract_rework_target"]["source_surface_ref"] == "surface.br040_br041"

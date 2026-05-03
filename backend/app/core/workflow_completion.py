@@ -10,6 +10,7 @@ from app.core.deliverable_contract import (
     DeliverableEvaluation,
     DeliverableEvaluationPolicy,
     compile_closeout_evidence_pack,
+    compile_contract_rework_recovery_actions,
     compile_deliverable_contract,
     checker_contract_gate,
     evaluate_deliverable_contract,
@@ -314,13 +315,13 @@ def _delivery_check_issue(
     return None
 
 
-def _delivery_check_contract_evaluation(
+def _delivery_check_contract_input(
     *,
     workflow_id: str,
     graph_version: str,
     ticket_id: str,
     payload: dict[str, Any],
-) -> DeliverableEvaluation | None:
+) -> tuple[DeliverableContract, DeliverableEvaluation, Any] | None:
     blocking_findings = []
     candidate_payloads = _payload_dicts_from_terminal_payload(payload)
     nested_payload = payload.get("payload")
@@ -379,19 +380,40 @@ def _delivery_check_contract_evaluation(
             "source": "workflow_completion.failed_delivery_check_report",
         },
     )
-    return evaluate_deliverable_contract(
+    evidence_pack = compile_closeout_evidence_pack(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        final_evidence_refs=[f"ticket://{ticket_id}/failed-delivery-report"],
+        closeout_summary={
+            "source": "workflow_completion.failed_delivery_check_report",
+            "maker_ticket_id": ticket_id,
+        },
+    )
+    evaluation = evaluate_deliverable_contract(
         contract,
-        compile_closeout_evidence_pack(
-            workflow_id=workflow_id,
-            graph_version=graph_version,
-            final_evidence_refs=[f"ticket://{ticket_id}/failed-delivery-report"],
-            closeout_summary={
-                "source": "workflow_completion.failed_delivery_check_report",
-                "maker_ticket_id": ticket_id,
-            },
-        ),
+        evidence_pack,
         DeliverableEvaluationPolicy(policy_ref="policy:round9c.failed_delivery_report"),
     )
+    return contract, evaluation, evidence_pack
+
+
+def _delivery_check_contract_evaluation(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    ticket_id: str,
+    payload: dict[str, Any],
+) -> DeliverableEvaluation | None:
+    compiled = _delivery_check_contract_input(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        ticket_id=ticket_id,
+        payload=payload,
+    )
+    if compiled is None:
+        return None
+    _, evaluation, _ = compiled
+    return evaluation
 
 
 def _checker_contract_gate_issue(
@@ -402,15 +424,17 @@ def _checker_contract_gate_issue(
     maker_payload: dict[str, Any],
     checker_ticket_id: str,
     checker_payload: dict[str, Any],
+    maker_node_ref: str | None = None,
 ) -> dict[str, Any] | None:
-    evaluation = _delivery_check_contract_evaluation(
+    compiled = _delivery_check_contract_input(
         workflow_id=workflow_id,
         graph_version=graph_version,
         ticket_id=maker_ticket_id,
         payload=maker_payload,
     )
-    if evaluation is None:
+    if compiled is None:
         return None
+    contract, evaluation, evidence_pack = compiled
     convergence_policy_payload = checker_payload.get("convergence_policy")
     convergence_policy = (
         ConvergencePolicy.model_validate(convergence_policy_payload)
@@ -425,6 +449,23 @@ def _checker_contract_gate_issue(
     )
     if gate.allowed:
         return None
+    contract_rework_actions = compile_contract_rework_recovery_actions(
+        contract=contract,
+        evaluation=evaluation,
+        evidence_pack=evidence_pack,
+        current_graph_pointers=[
+            {
+                "producer_ticket_id": maker_ticket_id,
+                "producer_node_ref": str(maker_node_ref or "").strip(),
+                "current_graph_pointer": {
+                    "graph_node_id": str(maker_node_ref or "").strip(),
+                    "latest_ticket_id": maker_ticket_id,
+                    "graph_version": graph_version,
+                },
+            }
+        ],
+        checker_ticket_id=checker_ticket_id,
+    )
     return _closeout_gate_issue(
         reason_code=gate.reason_code,
         ticket_id=checker_ticket_id,
@@ -434,6 +475,10 @@ def _checker_contract_gate_issue(
             "contract_id": gate.contract_id,
             "evaluation_fingerprint": gate.evaluation_fingerprint,
             "blocking_finding_count": gate.blocking_finding_count,
+            "blocking_findings": [
+                finding.model_dump(mode="json") for finding in gate.blocking_findings
+            ],
+            "contract_rework_actions": contract_rework_actions,
             "requires_convergence_policy": gate.requires_convergence_policy,
             "policy_ref": gate.policy_ref,
         },
@@ -745,6 +790,7 @@ def evaluate_workflow_closeout_gate_issue(
                     maker_payload=maker_payload,
                     checker_ticket_id=ticket_id,
                     checker_payload=terminal_payload,
+                    maker_node_ref=str(maker_ticket_spec.get("node_id") or "").strip(),
                 )
                 if issue is not None:
                     return issue

@@ -189,6 +189,14 @@ Rework 必须由结构化 finding 驱动：
 
 Rework target 必须指向能修复问题的 upstream node，而不是默认把 failed check report 再送回 checker。
 
+Round 9D 已把 deliverable contract gap 编译为 Phase 4 recovery input：
+
+- `finding_kind=deliverable_contract_gap` 生成 `progression.rework.deliverable_contract_gap`。
+- rework payload 必须携带结构化 `contract_rework_target`，包含 source surface、producer ticket/node、required capability、missing evidence kind、acceptance ref 和 current graph pointer。
+- source/test/git/check evidence gap 优先指向 current producer maker/source node；只有 checker 自身产出的 verdict/report 缺口才指向 checker node。
+- placeholder、archive、superseded、stale pointer evidence 只能作为 invalid lineage，不能作为 current producer。
+- 缺 current producer ticket 时生成 `progression.incident.contract_gap_missing_current_producer`，不得用 ticket `updated_at`、checker notes、graph terminal 或 closeout node 猜 target。
+
 ## Closeout 判断
 
 `CREATE_CLOSEOUT` 必须满足：

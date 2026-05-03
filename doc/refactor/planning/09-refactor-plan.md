@@ -122,14 +122,15 @@ Phase 4 边界：governance chain、architect/meeting gate、backlog fanout、cl
 
 目标：closeout 证明 PRD 满足，而不是 graph terminal。
 
-Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source surface / evidence pack 映射：
+Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source surface / evidence pack 映射，Round 9C 已完成 checker/convergence gate，Round 9D 已完成 upstream rework target routing：
 
 - `backend/app/core/deliverable_contract.py` 定义版本化 `DeliverableContract`、`DeliverableEvaluation` 和 `ContractFinding`。
 - `compile_deliverable_contract()` 可从结构化 PRD / charter / ticket acceptance 输入编译 contract。
 - `compile_deliverable_contract()` 可从 locked scope、governance/design/backlog assets 和 allowed write set metadata 编译 required source surfaces。
 - `EvidencePack` / `EvidenceItem` 映射 source/test/check/git/closeout evidence 到 acceptance criteria、source surface、producer ticket/node 和 artifact legality。
 - `evaluate_deliverable_contract()` 是纯函数 evaluator；9A 覆盖 missing acceptance、missing required evidence、unknown evidence kind 和 empty final evidence，9B 覆盖 invalid evidence、placeholder/source-test fallback、acceptance 缺 required source/test/check/git/closeout evidence。
-- Round 9C 已把 checker verdict gate 接到 `DeliverableEvaluation`，并要求 failed delivery report 只有结构化 `ConvergencePolicy` 才能放行；rework target upstream routing 和 closeout final evidence table 仍留给 9D/9E。
+- Round 9C 已把 checker verdict gate 接到 `DeliverableEvaluation`，并要求 failed delivery report 只有结构化 `ConvergencePolicy` 才能放行。
+- Round 9D 已把 blocking `ContractFinding` 编译成 Phase 4 recovery input，rework target 指向 source surface / producer ticket / producer node，缺 current producer 时输出 incident，不默认回 checker、graph terminal 或 closeout。
 
 任务：
 
@@ -138,7 +139,7 @@ Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source
 - [x] 将 required source surfaces 映射到 capability write surfaces 和 required evidence kinds（Round 9B）。
 - [x] 将 evidence pack 映射到 acceptance criteria，并拒绝 superseded/placeholder/archive/unknown/stale pointer evidence（Round 9B）。
 - [x] checker verdict 与 deliverable contract 解耦（Round 9C）。
-- rework target 指向能修问题的 upstream node。
+- [x] rework target 指向能修问题的 upstream node（Round 9D）。
 - [x] `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap（Round 9C）。
 
 验收：
@@ -153,7 +154,12 @@ Round 9B/9C 证据：
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q` -> `42 passed, 1 warning`。
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q` -> `3 passed`。
 
-下一入口：Round 9D Rework target upstream routing。不得开始 closeout final evidence table 收口。
+Round 9D 证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_progression.py -q` 覆盖 upstream source node、missing test evidence、checker-only defect、missing current producer incident、controller recovery input 和 BR-040/BR-041 placeholder 等价。
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework -q` 覆盖 failed delivery checker rework upstream target。
+
+下一入口：Round 9E Closeout final evidence 与 Phase 5 验收。不得把 9D rework target 证据当作 closeout final evidence table 收口。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 
