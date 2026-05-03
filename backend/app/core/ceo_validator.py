@@ -5,6 +5,7 @@ from typing import Any
 from app.contracts.ceo_actions import (
     CEOActionBatch,
     CEOActionType,
+    CEOCreateTicketPayload,
 )
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
@@ -61,6 +62,83 @@ def _action_entry(action, reason: str, details: dict[str, Any] | None = None) ->
     if details is not None:
         entry["details"] = details
     return entry
+
+
+def _matching_policy_create_ticket_proposal(snapshot: dict[str, Any], action) -> dict[str, Any] | None:
+    proposals = snapshot.get("progression_policy_proposals")
+    if not isinstance(proposals, list):
+        return None
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            continue
+        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+            continue
+        payload = proposal.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        ticket_payload = payload.get("ticket_payload")
+        if not isinstance(ticket_payload, dict):
+            continue
+        try:
+            normalized_policy_payload = CEOCreateTicketPayload.model_validate(ticket_payload).model_dump(mode="json")
+        except ValueError:
+            continue
+        if normalized_policy_payload == action.payload.model_dump(mode="json"):
+            return proposal
+    return None
+
+
+def _has_matching_policy_create_ticket_proposal_for_route(
+    snapshot: dict[str, Any],
+    action,
+) -> bool:
+    proposals = snapshot.get("progression_policy_proposals")
+    if not isinstance(proposals, list):
+        return False
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            continue
+        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+            continue
+        payload = proposal.get("payload")
+        ticket_payload = payload.get("ticket_payload") if isinstance(payload, dict) else None
+        if not isinstance(ticket_payload, dict):
+            continue
+        if (
+            str(ticket_payload.get("node_id") or "").strip() == action.payload.node_id
+            and str(ticket_payload.get("role_profile_ref") or "").strip() == action.payload.role_profile_ref
+            and str(ticket_payload.get("output_schema_ref") or "").strip() == action.payload.output_schema_ref
+        ):
+            return True
+    return False
+
+
+def _snapshot_requires_policy_meeting(snapshot: dict[str, Any]) -> bool:
+    proposals = snapshot.get("progression_policy_proposals")
+    if not isinstance(proposals, list):
+        return False
+    return any(
+        isinstance(proposal, dict)
+        and str(proposal.get("action_type") or "").strip() == "WAIT"
+        and str(
+            (
+                (proposal.get("metadata") or {}).get("reason_code")
+                if isinstance(proposal.get("metadata"), dict)
+                else ""
+            )
+            or ""
+        ).strip()
+        == "progression.wait.meeting_requirement"
+        for proposal in proposals
+    )
+
+
+def _request_meeting_requires_policy_gate(snapshot: dict[str, Any]) -> bool:
+    controller_state = controller_state_view(snapshot)
+    return (
+        str(controller_state.get("state") or "").strip() == "MEETING_REQUIRED"
+        or str(controller_state.get("recommended_action") or "").strip() == CEOActionType.REQUEST_MEETING.value
+    )
 
 
 def _snapshot_allows_capacity_hire(
@@ -273,6 +351,14 @@ def validate_ceo_action_batch(
                     _action_entry(action, "Meeting requests require the current CEO snapshot for validation.")
                 )
                 continue
+            if _request_meeting_requires_policy_gate(snapshot) and not _snapshot_requires_policy_meeting(snapshot):
+                rejected_actions.append(
+                    _action_entry(
+                        action,
+                        "Meeting requests require a structured progression policy meeting requirement.",
+                    )
+                )
+                continue
             candidate = next(
                 (
                     item
@@ -461,6 +547,34 @@ def validate_ceo_action_batch(
             if node_view.materialization_state == MATERIALIZATION_STATE_MATERIALIZED:
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
+            if snapshot is not None:
+                policy_proposal = _matching_policy_create_ticket_proposal(snapshot, action)
+                if policy_proposal is not None:
+                    metadata = policy_proposal.get("metadata") if isinstance(policy_proposal.get("metadata"), dict) else {}
+                    accepted_actions.append(
+                        _action_entry(
+                            action,
+                            "CREATE_TICKET matches the current progression policy proposal.",
+                            details={
+                                "reason_code": str((metadata or {}).get("reason_code") or ""),
+                                "idempotency_key": str((metadata or {}).get("idempotency_key") or ""),
+                                "source_graph_version": str((metadata or {}).get("source_graph_version") or ""),
+                                "affected_node_refs": list((metadata or {}).get("affected_node_refs") or []),
+                                "expected_state_transition": str(
+                                    (metadata or {}).get("expected_state_transition") or ""
+                                ),
+                            },
+                        )
+                    )
+                    continue
+                if _has_matching_policy_create_ticket_proposal_for_route(snapshot, action):
+                    rejected_actions.append(
+                        _action_entry(
+                            action,
+                            "CREATE_TICKET route matches a progression policy proposal, but the payload does not match exactly.",
+                        )
+                    )
+                    continue
             if snapshot is not None:
                 required_governance_ticket_plan = (
                     capability_plan_view(snapshot).get("required_governance_ticket_plan")

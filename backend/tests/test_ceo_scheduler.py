@@ -8,7 +8,7 @@ import pytest
 import app.core.graph_health as graph_health_module
 import tests.test_api as api_test_helpers
 
-from app.contracts.ceo_actions import CEOActionBatch
+from app.contracts.ceo_actions import CEOActionBatch, CEOActionType
 from app.core.ceo_snapshot import build_ceo_shadow_snapshot
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_SCOPE_NODE_ID,
@@ -377,6 +377,8 @@ def _persist_workflow_directive_details(
     *,
     workflow_profile: str | None = None,
     hard_constraints: list[str] | None = None,
+    governance_requirements: dict | None = None,
+    progression_policy_input: dict | None = None,
 ) -> None:
     with repository.transaction() as connection:
         rows = connection.execute(
@@ -394,6 +396,10 @@ def _persist_workflow_directive_details(
                 payload["workflow_profile"] = workflow_profile
             if hard_constraints is not None:
                 payload["hard_constraints"] = list(hard_constraints)
+            if governance_requirements is not None:
+                payload["governance_requirements"] = dict(governance_requirements)
+            if progression_policy_input is not None:
+                payload["progression_policy_input"] = dict(progression_policy_input)
             connection.execute(
                 "UPDATE events SET payload_json = ? WHERE event_id = ?",
                 (json.dumps(payload, sort_keys=True), row["event_id"]),
@@ -5094,6 +5100,250 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
     ]
     assert snapshot["capability_plan"]["followup_ticket_plans"][0]["blocked_by_plan_keys"] == []
     assert snapshot["capability_plan"]["followup_ticket_plans"][1]["blocked_by_plan_keys"] == ["BR-BE-01"]
+    policy_proposal = snapshot["progression_policy_proposals"][0]
+    assert policy_proposal["action_type"] == "CREATE_TICKET"
+    assert policy_proposal["metadata"]["reason_code"] == "progression.fanout.backlog_handoff_ticket"
+    assert policy_proposal["metadata"]["source_graph_version"] == snapshot["ticket_graph"]["graph_version"]
+    assert policy_proposal["metadata"]["affected_node_refs"]
+
+
+def test_ceo_shadow_snapshot_ignores_legacy_hard_constraint_gate_hints_without_structured_requirements(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_backlog_legacy_gate_hint_ignored",
+        "Legacy gate hint text must not block fanout",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        hard_constraints=[
+            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
+            "关键实现前必须先通过 technical decision meeting 锁定实现边界。",
+        ],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_legacy_hint",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="legacy_gate_hint_ignored",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_legacy_hint",
+        node_id="node_ceo_backlog_legacy_hint",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_legacy_hint",
+    )
+
+    assert snapshot["capability_plan"]["requires_architect"] is False
+    assert snapshot["capability_plan"]["requires_meeting"] is False
+    assert snapshot["capability_plan"]["required_governance_ticket_plan"] is None
+    assert snapshot["controller_state"]["state"] == "READY_FOR_FANOUT"
+    assert snapshot["controller_state"]["recommended_action"] == "CREATE_TICKET"
+    assert snapshot["progression_policy_proposals"][0]["metadata"]["reason_code"] == (
+        "progression.fanout.backlog_handoff_ticket"
+    )
+
+
+def test_ceo_validator_rejects_create_ticket_that_only_partially_matches_policy_payload(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_policy_payload_exact_match",
+        "Policy create-ticket payload matching must be exact",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_policy_exact",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_policy_wrong",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="policy_payload_exact",
+    )
+    _create_and_complete_backlog_recommendation_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_backlog_policy_exact",
+        node_id="node_ceo_backlog_policy_exact",
+        tickets=[
+            {
+                "ticket_id": "BR-BE-01",
+                "name": "借阅后端 API 交付",
+                "priority": "P0",
+                "target_role": "backend_engineer",
+                "scope": ["借阅服务", "REST API"],
+            }
+        ],
+        dependency_graph=[
+            {"ticket_id": "BR-BE-01", "depends_on": [], "reason": "后端服务可先行。"},
+        ],
+        recommended_sequence=[
+            "BR-BE-01 借阅后端 API 交付",
+        ],
+    )
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="TICKET_COMPLETED",
+        trigger_ref="tkt_backlog_policy_exact",
+    )
+    policy_payload = snapshot["progression_policy_proposals"][0]["payload"]["ticket_payload"]
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot=snapshot,
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Try to change the policy-selected assignee.",
+                "actions": [
+                    {
+                        "action_type": "CREATE_TICKET",
+                        "payload": {
+                            **policy_payload,
+                            "dispatch_intent": {
+                                **policy_payload["dispatch_intent"],
+                                "assignee_employee_id": "emp_backend_policy_wrong",
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert result["accepted_actions"] == []
+    assert "progression policy proposal" in result["rejected_actions"][0]["reason"]
+
+
+def test_ceo_shadow_snapshot_uses_structured_fanout_graph_patch_plan(
+    client,
+    monkeypatch,
+):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_structured_graph_patch_fanout",
+        "Structured graph patch fanout should enter progression policy",
+    )
+    _persist_workflow_directive_details(
+        client.app.state.repository,
+        workflow_id,
+        workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
+        progression_policy_input={
+            "governance": {
+                "completed_outputs": [
+                    {
+                        "output_schema_ref": BACKLOG_RECOMMENDATION_SCHEMA_REF,
+                        "ticket_id": "tkt_structured_graph_patch_backlog",
+                        "approved": True,
+                    }
+                ]
+            },
+            "fanout": {
+                "fanout_graph_patch_plan": {
+                    "patch_ref": "graph_patch:structured:1",
+                    "source_ticket_id": "tkt_graph_patch_source",
+                    "source_graph_version": "gv_structured_patch_0",
+                    "ticket_plans": [
+                        {
+                            "ticket_key": "BR-PATCH-01",
+                            "candidate_ref": "graph_patch:structured:1:BR-PATCH-01",
+                            "node_ref": "graph:patch:br-patch-01",
+                            "ticket_payload": {
+                                "workflow_id": workflow_id,
+                                "node_id": "node_graph_patch_followup_br_patch_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": "source_code_delivery",
+                                "execution_contract": infer_execution_contract_payload(
+                                    role_profile_ref="backend_engineer_primary",
+                                    output_schema_ref="source_code_delivery",
+                                ),
+                                "dispatch_intent": {
+                                    "assignee_employee_id": "emp_backend_graph_patch",
+                                    "selection_reason": "Create the graph patch fanout ticket from structured policy input.",
+                                    "dependency_gate_refs": [],
+                                },
+                                "summary": "BR-PATCH-01 Deliver graph patch follow-up.",
+                                "parent_ticket_id": "tkt_graph_patch_source",
+                            },
+                        }
+                    ],
+                }
+            }
+        },
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_graph_patch",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_minimum_governance_chain(
+        client,
+        workflow_id=workflow_id,
+        ticket_prefix="structured_graph_patch",
+        existing_schema_refs={BACKLOG_RECOMMENDATION_SCHEMA_REF},
+    )
+
+    snapshot = build_ceo_shadow_snapshot(
+        client.app.state.repository,
+        workflow_id=workflow_id,
+        trigger_type="MANUAL_TEST",
+        trigger_ref="manual:structured-graph-patch",
+    )
+
+    proposal = snapshot["progression_policy_proposals"][0]
+    assert proposal["action_type"] == "CREATE_TICKET"
+    assert proposal["metadata"]["reason_code"] == "progression.fanout.graph_patch_ticket"
+    assert proposal["metadata"]["source_graph_version"] == snapshot["ticket_graph"]["graph_version"]
+    assert proposal["metadata"]["affected_node_refs"] == ["graph:patch:br-patch-01"]
+    assert proposal["payload"]["candidate_ref"] == "graph_patch:structured:1:BR-PATCH-01"
 
 
 def test_controller_waits_when_graph_health_critical_recommends_pause(client, monkeypatch):
@@ -5626,6 +5876,76 @@ def test_backlog_followup_batch_uses_existing_ticket_ids_from_capability_plan_wh
     assert payload["node_id"] == "node_backlog_followup_br_db_01"
     assert payload["dispatch_intent"]["dependency_gate_refs"] == ["tkt_existing_followup_be"]
     assert payload["parent_ticket_id"] == "tkt_backlog_parent"
+
+
+def test_deterministic_fallback_does_not_create_backlog_followup_without_policy_proposal(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_no_legacy_backlog_fallback",
+        "Backlog fanout must come from progression policy proposals",
+    )
+    repository = client.app.state.repository
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_backend_no_policy",
+        role_type="backend_engineer",
+        role_profile_refs=["backend_engineer_primary"],
+    )
+    from app.core import ceo_proposer
+
+    snapshot = {
+        "workflow": {"workflow_id": workflow_id},
+        "replan_focus": {
+            "controller_state": {
+                "state": "READY_FOR_FANOUT",
+                "recommended_action": "CREATE_TICKET",
+                "blocking_reason": None,
+            },
+            "capability_plan": {
+                "followup_ticket_plans": [
+                    {
+                        "ticket_key": "BR-BE-01",
+                        "existing_ticket_id": None,
+                        "blocked_by_plan_keys": [],
+                        "ticket_payload": {
+                            "workflow_id": workflow_id,
+                            "node_id": "node_backlog_followup_br_be_01",
+                            "role_profile_ref": "backend_engineer_primary",
+                            "output_schema_ref": "source_code_delivery",
+                            "execution_contract": infer_execution_contract_payload(
+                                role_profile_ref="backend_engineer_primary",
+                                output_schema_ref="source_code_delivery",
+                            ),
+                            "dispatch_intent": {
+                                "assignee_employee_id": "emp_backend_no_policy",
+                                "selection_reason": "Legacy fallback must not be enough for Round 8C fanout.",
+                                "dependency_gate_refs": [],
+                            },
+                            "summary": "BR-BE-01 借阅后端 API 交付",
+                            "parent_ticket_id": "tkt_backlog_parent",
+                        },
+                    }
+                ],
+                "progression_policy_proposals": [],
+            },
+            "task_sensemaking": {"task_type": "implementation_fanout"},
+            "meeting_candidates": [],
+        },
+        "progression_policy_proposals": [],
+        "ticket_summary": {"active_count": 0},
+        "approvals": [],
+        "incidents": [],
+    }
+
+    batch = ceo_proposer.build_deterministic_fallback_batch(
+        repository,
+        snapshot,
+        "Create the next policy-selected backlog ticket.",
+    )
+
+    assert batch.actions[0].action_type == CEOActionType.NO_ACTION
+    assert "policy proposal" in batch.actions[0].payload.reason
 
 
 def test_deterministic_fallback_prefers_missing_backlog_followup_over_closeout(client, monkeypatch):
@@ -6412,9 +6732,15 @@ def test_ceo_shadow_snapshot_exposes_required_governance_ticket_plan_when_archit
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:doc-gap",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     _seed_board_approved_employee(
         client,
@@ -6749,9 +7075,15 @@ def test_ceo_shadow_snapshot_treats_any_approved_architect_governance_document_a
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:ready",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": approved_schema_ref,
+                }
+            ]
+        },
     )
     _seed_board_approved_employee(
         client,
@@ -6822,9 +7154,15 @@ def test_ceo_shadow_run_hires_architect_before_backlog_followup_when_required(cl
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:hire",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _create_and_complete_minimum_governance_chain(
@@ -7078,9 +7416,15 @@ def test_ceo_shadow_run_creates_architect_governance_ticket_before_backlog_follo
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:doc-ticket",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     _seed_board_approved_employee(
         client,
@@ -7177,10 +7521,14 @@ def test_ceo_shadow_run_requests_meeting_before_backlog_followup_when_required(c
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-            "关键实现前必须先通过技术决策会议锁定实现边界。",
-        ],
+        governance_requirements={
+            "meeting_requirements": [
+                {
+                    "requirement_ref": "meeting:req:implementation-boundary",
+                    "required_meeting_type": "TECHNICAL_DECISION",
+                }
+            ]
+        },
     )
     monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
     _seed_board_approved_employee(
@@ -7443,9 +7791,15 @@ def test_ceo_validator_accepts_required_architect_governance_ticket_plan_and_rej
         client.app.state.repository,
         workflow_id,
         workflow_profile="CEO_AUTOPILOT_FINE_GRAINED",
-        hard_constraints=[
-            "CEO 必须真实招聘并真实使用 architect_primary，系统分析职责并入架构治理链。",
-        ],
+        governance_requirements={
+            "required_gates": [
+                {
+                    "gate_ref": "gate:architect:validate",
+                    "gate_type": "ARCHITECT_GOVERNANCE",
+                    "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                }
+            ]
+        },
     )
     _seed_board_approved_employee(
         client,
@@ -7529,23 +7883,76 @@ def test_ceo_validator_accepts_required_architect_governance_ticket_plan_and_rej
             {
                 "summary": "Create the required architect governance document.",
                 "actions": [
+                        {
+                            "action_type": "CREATE_TICKET",
+                            "payload": required_plan["ticket_payload"],
+                        }
+                    ],
+                }
+        ),
+    )
+    assert len(accepted_result["accepted_actions"]) == 1
+    assert accepted_result["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
+    assert accepted_result["rejected_actions"] == []
+
+
+def test_ceo_validator_rejects_request_meeting_without_structured_policy_requirement(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_meeting_policy_required",
+        "Meeting requests must come from structured policy",
+    )
+
+    result = validate_ceo_action_batch(
+        client.app.state.repository,
+        snapshot={
+            "replan_focus": {
+                "controller_state": {
+                    "state": "MEETING_REQUIRED",
+                    "recommended_action": "REQUEST_MEETING",
+                    "blocking_reason": "Legacy candidate should not be enough.",
+                },
+                "capability_plan": {},
+                "meeting_candidates": [
                     {
-                        "action_type": "CREATE_TICKET",
+                        "eligible": True,
+                        "source_ticket_id": "tkt_legacy_meeting_source",
+                        "source_graph_node_id": "node_legacy_meeting_source",
+                        "topic": "Lock implementation boundary",
+                        "participant_employee_ids": ["emp_architect", "emp_checker"],
+                        "recorder_employee_id": "emp_checker",
+                        "input_artifact_refs": [],
+                    }
+                ],
+            },
+            "progression_policy_proposals": [],
+        },
+        action_batch=CEOActionBatch.model_validate(
+            {
+                "summary": "Try to request a legacy meeting candidate.",
+                "actions": [
+                    {
+                        "action_type": "REQUEST_MEETING",
                         "payload": {
-                            **required_plan["ticket_payload"],
-                            "dispatch_intent": {
-                                **required_plan["ticket_payload"]["dispatch_intent"],
-                                "selection_reason": "Follow the required architect governance ticket plan exactly.",
-                            },
+                            "workflow_id": workflow_id,
+                            "meeting_type": "TECHNICAL_DECISION",
+                            "source_graph_node_id": "node_legacy_meeting_source",
+                            "source_ticket_id": "tkt_legacy_meeting_source",
+                            "topic": "Lock implementation boundary",
+                            "participant_employee_ids": ["emp_architect", "emp_checker"],
+                            "recorder_employee_id": "emp_checker",
+                            "input_artifact_refs": [],
+                            "reason": "Legacy candidate should not bypass policy.",
                         },
                     }
                 ],
             }
         ),
     )
-    assert len(accepted_result["accepted_actions"]) == 1
-    assert accepted_result["accepted_actions"][0]["action_type"] == "CREATE_TICKET"
-    assert accepted_result["rejected_actions"] == []
+
+    assert result["accepted_actions"] == []
+    assert "structured progression policy meeting requirement" in result["rejected_actions"][0]["reason"]
 
 
 def test_ceo_shadow_run_marks_deferred_board_escalation(client, monkeypatch):

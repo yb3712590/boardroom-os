@@ -781,5 +781,7 @@ def _build_ceo_shadow_snapshot_from_connection(
         "task_sensemaking": controller_view["task_sensemaking"],
         "capability_plan": controller_view["capability_plan"],
         "controller_state": controller_view["controller_state"],
+        "progression_policy": controller_view["progression_policy"],
+        "progression_policy_proposals": controller_view["progression_policy_proposals"],
         "ticket_graph": ticket_graph_snapshot.model_dump(mode="json"),
     }

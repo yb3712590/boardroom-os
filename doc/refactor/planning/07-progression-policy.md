@@ -33,6 +33,21 @@ decide_next_actions(snapshot, policy) -> ActionProposal[]
 - `decide_next_actions()` 为 open approval、open incident、in-flight runtime、graph reduction issue、stale/orphan pending、blocked node 无恢复动作、graph complete 输出稳定 `WAIT` / `INCIDENT` / `NO_ACTION` reason code。
 - `ticket_graph.py` 仍是 DB snapshot facade，但 index summary 通过 policy evaluation 回填；controller 只保留 8E 前的兼容壳，fanout、meeting/architect、closeout/rework/restore 主判断尚未迁移。
 
+## Round 8C 实现状态
+
+8C 已把 governance chain、architect gate、meeting gate 和 backlog fanout 的推进输入迁到结构化 policy：
+
+- `ProgressionPolicy.governance` 现在消费 `chain_order`、`completed_outputs`、`chain_ticket_plans`、`required_gates`、`meeting_requirements` 和 `approved_meeting_evidence`。
+- `ProgressionPolicy.fanout` 现在消费 `backlog_implementation_handoff`、`fanout_graph_patch_plan` 和 `existing_ticket_ids_by_node_ref`。
+- `decide_next_actions(snapshot, policy)` 会为治理链下一文档、结构化 architect governance gate、结构化 meeting requirement、backlog handoff fanout 和 graph patch fanout 输出 `CREATE_TICKET` / `WAIT` / `NO_ACTION` proposal。
+- 8C 新增稳定 reason code：`progression.governance.followup_required`、`progression.governance.architect_gate_required`、`progression.wait.meeting_requirement`、`progression.fanout.backlog_handoff_ticket`、`progression.fanout.graph_patch_ticket`。
+- `CREATE_TICKET` proposal metadata 保留 8A contract：reason code、idempotency key、source graph version、affected node refs、expected state transition 和 policy ref；fanout payload 额外携带 source graph version、source ticket 和具体 plan。
+- `workflow_controller.py` 只读取 DB/artifact 来编译 structured policy input，不把 backlog recommendation artifact 正文交给 `decide_next_actions()`。`hard_constraints` 只保留为 snapshot/display 字段，不再驱动 `requires_architect`、`requires_meeting` 或 fanout。
+- controller 可透传 workflow/directive 中已编译的 `progression_policy_input.governance` / `progression_policy_input.fanout.fanout_graph_patch_plan`；8C 不从 graph patch placeholder node 或 freeform 文本硬造 create-ticket payload。
+- CEO proposer 优先消费 `progression_policy_proposals` 中的 `CREATE_TICKET` payload；validator 接受与 policy proposal 匹配的 create-ticket action，并在 accepted details 中保留 policy metadata。
+
+8C 未迁移 closeout、retry/restore、BR-100 loop 或 incident followup 主判断；失败票 recovery meeting 也仍保留 8D 前兼容路径。controller 中 graph wait/ready/blocked、closeout gate 和 recovery orchestration 仍是 8E 前兼容壳。
+
 ## 输入
 
 Policy engine 输入必须是结构化对象：
@@ -171,12 +186,13 @@ Rework target 必须指向能修复问题的 upstream node，而不是默认把 
 - Round 8A：相同 snapshot + policy 输出稳定 action proposals。
 - Round 8B：policy 单测覆盖 `REPLACES` current pointer、`CANCELLED` / `SUPERSEDED` effective edge 排除、orphan pending 不阻断 graph complete，以及 approval/incident/in-flight/blocked/graph reduction/stale-orphan reason code。
 - Round 8B：ticket graph facade 测试覆盖 runtime pointer 优先于 newer stale `updated_at`，以及缺 explicit pointer 时产生 graph reduction issue。
+- Round 8C：policy 单测覆盖无结构化 requirement 时 legacy hint text 不触发 architect/meeting gate，结构化 architect gate 产生稳定 `CREATE_TICKET` metadata，meeting requirement 缺 evidence 时 `WAIT`，backlog handoff / graph patch 产生 fanout ticket，只有 completed `milestone_plan` 时不 fanout。
 - 015 中出现的 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 都能由 policy 测试覆盖。
 - Scheduler 不再承担业务推进判断。
 
 ## 后续批次依赖
 
 - Round 8B：已把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
-- Round 8C：把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch；8B 已提供 current/effective indexes，8C 不应重新引入 substring hint 或 hardcoded milestone fanout。
-- Round 8D：把 closeout、rework、restore 和 incident follow-up 推进判断迁入 policy。
-- Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断，并补齐 Phase 4 全部验收证据。
+- Round 8C：已把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch，并删除 substring hint / hardcoded milestone fanout 作为推进依据。
+- Round 8D：把 closeout、rework、retry/restore、BR-100 loop 和 incident follow-up 推进判断迁入 policy。
+- Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断和兼容展示壳，并补齐 Phase 4 全部验收证据。

@@ -644,6 +644,479 @@ def _ids_from_records(records: list[dict[str, JsonValue]], key: str) -> list[str
     return _stable_unique_strings([str(record.get(key) or "").strip() for record in records])
 
 
+def _records_from_policy_section(section: dict[str, JsonValue], key: str) -> list[dict[str, JsonValue]]:
+    value = section.get(key)
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _record_output_schema_ref(record: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(record.get("output_schema_ref"))
+        or _record_ref(record.get("required_output_schema_ref"))
+        or _record_ref(record.get("schema_ref"))
+    )
+
+
+def _completed_governance_output_refs(governance: dict[str, JsonValue]) -> set[str]:
+    completed_refs: set[str] = set()
+    completed_outputs = governance.get("completed_outputs")
+    if isinstance(completed_outputs, dict):
+        completed_refs.update(
+            str(key).strip()
+            for key, value in completed_outputs.items()
+            if str(key).strip() and bool(value)
+        )
+    for record in _records_from_policy_section(governance, "completed_outputs"):
+        schema_ref = _record_output_schema_ref(record)
+        if schema_ref and (
+            _record_ref(record.get("ticket_id"))
+            or _record_ref(record.get("artifact_ref"))
+            or _record_ref(record.get("output_ref"))
+            or bool(record.get("approved", True))
+        ):
+            completed_refs.add(schema_ref)
+    return completed_refs
+
+
+def _approved_meeting_requirement_refs(governance: dict[str, JsonValue]) -> set[str]:
+    approved_refs: set[str] = set()
+    for record in _records_from_policy_section(governance, "approved_meeting_evidence"):
+        review_status = _record_ref(record.get("review_status")).upper()
+        if review_status and review_status not in {"APPROVED", "APPROVED_WITH_NOTES"}:
+            continue
+        requirement_ref = _record_ref(record.get("requirement_ref"))
+        if requirement_ref:
+            approved_refs.add(requirement_ref)
+        source_ticket_id = _record_ref(record.get("source_ticket_id"))
+        required_meeting_type = _record_ref(record.get("required_meeting_type"))
+        if source_ticket_id and required_meeting_type:
+            approved_refs.add(f"{source_ticket_id}:{required_meeting_type}")
+    return approved_refs
+
+
+def _proposal_node_ref(record: dict[str, JsonValue], ticket_payload: dict[str, JsonValue] | None = None) -> str:
+    ticket_payload = ticket_payload or {}
+    return (
+        _record_ref(record.get("node_ref"))
+        or _record_ref(record.get("graph_node_id"))
+        or _record_ref(record.get("node_id"))
+        or _record_ref(ticket_payload.get("node_ref"))
+        or _record_ref(ticket_payload.get("node_id"))
+    )
+
+
+def _create_ticket_policy_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    *,
+    reason_code: str,
+    candidate_ref: str,
+    ticket_payload: dict[str, JsonValue],
+    affected_node_refs: list[str],
+    idempotency_components: dict[str, Any],
+    extra_payload: dict[str, JsonValue] | None = None,
+) -> ActionProposal:
+    payload: dict[str, JsonValue] = {
+        "candidate_ref": candidate_ref,
+        "ticket_payload": dict(ticket_payload),
+    }
+    if extra_payload:
+        payload.update(dict(extra_payload))
+    return ActionProposal(
+        action_type=ProgressionActionType.CREATE_TICKET,
+        metadata=build_action_metadata(
+            action_type=ProgressionActionType.CREATE_TICKET,
+            reason_code=reason_code,
+            source_graph_version=snapshot.graph_version,
+            affected_node_refs=affected_node_refs,
+            expected_state_transition="TICKET_CREATED",
+            policy_ref=policy.policy_ref,
+            idempotency_components=idempotency_components,
+        ),
+        payload=payload,
+    )
+
+
+def _governance_gate_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    governance = dict(policy.governance)
+    completed_output_refs = _completed_governance_output_refs(governance)
+    for gate in sorted(
+        _records_from_policy_section(governance, "required_gates"),
+        key=lambda item: (
+            _record_ref(item.get("gate_ref")),
+            _record_ref(item.get("source_ticket_id")),
+            _proposal_node_ref(item),
+        ),
+    ):
+        if bool(gate.get("satisfied")):
+            continue
+        required_output_schema_ref = _record_ref(gate.get("required_output_schema_ref"))
+        if (
+            "satisfied" not in gate
+            and required_output_schema_ref
+            and required_output_schema_ref in completed_output_refs
+        ):
+            continue
+        existing_ticket_id = _record_ref(gate.get("existing_ticket_id"))
+        node_ref = _proposal_node_ref(gate)
+        gate_ref = _record_ref(gate.get("gate_ref")) or f"gate:{node_ref or required_output_schema_ref}"
+        if existing_ticket_id:
+            return ActionProposal(
+                action_type=ProgressionActionType.WAIT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.WAIT,
+                    reason_code="progression.wait.governance_gate_existing_ticket",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="WAITING_ON_GOVERNANCE_GATE",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={
+                        "gate_ref": gate_ref,
+                        "existing_ticket_id": existing_ticket_id,
+                    },
+                ),
+                payload={
+                    "wake_condition": "governance_gate_ticket_completed",
+                    "governance_gate": dict(gate),
+                },
+            )
+        ticket_payload = gate.get("ticket_payload")
+        if not isinstance(ticket_payload, dict):
+            continue
+        reason_code = (
+            "progression.governance.architect_gate_required"
+            if _record_ref(gate.get("gate_type")).upper() == "ARCHITECT_GOVERNANCE"
+            else "progression.governance.gate_required"
+        )
+        return _create_ticket_policy_proposal(
+            snapshot,
+            policy,
+            reason_code=reason_code,
+            candidate_ref=gate_ref,
+            ticket_payload=dict(ticket_payload),
+            affected_node_refs=[node_ref] if node_ref else [],
+            idempotency_components={
+                "gate_ref": gate_ref,
+                "required_output_schema_ref": required_output_schema_ref,
+                "ticket_payload": ticket_payload,
+            },
+            extra_payload={"governance_gate": dict(gate)},
+        )
+    return None
+
+
+def _governance_chain_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    governance = dict(policy.governance)
+    chain_order = [
+        str(item).strip()
+        for item in list(governance.get("chain_order") or [])
+        if str(item).strip()
+    ]
+    if not chain_order:
+        return None
+    completed_output_refs = _completed_governance_output_refs(governance)
+    next_schema_ref = next(
+        (schema_ref for schema_ref in chain_order if schema_ref not in completed_output_refs),
+        None,
+    )
+    if next_schema_ref is None:
+        return None
+    ticket_plans = _records_from_policy_section(governance, "chain_ticket_plans")
+    ticket_plans.extend(_records_from_policy_section(governance, "ticket_plans"))
+    for plan in sorted(
+        ticket_plans,
+        key=lambda item: (_record_ref(item.get("output_schema_ref")), _proposal_node_ref(item)),
+    ):
+        if _record_ref(plan.get("output_schema_ref")) != next_schema_ref:
+            continue
+        existing_ticket_id = _record_ref(plan.get("existing_ticket_id"))
+        ticket_payload = plan.get("ticket_payload")
+        node_ref = _proposal_node_ref(plan, ticket_payload if isinstance(ticket_payload, dict) else None)
+        candidate_ref = _record_ref(plan.get("candidate_ref")) or f"governance:{next_schema_ref}"
+        if existing_ticket_id:
+            return ActionProposal(
+                action_type=ProgressionActionType.WAIT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.WAIT,
+                    reason_code="progression.wait.governance_followup_existing_ticket",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="WAITING_ON_GOVERNANCE_FOLLOWUP",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={
+                        "candidate_ref": candidate_ref,
+                        "existing_ticket_id": existing_ticket_id,
+                    },
+                ),
+                payload={
+                    "wake_condition": "governance_followup_ticket_completed",
+                    "governance_followup": dict(plan),
+                },
+            )
+        if not isinstance(ticket_payload, dict):
+            return None
+        return _create_ticket_policy_proposal(
+            snapshot,
+            policy,
+            reason_code="progression.governance.followup_required",
+            candidate_ref=candidate_ref,
+            ticket_payload=dict(ticket_payload),
+            affected_node_refs=[node_ref] if node_ref else [],
+            idempotency_components={
+                "candidate_ref": candidate_ref,
+                "output_schema_ref": next_schema_ref,
+                "ticket_payload": ticket_payload,
+            },
+            extra_payload={"governance_followup": dict(plan)},
+        )
+    return None
+
+
+def _meeting_requirement_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    governance = dict(policy.governance)
+    approved_refs = _approved_meeting_requirement_refs(governance)
+    pending_requirements: list[dict[str, JsonValue]] = []
+    affected_node_refs: list[str] = []
+    for requirement in sorted(
+        _records_from_policy_section(governance, "meeting_requirements"),
+        key=lambda item: (
+            _record_ref(item.get("requirement_ref")),
+            _record_ref(item.get("source_ticket_id")),
+            _proposal_node_ref(item),
+        ),
+    ):
+        requirement_ref = _record_ref(requirement.get("requirement_ref"))
+        source_ticket_id = _record_ref(requirement.get("source_ticket_id"))
+        required_meeting_type = _record_ref(requirement.get("required_meeting_type"))
+        requirement_keys = {
+            ref
+            for ref in {
+                requirement_ref,
+                f"{source_ticket_id}:{required_meeting_type}" if source_ticket_id and required_meeting_type else "",
+            }
+            if ref
+        }
+        if requirement_keys & approved_refs:
+            continue
+        pending_requirements.append(dict(requirement))
+        node_ref = _proposal_node_ref(requirement)
+        if node_ref:
+            affected_node_refs.append(node_ref)
+    if not pending_requirements:
+        return None
+    return ActionProposal(
+        action_type=ProgressionActionType.WAIT,
+        metadata=build_action_metadata(
+            action_type=ProgressionActionType.WAIT,
+            reason_code="progression.wait.meeting_requirement",
+            source_graph_version=snapshot.graph_version,
+            affected_node_refs=affected_node_refs,
+            expected_state_transition="WAITING_ON_MEETING_REQUIREMENT",
+            policy_ref=policy.policy_ref,
+            idempotency_components={"meeting_requirements": pending_requirements},
+        ),
+        payload={
+            "wake_condition": "meeting_requirement_approved",
+            "meeting_requirements": pending_requirements,
+        },
+    )
+
+
+def _backlog_fanout_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    fanout = dict(policy.fanout)
+    handoff = fanout.get("backlog_implementation_handoff")
+    if not isinstance(handoff, dict):
+        return None
+    source_ticket_id = _record_ref(handoff.get("source_ticket_id"))
+    existing_ticket_ids_by_node_ref = {
+        str(key).strip(): str(value).strip()
+        for key, value in dict(fanout.get("existing_ticket_ids_by_node_ref") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
+    ticket_plans = [
+        dict(item)
+        for item in list(handoff.get("ticket_plans") or handoff.get("tickets") or [])
+        if isinstance(item, dict)
+    ]
+    materialized_plan_keys = {
+        _record_ref(plan.get("ticket_key"))
+        for plan in ticket_plans
+        if _record_ref(plan.get("ticket_key"))
+        and (
+            _record_ref(plan.get("existing_ticket_id"))
+            or existing_ticket_ids_by_node_ref.get(_proposal_node_ref(plan))
+        )
+    }
+    all_plan_keys = {
+        _record_ref(plan.get("ticket_key"))
+        for plan in ticket_plans
+        if _record_ref(plan.get("ticket_key"))
+    }
+    for plan in sorted(
+        ticket_plans,
+        key=lambda item: (
+            int(item.get("sequence_index") or 0),
+            _record_ref(item.get("ticket_key")),
+            _proposal_node_ref(item),
+        ),
+    ):
+        ticket_key = _record_ref(plan.get("ticket_key"))
+        ticket_payload = plan.get("ticket_payload")
+        node_ref = _proposal_node_ref(plan, ticket_payload if isinstance(ticket_payload, dict) else None)
+        if _record_ref(plan.get("existing_ticket_id")) or existing_ticket_ids_by_node_ref.get(node_ref):
+            continue
+        blocked_by_plan_keys = [
+            str(item).strip()
+            for item in list(plan.get("blocked_by_plan_keys") or [])
+            if str(item).strip()
+        ]
+        if any(
+            dependency_key in all_plan_keys and dependency_key not in materialized_plan_keys
+            for dependency_key in blocked_by_plan_keys
+        ):
+            continue
+        if not isinstance(ticket_payload, dict):
+            continue
+        candidate_ref = (
+            _record_ref(plan.get("candidate_ref"))
+            or f"backlog:{source_ticket_id or 'unknown'}:{ticket_key or node_ref or 'ticket'}"
+        )
+        return _create_ticket_policy_proposal(
+            snapshot,
+            policy,
+            reason_code="progression.fanout.backlog_handoff_ticket",
+            candidate_ref=candidate_ref,
+            ticket_payload=dict(ticket_payload),
+            affected_node_refs=[node_ref] if node_ref else [],
+            idempotency_components={
+                "candidate_ref": candidate_ref,
+                "source_ticket_id": source_ticket_id,
+                "ticket_key": ticket_key,
+                "ticket_payload": ticket_payload,
+            },
+            extra_payload={
+                "source_ticket_id": source_ticket_id,
+                "source_graph_version": _record_ref(handoff.get("source_graph_version")),
+                "fanout_plan": dict(plan),
+            },
+        )
+    return None
+
+
+def _graph_patch_fanout_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    fanout = dict(policy.fanout)
+    patch_plan = fanout.get("fanout_graph_patch_plan")
+    if not isinstance(patch_plan, dict):
+        return None
+    source_ticket_id = _record_ref(patch_plan.get("source_ticket_id"))
+    patch_ref = _record_ref(patch_plan.get("patch_ref"))
+    existing_ticket_ids_by_node_ref = {
+        str(key).strip(): str(value).strip()
+        for key, value in dict(fanout.get("existing_ticket_ids_by_node_ref") or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
+    ticket_plans = [
+        dict(item)
+        for item in list(patch_plan.get("ticket_plans") or patch_plan.get("tickets") or [])
+        if isinstance(item, dict)
+    ]
+    materialized_plan_keys = {
+        _record_ref(plan.get("ticket_key"))
+        for plan in ticket_plans
+        if _record_ref(plan.get("ticket_key"))
+        and (
+            _record_ref(plan.get("existing_ticket_id"))
+            or existing_ticket_ids_by_node_ref.get(_proposal_node_ref(plan))
+        )
+    }
+    all_plan_keys = {
+        _record_ref(plan.get("ticket_key"))
+        for plan in ticket_plans
+        if _record_ref(plan.get("ticket_key"))
+    }
+    for plan in sorted(
+        ticket_plans,
+        key=lambda item: (
+            int(item.get("sequence_index") or 0),
+            _record_ref(item.get("ticket_key")),
+            _proposal_node_ref(item),
+        ),
+    ):
+        ticket_key = _record_ref(plan.get("ticket_key"))
+        ticket_payload = plan.get("ticket_payload")
+        node_ref = _proposal_node_ref(plan, ticket_payload if isinstance(ticket_payload, dict) else None)
+        if _record_ref(plan.get("existing_ticket_id")) or existing_ticket_ids_by_node_ref.get(node_ref):
+            continue
+        blocked_by_plan_keys = [
+            str(item).strip()
+            for item in list(plan.get("blocked_by_plan_keys") or [])
+            if str(item).strip()
+        ]
+        if any(
+            dependency_key in all_plan_keys and dependency_key not in materialized_plan_keys
+            for dependency_key in blocked_by_plan_keys
+        ):
+            continue
+        if not isinstance(ticket_payload, dict):
+            continue
+        candidate_ref = (
+            _record_ref(plan.get("candidate_ref"))
+            or f"graph_patch:{patch_ref or source_ticket_id or 'unknown'}:{ticket_key or node_ref or 'ticket'}"
+        )
+        return _create_ticket_policy_proposal(
+            snapshot,
+            policy,
+            reason_code="progression.fanout.graph_patch_ticket",
+            candidate_ref=candidate_ref,
+            ticket_payload=dict(ticket_payload),
+            affected_node_refs=[node_ref] if node_ref else [],
+            idempotency_components={
+                "candidate_ref": candidate_ref,
+                "patch_ref": patch_ref,
+                "source_ticket_id": source_ticket_id,
+                "ticket_key": ticket_key,
+                "ticket_payload": ticket_payload,
+            },
+            extra_payload={
+                "source_ticket_id": source_ticket_id,
+                "source_graph_version": _record_ref(patch_plan.get("source_graph_version")),
+                "fanout_graph_patch_plan": dict(patch_plan),
+                "fanout_plan": dict(plan),
+            },
+        )
+    return None
+
+
+def _structured_policy_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+) -> ActionProposal | None:
+    return (
+        _governance_gate_proposal(snapshot, policy)
+        or _governance_chain_proposal(snapshot, policy)
+        or _meeting_requirement_proposal(snapshot, policy)
+        or _backlog_fanout_proposal(snapshot, policy)
+        or _graph_patch_fanout_proposal(snapshot, policy)
+    )
+
+
 def _wait_proposal(
     snapshot: ProgressionSnapshot,
     policy: ProgressionPolicy,
@@ -871,6 +1344,10 @@ def decide_next_actions(
     if graph_evaluation.graph_reduction_issues:
         return [_graph_reduction_issue_proposal(snapshot, policy, graph_evaluation)]
 
+    structured_policy_proposal = _structured_policy_proposal(snapshot, policy)
+    if structured_policy_proposal is not None:
+        return [structured_policy_proposal]
+
     if policy.create_ticket_candidates:
         ordered_candidates = sorted(
             policy.create_ticket_candidates,
@@ -912,13 +1389,6 @@ def build_project_init_architecture_brief_ticket_specs(
         workflow,
         board_brief_artifact_ref=board_brief_artifact_ref,
     )
-
-
-def resolve_next_governance_schema(completed_ticket_ids_by_schema: dict[str, str]) -> str | None:
-    for output_schema_ref in GOVERNANCE_DOCUMENT_CHAIN_ORDER:
-        if not completed_ticket_ids_by_schema.get(output_schema_ref):
-            return output_schema_ref
-    return None
 
 
 def governance_dependency_gate_refs(

@@ -3,7 +3,10 @@ from __future__ import annotations
 from app.core.ceo_execution_presets import (
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
 )
-from app.core.output_schemas import ARCHITECTURE_BRIEF_SCHEMA_REF
+from app.core.output_schemas import (
+    ARCHITECTURE_BRIEF_SCHEMA_REF,
+    SOURCE_CODE_DELIVERY_SCHEMA_REF,
+)
 from app.core.workflow_progression import (
     AUTOPILOT_GOVERNANCE_CHAIN,
     ProgressionActionType,
@@ -489,6 +492,281 @@ def test_decide_next_actions_uses_policy_recomputed_graph_indexes() -> None:
     assert blocked_proposal.action_type == ProgressionActionType.NO_ACTION
     assert blocked_proposal.metadata.reason_code == "progression.blocked_no_recovery_action"
     assert blocked_proposal.metadata.affected_node_refs == ["graph:node_blocked"]
+
+
+def test_policy_does_not_trigger_architect_or_meeting_gate_from_legacy_hint_text() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "governance": {
+                "legacy_hints": [
+                    "architect_primary must review this.",
+                    "A technical decision meeting is required before fanout.",
+                ]
+            },
+            "fanout": {
+                "backlog_implementation_handoff": {
+                    "source_ticket_id": "tkt_backlog_parent",
+                    "ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "node_ref": "graph:backlog:br-be-01",
+                            "existing_ticket_id": None,
+                            "ticket_payload": {
+                                "workflow_id": "wf_policy_contract",
+                                "node_id": "node_backlog_followup_br_be_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                                "summary": "Deliver the backend API follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.CREATE_TICKET
+    assert proposal.metadata.reason_code == "progression.fanout.backlog_handoff_ticket"
+    assert proposal.metadata.affected_node_refs == ["graph:backlog:br-be-01"]
+
+
+def test_policy_creates_structured_architect_gate_ticket_when_required_output_is_missing() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "governance": {
+                "required_gates": [
+                    {
+                        "gate_ref": "gate:architect:tkt_backlog_parent",
+                        "gate_type": "ARCHITECT_GOVERNANCE",
+                        "required_output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                        "source_ticket_id": "tkt_backlog_parent",
+                        "node_ref": "graph:architect_gate:backlog_parent",
+                        "ticket_payload": {
+                            "workflow_id": "wf_policy_contract",
+                            "node_id": "node_architect_gate_backlog_parent",
+                            "role_profile_ref": "architect_primary",
+                            "output_schema_ref": ARCHITECTURE_BRIEF_SCHEMA_REF,
+                            "summary": "Prepare the architect governance brief.",
+                            "parent_ticket_id": "tkt_backlog_parent",
+                        },
+                    }
+                ],
+                "completed_outputs": [],
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.CREATE_TICKET
+    assert proposal.metadata.reason_code == "progression.governance.architect_gate_required"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:architect_gate:backlog_parent"]
+    assert proposal.metadata.expected_state_transition == "TICKET_CREATED"
+    assert proposal.metadata.idempotency_key.startswith(
+        "progression:CREATE_TICKET:gv_42:policy:round8c:"
+    )
+    assert proposal.payload["candidate_ref"] == "gate:architect:tkt_backlog_parent"
+    assert proposal.payload["ticket_payload"]["node_id"] == "node_architect_gate_backlog_parent"
+
+
+def test_policy_waits_for_structured_meeting_requirement_until_evidence_is_approved() -> None:
+    waiting_policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "governance": {
+                "meeting_requirements": [
+                    {
+                        "requirement_ref": "meeting:req:tkt_backlog_parent",
+                        "source_ticket_id": "tkt_backlog_parent",
+                        "node_ref": "graph:backlog:parent",
+                        "required_meeting_type": "TECHNICAL_DECISION",
+                        "meeting_candidate": {
+                            "source_ticket_id": "tkt_backlog_parent",
+                            "topic": "Lock implementation boundary",
+                            "eligible": True,
+                        },
+                    }
+                ],
+                "approved_meeting_evidence": [],
+            },
+            "fanout": {
+                "backlog_implementation_handoff": {
+                    "source_ticket_id": "tkt_backlog_parent",
+                    "ticket_plans": [
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "node_ref": "graph:backlog:br-be-01",
+                            "existing_ticket_id": None,
+                            "ticket_payload": {
+                                "workflow_id": "wf_policy_contract",
+                                "node_id": "node_backlog_followup_br_be_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                                "summary": "Deliver the backend API follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    approved_policy = ProgressionPolicy.model_validate(
+        {
+            **waiting_policy.model_dump(mode="json"),
+            "governance": {
+                **waiting_policy.governance,
+                "approved_meeting_evidence": [
+                    {
+                        "requirement_ref": "meeting:req:tkt_backlog_parent",
+                        "meeting_id": "mtg_backlog_parent",
+                        "review_status": "APPROVED",
+                    }
+                ],
+            },
+        }
+    )
+
+    waiting_proposal = decide_next_actions(_minimal_progression_snapshot(), waiting_policy)[0]
+    approved_proposal = decide_next_actions(_minimal_progression_snapshot(), approved_policy)[0]
+
+    assert waiting_proposal.action_type == ProgressionActionType.WAIT
+    assert waiting_proposal.metadata.reason_code == "progression.wait.meeting_requirement"
+    assert waiting_proposal.metadata.affected_node_refs == ["graph:backlog:parent"]
+    assert waiting_proposal.payload["meeting_requirements"][0]["requirement_ref"] == (
+        "meeting:req:tkt_backlog_parent"
+    )
+    assert approved_proposal.action_type == ProgressionActionType.CREATE_TICKET
+    assert approved_proposal.metadata.reason_code == "progression.fanout.backlog_handoff_ticket"
+
+
+def test_policy_creates_backlog_fanout_from_structured_handoff_with_stable_metadata() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "fanout": {
+                "backlog_implementation_handoff": {
+                    "source_ticket_id": "tkt_backlog_parent",
+                    "source_graph_version": "gv_backlog_7",
+                    "ticket_plans": [
+                        {
+                            "ticket_key": "BR-FE-01",
+                            "node_ref": "graph:backlog:br-fe-01",
+                            "existing_ticket_id": "tkt_existing_fe",
+                            "ticket_payload": {
+                                "workflow_id": "wf_policy_contract",
+                                "node_id": "node_backlog_followup_br_fe_01",
+                                "role_profile_ref": "frontend_engineer_primary",
+                                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                                "summary": "Existing frontend follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        },
+                        {
+                            "ticket_key": "BR-BE-01",
+                            "node_ref": "graph:backlog:br-be-01",
+                            "existing_ticket_id": None,
+                            "blocked_by_plan_keys": [],
+                            "ticket_payload": {
+                                "workflow_id": "wf_policy_contract",
+                                "node_id": "node_backlog_followup_br_be_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                                "summary": "Deliver the backend API follow-up.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        },
+                    ],
+                }
+            },
+        }
+    )
+
+    first = decide_next_actions(snapshot, policy)[0]
+    second = decide_next_actions(snapshot, policy)[0]
+
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.action_type == ProgressionActionType.CREATE_TICKET
+    assert first.metadata.reason_code == "progression.fanout.backlog_handoff_ticket"
+    assert first.metadata.source_graph_version == "gv_42"
+    assert first.metadata.affected_node_refs == ["graph:backlog:br-be-01"]
+    assert first.metadata.expected_state_transition == "TICKET_CREATED"
+    assert first.payload["candidate_ref"] == "backlog:tkt_backlog_parent:BR-BE-01"
+    assert first.payload["source_graph_version"] == "gv_backlog_7"
+    assert first.payload["ticket_payload"]["node_id"] == "node_backlog_followup_br_be_01"
+
+
+def test_policy_creates_backlog_fanout_from_structured_graph_patch_plan() -> None:
+    snapshot = _minimal_progression_snapshot(graph_version="gv_patch_12")
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "fanout": {
+                "fanout_graph_patch_plan": {
+                    "patch_ref": "graph_patch:fanout:12",
+                    "source_ticket_id": "tkt_backlog_parent",
+                    "source_graph_version": "gv_patch_11",
+                    "ticket_plans": [
+                        {
+                            "ticket_key": "BR-API-01",
+                            "candidate_ref": "graph_patch:fanout:12:BR-API-01",
+                            "node_ref": "graph:patch:br-api-01",
+                            "ticket_payload": {
+                                "workflow_id": "wf_policy_contract",
+                                "node_id": "node_graph_patch_br_api_01",
+                                "role_profile_ref": "backend_engineer_primary",
+                                "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                                "summary": "Deliver the graph-patch fanout API work.",
+                                "parent_ticket_id": "tkt_backlog_parent",
+                            },
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.CREATE_TICKET
+    assert proposal.metadata.reason_code == "progression.fanout.graph_patch_ticket"
+    assert proposal.metadata.source_graph_version == "gv_patch_12"
+    assert proposal.metadata.affected_node_refs == ["graph:patch:br-api-01"]
+    assert proposal.metadata.expected_state_transition == "TICKET_CREATED"
+    assert proposal.payload["candidate_ref"] == "graph_patch:fanout:12:BR-API-01"
+    assert proposal.payload["source_graph_version"] == "gv_patch_11"
+    assert proposal.payload["fanout_graph_patch_plan"]["patch_ref"] == "graph_patch:fanout:12"
+
+
+def test_policy_does_not_create_backlog_fanout_from_completed_milestone_without_structured_input() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8c",
+            "governance": {
+                "completed_outputs": [
+                    {
+                        "output_schema_ref": "milestone_plan",
+                        "ticket_id": "tkt_parent_milestone_plan",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.NO_ACTION
+    assert proposal.metadata.reason_code == "progression.no_action"
 
 
 def test_policy_keeps_blocked_index_for_in_flight_blocked_nodes() -> None:

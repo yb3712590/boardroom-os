@@ -1320,6 +1320,68 @@ def _build_required_governance_ticket_batch(
     )
 
 
+def _progression_policy_create_ticket_proposals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    proposals = snapshot.get("progression_policy_proposals")
+    if not isinstance(proposals, list):
+        proposals = (capability_plan_view(snapshot).get("progression_policy_proposals") or [])
+    resolved: list[dict[str, Any]] = []
+    for proposal in list(proposals or []):
+        if not isinstance(proposal, dict):
+            continue
+        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+            continue
+        payload = proposal.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        ticket_payload = payload.get("ticket_payload")
+        if not isinstance(ticket_payload, dict):
+            continue
+        resolved.append(proposal)
+    return resolved
+
+
+def _build_policy_create_ticket_batch(snapshot: dict[str, Any], reason: str) -> CEOActionBatch | None:
+    proposals = _progression_policy_create_ticket_proposals(snapshot)
+    if not proposals:
+        return None
+    actions: list[dict[str, Any]] = []
+    for proposal in proposals:
+        ticket_payload = dict((proposal.get("payload") or {}).get("ticket_payload") or {})
+        try:
+            normalized_payload = CEOCreateTicketPayload.model_validate(ticket_payload).model_dump(mode="json")
+        except ValidationError as exc:
+            dispatch_intent = ticket_payload.get("dispatch_intent")
+            if (
+                isinstance(dispatch_intent, dict)
+                and not str(dispatch_intent.get("assignee_employee_id") or "").strip()
+            ):
+                continue
+            metadata = proposal.get("metadata") if isinstance(proposal.get("metadata"), dict) else {}
+            _raise_proposal_contract_error(
+                source_component="progression_policy.create_ticket",
+                reason_code="proposal_payload_invalid",
+                message="Progression policy CREATE_TICKET proposal does not match the canonical CEO action contract.",
+                details={
+                    "policy_reason_code": str((metadata or {}).get("reason_code") or ""),
+                    "errors": exc.errors(include_url=False),
+                },
+            )
+        actions.append(
+            {
+                "action_type": CEOActionType.CREATE_TICKET,
+                "payload": normalized_payload,
+            }
+        )
+    if not actions:
+        return None
+    return CEOActionBatch.model_validate(
+        {
+            "summary": reason,
+            "actions": actions,
+        }
+    )
+
+
 def _build_capability_hire_batch(
     repository: ControlPlaneRepository,
     snapshot: dict,
@@ -1690,10 +1752,19 @@ def build_deterministic_fallback_batch(
         return _build_request_meeting_batch(
             candidate,
             reason=(
-                "Open one bounded technical decision meeting because the controller state requires it before implementation fanout."
+                "Open one bounded structured meeting because policy requires it before implementation fanout."
             ),
         )
     if recommended_action == "CREATE_TICKET":
+        policy_create_ticket_batch = _build_policy_create_ticket_batch(snapshot, reason)
+        if policy_create_ticket_batch is not None:
+            return policy_create_ticket_batch
+        if str((snapshot.get("replan_focus") or {}).get("task_sensemaking", {}).get("task_type") or "").strip() == (
+            "implementation_fanout"
+        ):
+            return build_no_action_batch(
+                "Implementation fanout requires a CREATE_TICKET progression policy proposal."
+            )
         if isinstance(capability_plan.get("required_governance_ticket_plan"), dict):
             required_governance_ticket_batch = _build_required_governance_ticket_batch(
                 repository,
