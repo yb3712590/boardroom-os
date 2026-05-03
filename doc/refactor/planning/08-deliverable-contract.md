@@ -222,3 +222,33 @@ Evaluator additions:
 - Checker verdict / `APPROVED_WITH_NOTES` gate must consume `DeliverableEvaluation` and must not override blocking findings.
 - Failed delivery report convergence still needs structured `ConvergencePolicy`; freeform checker notes or graph terminal state must not satisfy the contract.
 - Rework target routing and closeout final evidence table remain later Round 9D/9E work.
+
+## Round 9C implementation status
+
+Round 9C has replaced the checker verdict gate for failed delivery reports with a `DeliverableEvaluation` first contract gate.
+
+Implemented additions:
+
+- `ConvergencePolicy` and `ConvergenceAllowedGap` are structured inputs in `backend/app/core/deliverable_contract.py`.
+- `checker_contract_gate()` consumes `DeliverableEvaluation`, checker review status and optional `ConvergencePolicy`.
+- `APPROVED` / `APPROVED_WITH_NOTES` cannot override blocking contract findings.
+- `APPROVED_WITH_NOTES` can pass only when the contract evaluation has no blocking findings, or every blocking gap is explicitly covered by structured convergence policy.
+- Failed delivery report convergence requires `allow_failed_delivery_report=true`, declared gap identity, risk disposition, approver/source refs, and expiry or scope limits.
+
+Integrated gates:
+
+- `ticket_handlers.py` now compiles failed delivery check reports into a Round 9C legacy `DeliverableEvaluation` input and converts blocked gates back into existing fix-ticket rework input.
+- `workflow_completion.py` now uses the same gate before allowing maker-checker approval of failed delivery reports into closeout eligibility.
+- `output_schemas.py` validates optional `maker_checker_verdict.convergence_policy` through the structured model.
+- `workflow_controller.py`, `ceo_snapshot.py` and `graph_health.py` approved-review checks are marked as API display / legacy input compiler only, not contract satisfaction.
+
+Still deferred:
+
+- Round 9D must route blocking contract gaps to the upstream node/ticket/source surface that can fix them.
+- Round 9E must build the final evidence table and closeout package contract version surface.
+
+9C verification:
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q` -> `42 passed, 1 warning`.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q` -> `3 passed`.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_output_schemas.py -q` -> `40 passed`.

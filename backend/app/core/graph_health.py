@@ -20,6 +20,7 @@ from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
 
 _PATH_EDGE_TYPES = {"PARENT_OF", "DEPENDS_ON"}
+# Round 9C: graph-health display / legacy compiler only. This is not contract satisfaction.
 _APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 
 

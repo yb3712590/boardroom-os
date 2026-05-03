@@ -8,6 +8,7 @@ from app.contracts.advisory import GraphPatchProposal
 from app.core.decomposition import validate_decomposition_plan
 from app.contracts.commands import DeliveryStage
 from app.contracts.ceo_actions import CEOActionBatch
+from app.core.deliverable_contract import ConvergencePolicy
 
 
 UI_MILESTONE_REVIEW_SCHEMA_REF = "ui_milestone_review"
@@ -1363,6 +1364,10 @@ def _delivery_check_report_schema_body() -> dict[str, Any]:
                     },
                 },
             },
+            "convergence_policy": {
+                "type": "object",
+                "description": "Structured policy that explicitly allows declared contract gaps.",
+            },
         },
     }
 
@@ -1697,6 +1702,24 @@ def _validate_maker_checker_verdict_payload(payload: dict[str, Any]) -> None:
             actual_value=findings,
             message="Maker-checker CHANGES_REQUIRED verdict must include at least one blocking finding.",
         )
+    convergence_policy = payload.get("convergence_policy")
+    if convergence_policy is not None:
+        if not isinstance(convergence_policy, dict):
+            _raise_schema_validation_error(
+                field_path="convergence_policy",
+                expected="object",
+                actual_value=convergence_policy,
+                message="Maker-checker convergence_policy must be a structured object.",
+            )
+        try:
+            ConvergencePolicy.model_validate(convergence_policy)
+        except ValueError as exc:
+            _raise_schema_validation_error(
+                field_path="convergence_policy",
+                expected="ConvergencePolicy",
+                actual_value=convergence_policy,
+                message=str(exc),
+            )
 
 
 def _validate_ceo_action_batch_payload(payload: dict[str, Any]) -> None:

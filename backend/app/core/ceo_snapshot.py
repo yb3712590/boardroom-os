@@ -58,6 +58,7 @@ _TERMINAL_TICKET_STATUSES = {
 _RECENT_COMPLETED_TICKET_LIMIT = 5
 _RECENT_CLOSED_MEETING_LIMIT = 3
 _RECENT_FAILURE_LIMIT = 5
+# Round 9C: snapshot display / legacy compiler only. This is not contract satisfaction.
 _APPROVED_INTERNAL_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 _MEMORY_BUDGET_RATIOS = {
     "m0_constitution": 10,

@@ -1772,7 +1772,7 @@ def test_autopilot_closeout_batch_requires_policy_proposal_when_snapshot_has_orp
     assert policy_batch.actions[0].payload.parent_ticket_id == "tkt_closeout_orphan_build"
 
 
-def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():
+def test_closeout_gate_blocks_autopilot_converged_failed_delivery_check_without_policy():
     from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
 
     maker_ticket_id = "tkt_converged_check_report"
@@ -1847,6 +1847,112 @@ def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():
         },
     }
 
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "convergence_policy_required"
+    assert issue["ticket_id"] == checker_ticket_id
+
+
+def test_closeout_gate_allows_failed_delivery_check_with_structured_convergence_policy():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    maker_ticket_id = "tkt_converged_check_report_policy"
+    checker_ticket_id = "tkt_converged_check_verdict_policy"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    tickets = [
+        {
+            "ticket_id": maker_ticket_id,
+            "workflow_id": "wf_converged_check_policy",
+            "node_id": "node_converged_check",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": checker_ticket_id,
+            "workflow_id": "wf_converged_check_policy",
+            "node_id": "node_converged_check",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        maker_ticket_id: {
+            "ticket_id": maker_ticket_id,
+            "workflow_id": "wf_converged_check_policy",
+            "graph_version": "gv_converged_check_policy",
+            "output_schema_ref": "delivery_check_report",
+            "delivery_stage": "CHECK",
+        },
+        checker_ticket_id: {
+            "ticket_id": checker_ticket_id,
+            "workflow_id": "wf_converged_check_policy",
+            "graph_version": "gv_converged_check_policy",
+            "output_schema_ref": "maker_checker_verdict",
+            "maker_checker_context": {
+                "maker_ticket_id": maker_ticket_id,
+                "maker_ticket_spec": {
+                    "ticket_id": maker_ticket_id,
+                    "workflow_id": "wf_converged_check_policy",
+                    "output_schema_ref": "delivery_check_report",
+                    "delivery_stage": "CHECK",
+                },
+            },
+        },
+    }
+    terminal_events = {
+        maker_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": maker_ticket_id,
+                "payload": {
+                    "status": "FAIL",
+                    "findings": [
+                        {
+                            "finding_id": "finding_missing_evidence",
+                            "summary": "Evidence is still missing.",
+                            "blocking": True,
+                        }
+                    ],
+                },
+            },
+        },
+        checker_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": checker_ticket_id,
+                "review_status": "APPROVED_WITH_NOTES",
+                "autopilot_convergence_applied": True,
+                "convergence_policy": {
+                    "policy_ref": "conv://round9c/missing-evidence",
+                    "allow_failed_delivery_report": True,
+                    "allowed_gaps": [
+                        {
+                            "reason_code": "missing_required_evidence",
+                            "risk_disposition": "accepted for limited checkpoint delivery",
+                            "approver_ref": "approval://board/round9c",
+                            "source_ref": "decision://round9c/missing-evidence",
+                            "scope_refs": ["AC-finding_missing_evidence"],
+                        }
+                    ],
+                },
+                "findings": [
+                    {
+                        "finding_id": "finding_missing_evidence",
+                        "summary": "Accepted with structured convergence policy.",
+                        "blocking": False,
+                    }
+                ],
+            },
+        },
+    }
+
     assert (
         evaluate_workflow_closeout_gate_issue(
             tickets=tickets,
@@ -1855,7 +1961,6 @@ def test_closeout_gate_allows_autopilot_converged_failed_delivery_check():
         )
         is None
     )
-
 
 
 def test_closeout_gate_rejects_illegal_final_artifact_ref_kind():

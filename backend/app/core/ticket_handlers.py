@@ -131,10 +131,13 @@ from app.core.ceo_execution_presets import build_internal_governance_review_requ
 from app.core.decomposition import build_decomposition_recovery_plan, build_decomposition_ticket_specs
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
 from app.core.deliverable_contract import (
+    ConvergencePolicy,
     DeliverableContract,
     DeliverableEvaluation,
     DeliverableEvaluationPolicy,
     compile_closeout_evidence_pack,
+    compile_deliverable_contract,
+    checker_contract_gate,
     evaluate_deliverable_contract,
 )
 from app.core.execution_targets import (
@@ -1010,6 +1013,130 @@ def _delivery_check_report_rework_findings(
     return required_findings
 
 
+def _contract_evaluation_from_delivery_check_rework_findings(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    maker_ticket_id: str,
+    rework_findings: list[dict[str, Any]],
+) -> DeliverableEvaluation:
+    findings = [
+        {
+            "finding_id": str(finding.get("finding_id") or "").strip(),
+            "summary": str(finding.get("summary") or finding.get("headline") or "").strip()
+            or "Delivery check report has a blocking contract gap.",
+        }
+        for finding in rework_findings
+        if str(finding.get("finding_id") or "").strip()
+    ]
+    acceptance_criteria = [
+        {
+            "criterion_id": f"AC-{finding['finding_id']}",
+            "description": finding["summary"],
+        }
+        for finding in findings
+    ] or [
+        {
+            "criterion_id": "AC-delivery-check-report-failed",
+            "description": "Failed delivery check report requires structured convergence policy.",
+        }
+    ]
+    required_evidence = [
+        {
+            "evidence_id": f"ev_{finding['finding_id']}",
+            "evidence_kind": "risk_disposition",
+            "acceptance_criteria_refs": [f"AC-{finding['finding_id']}"],
+        }
+        for finding in findings
+    ] or [
+        {
+            "evidence_id": "ev_delivery_check_report_failed",
+            "evidence_kind": "risk_disposition",
+            "acceptance_criteria_refs": ["AC-delivery-check-report-failed"],
+        }
+    ]
+    contract = compile_deliverable_contract(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        source_ticket_refs=[maker_ticket_id],
+        acceptance_criteria=acceptance_criteria,
+        required_evidence=required_evidence,
+        metadata={
+            "round9c_legacy_input_compiler": True,
+            "source": "ticket_handlers.failed_delivery_check_report",
+        },
+    )
+    return evaluate_deliverable_contract(
+        contract,
+        compile_closeout_evidence_pack(
+            workflow_id=workflow_id,
+            graph_version=graph_version,
+            final_evidence_refs=[f"ticket://{maker_ticket_id}/failed-delivery-report"],
+            closeout_summary={
+                "source": "ticket_handlers.failed_delivery_check_report",
+                "maker_ticket_id": maker_ticket_id,
+            },
+        ),
+        DeliverableEvaluationPolicy(
+            policy_ref="policy:round9c.failed_delivery_report",
+            require_final_evidence=True,
+        ),
+    )
+
+
+def _contract_gate_rework_findings(
+    gate,
+    fallback_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not gate.blocking_findings:
+        return fallback_findings
+    if fallback_findings:
+        contract_metadata = {
+            "contract_reason_code": gate.reason_code,
+            "contract_blocking_finding_ids": [
+                finding.finding_id for finding in gate.blocking_findings
+            ],
+        }
+        return [
+            {
+                **finding,
+                **contract_metadata,
+                "blocking": True,
+            }
+            for finding in fallback_findings
+        ]
+    fallback_by_reason = {
+        str(finding.get("finding_id") or finding.get("reason_code") or "").strip(): finding
+        for finding in fallback_findings
+    }
+    rework_findings: list[dict[str, Any]] = []
+    for finding in gate.blocking_findings:
+        fallback = fallback_by_reason.get(finding.reason_code) or fallback_by_reason.get(finding.finding_id) or {}
+        rework_findings.append(
+            {
+                "finding_id": (
+                    str((fallback or {}).get("finding_id") or "").strip()
+                    or finding.finding_id
+                ),
+                "severity": str((fallback or {}).get("severity") or "high"),
+                "category": str((fallback or {}).get("category") or "DELIVERABLE_CONTRACT"),
+                "headline": (
+                    str((fallback or {}).get("headline") or "").strip()
+                    or finding.summary[:120]
+                ),
+                "summary": finding.summary,
+                "required_action": (
+                    str((fallback or {}).get("required_action") or "").strip()
+                    or "Resolve the blocking deliverable contract finding or attach a structured convergence policy."
+                ),
+                "blocking": True,
+                "contract_finding_id": finding.finding_id,
+                "contract_reason_code": finding.reason_code,
+            }
+        )
+    return rework_findings
+
+
 def _force_failed_delivery_check_to_rework(
     repository: ControlPlaneRepository,
     connection,
@@ -1017,8 +1144,6 @@ def _force_failed_delivery_check_to_rework(
     created_spec: dict[str, Any],
     checker_result_payload: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if checker_result_payload.get("autopilot_convergence_applied") is True:
-        return None
     maker_checker_context = created_spec.get("maker_checker_context") or {}
     maker_ticket_spec = maker_checker_context.get("maker_ticket_spec") or {}
     if str(maker_ticket_spec.get("output_schema_ref") or "").strip() != DELIVERY_CHECK_REPORT_SCHEMA_REF:
@@ -1032,6 +1157,35 @@ def _force_failed_delivery_check_to_rework(
     )
     if not rework_findings:
         return None
+    workflow_id = str(
+        created_spec.get("workflow_id")
+        or maker_ticket_spec.get("workflow_id")
+        or checker_result_payload.get("workflow_id")
+        or ""
+    ).strip()
+    if not workflow_id:
+        workflow_id = "workflow-unknown"
+    evaluation = _contract_evaluation_from_delivery_check_rework_findings(
+        workflow_id=workflow_id,
+        graph_version=resolve_workflow_graph_version(repository, workflow_id),
+        maker_ticket_id=maker_ticket_id,
+        rework_findings=rework_findings,
+    )
+    convergence_policy_payload = checker_result_payload.get("convergence_policy")
+    convergence_policy = (
+        ConvergencePolicy.model_validate(convergence_policy_payload)
+        if isinstance(convergence_policy_payload, dict)
+        else None
+    )
+    gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status=str(checker_result_payload.get("review_status") or ""),
+        convergence_policy=convergence_policy,
+        failed_delivery_report=True,
+        checked_at=now_local(),
+    )
+    if gate.allowed:
+        return None
     summary = str(checker_result_payload.get("summary") or "").strip()
     return {
         **checker_result_payload,
@@ -1039,8 +1193,9 @@ def _force_failed_delivery_check_to_rework(
             f"{summary} Delivery check report is fail-closed and must be reworked."
         ).strip(),
         "review_status": "CHANGES_REQUIRED",
-        "findings": rework_findings,
+        "findings": _contract_gate_rework_findings(gate, rework_findings),
         "fail_closed_delivery_check_rework_applied": True,
+        "deliverable_contract_gate": gate.model_dump(mode="json"),
     }
 
 

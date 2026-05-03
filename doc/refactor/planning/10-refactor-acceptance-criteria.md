@@ -79,11 +79,11 @@ Round 8E 证据：
 - [x] PRD acceptance criteria 可编译成 `DeliverableContract`（Round 9A：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py -q`）。
 - [x] Required source surfaces 有路径、capability、evidence 映射（Round 9B：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py -q`）。
 - [x] Evidence pack 能映射到 acceptance criteria（Round 9B：同上）。
-- [ ] `APPROVED_WITH_NOTES` 不放行 blocking contract gap。
+- [x] `APPROVED_WITH_NOTES` 不放行 blocking contract gap（Round 9C：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q`）。
 - [ ] closeout package 包含 contract version 和 final evidence table。
 - [x] superseded/placeholder evidence 不满足 required evidence（Round 9B evaluator 层：同上；closeout final evidence table 主路径留给 9E）。
 
-Round 9A 证据：contract/evaluator skeleton 已覆盖 missing acceptance、missing required evidence、unknown evidence kind、empty final evidence 和重复 evaluation 稳定输出。Round 9B 证据：source surface path/capability/evidence mapping、evidence -> acceptance mapping、关键 acceptance 缺 evidence、placeholder source/test fallback、superseded/archive/unknown/stale evidence 拒绝均有单测。checker/convergence、rework、closeout 主路径尚未迁移。
+Round 9A 证据：contract/evaluator skeleton 已覆盖 missing acceptance、missing required evidence、unknown evidence kind、empty final evidence 和重复 evaluation 稳定输出。Round 9B 证据：source surface path/capability/evidence mapping、evidence -> acceptance mapping、关键 acceptance 缺 evidence、placeholder source/test fallback、superseded/archive/unknown/stale evidence 拒绝均有单测。Round 9C 证据：checker gate 先消费 `DeliverableEvaluation`，failed delivery report 无结构化 `ConvergencePolicy` 不放行，结构化 policy 只放行声明 gap/scope/expiry；目标测试 `backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report` -> `3 passed`。rework target upstream routing 留给 9D；closeout final evidence table 留给 9E。
 
 ## Phase 6：Replay / resume / checkpoint
 

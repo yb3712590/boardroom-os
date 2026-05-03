@@ -129,7 +129,7 @@ Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source
 - `compile_deliverable_contract()` 可从 locked scope、governance/design/backlog assets 和 allowed write set metadata 编译 required source surfaces。
 - `EvidencePack` / `EvidenceItem` 映射 source/test/check/git/closeout evidence 到 acceptance criteria、source surface、producer ticket/node 和 artifact legality。
 - `evaluate_deliverable_contract()` 是纯函数 evaluator；9A 覆盖 missing acceptance、missing required evidence、unknown evidence kind 和 empty final evidence，9B 覆盖 invalid evidence、placeholder/source-test fallback、acceptance 缺 required source/test/check/git/closeout evidence。
-- `workflow_completion.py` 和 `ticket_handlers.py` 只新增 closeout preview helper，没有迁移 checker verdict、rework target 或 closeout final evidence 主路径。
+- Round 9C 已把 checker verdict gate 接到 `DeliverableEvaluation`，并要求 failed delivery report 只有结构化 `ConvergencePolicy` 才能放行；rework target upstream routing 和 closeout final evidence table 仍留给 9D/9E。
 
 任务：
 
@@ -137,21 +137,23 @@ Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source
 - [x] 建立稳定 contract id、finding id 和 evaluation fingerprint（Round 9A skeleton）。
 - [x] 将 required source surfaces 映射到 capability write surfaces 和 required evidence kinds（Round 9B）。
 - [x] 将 evidence pack 映射到 acceptance criteria，并拒绝 superseded/placeholder/archive/unknown/stale pointer evidence（Round 9B）。
-- checker verdict 与 deliverable contract 解耦。
+- [x] checker verdict 与 deliverable contract 解耦（Round 9C）。
 - rework target 指向能修问题的 upstream node。
-- `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap。
+- [x] `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap（Round 9C）。
 
 验收：
 
 - placeholder source/evidence 不能通过 contract evaluator。
-- failed delivery report 有结构化 convergence policy 才能放行。
+- failed delivery report 有结构化 convergence policy 才能放行；Round 9C 已覆盖 checker/closeout gate，9E 仍需纳入 final evidence table。
 - final evidence set 不包含 superseded/old placeholder 资产；Round 9B 已覆盖 evaluator 层拒绝，closeout table 主路径留给 9E。
 
-Round 9B 证据：
+Round 9B/9C 证据：
 
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py -q` -> `34 passed`。
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q` -> `42 passed, 1 warning`。
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q` -> `3 passed`。
 
-下一入口：Round 9C Checker verdict / convergence policy gate。不得用 checker notes、graph terminal 或 failed delivery report freeform 文本覆盖 blocking contract gap。
+下一入口：Round 9D Rework target upstream routing。不得开始 closeout final evidence table 收口。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 

@@ -66,6 +66,8 @@ from app.core.workflow_completion import (
 )
 from app.db.repository import ControlPlaneRepository
 
+# Round 9C: display / legacy input compiler only. Contract satisfaction must use
+# DeliverableEvaluation plus the checker contract gate.
 _APPROVED_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 _APPROVED_ARCHITECT_DOCUMENT_SCHEMA_REFS = {
     ARCHITECTURE_BRIEF_SCHEMA_REF,

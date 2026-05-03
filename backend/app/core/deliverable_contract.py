@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.contracts.common import JsonValue, StrictModel
 from app.core.workspace_path_contracts import CAPABILITY_WRITE_SURFACES
@@ -22,6 +23,9 @@ class ContractFindingSeverity(StrEnum):
 class ContractEvaluationStatus(StrEnum):
     SATISFIED = "SATISFIED"
     BLOCKED = "BLOCKED"
+
+
+APPROVED_CHECKER_REVIEW_STATUSES = {"APPROVED", "APPROVED_WITH_NOTES"}
 
 
 DEFAULT_ALLOWED_EVIDENCE_KINDS = {
@@ -197,6 +201,51 @@ class DeliverableEvaluation(StrictModel):
     acceptance_criteria_count: int = 0
     required_evidence_count: int = 0
     final_evidence_ref_count: int = 0
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ConvergenceAllowedGap(StrictModel):
+    finding_id: str | None = None
+    reason_code: str | None = None
+    risk_disposition: str = Field(min_length=1)
+    approver_ref: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    expires_at: datetime | None = None
+    scope_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_gap_identity_and_boundary(self) -> "ConvergenceAllowedGap":
+        finding_id = str(self.finding_id or "").strip()
+        reason_code = str(self.reason_code or "").strip()
+        if not finding_id and not reason_code:
+            raise ValueError("Convergence allowed gaps require finding_id or reason_code.")
+        if self.expires_at is None and not self.scope_refs:
+            raise ValueError("Convergence allowed gaps require expires_at or scope_refs.")
+        object.__setattr__(self, "finding_id", finding_id or None)
+        object.__setattr__(self, "reason_code", reason_code or None)
+        object.__setattr__(self, "scope_refs", _stable_unique_strings(self.scope_refs))
+        return self
+
+
+class ConvergencePolicy(StrictModel):
+    policy_ref: str = Field(min_length=1)
+    allow_failed_delivery_report: bool
+    allowed_gaps: list[ConvergenceAllowedGap] = Field(min_length=1)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class CheckerContractGateResult(StrictModel):
+    allowed: bool
+    reason_code: str = Field(min_length=1)
+    review_status: str = Field(min_length=1)
+    contract_id: str = Field(min_length=1)
+    evaluation_fingerprint: str = Field(min_length=1)
+    blocking_findings: list[ContractFinding] = Field(default_factory=list)
+    blocking_finding_count: int = 0
+    allowed_gap_refs: list[str] = Field(default_factory=list)
+    requires_convergence_policy: bool = False
+    policy_ref: str | None = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -743,6 +792,174 @@ def _finding(
         evidence_refs=normalized["evidence_refs"],
         source_surface_refs=normalized["source_surface_refs"],
         metadata=normalized["metadata"],
+    )
+
+
+def _blocking_contract_findings(evaluation: DeliverableEvaluation) -> list[ContractFinding]:
+    return [finding for finding in evaluation.findings if finding.blocking]
+
+
+def _finding_scope_refs(finding: ContractFinding) -> set[str]:
+    refs: set[str] = set()
+    refs.update(finding.acceptance_criteria_refs)
+    refs.update(finding.required_evidence_refs)
+    refs.update(finding.source_surface_refs)
+    return refs
+
+
+def _allowed_gap_applies_to_finding(
+    allowed_gap: ConvergenceAllowedGap,
+    finding: ContractFinding,
+    *,
+    checked_at: datetime,
+    scope_refs: set[str],
+) -> bool:
+    if allowed_gap.expires_at is not None:
+        comparable_checked_at = checked_at
+        comparable_expires_at = allowed_gap.expires_at
+        if comparable_checked_at.tzinfo is None and comparable_expires_at.tzinfo is not None:
+            comparable_checked_at = comparable_checked_at.replace(tzinfo=comparable_expires_at.tzinfo)
+        elif comparable_checked_at.tzinfo is not None and comparable_expires_at.tzinfo is None:
+            comparable_expires_at = comparable_expires_at.replace(tzinfo=comparable_checked_at.tzinfo)
+        if comparable_checked_at > comparable_expires_at:
+            return False
+    if allowed_gap.finding_id is not None and allowed_gap.finding_id != finding.finding_id:
+        return False
+    if allowed_gap.reason_code is not None and allowed_gap.reason_code != finding.reason_code:
+        return False
+    if allowed_gap.scope_refs:
+        finding_scopes = _finding_scope_refs(finding)
+        finding_acceptance_scopes = set(finding.acceptance_criteria_refs)
+        requested_scopes = scope_refs or finding_acceptance_scopes or finding_scopes
+        allowed_scopes = set(allowed_gap.scope_refs)
+        if not requested_scopes or not requested_scopes.issubset(allowed_scopes):
+            return False
+        if finding_acceptance_scopes and not finding_acceptance_scopes.issubset(allowed_scopes):
+            return False
+    return True
+
+
+def _convergence_allowed_gap_for_finding(
+    convergence_policy: ConvergencePolicy,
+    finding: ContractFinding,
+    *,
+    checked_at: datetime,
+    scope_refs: set[str],
+) -> ConvergenceAllowedGap | None:
+    for allowed_gap in convergence_policy.allowed_gaps:
+        if _allowed_gap_applies_to_finding(
+            allowed_gap,
+            finding,
+            checked_at=checked_at,
+            scope_refs=scope_refs,
+        ):
+            return allowed_gap
+    return None
+
+
+def checker_contract_gate(
+    *,
+    evaluation: DeliverableEvaluation,
+    review_status: str,
+    convergence_policy: ConvergencePolicy | dict[str, Any] | None = None,
+    failed_delivery_report: bool = False,
+    scope_refs: list[str] | None = None,
+    checked_at: datetime | None = None,
+) -> CheckerContractGateResult:
+    normalized_review_status = str(review_status or "").strip()
+    blocking_findings = _blocking_contract_findings(evaluation)
+    checked_at = checked_at or datetime.now().astimezone()
+    resolved_policy = (
+        ConvergencePolicy.model_validate(convergence_policy)
+        if isinstance(convergence_policy, dict)
+        else convergence_policy
+    )
+    policy_ref = resolved_policy.policy_ref if resolved_policy is not None else None
+
+    if normalized_review_status not in APPROVED_CHECKER_REVIEW_STATUSES:
+        return CheckerContractGateResult(
+            allowed=False,
+            reason_code="checker_verdict_not_approved",
+            review_status=normalized_review_status or "UNKNOWN",
+            contract_id=evaluation.contract_id,
+            evaluation_fingerprint=evaluation.evaluation_fingerprint,
+            blocking_findings=blocking_findings,
+            blocking_finding_count=len(blocking_findings),
+            requires_convergence_policy=False,
+            policy_ref=policy_ref,
+        )
+
+    if not blocking_findings:
+        return CheckerContractGateResult(
+            allowed=True,
+            reason_code="contract_satisfied",
+            review_status=normalized_review_status,
+            contract_id=evaluation.contract_id,
+            evaluation_fingerprint=evaluation.evaluation_fingerprint,
+            blocking_findings=[],
+            blocking_finding_count=0,
+            requires_convergence_policy=False,
+            policy_ref=policy_ref,
+        )
+
+    if failed_delivery_report and (
+        resolved_policy is None or not resolved_policy.allow_failed_delivery_report
+    ):
+        return CheckerContractGateResult(
+            allowed=False,
+            reason_code="convergence_policy_required",
+            review_status=normalized_review_status,
+            contract_id=evaluation.contract_id,
+            evaluation_fingerprint=evaluation.evaluation_fingerprint,
+            blocking_findings=blocking_findings,
+            blocking_finding_count=len(blocking_findings),
+            requires_convergence_policy=True,
+            policy_ref=policy_ref,
+        )
+
+    allowed_gap_refs: list[str] = []
+    remaining_findings: list[ContractFinding] = []
+    requested_scope_refs = set(_stable_unique_strings(scope_refs))
+    if resolved_policy is None:
+        remaining_findings = list(blocking_findings)
+    else:
+        for finding in blocking_findings:
+            allowed_gap = _convergence_allowed_gap_for_finding(
+                resolved_policy,
+                finding,
+                checked_at=checked_at,
+                scope_refs=requested_scope_refs,
+            )
+            if allowed_gap is None:
+                remaining_findings.append(finding)
+                continue
+            allowed_gap_refs.append(finding.finding_id)
+
+    if remaining_findings:
+        return CheckerContractGateResult(
+            allowed=False,
+            reason_code="deliverable_contract_blocked",
+            review_status=normalized_review_status,
+            contract_id=evaluation.contract_id,
+            evaluation_fingerprint=evaluation.evaluation_fingerprint,
+            blocking_findings=remaining_findings,
+            blocking_finding_count=len(remaining_findings),
+            allowed_gap_refs=allowed_gap_refs,
+            requires_convergence_policy=True,
+            policy_ref=policy_ref,
+        )
+
+    return CheckerContractGateResult(
+        allowed=True,
+        reason_code="convergence_policy_allowed",
+        review_status=normalized_review_status,
+        contract_id=evaluation.contract_id,
+        evaluation_fingerprint=evaluation.evaluation_fingerprint,
+        blocking_findings=[],
+        blocking_finding_count=0,
+        allowed_gap_refs=allowed_gap_refs,
+        requires_convergence_policy=False,
+        policy_ref=policy_ref,
     )
 
 

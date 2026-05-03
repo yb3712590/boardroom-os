@@ -1873,6 +1873,7 @@ def _maker_checker_result_submit_payload(
     review_status: str = "APPROVED_WITH_NOTES",
     findings: list[dict] | None = None,
     artifact_refs: list[str] | None = None,
+    convergence_policy: dict | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     resolved_findings = findings
@@ -1904,6 +1905,14 @@ def _maker_checker_result_submit_payload(
                 }
             ]
 
+    payload = {
+        "summary": f"Checker returned {review_status} for the visual milestone.",
+        "review_status": review_status,
+        "findings": resolved_findings,
+    }
+    if convergence_policy is not None:
+        payload["convergence_policy"] = convergence_policy
+
     return {
         "workflow_id": workflow_id,
         "ticket_id": ticket_id,
@@ -1911,11 +1920,7 @@ def _maker_checker_result_submit_payload(
         "submitted_by": submitted_by,
         "result_status": "completed",
         "schema_version": "maker_checker_verdict_v1",
-        "payload": {
-            "summary": f"Checker returned {review_status} for the visual milestone.",
-            "review_status": review_status,
-            "findings": resolved_findings,
-        },
+        "payload": payload,
         "artifact_refs": artifact_refs or [],
         "written_artifacts": [],
         "assumptions": ["Checker reviewed the submitted visual milestone package."],
@@ -5351,7 +5356,7 @@ def test_check_internal_checker_approval_on_failed_report_creates_fix_ticket(cli
     ]
 
 
-def test_autopilot_converged_check_report_is_not_forced_back_to_rework(client, set_ticket_time):
+def test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework(client, set_ticket_time):
     set_ticket_time("2026-03-28T10:00:00+08:00")
     workflow_response = client.post(
         "/api/v1/commands/project-init",
@@ -5430,7 +5435,107 @@ def test_autopilot_converged_check_report_is_not_forced_back_to_rework(client, s
             checker_result_payload=converged_payload,
         )
 
-    assert forced_rework_payload is None
+    assert forced_rework_payload is not None
+    assert forced_rework_payload["review_status"] == "CHANGES_REQUIRED"
+    assert forced_rework_payload["deliverable_contract_gate"]["reason_code"] == (
+        "convergence_policy_required"
+    )
+
+
+def test_structured_convergence_policy_allows_failed_check_report(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = "wf_check_convergence_policy"
+    node_id = "node_check_convergence_policy"
+    maker_ticket_id = "tkt_check_convergence_policy_maker"
+    _create_lease_and_start_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id=maker_ticket_id,
+        node_id=node_id,
+        role_profile_ref="checker_primary",
+        output_schema_ref="delivery_check_report",
+        allowed_write_set=[f"reports/check/{maker_ticket_id}/*"],
+        allowed_tools=["read_artifact", "write_artifact"],
+        acceptance_criteria=[
+            "Must check the source code delivery against the approved scope lock.",
+            "Must produce a structured delivery check report.",
+        ],
+        input_artifact_refs=[
+            "art://runtime/tkt_build_convergence/source-code.tsx",
+            "art://meeting/consensus-document.json",
+        ],
+        delivery_stage="CHECK",
+    )
+    client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_delivery_check_report_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=maker_ticket_id,
+            node_id=node_id,
+            include_review_request=True,
+            status="FAIL",
+            findings=[
+                {
+                    "finding_id": "finding_missing_security_evidence",
+                    "summary": "Missing linked security and RBAC verification evidence.",
+                    "blocking": True,
+                }
+            ],
+        ),
+    )
+
+    repository = client.app.state.repository
+    checker_ticket_id = repository.get_current_node_projection(workflow_id, node_id)["latest_ticket_id"]
+    client.post(
+        "/api/v1/commands/ticket-lease",
+        json=_ticket_lease_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            leased_by="emp_checker_1",
+        ),
+    )
+    client.post(
+        "/api/v1/commands/ticket-start",
+        json=_ticket_start_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            started_by="emp_checker_1",
+        ),
+    )
+    checker_result = client.post(
+        "/api/v1/commands/ticket-result-submit",
+        json=_maker_checker_result_submit_payload(
+            workflow_id=workflow_id,
+            ticket_id=checker_ticket_id,
+            node_id=node_id,
+            review_status="APPROVED_WITH_NOTES",
+            convergence_policy={
+                "policy_ref": "conv://round9c/security-gap",
+                "allow_failed_delivery_report": True,
+                "allowed_gaps": [
+                    {
+                        "reason_code": "missing_required_evidence",
+                        "risk_disposition": "accepted for limited checkpoint delivery",
+                        "approver_ref": "approval://board/round9c",
+                        "source_ref": "decision://round9c/security-gap",
+                        "scope_refs": ["AC-finding_missing_security_evidence"],
+                    }
+                ],
+            },
+            idempotency_key=f"ticket-result-submit:{workflow_id}:{checker_ticket_id}:converged-policy",
+        ),
+    )
+
+    node_projection = repository.get_current_node_projection(workflow_id, node_id)
+    with repository.connection() as connection:
+        terminal_event = repository.get_latest_ticket_terminal_event(connection, checker_ticket_id)
+
+    assert checker_result.status_code == 200
+    assert checker_result.json()["status"] == "ACCEPTED"
+    assert terminal_event["payload"]["review_status"] == "APPROVED_WITH_NOTES"
+    assert node_projection["latest_ticket_id"] == checker_ticket_id
 
 
 def test_review_evidence_missing_required_hook_keeps_dependency_gate_blocked(client, set_ticket_time):

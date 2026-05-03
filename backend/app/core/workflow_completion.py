@@ -5,10 +5,13 @@ from datetime import datetime
 from typing import Any
 
 from app.core.deliverable_contract import (
+    ConvergencePolicy,
     DeliverableContract,
     DeliverableEvaluation,
     DeliverableEvaluationPolicy,
     compile_closeout_evidence_pack,
+    compile_deliverable_contract,
+    checker_contract_gate,
     evaluate_deliverable_contract,
 )
 from app.core.output_schemas import (
@@ -264,15 +267,6 @@ def _payload_review_status(payload: dict[str, Any]) -> str:
     return str(payload.get("review_status") or "").strip()
 
 
-def _payload_has_autopilot_convergence(payload: dict[str, Any]) -> bool:
-    if payload.get("autopilot_convergence_applied") is True:
-        return True
-    maker_checker_summary = payload.get("maker_checker_summary")
-    if isinstance(maker_checker_summary, dict):
-        return maker_checker_summary.get("autopilot_convergence_applied") is True
-    return False
-
-
 def _blocking_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     findings = payload.get("findings")
     if not isinstance(findings, list):
@@ -318,6 +312,132 @@ def _delivery_check_issue(
                 details={"status": status, "blocking_finding_count": len(blocking_findings)},
             )
     return None
+
+
+def _delivery_check_contract_evaluation(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    ticket_id: str,
+    payload: dict[str, Any],
+) -> DeliverableEvaluation | None:
+    blocking_findings = []
+    candidate_payloads = _payload_dicts_from_terminal_payload(payload)
+    nested_payload = payload.get("payload")
+    if isinstance(nested_payload, dict):
+        candidate_payloads.append(nested_payload)
+    for candidate_payload in candidate_payloads:
+        status = str(candidate_payload.get("status") or "").strip()
+        findings = [
+            finding
+            for finding in list(candidate_payload.get("findings") or [])
+            if isinstance(finding, dict) and bool(finding.get("blocking"))
+        ]
+        for finding in findings:
+            finding_id = str(finding.get("finding_id") or "").strip()
+            if finding_id:
+                blocking_findings.append(
+                    {
+                        "finding_id": finding_id,
+                        "summary": str(finding.get("summary") or "").strip()
+                        or "Delivery check report has a blocking finding.",
+                    }
+                )
+        if status == "FAIL" and not blocking_findings:
+            blocking_findings.append(
+                {
+                    "finding_id": "delivery_check_report_failed",
+                    "summary": str(candidate_payload.get("summary") or "").strip()
+                    or "Delivery check report returned FAIL.",
+                }
+            )
+    if not blocking_findings:
+        return None
+    acceptance = [
+        {
+            "criterion_id": f"AC-{finding['finding_id']}",
+            "description": finding["summary"],
+        }
+        for finding in blocking_findings
+    ]
+    required_evidence = [
+        {
+            "evidence_id": f"ev_{finding['finding_id']}",
+            "evidence_kind": "risk_disposition",
+            "acceptance_criteria_refs": [f"AC-{finding['finding_id']}"],
+        }
+        for finding in blocking_findings
+    ]
+    contract = compile_deliverable_contract(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        source_ticket_refs=[ticket_id],
+        acceptance_criteria=acceptance,
+        required_evidence=required_evidence,
+        metadata={
+            "round9c_legacy_input_compiler": True,
+            "source": "workflow_completion.failed_delivery_check_report",
+        },
+    )
+    return evaluate_deliverable_contract(
+        contract,
+        compile_closeout_evidence_pack(
+            workflow_id=workflow_id,
+            graph_version=graph_version,
+            final_evidence_refs=[f"ticket://{ticket_id}/failed-delivery-report"],
+            closeout_summary={
+                "source": "workflow_completion.failed_delivery_check_report",
+                "maker_ticket_id": ticket_id,
+            },
+        ),
+        DeliverableEvaluationPolicy(policy_ref="policy:round9c.failed_delivery_report"),
+    )
+
+
+def _checker_contract_gate_issue(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    maker_ticket_id: str,
+    maker_payload: dict[str, Any],
+    checker_ticket_id: str,
+    checker_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    evaluation = _delivery_check_contract_evaluation(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        ticket_id=maker_ticket_id,
+        payload=maker_payload,
+    )
+    if evaluation is None:
+        return None
+    convergence_policy_payload = checker_payload.get("convergence_policy")
+    convergence_policy = (
+        ConvergencePolicy.model_validate(convergence_policy_payload)
+        if isinstance(convergence_policy_payload, dict)
+        else None
+    )
+    gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status=_payload_review_status(checker_payload),
+        convergence_policy=convergence_policy,
+        failed_delivery_report=True,
+    )
+    if gate.allowed:
+        return None
+    return _closeout_gate_issue(
+        reason_code=gate.reason_code,
+        ticket_id=checker_ticket_id,
+        output_schema_ref=MAKER_CHECKER_VERDICT_SCHEMA_REF,
+        details={
+            "maker_ticket_id": maker_ticket_id,
+            "contract_id": gate.contract_id,
+            "evaluation_fingerprint": gate.evaluation_fingerprint,
+            "blocking_finding_count": gate.blocking_finding_count,
+            "requires_convergence_policy": gate.requires_convergence_policy,
+            "policy_ref": gate.policy_ref,
+        },
+    )
 
 
 def _maker_checker_issue(
@@ -580,6 +700,22 @@ def evaluate_workflow_closeout_gate_issue(
     closeout_ticket: dict[str, Any] | None = None,
     closeout_terminal_event: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    workflow_id = ""
+    for ticket in tickets:
+        workflow_id = str(ticket.get("workflow_id") or "").strip()
+        if workflow_id:
+            break
+    if not workflow_id:
+        for created_spec in created_specs_by_ticket.values():
+            workflow_id = str(created_spec.get("workflow_id") or "").strip()
+            if workflow_id:
+                break
+    graph_version = ""
+    for created_spec in created_specs_by_ticket.values():
+        graph_version = str(created_spec.get("graph_version") or "").strip()
+        if graph_version:
+            break
+    graph_version = graph_version or "legacy-closeout-gate"
     latest_ticket_ids = _latest_ticket_ids_by_node(tickets)
     for ticket_id in sorted(latest_ticket_ids):
         created_spec = created_specs_by_ticket.get(ticket_id) or {}
@@ -596,14 +732,19 @@ def evaluate_workflow_closeout_gate_issue(
         maker_output_schema_ref = str(maker_ticket_spec.get("output_schema_ref") or "").strip()
         maker_ticket_id = str((created_spec.get("maker_checker_context") or {}).get("maker_ticket_id") or "").strip()
         if maker_output_schema_ref == DELIVERY_CHECK_REPORT_SCHEMA_REF and maker_ticket_id:
+            maker_payload = _terminal_payload(ticket_terminal_events_by_ticket.get(maker_ticket_id))
             checker_review_status = _payload_review_status(terminal_payload)
-            if (
-                checker_review_status not in APPROVED_REVIEW_STATUSES
-                and not _payload_has_autopilot_convergence(terminal_payload)
+            if checker_review_status in APPROVED_REVIEW_STATUSES or isinstance(
+                terminal_payload.get("convergence_policy"),
+                dict,
             ):
-                issue = _delivery_check_issue(
-                    ticket_id=maker_ticket_id,
-                    payload=_terminal_payload(ticket_terminal_events_by_ticket.get(maker_ticket_id)),
+                issue = _checker_contract_gate_issue(
+                    workflow_id=workflow_id or str(created_spec.get("workflow_id") or "workflow-unknown"),
+                    graph_version=graph_version,
+                    maker_ticket_id=maker_ticket_id,
+                    maker_payload=maker_payload,
+                    checker_ticket_id=ticket_id,
+                    checker_payload=terminal_payload,
                 )
                 if issue is not None:
                     return issue

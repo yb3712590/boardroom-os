@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.core.deliverable_contract import (
+    ContractEvaluationStatus,
+    ConvergenceAllowedGap,
+    ConvergencePolicy,
     DeliverableEvaluationPolicy,
     DeliverableEvidencePack,
     EvidencePack,
+    checker_contract_gate,
     compile_deliverable_contract,
     evaluate_deliverable_contract,
 )
@@ -699,3 +705,255 @@ def test_superseded_archive_unknown_and_stale_pointer_evidence_do_not_satisfy_re
         "SUPERSEDED",
         "UNKNOWN_REF",
     ]
+
+
+def _blocking_contract_evaluation():
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9c_blocking",
+        graph_version="gv_9c",
+        acceptance_criteria=[
+            {
+                "criterion_id": "AC-contract-gap",
+                "description": "Blocking gaps cannot be approved by checker verdict alone.",
+            }
+        ],
+        required_evidence=[
+            {
+                "evidence_id": "ev_contract_gap",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": ["AC-contract-gap"],
+                "source_surface_refs": ["surface.contract_gap"],
+            }
+        ],
+    )
+    return evaluate_deliverable_contract(
+        contract,
+        EvidencePack.model_validate(
+            {
+                "workflow_id": "wf_round9c_blocking",
+                "graph_version": "gv_9c",
+                "final_evidence_refs": ["art://runtime/tkt_closeout/delivery-closeout-package.json"],
+            }
+        ),
+        DeliverableEvaluationPolicy(policy_ref="policy:round9c"),
+    )
+
+
+def test_approved_with_notes_does_not_allow_blocking_contract_gap() -> None:
+    gate = checker_contract_gate(
+        evaluation=_blocking_contract_evaluation(),
+        review_status="APPROVED_WITH_NOTES",
+        checked_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
+    )
+
+    assert gate.allowed is False
+    assert gate.reason_code == "deliverable_contract_blocked"
+    assert gate.requires_convergence_policy is True
+    assert gate.blocking_finding_count == 1
+
+
+def test_approved_with_notes_allows_non_blocking_notes_when_contract_is_satisfied() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9c_nonblocking",
+        graph_version="gv_9c",
+        acceptance_criteria=[
+            {
+                "criterion_id": "AC-nonblocking",
+                "description": "Non-blocking checker notes can pass with contract evidence.",
+            }
+        ],
+        required_evidence=[
+            {
+                "evidence_id": "ev_source",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": ["AC-nonblocking"],
+            }
+        ],
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        EvidencePack.model_validate(
+            {
+                "workflow_id": "wf_round9c_nonblocking",
+                "graph_version": "gv_9c",
+                "evidence": [
+                    {
+                        "evidence_ref": "art://workspace/tkt_impl/source/src/backend/app.py",
+                        "evidence_kind": "source_inventory",
+                        "acceptance_criteria_refs": ["AC-nonblocking"],
+                        "legality_status": "ACCEPTED",
+                    }
+                ],
+                "final_evidence_refs": ["art://workspace/tkt_impl/source/src/backend/app.py"],
+            }
+        ),
+        DeliverableEvaluationPolicy(policy_ref="policy:round9c"),
+    )
+
+    gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED_WITH_NOTES",
+        checked_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
+    )
+
+    assert evaluation.status == ContractEvaluationStatus.SATISFIED
+    assert gate.allowed is True
+    assert gate.reason_code == "contract_satisfied"
+    assert gate.requires_convergence_policy is False
+
+
+def test_failed_delivery_report_requires_structured_convergence_policy() -> None:
+    gate = checker_contract_gate(
+        evaluation=_blocking_contract_evaluation(),
+        review_status="APPROVED",
+        failed_delivery_report=True,
+        checked_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
+    )
+
+    assert gate.allowed is False
+    assert gate.reason_code == "convergence_policy_required"
+    assert gate.requires_convergence_policy is True
+
+
+def test_convergence_policy_allows_only_declared_gap_scope_and_expiry() -> None:
+    evaluation = _blocking_contract_evaluation()
+    finding = evaluation.findings[0]
+    checked_at = datetime.fromisoformat("2026-05-04T10:00:00+08:00")
+    policy = ConvergencePolicy(
+        policy_ref="conv://round9c/allow-contract-gap",
+        allow_failed_delivery_report=True,
+        allowed_gaps=[
+            ConvergenceAllowedGap(
+                finding_id=finding.finding_id,
+                reason_code=finding.reason_code,
+                risk_disposition="accepted for checkpoint-only delivery",
+                approver_ref="approval://board/round9c",
+                source_ref="decision://round9c/contract-gap",
+                expires_at=datetime.fromisoformat("2026-05-05T10:00:00+08:00"),
+                scope_refs=["AC-contract-gap"],
+            )
+        ],
+    )
+
+    allowed_gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED_WITH_NOTES",
+        convergence_policy=policy,
+        failed_delivery_report=True,
+        scope_refs=["AC-contract-gap"],
+        checked_at=checked_at,
+    )
+    scope_mismatch_gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED_WITH_NOTES",
+        convergence_policy=policy,
+        failed_delivery_report=True,
+        scope_refs=["AC-other"],
+        checked_at=checked_at,
+    )
+    expired_gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED_WITH_NOTES",
+        convergence_policy=policy,
+        failed_delivery_report=True,
+        scope_refs=["AC-contract-gap"],
+        checked_at=datetime.fromisoformat("2026-05-06T10:00:00+08:00"),
+    )
+
+    assert allowed_gate.allowed is True
+    assert allowed_gate.reason_code == "convergence_policy_allowed"
+    assert allowed_gate.allowed_gap_refs == [finding.finding_id]
+    assert scope_mismatch_gate.allowed is False
+    assert scope_mismatch_gate.reason_code == "deliverable_contract_blocked"
+    assert expired_gate.allowed is False
+    assert expired_gate.reason_code == "deliverable_contract_blocked"
+
+
+def test_convergence_policy_default_checked_at_handles_timezone_expiry() -> None:
+    evaluation = _blocking_contract_evaluation()
+    finding = evaluation.findings[0]
+    policy = ConvergencePolicy(
+        policy_ref="conv://round9c/tz-aware",
+        allow_failed_delivery_report=True,
+        allowed_gaps=[
+            ConvergenceAllowedGap(
+                finding_id=finding.finding_id,
+                reason_code=finding.reason_code,
+                risk_disposition="accepted before expiry",
+                approver_ref="approval://board/round9c",
+                source_ref="decision://round9c/tz-aware",
+                expires_at=datetime.fromisoformat("2099-05-04T10:00:00+08:00"),
+                scope_refs=["AC-contract-gap"],
+            )
+        ],
+    )
+
+    gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED",
+        convergence_policy=policy,
+        failed_delivery_report=True,
+    )
+
+    assert gate.allowed is True
+
+
+def test_convergence_policy_must_cover_every_blocking_gap() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9c_two_gaps",
+        graph_version="gv_9c",
+        acceptance_criteria=[
+            {"criterion_id": "AC-one", "description": "First required evidence."},
+            {"criterion_id": "AC-two", "description": "Second required evidence."},
+        ],
+        required_evidence=[
+            {
+                "evidence_id": "ev_one",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": ["AC-one"],
+            },
+            {
+                "evidence_id": "ev_two",
+                "evidence_kind": "unit_test",
+                "acceptance_criteria_refs": ["AC-two"],
+            },
+        ],
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        EvidencePack.model_validate(
+            {
+                "workflow_id": "wf_round9c_two_gaps",
+                "graph_version": "gv_9c",
+                "final_evidence_refs": ["art://runtime/tkt_closeout/delivery-closeout-package.json"],
+            }
+        ),
+        DeliverableEvaluationPolicy(policy_ref="policy:round9c"),
+    )
+    policy = ConvergencePolicy(
+        policy_ref="conv://round9c/partial",
+        allow_failed_delivery_report=True,
+        allowed_gaps=[
+            ConvergenceAllowedGap(
+                finding_id=evaluation.findings[0].finding_id,
+                reason_code=evaluation.findings[0].reason_code,
+                risk_disposition="accepted for one gap only",
+                approver_ref="approval://board/round9c",
+                source_ref="decision://round9c/partial",
+                scope_refs=["AC-one"],
+            )
+        ],
+    )
+
+    gate = checker_contract_gate(
+        evaluation=evaluation,
+        review_status="APPROVED",
+        convergence_policy=policy,
+        failed_delivery_report=True,
+        scope_refs=["AC-one"],
+        checked_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
+    )
+
+    assert gate.allowed is False
+    assert gate.reason_code == "deliverable_contract_blocked"
+    assert gate.blocking_finding_count == 1
