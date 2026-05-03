@@ -24,7 +24,6 @@ from app.contracts.commands import (
 )
 from app.contracts.common import StrictModel
 from app.config import get_settings
-from app.core.execution_targets import legacy_target_refs_for_execution_target
 from app.core.ids import new_prefixed_id
 from app.core.time import now_local
 from app.db.repository import ControlPlaneRepository
@@ -706,92 +705,31 @@ def runtime_target_label(target_ref: str) -> str:
     return RUNTIME_TARGET_LABELS.get(target_ref, target_ref)
 
 
-def _binding_target_ref_candidates(target_ref: str) -> tuple[str, ...]:
-    normalized_target_ref = str(target_ref or "").strip()
-    if not normalized_target_ref:
-        return ()
-    candidates = [normalized_target_ref]
-    for legacy_target_ref in legacy_target_refs_for_execution_target(normalized_target_ref):
-        if legacy_target_ref not in candidates:
-            candidates.append(legacy_target_ref)
-    return tuple(candidates)
-
-
-def _get_binding(config: RuntimeProviderStoredConfig, target_ref: str) -> RuntimeProviderRoleBinding | None:
-    for binding in config.role_bindings:
-        if binding.target_ref == target_ref:
-            return binding
-    return None
-
-
-def _selection_from_entry(
-    config: RuntimeProviderStoredConfig,
+def _runtime_selection_from_provider(
+    provider: RuntimeProviderConfigEntry,
     *,
-    entry_ref: str,
-    binding_target_ref: str | None,
     selection_reason: str,
-    max_context_window_override: int | None = None,
-    reasoning_effort_override: RuntimeProviderReasoningEffort | None = None,
+    policy_reason: str | None = None,
+    preferred_provider_id: str | None = None,
+    preferred_model: str | None = None,
+    actual_model: str | None = None,
 ) -> RuntimeProviderSelection | None:
-    entry = find_provider_model_entry(config, entry_ref)
-    if entry is None:
+    normalized_provider = _normalize_provider_entry(provider)
+    model_name = str(actual_model or preferred_model or normalized_provider.preferred_model or normalized_provider.model or "").strip()
+    if not normalized_provider.enabled or not model_name:
         return None
-    provider = find_provider_entry(config, entry.provider_id)
-    if provider is None or not provider.enabled:
-        return None
-    actual_model = entry.model_name
     return RuntimeProviderSelection(
-        provider=provider,
-        provider_model_entry_ref=entry.entry_ref,
-        preferred_provider_id=provider.provider_id,
-        preferred_model=actual_model,
-        actual_model=actual_model,
-        binding_target_ref=binding_target_ref,
+        provider=normalized_provider,
+        provider_model_entry_ref=build_provider_model_entry_ref(normalized_provider.provider_id, model_name),
+        preferred_provider_id=preferred_provider_id or normalized_provider.provider_id,
+        preferred_model=preferred_model or model_name,
+        actual_model=model_name,
+        binding_target_ref=None,
         selection_reason=selection_reason,
-        policy_reason=None,
-        effective_max_context_window=max_context_window_override or provider.max_context_window,
-        effective_reasoning_effort=reasoning_effort_override or provider.reasoning_effort,
+        policy_reason=policy_reason,
+        effective_max_context_window=normalized_provider.max_context_window,
+        effective_reasoning_effort=normalized_provider.reasoning_effort,
     )
-
-
-def _selection_from_binding(
-    config: RuntimeProviderStoredConfig,
-    *,
-    binding: RuntimeProviderRoleBinding,
-    binding_target_ref: str,
-    selection_reason: str,
-) -> RuntimeProviderSelection | None:
-    selections = _selections_from_binding(
-        config,
-        binding=binding,
-        binding_target_ref=binding_target_ref,
-        selection_reason=selection_reason,
-    )
-    return selections[0] if selections else None
-
-
-def _selections_from_binding(
-    config: RuntimeProviderStoredConfig,
-    *,
-    binding: RuntimeProviderRoleBinding,
-    binding_target_ref: str,
-    selection_reason: str,
-) -> list[RuntimeProviderSelection]:
-    if not binding.provider_model_entry_refs:
-        return []
-    selections: list[RuntimeProviderSelection] = []
-    for entry_ref in binding.provider_model_entry_refs:
-        selection = _selection_from_entry(
-            config,
-            entry_ref=entry_ref,
-            binding_target_ref=binding_target_ref,
-            selection_reason=selection_reason,
-            max_context_window_override=binding.max_context_window_override,
-            reasoning_effort_override=binding.reasoning_effort_override,
-        )
-        if selection is not None:
-            selections.append(selection)
-    return selections
 
 
 def _normalize_runtime_preference(
@@ -824,86 +762,36 @@ def resolve_provider_selection(
     normalized_preference = _normalize_runtime_preference(runtime_preference)
     if normalized_preference is not None:
         preferred_provider = find_provider_entry(config, normalized_preference.preferred_provider_id)
-        if preferred_provider is None or not preferred_provider.enabled:
+        if preferred_provider is None:
             return None
-        preferred_model = normalized_preference.preferred_model or preferred_provider.preferred_model
-        if not preferred_model:
-            return None
-        return RuntimeProviderSelection(
-            provider=preferred_provider,
-            provider_model_entry_ref=build_provider_model_entry_ref(
-                preferred_provider.provider_id,
-                preferred_model,
-            ),
+        return _runtime_selection_from_provider(
+            preferred_provider,
+            selection_reason="actor_provider_preference",
+            policy_reason="actor_provider_preference",
             preferred_provider_id=preferred_provider.provider_id,
-            preferred_model=preferred_model,
-            actual_model=preferred_model,
-            binding_target_ref=target_ref,
-            selection_reason="ticket_runtime_preference",
-            policy_reason=None,
-            effective_max_context_window=preferred_provider.max_context_window,
-            effective_reasoning_effort=preferred_provider.reasoning_effort,
+            preferred_model=normalized_preference.preferred_model or preferred_provider.preferred_model,
+            actual_model=normalized_preference.preferred_model or preferred_provider.preferred_model,
         )
-
-    for candidate_ref in _binding_target_ref_candidates(target_ref):
-        binding = _get_binding(config, candidate_ref)
-        if binding is None:
-            continue
-        selection = _selection_from_binding(
-            config,
-            binding=binding,
-            binding_target_ref=candidate_ref,
-            selection_reason="role_binding",
-        )
-        if selection is not None:
-            return selection
-        break
 
     if strict_explicit_binding:
         return None
 
-    ceo_binding = _get_binding(config, ROLE_BINDING_CEO_SHADOW)
-    if ceo_binding is not None:
-        selection = _selection_from_binding(
-            config,
-            binding=ceo_binding,
-            binding_target_ref=ROLE_BINDING_CEO_SHADOW,
-            selection_reason="ceo_binding_inheritance",
+    employee_provider = find_provider_entry(config, employee_provider_id)
+    if employee_provider is not None:
+        selection = _runtime_selection_from_provider(
+            employee_provider,
+            selection_reason="actor_provider_preference",
+            policy_reason="actor_provider_preference",
         )
         if selection is not None:
             return selection
 
-    employee_provider = find_provider_entry(config, employee_provider_id)
-    if employee_provider is not None and employee_provider.enabled and employee_provider.preferred_model:
-        return RuntimeProviderSelection(
-            provider=employee_provider,
-            provider_model_entry_ref=build_provider_model_entry_ref(
-                employee_provider.provider_id,
-                employee_provider.preferred_model,
-            ),
-            preferred_provider_id=employee_provider.provider_id,
-            preferred_model=employee_provider.preferred_model,
-            actual_model=employee_provider.preferred_model,
-            binding_target_ref=None,
-            selection_reason="employee_provider",
-            policy_reason=None,
-            effective_max_context_window=employee_provider.max_context_window,
-            effective_reasoning_effort=employee_provider.reasoning_effort,
-        )
     default_provider = find_provider_entry(config, config.default_provider_id)
-    if default_provider is not None and default_provider.enabled and (default_provider.preferred_model or default_provider.model):
-        model_name = str(default_provider.preferred_model or default_provider.model or "").strip()
-        return RuntimeProviderSelection(
-            provider=default_provider,
-            provider_model_entry_ref=build_provider_model_entry_ref(default_provider.provider_id, model_name),
-            preferred_provider_id=default_provider.provider_id,
-            preferred_model=model_name,
-            actual_model=model_name,
-            binding_target_ref=None,
+    if default_provider is not None:
+        return _runtime_selection_from_provider(
+            default_provider,
             selection_reason="default_provider",
-            policy_reason=None,
-            effective_max_context_window=default_provider.max_context_window,
-            effective_reasoning_effort=default_provider.reasoning_effort,
+            policy_reason="default_provider",
         )
     return None
 
@@ -917,34 +805,6 @@ def resolve_provider_failover_selections(
 ) -> list[RuntimeProviderSelection]:
     selections: list[RuntimeProviderSelection] = []
     attempted_provider_ids = {primary_selection.provider.provider_id}
-    if (
-        primary_selection.binding_target_ref is not None
-        and primary_selection.selection_reason != "ticket_runtime_preference"
-    ):
-        binding = _get_binding(config, primary_selection.binding_target_ref)
-        if binding is not None:
-            binding_selections = _selections_from_binding(
-                config,
-                binding=binding,
-                binding_target_ref=primary_selection.binding_target_ref,
-                selection_reason="provider_failover",
-            )
-            binding_refs = [item.provider_model_entry_ref for item in binding_selections]
-            try:
-                start_index = binding_refs.index(primary_selection.provider_model_entry_ref) + 1
-            except ValueError:
-                start_index = 0
-            for failover_selection in binding_selections[start_index:]:
-                provider_id = failover_selection.provider.provider_id
-                if provider_id in attempted_provider_ids:
-                    continue
-                if not provider_meets_target_capability_floor(failover_selection.provider, target_ref):
-                    continue
-                health_status, _ = runtime_provider_health_details(failover_selection.provider, repository)
-                if health_status != "HEALTHY":
-                    continue
-                selections.append(failover_selection)
-                attempted_provider_ids.add(provider_id)
     for fallback_provider_id in primary_selection.provider.fallback_provider_ids:
         fallback_provider = find_provider_entry(config, fallback_provider_id)
         if fallback_provider is None or fallback_provider.provider_id in attempted_provider_ids:
@@ -954,23 +814,17 @@ def resolve_provider_failover_selections(
         health_status, _ = runtime_provider_health_details(fallback_provider, repository)
         if health_status != "HEALTHY":
             continue
-        model_name = str(fallback_provider.preferred_model or fallback_provider.model or "").strip()
-        if not model_name:
-            continue
-        selections.append(
-            RuntimeProviderSelection(
-                provider=fallback_provider,
-                provider_model_entry_ref=build_provider_model_entry_ref(fallback_provider.provider_id, model_name),
-                preferred_provider_id=primary_selection.preferred_provider_id,
-                preferred_model=primary_selection.preferred_model,
-                actual_model=model_name,
-                binding_target_ref=primary_selection.binding_target_ref,
-                selection_reason="provider_failover",
-                policy_reason=primary_selection.policy_reason,
-                effective_max_context_window=fallback_provider.max_context_window,
-                effective_reasoning_effort=fallback_provider.reasoning_effort,
-            )
+        selection = _runtime_selection_from_provider(
+            fallback_provider,
+            selection_reason="provider_failover",
+            policy_reason=f"provider_fallback:{primary_selection.provider.provider_id}",
+            preferred_provider_id=primary_selection.preferred_provider_id,
+            preferred_model=primary_selection.preferred_model,
+            actual_model=fallback_provider.preferred_model or fallback_provider.model,
         )
+        if selection is None:
+            continue
+        selections.append(selection)
         attempted_provider_ids.add(fallback_provider.provider_id)
     return selections
 

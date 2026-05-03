@@ -50,7 +50,7 @@
 - [x] Assignment 与 Lease 分离（Round 7C: `TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` plus assignment/lease projections; ticket lease/start/timeout and context compiler/runtime package carry `actor_id` / `assignment_id` / `lease_id`）。
 - [x] `excluded_employee_ids` 有作用域，不会继承污染（Round 7B: retry/rework 清空 legacy list，并使用 scoped exclusions）。
 - [x] no eligible actor 产生显式 action 或 incident（Round 7B: scheduler diagnostic `NO_ELIGIBLE_ACTOR` carries candidate details and suggested actions）。
-- [ ] provider preferred/actual 记录完整。
+- [x] provider preferred/actual 记录完整（Round 7D: assignment payload/projection、provider audit event、runtime result assumptions/attempt log 均记录 `preferred_provider_id` / `actual_provider_id` 与 model/failover provenance）。
 
 ## Phase 4：Progression policy engine
 

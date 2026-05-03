@@ -447,12 +447,13 @@ class ControlPlaneRepository:
                     node_id,
                     actor_id,
                     required_capabilities_json,
+                    provider_selection_json,
                     status,
                     assignment_reason,
                     assigned_at,
                     updated_at,
                     version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     projection["assignment_id"],
@@ -461,6 +462,7 @@ class ControlPlaneRepository:
                     projection["node_id"],
                     projection["actor_id"],
                     json.dumps(list(projection.get("required_capabilities") or []), sort_keys=True),
+                    json.dumps(dict(projection.get("provider_selection") or {}), sort_keys=True),
                     projection["status"],
                     projection.get("assignment_reason"),
                     projection["assigned_at"],
@@ -6572,7 +6574,9 @@ class ControlPlaneRepository:
     def _convert_assignment_projection_row(self, row: sqlite3.Row) -> dict[str, Any]:
         converted = dict(row)
         converted["required_capabilities"] = json.loads(converted.get("required_capabilities_json") or "[]")
+        converted["provider_selection"] = json.loads(converted.get("provider_selection_json") or "{}")
         converted.pop("required_capabilities_json", None)
+        converted.pop("provider_selection_json", None)
         for field in ("assigned_at", "updated_at"):
             if converted.get(field):
                 converted[field] = datetime.fromisoformat(converted[field])
@@ -7521,6 +7525,7 @@ class ControlPlaneRepository:
                 node_id TEXT NOT NULL,
                 actor_id TEXT NOT NULL,
                 required_capabilities_json TEXT NOT NULL,
+                provider_selection_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 assignment_reason TEXT,
                 assigned_at TEXT NOT NULL,
@@ -7529,6 +7534,14 @@ class ControlPlaneRepository:
             )
             """
         )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(assignment_projection)").fetchall()
+        }
+        if "provider_selection_json" not in existing_columns:
+            connection.execute(
+                "ALTER TABLE assignment_projection ADD COLUMN provider_selection_json TEXT NOT NULL DEFAULT '{}'"
+            )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_assignment_projection_ticket ON assignment_projection(ticket_id)"
         )

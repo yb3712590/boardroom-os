@@ -3108,8 +3108,75 @@ def test_runtime_uses_openai_compat_provider_when_configured(client, set_ticket_
     assert ticket_projection["status"] == "COMPLETED"
 
 
-def test_runtime_completes_governance_document_ticket_on_live_role(client, set_ticket_time):
-    set_ticket_time("2026-04-07T19:00:00+08:00")
+def test_scheduler_assignment_records_provider_provenance_from_actor_preference(client, set_ticket_time):
+    set_ticket_time("2026-03-28T10:00:00+08:00")
+    workflow_id = _seed_runtime_workflow(
+        client,
+        "wf_assignment_provider_provenance",
+        "Assignment provider provenance",
+    )
+    repository = client.app.state.repository
+    client.app.state.runtime_provider_store.save_config(
+        RuntimeProviderStoredConfig(
+            default_provider_id=OPENAI_COMPAT_PROVIDER_ID,
+            providers=[
+                RuntimeProviderConfigEntry(
+                    provider_id=OPENAI_COMPAT_PROVIDER_ID,
+                    adapter_kind="openai_compat",
+                    label="OpenAI Compat",
+                    enabled=True,
+                    base_url="https://api.example.test/v1",
+                    api_key="sk-test-secret",
+                    preferred_model="gpt-5.3-codex",
+                    timeout_sec=30.0,
+                    reasoning_effort="medium",
+                    capability_tags=["structured_output", "implementation", "planning"],
+                )
+            ],
+            role_bindings=[],
+        )
+    )
+
+    client.post(
+        "/api/v1/commands/ticket-create",
+        json=_ticket_create_payload(
+            workflow_id=workflow_id,
+            ticket_id="tkt_assignment_provider_provenance",
+            node_id="node_assignment_provider_provenance",
+            role_profile_ref="frontend_engineer_primary",
+        ),
+    )
+    run_scheduler_tick(
+        repository,
+        idempotency_key="scheduler-runner:test-assignment-provider-provenance",
+        max_dispatches=1,
+    )
+
+    assignment_event = [
+        event
+        for event in repository.list_events_for_testing()
+        if event["event_type"] == EVENT_TICKET_ASSIGNED
+        and event.get("ticket_id") == "tkt_assignment_provider_provenance"
+    ][0]
+    assignment = repository.get_assignment_projection(
+        assignment_event["payload"]["assignment_id"]
+    )
+
+    assert assignment_event["payload"]["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert assignment_event["payload"]["preferred_model"] == "gpt-5.3-codex"
+    assert assignment_event["payload"]["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert assignment_event["payload"]["actual_model"] == "gpt-5.3-codex"
+    assert assignment_event["payload"]["selection_reason"] == "actor_provider_preference"
+    assert assignment_event["payload"]["policy_reason"] == "capability_match"
+    assert assignment_event["payload"]["provider_health_snapshot"]["status"] == "HEALTHY"
+    assert assignment_event["payload"]["cost_class"] == "standard"
+    assert assignment_event["payload"]["latency_class"] == "standard"
+    assert assignment is not None
+    assert assignment["provider_selection"]["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert assignment["provider_selection"]["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+
+
+def test_runtime_governance_document_completion_persists_governance_process_asset(client, set_ticket_time):
     repository = client.app.state.repository
     _seed_runtime_workflow(client, "wf_runtime_governance_doc", "Runtime governance document")
 
@@ -5342,8 +5409,9 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     original_submit = runtime_module.handle_ticket_result_submit
 
     def _record_submit(repository_arg, payload, developer_inspector_store=None, artifact_store=None):
-        recorded_submit["assumptions"] = list(payload.assumptions)
-        recorded_submit["issues"] = list(payload.issues)
+        if payload.ticket_id == "tkt_runner_provider_failover":
+            recorded_submit["assumptions"] = list(payload.assumptions)
+            recorded_submit["issues"] = list(payload.issues)
         return original_submit(
             repository_arg,
             payload,
@@ -5368,6 +5436,13 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
         and event["payload"]["provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     ][-1]
     assert openai_finished["payload"]["provider_attempt_count"] == 5
+    assert openai_finished["payload"]["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert openai_finished["payload"]["preferred_model"] == "gpt-5.3-codex"
+    assert openai_finished["payload"]["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert openai_finished["payload"]["actual_model"] == "gpt-5.3-codex"
+    assert openai_finished["payload"]["selection_reason"] == "actor_provider_preference"
+    assert openai_finished["payload"]["policy_reason"] == "actor_provider_preference"
+    assert openai_finished["payload"]["provider_health_snapshot"]["status"] == "HEALTHY"
     assert open_provider_incidents == []
     assert "preferred_provider_id=prov_openai_compat" in recorded_submit["assumptions"]
     assert "preferred_model=gpt-5.3-codex" in recorded_submit["assumptions"]
@@ -5375,11 +5450,22 @@ def test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_dete
     assert "actual_model=claude-sonnet-4-6" in recorded_submit["assumptions"]
     assert "effective_reasoning_effort=high" in recorded_submit["assumptions"]
     assert "selection_reason=provider_failover" in recorded_submit["assumptions"]
+    assert "policy_reason=provider_fallback:prov_openai_compat" in recorded_submit["assumptions"]
     assert any("failover" in issue.lower() for issue in recorded_submit["issues"])
     failover_events = [
         event for event in provider_events if event["event_type"] == "PROVIDER_FAILOVER_SELECTED"
     ]
     assert len(failover_events) == 1
+    assert failover_events[0]["payload"]["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert failover_events[0]["payload"]["preferred_model"] == "gpt-5.3-codex"
+    assert failover_events[0]["payload"]["actual_provider_id"] == CLAUDE_CODE_PROVIDER_ID
+    assert failover_events[0]["payload"]["actual_model"] == "claude-sonnet-4-6"
+    assert failover_events[0]["payload"]["selection_reason"] == "provider_failover"
+    assert failover_events[0]["payload"]["policy_reason"] == f"provider_fallback:{OPENAI_COMPAT_PROVIDER_ID}"
+    assert failover_events[0]["payload"]["fallback_reason"] == "PROVIDER_RATE_LIMITED"
+    assert failover_events[0]["payload"]["provider_health_snapshot"]["status"] == "HEALTHY"
+    assert failover_events[0]["payload"]["cost_class"] == "standard"
+    assert failover_events[0]["payload"]["latency_class"] == "standard"
     assert failover_events[0]["payload"]["from_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
     assert failover_events[0]["payload"]["to_provider_id"] == CLAUDE_CODE_PROVIDER_ID
     assert failover_events[0]["payload"]["failure_kind"] == "PROVIDER_RATE_LIMITED"

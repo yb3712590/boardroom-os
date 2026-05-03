@@ -851,6 +851,22 @@ def rebuild_actor_projections(events: Iterable[dict]) -> list[dict[str, Any]]:
     return [projections[actor_id] for actor_id in sorted(projections)]
 
 
+def _assignment_provider_selection(payload: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "preferred_provider_id",
+        "preferred_model",
+        "actual_provider_id",
+        "actual_model",
+        "selection_reason",
+        "policy_reason",
+        "fallback_reason",
+        "provider_health_snapshot",
+        "cost_class",
+        "latency_class",
+    )
+    return {key: payload.get(key) for key in keys if key in payload}
+
+
 def rebuild_assignment_projections(events: Iterable[dict]) -> list[dict[str, Any]]:
     projections: dict[str, dict[str, Any]] = {}
 
@@ -875,6 +891,7 @@ def rebuild_assignment_projections(events: Iterable[dict]) -> list[dict[str, Any
             "required_capabilities": _dedupe_text_values(payload.get("required_capabilities") or []),
             "status": str(payload.get("status") or "ASSIGNED"),
             "assignment_reason": str(payload.get("assignment_reason") or payload.get("reason") or ""),
+            "provider_selection": _assignment_provider_selection(payload),
             "assigned_at": str(payload.get("assigned_at") or occurred_at),
             "updated_at": occurred_at,
             "version": int(event["sequence_no"]),

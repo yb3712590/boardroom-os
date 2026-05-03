@@ -92,6 +92,7 @@ from app.core.runtime_provider_config import (
     resolve_provider_failover_selections,
     resolve_provider_selection,
     resolve_runtime_provider_config,
+    runtime_provider_health_details,
 )
 from app.core.execution_targets import resolve_execution_target_ref_from_ticket_spec
 from app.core.graph_identity import GraphIdentityResolutionError, resolve_ticket_graph_identity
@@ -283,6 +284,45 @@ def _build_runtime_developer_inspector_refs(ticket_id: str) -> DeveloperInspecto
     )
 
 
+def _provider_cost_class(selection: RuntimeProviderSelection) -> str:
+    cost_tier = getattr(selection.provider, "cost_tier", None)
+    return str(getattr(cost_tier, "value", cost_tier) or "standard")
+
+
+def _provider_latency_class(_selection: RuntimeProviderSelection) -> str:
+    return "standard"
+
+
+def _provider_provenance_payload(
+    selection: RuntimeProviderSelection,
+    *,
+    repository: ControlPlaneRepository | None = None,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    provider_id = selection.provider.provider_id
+    payload: dict[str, Any] = {
+        "provider_id": provider_id,
+        "preferred_provider_id": selection.preferred_provider_id,
+        "preferred_model": selection.preferred_model,
+        "actual_provider_id": provider_id,
+        "actual_model": selection.actual_model or selection.provider.model,
+        "selection_reason": selection.selection_reason,
+        "policy_reason": selection.policy_reason,
+        "cost_class": _provider_cost_class(selection),
+        "latency_class": _provider_latency_class(selection),
+    }
+    if fallback_reason is not None:
+        payload["fallback_reason"] = fallback_reason
+    if repository is not None:
+        health_status, health_reason = runtime_provider_health_details(selection.provider, repository)
+        payload["provider_health_snapshot"] = {
+            "provider_id": provider_id,
+            "status": health_status,
+            "reason": health_reason,
+        }
+    return payload
+
+
 def _build_provider_selection_assumptions(
     *,
     execution_package: CompiledExecutionPackage,
@@ -320,6 +360,8 @@ def _resolve_ticket_provider_id(
     provider_preferences = dict(actor.get("provider_preferences") or {})
     if provider_preferences.get("provider_id"):
         return str(provider_preferences["provider_id"])
+    if provider_preferences.get("preferred_provider_id"):
+        return str(provider_preferences["preferred_provider_id"])
     employee_id = str(actor.get("employee_id") or "").strip()
     if not employee_id:
         return None
@@ -2273,14 +2315,11 @@ def _normalize_provider_failure_detail(
 ) -> dict[str, Any]:
     normalized = dict(failure_detail or {})
     if selection is not None:
-        normalized.setdefault("provider_id", selection.provider.provider_id)
-        normalized.setdefault("preferred_provider_id", selection.preferred_provider_id)
-        normalized.setdefault("preferred_model", selection.preferred_model)
-        normalized.setdefault("actual_provider_id", selection.provider.provider_id)
-        normalized.setdefault("actual_model", selection.actual_model or selection.provider.model)
+        provider_provenance = _provider_provenance_payload(selection)
+        normalized.setdefault("provider_id", provider_provenance["actual_provider_id"])
+        for key, value in provider_provenance.items():
+            normalized.setdefault(key, value)
         normalized.setdefault("adapter_kind", selection.provider.adapter_kind)
-        normalized.setdefault("selection_reason", selection.selection_reason)
-        normalized.setdefault("policy_reason", selection.policy_reason)
         normalized.setdefault(
             "retry_backoff_schedule_sec",
             [float(item) for item in list(selection.provider.retry_backoff_schedule_sec or [])],
@@ -2325,11 +2364,12 @@ def _build_provider_attempt_log_entry(
     selection: RuntimeProviderSelection,
     result: RuntimeExecutionResult,
 ) -> dict[str, Any]:
+    provider_provenance = _provider_provenance_payload(selection)
     return {
-        "provider_id": selection.provider.provider_id,
+        **provider_provenance,
         "provider_model_entry_ref": selection.provider_model_entry_ref,
-        "actual_model": selection.actual_model or selection.provider.model,
-        "selection_reason": selection.selection_reason,
+        "adapter_kind": selection.provider.adapter_kind,
+        "effective_reasoning_effort": selection.effective_reasoning_effort,
         "status": result.result_status.upper(),
         "failure_kind": result.failure_kind,
         "failure_message": result.failure_message,
@@ -2422,6 +2462,7 @@ def _provider_attempt_deadline_at(
 
 def _provider_audit_payload_base(
     *,
+    repository: ControlPlaneRepository,
     ticket: dict[str, Any],
     selection: RuntimeProviderSelection,
     candidate_chain: list[str],
@@ -2437,8 +2478,7 @@ def _provider_audit_payload_base(
         "attempt_idempotency_key": _provider_attempt_idempotency_key(ticket, selection, attempt_no),
         "provider_policy_ref": _provider_policy_ref(selection),
         "deadline_at": deadline_at.isoformat(),
-        "provider_id": selection.provider.provider_id,
-        "actual_model": selection.actual_model or selection.provider.model,
+        **_provider_provenance_payload(selection, repository=repository),
         "effective_reasoning_effort": selection.effective_reasoning_effort,
         "adapter_kind": selection.provider.adapter_kind,
         "provider_candidate_chain": list(candidate_chain),
@@ -2465,6 +2505,7 @@ def _record_provider_audit_event(
     idempotency_suffix = payload.get("idempotency_suffix") or event_type.lower()
     effective_payload = {
         **_provider_audit_payload_base(
+            repository=repository,
             ticket=ticket,
             selection=selection,
             candidate_chain=candidate_chain,
@@ -2589,11 +2630,7 @@ def _execute_openai_compat_provider(
     last_failure_kind = "PROVIDER_BAD_RESPONSE"
     last_failure_message = "Provider execution failed."
     last_failure_detail: dict[str, Any] = {
-        "provider_id": selection.provider.provider_id,
-        "preferred_provider_id": selection.preferred_provider_id,
-        "preferred_model": selection.preferred_model,
-        "actual_provider_id": selection.provider.provider_id,
-        "actual_model": selection.actual_model or selection.provider.model,
+        **_provider_provenance_payload(selection),
         "adapter_kind": selection.provider.adapter_kind,
     }
 
@@ -3085,6 +3122,7 @@ def _attempt_provider_failover(
                 "from_provider_id": primary_selection.provider.provider_id,
                 "to_provider_id": failover_selection.provider.provider_id,
                 "failure_kind": primary_failure.failure_kind,
+                "fallback_reason": primary_failure.failure_kind,
                 "status": "IN_PROGRESS",
                 "current_phase": "retry_waiting",
                 "elapsed_sec": 0.0,
@@ -3281,6 +3319,7 @@ def _execute_runtime_with_provider_if_configured(
                     "from_provider_id": selection.provider.provider_id,
                     "to_provider_id": failover_selection.provider.provider_id,
                     "failure_kind": provider_result.failure_kind,
+                    "fallback_reason": provider_result.failure_kind,
                     "status": "IN_PROGRESS",
                     "current_phase": "retry_waiting",
                     "elapsed_sec": 0.0,

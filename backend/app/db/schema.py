@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS assignment_projection (
     node_id TEXT NOT NULL,
     actor_id TEXT NOT NULL,
     required_capabilities_json TEXT NOT NULL,
+    provider_selection_json TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL,
     assignment_reason TEXT,
     assigned_at TEXT NOT NULL,

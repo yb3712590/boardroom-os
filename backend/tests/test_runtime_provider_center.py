@@ -9,6 +9,7 @@ from app.core.runtime_provider_config import (
     RuntimeProviderModelEntry,
     RuntimeProviderRoleBinding,
     RuntimeProviderConfigStore,
+    RuntimeProviderSelection,
     RuntimeProviderStoredConfig,
     build_provider_model_entry_ref,
     resolve_runtime_provider_config,
@@ -416,7 +417,7 @@ def test_save_runtime_provider_command_preserves_explicit_request_total_timeout(
     assert loaded.providers[0].request_total_timeout_sec == 45.0
 
 
-def test_resolve_provider_selection_inherits_ceo_binding_and_provider_window(tmp_path: Path) -> None:
+def test_resolve_provider_selection_uses_default_provider_without_actor_preference(tmp_path: Path) -> None:
     store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
     save_runtime_provider_command(store, _build_upsert_command())
     loaded = store.load_saved_config()
@@ -431,11 +432,13 @@ def test_resolve_provider_selection_inherits_ceo_binding_and_provider_window(tmp
     assert selection.provider.provider_id == "prov_primary"
     assert selection.provider_model_entry_ref == build_provider_model_entry_ref("prov_primary", "gpt-5.3-codex")
     assert selection.actual_model == "gpt-5.3-codex"
+    assert selection.binding_target_ref is None
+    assert selection.selection_reason == "default_provider"
     assert selection.effective_max_context_window == 1000000
     assert selection.effective_reasoning_effort == "high"
 
 
-def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp_path: Path) -> None:
+def test_resolve_provider_selection_ignores_role_binding_and_uses_default_provider(tmp_path: Path) -> None:
     store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
     payload = {
         "providers": [
@@ -500,10 +503,12 @@ def test_resolve_provider_selection_prefers_role_binding_and_window_override(tmp
     )
 
     assert selection is not None
-    assert selection.provider.provider_id == "prov_backup"
-    assert selection.actual_model == "gpt-4.1"
-    assert selection.effective_max_context_window == 180000
-    assert selection.effective_reasoning_effort == "xhigh"
+    assert selection.provider.provider_id == "prov_primary"
+    assert selection.actual_model == "gpt-5.3-codex"
+    assert selection.binding_target_ref is None
+    assert selection.selection_reason == "default_provider"
+    assert selection.effective_max_context_window == 1000000
+    assert selection.effective_reasoning_effort == "high"
 
 
 def test_strict_provider_selection_requires_explicit_target_binding() -> None:
@@ -519,7 +524,7 @@ def test_strict_provider_selection_requires_explicit_target_binding() -> None:
     assert selection is None
 
 
-def test_strict_provider_selection_uses_explicit_target_binding() -> None:
+def test_strict_provider_selection_disables_non_actor_runtime_selection() -> None:
     config = _provider_config(include_ceo_binding=True, include_target_binding=True)
 
     selection = resolve_provider_selection(
@@ -529,12 +534,10 @@ def test_strict_provider_selection_uses_explicit_target_binding() -> None:
         strict_explicit_binding=True,
     )
 
-    assert selection is not None
-    assert selection.provider.provider_id == "prov_role"
-    assert selection.selection_reason == "role_binding"
+    assert selection is None
 
 
-def test_non_strict_provider_selection_keeps_existing_fallback_order() -> None:
+def test_non_strict_provider_selection_uses_actor_provider_before_default() -> None:
     config = _provider_config(include_ceo_binding=True, include_target_binding=False)
 
     selection = resolve_provider_selection(
@@ -544,11 +547,11 @@ def test_non_strict_provider_selection_keeps_existing_fallback_order() -> None:
     )
 
     assert selection is not None
-    assert selection.provider.provider_id == "prov_default"
-    assert selection.selection_reason == "ceo_binding_inheritance"
+    assert selection.provider.provider_id == "prov_employee"
+    assert selection.selection_reason == "actor_provider_preference"
 
 
-def test_resolve_provider_failover_selections_uses_remaining_binding_entries_before_provider_fallbacks(
+def test_resolve_provider_failover_selections_uses_provider_fallbacks_only(
     tmp_path: Path,
 ) -> None:
     class _HealthyRepository:
@@ -592,18 +595,9 @@ def test_resolve_provider_failover_selections_uses_remaining_binding_entries_bef
             },
         ],
         "provider_model_entries": [
-            {
-                "provider_id": "prov_primary",
-                "model_name": "gpt-5.3-codex",
-            },
-            {
-                "provider_id": "prov_binding_backup",
-                "model_name": "gpt-4.1",
-            },
-            {
-                "provider_id": "prov_tail_backup",
-                "model_name": "gpt-4.1-mini",
-            },
+            {"provider_id": "prov_primary", "model_name": "gpt-5.3-codex"},
+            {"provider_id": "prov_binding_backup", "model_name": "gpt-4.1"},
+            {"provider_id": "prov_tail_backup", "model_name": "gpt-4.1-mini"},
         ],
         "role_bindings": [
             {
@@ -625,7 +619,7 @@ def test_resolve_provider_failover_selections_uses_remaining_binding_entries_bef
     primary_selection = resolve_provider_selection(
         loaded,
         target_ref="role_profile:frontend_engineer_primary",
-        employee_provider_id=None,
+        employee_provider_id="prov_primary",
     )
     assert primary_selection is not None
 
@@ -636,13 +630,185 @@ def test_resolve_provider_failover_selections_uses_remaining_binding_entries_bef
         primary_selection=primary_selection,
     )
 
-    assert [item.provider.provider_id for item in failover_selections] == [
-        "prov_binding_backup",
-        "prov_tail_backup",
-    ]
+    assert [item.provider.provider_id for item in failover_selections] == ["prov_tail_backup"]
+    assert failover_selections[0].binding_target_ref is None
+    assert failover_selections[0].policy_reason == "provider_fallback:prov_primary"
 
 
-def test_runtime_provider_store_normalizes_legacy_null_reasoning_to_high(tmp_path: Path) -> None:
+def test_resolve_provider_selection_uses_actor_preference_not_role_binding() -> None:
+    config = RuntimeProviderStoredConfig(
+        default_provider_id="prov_default",
+        providers=[
+            RuntimeProviderConfigEntry(
+                provider_id="prov_default",
+                adapter_kind="openai_compat",
+                label="Default",
+                enabled=True,
+                base_url="https://api.default.test/v1",
+                api_key="sk-default",
+                preferred_model="gpt-default",
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id="prov_role",
+                adapter_kind="openai_compat",
+                label="Role",
+                enabled=True,
+                base_url="https://api.role.test/v1",
+                api_key="sk-role",
+                preferred_model="gpt-role",
+            ),
+            RuntimeProviderConfigEntry(
+                provider_id="prov_actor",
+                adapter_kind="openai_compat",
+                label="Actor",
+                enabled=True,
+                base_url="https://api.actor.test/v1",
+                api_key="sk-actor",
+                preferred_model="gpt-actor-default",
+            ),
+        ],
+        provider_model_entries=[
+            RuntimeProviderModelEntry(
+                entry_ref=build_provider_model_entry_ref("prov_default", "gpt-default"),
+                provider_id="prov_default",
+                model_name="gpt-default",
+            ),
+            RuntimeProviderModelEntry(
+                entry_ref=build_provider_model_entry_ref("prov_role", "gpt-role"),
+                provider_id="prov_role",
+                model_name="gpt-role",
+            ),
+            RuntimeProviderModelEntry(
+                entry_ref=build_provider_model_entry_ref("prov_actor", "gpt-actor"),
+                provider_id="prov_actor",
+                model_name="gpt-actor",
+            ),
+        ],
+        role_bindings=[
+            RuntimeProviderRoleBinding(
+                target_ref="role_profile:frontend_engineer_primary",
+                provider_model_entry_refs=[build_provider_model_entry_ref("prov_role", "gpt-role")],
+            )
+        ],
+    )
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="role_profile:frontend_engineer_primary",
+        employee_provider_id="prov_default",
+        runtime_preference={
+            "preferred_provider_id": "prov_actor",
+            "preferred_model": "gpt-actor",
+        },
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_actor"
+    assert selection.preferred_provider_id == "prov_actor"
+    assert selection.preferred_model == "gpt-actor"
+    assert selection.actual_model == "gpt-actor"
+    assert selection.binding_target_ref is None
+    assert selection.selection_reason == "actor_provider_preference"
+
+
+def test_resolve_provider_selection_ignores_role_binding_without_actor_preference() -> None:
+    config = _provider_config(
+        default_provider_id="prov_default",
+        include_ceo_binding=True,
+        include_target_binding=True,
+    )
+
+    selection = resolve_provider_selection(
+        config,
+        target_ref="role_profile:architect_primary",
+        employee_provider_id="prov_employee",
+    )
+
+    assert selection is not None
+    assert selection.provider.provider_id == "prov_employee"
+    assert selection.binding_target_ref is None
+    assert selection.selection_reason == "actor_provider_preference"
+
+
+def test_resolve_provider_failover_uses_provider_fallbacks_not_binding_chain(tmp_path: Path) -> None:
+    class _HealthyRepository:
+        @staticmethod
+        def has_open_circuit_breaker_for_provider(_provider_id: str) -> bool:
+            return False
+
+    store = RuntimeProviderConfigStore(tmp_path / "runtime-provider-config.json")
+    payload = {
+        "providers": [
+            {
+                "provider_id": "prov_primary",
+                "type": "openai_responses_stream",
+                "base_url": "https://api.primary.test/v1",
+                "api_key": "sk-primary-secret",
+                "alias": "primary",
+                "preferred_model": "gpt-primary",
+                "enabled": True,
+                "fallback_provider_ids": ["prov_tail_backup"],
+            },
+            {
+                "provider_id": "prov_binding_backup",
+                "type": "openai_responses_non_stream",
+                "base_url": "https://api.binding-backup.test/v1",
+                "api_key": "sk-binding-backup",
+                "alias": "binding-backup",
+                "preferred_model": "gpt-binding",
+                "enabled": True,
+            },
+            {
+                "provider_id": "prov_tail_backup",
+                "type": "openai_responses_non_stream",
+                "base_url": "https://api.tail-backup.test/v1",
+                "api_key": "sk-tail-backup",
+                "alias": "tail-backup",
+                "preferred_model": "gpt-tail",
+                "enabled": True,
+            },
+        ],
+        "provider_model_entries": [
+            {"provider_id": "prov_primary", "model_name": "gpt-primary"},
+            {"provider_id": "prov_binding_backup", "model_name": "gpt-binding"},
+            {"provider_id": "prov_tail_backup", "model_name": "gpt-tail"},
+        ],
+        "role_bindings": [
+            {
+                "target_ref": "role_profile:frontend_engineer_primary",
+                "provider_model_entry_refs": [
+                    build_provider_model_entry_ref("prov_primary", "gpt-primary"),
+                    build_provider_model_entry_ref("prov_binding_backup", "gpt-binding"),
+                ],
+            }
+        ],
+        "idempotency_key": "runtime-provider-upsert:no-binding-chain-failover",
+    }
+    save_runtime_provider_command(store, RuntimeProviderUpsertCommand.model_validate(payload))
+    loaded = store.load_saved_config()
+
+    primary_selection = RuntimeProviderSelection(
+        provider=next(provider for provider in loaded.providers if provider.provider_id == "prov_primary"),
+        provider_model_entry_ref=build_provider_model_entry_ref("prov_primary", "gpt-primary"),
+        preferred_provider_id="prov_primary",
+        preferred_model="gpt-primary",
+        actual_model="gpt-primary",
+        selection_reason="actor_provider_preference",
+    )
+    failover_selections = resolve_provider_failover_selections(
+        loaded,
+        _HealthyRepository(),
+        target_ref="role_profile:frontend_engineer_primary",
+        primary_selection=primary_selection,
+    )
+
+    assert [item.provider.provider_id for item in failover_selections] == ["prov_tail_backup"]
+    assert failover_selections[0].preferred_provider_id == "prov_primary"
+    assert failover_selections[0].actual_model == "gpt-tail"
+    assert failover_selections[0].binding_target_ref is None
+
+
+def test_runtime_provider_load_normalizes_missing_reasoning_effort(tmp_path: Path) -> None:
     config_path = tmp_path / "runtime-provider-config.json"
     config_path.write_text(
         """

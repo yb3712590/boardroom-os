@@ -192,6 +192,7 @@ from app.core.runtime_provider_config import (
     resolve_provider_failover_selections,
     resolve_provider_selection,
     resolve_runtime_provider_config,
+    runtime_provider_health_details,
 )
 from app.core.project_workspaces import (
     build_effective_workspace_written_artifacts,
@@ -2351,6 +2352,73 @@ def _build_scheduler_failure_event(
 TIMEOUT_FAILURE_KINDS = {"TIMEOUT_SLA_EXCEEDED", "HEARTBEAT_TIMEOUT"}
 
 
+def _provider_cost_class(selection: Any) -> str:
+    cost_tier = getattr(selection.provider, "cost_tier", None)
+    return str(getattr(cost_tier, "value", cost_tier) or "standard")
+
+
+def _provider_latency_class(_selection: Any) -> str:
+    return "standard"
+
+
+def _provider_selection_provenance(
+    repository: ControlPlaneRepository,
+    selection: Any | None,
+    *,
+    policy_reason: str | None = None,
+) -> dict[str, Any]:
+    if selection is None:
+        return {}
+    provider_id = str(selection.provider.provider_id)
+    health_status, health_reason = runtime_provider_health_details(selection.provider, repository)
+    return {
+        "preferred_provider_id": selection.preferred_provider_id,
+        "preferred_model": selection.preferred_model or selection.provider.model,
+        "actual_provider_id": provider_id,
+        "actual_model": selection.actual_model or selection.provider.model,
+        "selection_reason": selection.selection_reason,
+        "policy_reason": policy_reason or selection.policy_reason,
+        "provider_health_snapshot": {
+            "provider_id": provider_id,
+            "status": health_status,
+            "reason": health_reason,
+        },
+        "cost_class": _provider_cost_class(selection),
+        "latency_class": _provider_latency_class(selection),
+    }
+
+
+def _resolve_assignment_provider_selection(
+    repository: ControlPlaneRepository,
+    connection,
+    *,
+    ticket: dict[str, Any],
+    created_spec: dict[str, Any] | None,
+    actor_id: str,
+    policy_reason: str,
+) -> dict[str, Any]:
+    target_ref = resolve_execution_target_ref_from_ticket_spec(created_spec)
+    if target_ref is None:
+        return {}
+    config = resolve_runtime_provider_config()
+    selection = resolve_provider_selection(
+        config,
+        target_ref=target_ref,
+        employee_provider_id=_resolve_provider_id_for_ticket(
+            repository,
+            connection,
+            ticket=ticket,
+            lease_owner=actor_id,
+        ),
+        runtime_preference=(created_spec or {}).get("runtime_preference"),
+    )
+    return _provider_selection_provenance(
+        repository,
+        selection,
+        policy_reason=policy_reason,
+    )
+
+
 def _resolve_ticket_lease_timeout_sec(created_spec: dict[str, Any]) -> int:
     return int(created_spec.get("lease_timeout_sec") or DEFAULT_LEASE_TIMEOUT_SEC)
 
@@ -2547,7 +2615,6 @@ def _runtime_provider_config_is_empty(config: Any) -> bool:
     return not (
         getattr(config, "default_provider_id", None)
         or list(getattr(config, "providers", []) or [])
-        or list(getattr(config, "role_bindings", []) or [])
     )
 
 
@@ -5222,6 +5289,14 @@ def run_scheduler_tick(
 
             assignment_id = f"asg_{ticket['workflow_id']}_{ticket['ticket_id']}_{selected_worker_id}"
             lease_id = f"lease_{ticket['workflow_id']}_{ticket['ticket_id']}_{selected_worker_id}_{int(created_spec.get('attempt_no') or 1)}"
+            provider_selection_payload = _resolve_assignment_provider_selection(
+                repository,
+                connection,
+                ticket=ticket,
+                created_spec=created_spec,
+                actor_id=selected_worker_id,
+                policy_reason="capability_match",
+            )
             assignment_event = repository.insert_event(
                 connection,
                 event_type=EVENT_TICKET_ASSIGNED,
@@ -5240,6 +5315,7 @@ def run_scheduler_tick(
                     "actor_id": selected_worker_id,
                     "required_capabilities": required_capabilities,
                     "assignment_reason": "capability_match",
+                    **provider_selection_payload,
                 },
                 occurred_at=received_at,
             )
@@ -6863,6 +6939,14 @@ def handle_ticket_lease(
                 reason=str(precondition_result["provider_reason"]),
             )
 
+        provider_selection_payload = _resolve_assignment_provider_selection(
+            repository,
+            connection,
+            ticket=current_ticket,
+            created_spec=created_spec,
+            actor_id=payload.actor_id,
+            policy_reason="manual_lease",
+        )
         assignment_event = repository.insert_event(
             connection,
             event_type=EVENT_TICKET_ASSIGNED,
@@ -6879,6 +6963,7 @@ def handle_ticket_lease(
                 "assignment_id": payload.assignment_id,
                 "required_capabilities": list((created_spec or {}).get("required_capabilities") or []),
                 "assignment_reason": "manual_lease",
+                **provider_selection_payload,
             },
             occurred_at=received_at,
         )

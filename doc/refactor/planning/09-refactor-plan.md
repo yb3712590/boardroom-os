@@ -77,6 +77,8 @@
 
 Round 7C 已把 Assignment 与 Lease 拆为独立 runtime identity；`TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` 及 assignment/lease projections 已落地，ticket lease/start/timeout、scheduler dispatch、context compiler 和 execution package meta 均携带 `actor_id` / `assignment_id` / `lease_id`。`lease_owner` 只保留为 legacy display/migration alias，不再驱动新 runtime execution identity。
 
+Round 7D 已完成 provider provenance 强迁移：assignment payload/projection、provider audit event 和 runtime result evidence 统一记录 preferred/actual provider/model、selection/policy/fallback reason、provider health snapshot、cost/latency class；provider selection 不再使用 `role_bindings` 或 binding chain 作为 runtime execution key，provider failover 只使用 provider config `fallback_provider_ids` 并把 final execution 的 actual provider/model 记录为 fallback provider。
+
 验收：
 
 - [x] 派工由 required capabilities 驱动：Round 7B scheduler consumes `actor_projection` plus compiled `required_capabilities` through `assignment_resolver`.

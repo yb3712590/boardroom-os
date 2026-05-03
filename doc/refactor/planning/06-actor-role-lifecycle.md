@@ -261,7 +261,26 @@ Round 7C 已把 Assignment 与 Lease 拆成一等 runtime identity。Assignment 
 - `backend/tests/test_context_compiler.py::test_build_compile_request_translates_runtime_inputs`
 - `backend/tests/test_context_compiler.py::test_compile_execution_package_builds_minimal_worker_input`
 
-仍留给后续批次：
+## Round 7D 实现状态
 
-- provider preferred vs actual provider/model 的完整审计仍属于后续 provider/lease 收口。
-- 旧 worker/admin surface 中的 `lease_owner` 展示字段需要在后续冻结模块拆分时继续收口为 display alias。
+Round 7D 已把 provider preferred/actual provenance 贯穿 assignment、execution attempt/provider audit 和 runtime result evidence。Provider selection 不再把旧 `role_bindings` / binding chain 当作 runtime execution key；role template 只能继续作为默认 capability/provider preference 的迁移来源。
+
+已落地的运行时边界：
+
+- `EVENT_TICKET_ASSIGNED` payload 记录 `preferred_provider_id`、`preferred_model`、`actual_provider_id`、`actual_model`、`selection_reason`、`policy_reason`、`provider_health_snapshot`、`cost_class` 和 `latency_class`；manual lease 使用 `policy_reason=manual_lease`，scheduler assignment 使用 `policy_reason=capability_match`。
+- `assignment_projection` 持久化 `provider_selection`，replay 后可恢复同一套 provider provenance 字段。
+- provider audit event payload 记录 preferred/actual provider/model、selection/policy/fallback reason、provider health snapshot、cost/latency class；字段命名与 provider-only smoke 报告一致。
+- provider failover 只消费 provider config 的 `fallback_provider_ids`，并把 final execution 记录为 fallback provider 的 `actual_provider_id` / `actual_model`，不把 fallback 成功伪装成 primary provider 成功。
+- runtime result assumptions 和 provider attempt log 保留同名 provenance 字段，便于 result evidence 与 provider audit 对齐。
+
+测试证据：
+
+- `backend/tests/test_runtime_provider_center.py`
+- `backend/tests/test_scheduler_runner.py::test_scheduler_assignment_records_provider_provenance_from_actor_preference`
+- `backend/tests/test_scheduler_runner.py::test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic`
+
+仍留给 Round 7E：
+
+- 全仓库收口 remaining role/template/provider config legacy surface，确认 `role_profile_ref` 仅作为治理模板、产品展示、legacy input -> capability/preference 编译来源保留。
+- 对 `runtime_provider_config.py` 中仍为历史配置 shape 保留的 `role_bindings` / provider model entry API 做最终边界标注或删除测试依赖。
+- 用 grep + targeted tests 为 Phase 3 全部 checkbox 建立最终证据。
