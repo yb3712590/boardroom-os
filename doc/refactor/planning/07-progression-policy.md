@@ -48,6 +48,23 @@ decide_next_actions(snapshot, policy) -> ActionProposal[]
 
 8C 未迁移 closeout、retry/restore、BR-100 loop 或 incident followup 主判断；失败票 recovery meeting 也仍保留 8D 前兼容路径。controller 中 graph wait/ready/blocked、closeout gate 和 recovery orchestration 仍是 8E 前兼容壳。
 
+## Round 8D 实现状态
+
+8D 已把 closeout、rework、retry/restore、incident followup 和 BR-100 loop 的推进裁决迁入结构化 policy：
+
+- `ProgressionPolicy.closeout.readiness` 现在消费 `effective_graph_complete`、`open_blocking_incident_refs`、`open_approval_refs`、`delivery_checker_gate_issue`、`existing_closeout_ticket_id`、`closeout_parent_ticket_id`、`final_evidence_legality_summary` 和可执行 `ticket_payload`。
+- `CLOSEOUT` proposal 只在 effective graph complete、无 blocker、无 duplicate closeout、存在 parent ticket、final evidence 合法且存在 closeout ticket payload 时输出；duplicate closeout 输出 `NO_ACTION`，reason code 为 `progression.closeout.duplicate_existing_closeout`。
+- `ProgressionPolicy.recovery.actions` 现在消费 failed/timed-out terminal state、retry budget/count、failure kind、recommended followup action、failure lineage、completed-ticket reuse gate、superseded/invalidated lineage 和 restore-needed action。
+- `ProgressionPolicy.recovery.loop_signals` 现在消费 maker-checker/rework loop threshold；BR-100 在本批用结构化 `loop_ref=BR-100` + threshold input 覆盖，完整 015 replay 仍归 Phase 7。
+- Policy 为 checker blocking finding、deliverable/evidence gap、retryable failed/timed-out terminal target 和 completed-ticket reuse lineage blocker 输出 `REWORK`；为 retry budget exhausted、restore-needed missing ticket id、unrecoverable failure kind 和 loop threshold reached 输出 `INCIDENT`。
+- `REWORK`、`CLOSEOUT`、`INCIDENT` proposal 都有稳定 reason code、idempotency key、source graph version、affected node refs 和 expected state transition 单测。
+- `workflow_controller.py` 不再调用 `resolve_workflow_closeout_completion()` 做 closeout 推进裁决；它只读取 DB/artifact index 编译 closeout/recovery policy input，final evidence 只传 legality summary，不把 artifact 正文交给 policy。
+- Closeout graph complete 来自 `evaluate_progression_graph(progression_snapshot).graph_complete`，不得用 stale snapshot nodes 覆盖 effective graph pointer。
+- CEO proposer / validator 已接受 `CLOSEOUT` policy proposal，并把其中 `ticket_payload` 当 create-ticket execution shell；旧 `_build_autopilot_closeout_batch()` 只保留为 Round 8E 兼容壳。
+- `workflow_auto_advance.py` 和 incident detail projection 的 recommended followup action 改为复用 `recommended_incident_followup_action_from_policy_input()`；需要 DB 查询的 source-ticket/provider context 只作为结构化 input compiler。
+
+8D 仍未完成 Round 8E 的 scheduler/controller/proposer 总收口：旧 closeout fallback、backlog followup retry execution shell、projection display 分支和 runtime incident execution 分支仍需在 8E 统一 grep、删减或标注为纯 input compiler / execution shell。
+
 ## 输入
 
 Policy engine 输入必须是结构化对象：
@@ -190,9 +207,15 @@ Rework target 必须指向能修复问题的 upstream node，而不是默认把 
 - 015 中出现的 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 都能由 policy 测试覆盖。
 - Scheduler 不再承担业务推进判断。
 
+8D 验收补充：
+
+- closeout readiness 的 policy 单测覆盖 `CLOSEOUT` stable metadata、duplicate closeout `NO_ACTION`、open incident/approval/gate issue/illegal evidence blocker。
+- recovery policy 单测覆盖 checker blocking finding `REWORK`、retry budget exhausted `INCIDENT`、restore-needed missing ticket id `INCIDENT`、completed-ticket reuse gate `NO_ACTION`、superseded/invalidated lineage `REWORK`、retryable terminal target `REWORK` 和 unrecoverable failure kind `INCIDENT`。
+- BR-100 loop 本批覆盖结构化 loop threshold 等价输入；没有 replay DB 时，完整 015/BR-100 replay 仍归 Phase 7。
+
 ## 后续批次依赖
 
 - Round 8B：已把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
 - Round 8C：已把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch，并删除 substring hint / hardcoded milestone fanout 作为推进依据。
-- Round 8D：把 closeout、rework、retry/restore、BR-100 loop 和 incident follow-up 推进判断迁入 policy。
+- Round 8D：已把 closeout、rework、retry/restore、BR-100 loop 和 incident follow-up 推进判断迁入 policy；旧入口只作为 input compiler、execution shell 或 8E 兼容壳。
 - Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断和兼容展示壳，并补齐 Phase 4 全部验收证据。

@@ -142,6 +142,7 @@ from app.core.governance_templates import (
 )
 from app.core.workflow_completion import resolve_workflow_closeout_completion
 from app.core.workflow_autopilot import workflow_chain_report_artifact_ref
+from app.core.workflow_progression import recommended_incident_followup_action_from_policy_input
 from app.core.workflow_relationships import (
     list_workflow_ticket_snapshots,
     resolve_display_ticket_spec as _shared_resolve_display_ticket_spec,
@@ -2457,6 +2458,8 @@ def build_incident_detail_projection(
     repository: ControlPlaneRepository,
     incident_id: str,
 ) -> IncidentDetailProjectionEnvelope | None:
+    # Round 8E compatibility shell: display still enumerates available actions
+    # by incident type, while the recommended action is derived from policy input.
     repository.initialize()
     incident = repository.get_incident_projection(incident_id)
     if incident is None:
@@ -2474,7 +2477,7 @@ def build_incident_detail_projection(
             IncidentFollowupAction.REBUILD_TICKET_GRAPH.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.REBUILD_TICKET_GRAPH.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type in {
         INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL,
         INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL,
@@ -2483,10 +2486,10 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
         available_followup_actions = [IncidentFollowupAction.RESTORE_ONLY.value]
-        recommended_followup_action = IncidentFollowupAction.RESTORE_ONLY.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
         source_ticket_context = resolve_ceo_shadow_source_ticket_context(repository, incident)
         source_ticket_id = source_ticket_context["source_ticket_id"]
@@ -2497,31 +2500,36 @@ def build_incident_detail_projection(
                 recommended_restore_action,
                 IncidentFollowupAction.RESTORE_ONLY.value,
             ]
-            recommended_followup_action = recommended_restore_action
+            recommended_followup_action = recommended_incident_followup_action_from_policy_input(
+                {
+                    **incident,
+                    "recommended_restore_action": recommended_restore_action,
+                }
+            )
         else:
             available_followup_actions = [
                 IncidentFollowupAction.RERUN_CEO_SHADOW.value,
                 IncidentFollowupAction.RESTORE_ONLY.value,
             ]
-            recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+            recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_CEO_SHADOW.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.RERUN_CEO_SHADOW.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_BOARD_ADVISORY_ANALYSIS_FAILED:
         available_followup_actions = [
             IncidentFollowupAction.RERUN_BOARD_ADVISORY_ANALYSIS.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.RERUN_BOARD_ADVISORY_ANALYSIS.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
         available_followup_actions = [
             IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.REPLAY_REQUIRED_HOOKS.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type in {
         INCIDENT_TYPE_EVIDENCE_GAP,
         INCIDENT_TYPE_COMPILER_FAILURE,
@@ -2531,36 +2539,37 @@ def build_incident_detail_projection(
             IncidentFollowupAction.RECOMPILE_CONTEXT.value,
             IncidentFollowupAction.RESTORE_ONLY.value,
         ]
-        recommended_followup_action = IncidentFollowupAction.RECOMPILE_CONTEXT.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
         )
-        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
         )
-        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK.value
         )
-        recommended_followup_action = IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
     elif incident_type == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value
         )
-        recommended_followup_action = (
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE.value
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(
+            {
+                **incident,
+                "provider_retryable": True,
+            }
         )
     elif incident_type == INCIDENT_TYPE_STAFFING_CONTAINMENT:
         available_followup_actions.append(
             IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT.value
         )
-        recommended_followup_action = (
-            IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT.value
-        )
+        recommended_followup_action = recommended_incident_followup_action_from_policy_input(incident)
 
     return IncidentDetailProjectionEnvelope(
         schema_version=SCHEMA_VERSION,

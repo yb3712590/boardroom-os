@@ -5,6 +5,7 @@ from app.core.ceo_execution_presets import (
 )
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     SOURCE_CODE_DELIVERY_SCHEMA_REF,
 )
 from app.core.workflow_progression import (
@@ -767,6 +768,465 @@ def test_policy_does_not_create_backlog_fanout_from_completed_milestone_without_
 
     assert proposal.action_type == ProgressionActionType.NO_ACTION
     assert proposal.metadata.reason_code == "progression.no_action"
+
+
+def test_policy_creates_closeout_with_stable_metadata() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:delivery",
+                "ticket_id": "tkt_delivery_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "closeout": {
+                "readiness": {
+                    "effective_graph_complete": True,
+                    "closeout_parent_ticket_id": "tkt_delivery_done",
+                    "final_evidence_legality_summary": {
+                        "status": "ACCEPTED",
+                        "illegal_ref_count": 0,
+                    },
+                    "ticket_payload": {
+                        "workflow_id": "wf_policy_contract",
+                        "node_id": "node_ceo_delivery_closeout",
+                        "role_profile_ref": "frontend_engineer_primary",
+                        "output_schema_ref": DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+                        "summary": "Prepare the final closeout package.",
+                        "parent_ticket_id": "tkt_delivery_done",
+                    },
+                }
+            },
+        }
+    )
+
+    first = decide_next_actions(snapshot, policy)[0]
+    second = decide_next_actions(snapshot, policy)[0]
+
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert first.action_type == ProgressionActionType.CLOSEOUT
+    assert first.metadata.reason_code == "progression.closeout.create_ready"
+    assert first.metadata.source_graph_version == "gv_42"
+    assert first.metadata.affected_node_refs == ["graph:delivery"]
+    assert first.metadata.expected_state_transition == "CLOSEOUT_REQUESTED"
+    assert first.metadata.idempotency_key.startswith(
+        "progression:CLOSEOUT:gv_42:policy:round8d:"
+    )
+    assert first.payload["ticket_payload"]["node_id"] == "node_ceo_delivery_closeout"
+    assert first.payload["closeout_parent_ticket_id"] == "tkt_delivery_done"
+
+
+def test_policy_duplicate_closeout_returns_no_action() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:delivery",
+                "ticket_id": "tkt_delivery_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "closeout": {
+                "readiness": {
+                    "effective_graph_complete": True,
+                    "existing_closeout_ticket_id": "tkt_existing_closeout",
+                    "closeout_parent_ticket_id": "tkt_delivery_done",
+                    "final_evidence_legality_summary": {"status": "ACCEPTED"},
+                }
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.NO_ACTION
+    assert proposal.metadata.reason_code == "progression.closeout.duplicate_existing_closeout"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.metadata.expected_state_transition == "NO_STATE_CHANGE"
+    assert proposal.payload["existing_closeout_ticket_id"] == "tkt_existing_closeout"
+
+
+def test_policy_blocks_closeout_for_open_incident_approval_gate_or_illegal_evidence() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:delivery",
+                "ticket_id": "tkt_delivery_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "closeout": {
+                "readiness": {
+                    "effective_graph_complete": True,
+                    "open_blocking_incident_refs": ["inc_blocking"],
+                    "open_approval_refs": ["approval_open"],
+                    "delivery_checker_gate_issue": {
+                        "reason_code": "delivery_check_failed",
+                        "ticket_id": "tkt_check",
+                    },
+                    "closeout_parent_ticket_id": "tkt_delivery_done",
+                    "final_evidence_legality_summary": {
+                        "status": "REJECTED",
+                        "illegal_ref_count": 1,
+                        "illegal_refs": ["art://archive/old"],
+                    },
+                }
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.WAIT
+    assert proposal.metadata.reason_code == "progression.wait.closeout_blockers"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.payload["blocked_by"]["incident_refs"] == ["inc_blocking"]
+    assert proposal.payload["blocked_by"]["approval_refs"] == ["approval_open"]
+    assert proposal.payload["delivery_checker_gate_issue"]["reason_code"] == "delivery_check_failed"
+    assert proposal.payload["final_evidence_legality_summary"]["illegal_ref_count"] == 1
+
+
+def test_policy_creates_rework_for_checker_blocking_finding() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "rework:checker:tkt_check",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_check",
+                        "finding_kind": "checker_blocking_finding",
+                        "blocking_findings": [
+                            {
+                                "finding_id": "finding_1",
+                                "blocking": True,
+                                "target_node_ref": "graph:delivery",
+                            }
+                        ],
+                        "target_ticket_id": "tkt_delivery",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+    repeated = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.model_dump(mode="json") == repeated.model_dump(mode="json")
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.checker_blocking_finding"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.metadata.expected_state_transition == "REWORK_REQUESTED"
+    assert proposal.metadata.idempotency_key.startswith(
+        "progression:REWORK:gv_42:policy:round8d:"
+    )
+    assert proposal.payload["target_ticket_id"] == "tkt_delivery"
+    assert proposal.payload["blocking_findings"][0]["finding_id"] == "finding_1"
+
+
+def test_policy_creates_rework_for_deliverable_evidence_gap() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "rework:evidence-gap:tkt_delivery",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_checker",
+                        "target_ticket_id": "tkt_delivery",
+                        "finding_kind": "evidence_gap",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.evidence_gap"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.metadata.expected_state_transition == "REWORK_REQUESTED"
+    assert proposal.payload["target_ticket_id"] == "tkt_delivery"
+    assert proposal.payload["finding_kind"] == "evidence_gap"
+
+
+def test_policy_opens_incident_when_retry_budget_exhausted() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "retry:tkt_failed",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_failed",
+                        "terminal_state": "FAILED",
+                        "failure_kind": "SCHEMA_ERROR",
+                        "retry_count": 2,
+                        "retry_budget": 2,
+                        "incident_type": "REPEATED_FAILURE_ESCALATION",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+    repeated = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.model_dump(mode="json") == repeated.model_dump(mode="json")
+    assert proposal.action_type == ProgressionActionType.INCIDENT
+    assert proposal.metadata.reason_code == "progression.incident.retry_budget_exhausted"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.metadata.expected_state_transition == "INCIDENT_OPENED"
+    assert proposal.metadata.idempotency_key.startswith(
+        "progression:INCIDENT:gv_42:policy:round8d:"
+    )
+    assert proposal.payload["source_ticket_id"] == "tkt_failed"
+    assert proposal.payload["failure_kind"] == "SCHEMA_ERROR"
+
+
+def test_policy_creates_rework_for_retryable_failed_terminal_target() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "retry:tkt_failed",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_failed",
+                        "terminal_state": "FAILED",
+                        "failure_kind": "TEST_FAILURE",
+                        "retry_count": 0,
+                        "retry_budget": 1,
+                        "recommended_followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.failed_terminal_recovery_target"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.metadata.expected_state_transition == "REWORK_REQUESTED"
+    assert proposal.payload["source_ticket_id"] == "tkt_failed"
+    assert proposal.payload["retry_count"] == 0
+    assert proposal.payload["retry_budget"] == 1
+
+
+def test_policy_opens_incident_for_unrecoverable_failure_kind() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "retry:tkt_failed",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_failed",
+                        "terminal_state": "FAILED",
+                        "failure_kind": "CONTRACT_CORRUPTION",
+                        "retry_count": 0,
+                        "retry_budget": 3,
+                        "unrecoverable_failure_kinds": ["CONTRACT_CORRUPTION"],
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.INCIDENT
+    assert proposal.metadata.reason_code == "progression.incident.unrecoverable_failure_kind"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.payload["failure_kind"] == "CONTRACT_CORRUPTION"
+
+
+def test_policy_restore_needed_missing_ticket_id_opens_incident() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "restore-needed:missing-ticket",
+                        "node_ref": "graph:delivery",
+                        "restore_needed": True,
+                        "recommended_followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.INCIDENT
+    assert proposal.metadata.reason_code == "progression.incident.restore_needed_missing_ticket_id"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.payload["recommended_followup_action"] == "RESTORE_AND_RETRY_LATEST_FAILURE"
+
+
+def test_policy_completed_ticket_reuse_gate_blocks_parallel_retry() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "reuse:tkt_completed",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_failed_retry",
+                        "completed_ticket_reuse_gate": {
+                            "satisfies": True,
+                            "completed_ticket_id": "tkt_completed",
+                        },
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.NO_ACTION
+    assert proposal.metadata.reason_code == "progression.recovery.completed_ticket_reuse_gate_satisfied"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.payload["completed_ticket_reuse_gate"]["completed_ticket_id"] == "tkt_completed"
+
+
+def test_policy_superseded_or_invalidated_lineage_blocks_reuse() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "actions": [
+                    {
+                        "action_ref": "reuse:tkt_completed_invalid",
+                        "node_ref": "graph:delivery",
+                        "ticket_id": "tkt_failed_retry",
+                        "completed_ticket_reuse_gate": {
+                            "satisfies": False,
+                            "reason_code": "completed_ticket_superseded",
+                            "completed_ticket_id": "tkt_completed",
+                            "terminal_failed_ticket_id": "tkt_failed_retry",
+                        },
+                        "superseded_lineage_refs": ["tkt_completed"],
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.completed_ticket_reuse_blocked_by_lineage"
+    assert proposal.metadata.affected_node_refs == ["graph:delivery"]
+    assert proposal.payload["completed_ticket_reuse_gate"]["reason_code"] == "completed_ticket_superseded"
+    assert proposal.payload["superseded_lineage_refs"] == ["tkt_completed"]
+
+
+def test_policy_br100_loop_threshold_opens_incident() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "loop_signals": [
+                    {
+                        "loop_ref": "BR-100",
+                        "node_ref": "graph:br-100",
+                        "loop_kind": "maker_checker_rework",
+                        "current_count": 3,
+                        "threshold": 3,
+                        "incident_type": "MAKER_CHECKER_REWORK_ESCALATION",
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.INCIDENT
+    assert proposal.metadata.reason_code == "progression.incident.loop_threshold_reached"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:br-100"]
+    assert proposal.metadata.expected_state_transition == "INCIDENT_OPENED"
+    assert proposal.metadata.idempotency_key.startswith(
+        "progression:INCIDENT:gv_42:policy:round8d:"
+    )
+    assert proposal.payload["loop_ref"] == "BR-100"
+    assert proposal.payload["loop_kind"] == "maker_checker_rework"
+
+
+def test_policy_br100_loop_below_threshold_requests_rework() -> None:
+    snapshot = _minimal_progression_snapshot()
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round8d",
+            "recovery": {
+                "loop_signals": [
+                    {
+                        "loop_ref": "BR-100",
+                        "node_ref": "graph:br-100",
+                        "target_ticket_id": "tkt_br100_maker",
+                        "loop_kind": "maker_checker_rework",
+                        "current_count": 2,
+                        "threshold": 3,
+                    }
+                ]
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.REWORK
+    assert proposal.metadata.reason_code == "progression.rework.loop_threshold_not_reached"
+    assert proposal.metadata.source_graph_version == "gv_42"
+    assert proposal.metadata.affected_node_refs == ["graph:br-100"]
+    assert proposal.metadata.expected_state_transition == "REWORK_REQUESTED"
+    assert proposal.payload["loop_ref"] == "BR-100"
+    assert proposal.payload["target_ticket_id"] == "tkt_br100_maker"
+    assert proposal.payload["current_count"] == 2
+    assert proposal.payload["threshold"] == 3
 
 
 def test_policy_keeps_blocked_index_for_in_flight_blocked_nodes() -> None:

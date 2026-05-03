@@ -21,6 +21,7 @@ from app.core.execution_targets import infer_execution_contract_payload
 from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
     MILESTONE_PLAN_SCHEMA_REF,
     TECHNOLOGY_DECISION_SCHEMA_REF,
@@ -2055,7 +2056,7 @@ def test_live_ceo_prompt_mentions_reuse_candidates_and_provider_receives_them(cl
     assert run["deterministic_fallback_used"] is False
 
 
-def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypatch):
+def test_ceo_shadow_ignores_role_binding_and_uses_default_provider(client, monkeypatch):
     workflow_id = _project_init(client, "CEO shadow provider binding")
     client.app.state.runtime_provider_store.save_config(
         RuntimeProviderStoredConfig(
@@ -2094,32 +2095,26 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
 
     from app.core import ceo_proposer
 
-    monkeypatch.setattr(
-        ceo_proposer,
-        "invoke_openai_compat_response",
-        lambda *args, **kwargs: pytest.fail("CEO shadow should not pick OpenAI when ceo_shadow is bound to Claude"),
-    )
+    def _fake_openai(_config, _rendered_payload):
+        return OpenAICompatProviderResult(
+            output_text=json.dumps(
+                {
+                    "summary": "Use the default provider for the CEO proposal.",
+                    "actions": [
+                        {
+                            "action_type": "NO_ACTION",
+                            "payload": {"reason": "Default provider says to wait."},
+                        }
+                    ],
+                }
+            ),
+            response_id="resp_ceo_default_provider_1",
+        )
 
     def _fake_claude(_config, _rendered_payload):
-        return type(
-            "ClaudeResult",
-            (),
-            {
-                "output_text": json.dumps(
-                    {
-                        "summary": "Use Claude for the CEO proposal.",
-                        "actions": [
-                            {
-                                "action_type": "NO_ACTION",
-                                "payload": {"reason": "Claude decided the current workflow should wait."},
-                            }
-                        ],
-                    }
-                ),
-                "response_id": None,
-            },
-        )()
+        pytest.fail("CEO shadow role binding must not drive runtime provider selection")
 
+    monkeypatch.setattr(ceo_proposer, "invoke_openai_compat_response", _fake_openai)
     monkeypatch.setattr(ceo_proposer, "invoke_claude_code_response", _fake_claude)
 
     run = run_ceo_shadow_for_trigger(
@@ -2130,15 +2125,15 @@ def test_ceo_shadow_prefers_role_binding_over_default_provider(client, monkeypat
         runtime_provider_store=client.app.state.runtime_provider_store,
     )
 
-    assert run["effective_mode"] == "CLAUDE_CODE_CLI_LIVE"
-    assert run["model"] == "claude-opus-4-1"
-    assert run["preferred_provider_id"] == CLAUDE_CODE_PROVIDER_ID
-    assert run["preferred_model"] == "claude-opus-4-1"
-    assert run["actual_provider_id"] == CLAUDE_CODE_PROVIDER_ID
-    assert run["actual_model"] == "claude-opus-4-1"
-    assert run["selection_reason"] == "role_binding"
-    assert run["policy_reason"] is None
-    assert run["proposed_action_batch"]["summary"] == "Use Claude for the CEO proposal."
+    assert run["effective_mode"] == "OPENAI_RESPONSES_STREAM_LIVE"
+    assert run["model"] == "gpt-5.3-codex"
+    assert run["preferred_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert run["preferred_model"] == "gpt-5.3-codex"
+    assert run["actual_provider_id"] == OPENAI_COMPAT_PROVIDER_ID
+    assert run["actual_model"] == "gpt-5.3-codex"
+    assert run["selection_reason"] == "default_provider"
+    assert run["policy_reason"] == "default_provider"
+    assert run["proposed_action_batch"]["summary"] == "Use the default provider for the CEO proposal."
 
 
 def test_ceo_shadow_system_prompt_prefers_document_chain_before_implementation(client):
@@ -2270,7 +2265,7 @@ def test_ceo_shadow_failover_uses_fallback_provider_when_primary_is_unavailable(
     assert run["actual_provider_id"] == CLAUDE_CODE_PROVIDER_ID
     assert run["actual_model"] == "claude-sonnet-4-6"
     assert run["selection_reason"] == "provider_failover"
-    assert run["policy_reason"] is None
+    assert run["policy_reason"] == f"provider_fallback:{OPENAI_COMPAT_PROVIDER_ID}"
     assert run["proposed_action_batch"]["summary"] == "Claude handled the CEO failover proposal."
 
 
@@ -5107,6 +5102,200 @@ def test_ceo_shadow_snapshot_exposes_capability_plan_for_backlog_followups(clien
     assert policy_proposal["metadata"]["affected_node_refs"]
 
 
+def test_closeout_policy_proposal_executes_as_create_ticket_shell(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_policy_closeout_execution_shell",
+        "Policy closeout proposal should execute through create-ticket shell.",
+    )
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_policy_closeout_frontend",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    ticket_payload = {
+        "workflow_id": workflow_id,
+        "node_id": "node_ceo_delivery_closeout",
+        "role_profile_ref": "frontend_engineer_primary",
+        "output_schema_ref": DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        "execution_contract": infer_execution_contract_payload(
+            role_profile_ref="frontend_engineer_primary",
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+        ),
+        "dispatch_intent": {
+            "assignee_employee_id": "emp_policy_closeout_frontend",
+            "selection_reason": "Collect final delivery evidence into one auditable closeout package.",
+            "dependency_gate_refs": ["tkt_policy_closeout_parent"],
+        },
+        "summary": "Prepare the final delivery closeout package.",
+        "parent_ticket_id": "tkt_policy_closeout_parent",
+    }
+    snapshot = {
+        "workflow": {
+            "workflow_id": workflow_id,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "north_star_goal": "Policy closeout execution shell",
+        },
+        "controller_state": {
+            "state": "CLOSEOUT_REQUIRED",
+            "recommended_action": "CREATE_TICKET",
+            "blocking_reason": "Structured closeout policy requires a final closeout ticket.",
+        },
+        "progression_policy_proposals": [
+            {
+                "action_type": "CLOSEOUT",
+                "metadata": {
+                    "reason_code": "progression.closeout.create_ready",
+                    "idempotency_key": "progression:CLOSEOUT:gv_policy:policy:round8d:abc",
+                    "source_graph_version": "gv_policy",
+                    "affected_node_refs": ["graph:delivery"],
+                    "expected_state_transition": "CLOSEOUT_REQUESTED",
+                    "policy_ref": "policy:round8d",
+                },
+                "payload": {
+                    "ticket_payload": ticket_payload,
+                    "closeout_parent_ticket_id": "tkt_policy_closeout_parent",
+                },
+            }
+        ],
+        "replan_focus": {
+            "controller_state": {
+                "state": "CLOSEOUT_REQUIRED",
+                "recommended_action": "CREATE_TICKET",
+                "blocking_reason": "Structured closeout policy requires a final closeout ticket.",
+            },
+            "capability_plan": {
+                "progression_policy_proposals": [],
+            },
+        },
+    }
+    action_batch = CEOActionBatch.model_validate(
+        {
+            "summary": "Execute policy closeout proposal.",
+            "actions": [
+                {
+                    "action_type": "CREATE_TICKET",
+                    "payload": ticket_payload,
+                }
+            ],
+        }
+    )
+
+    validation = validate_ceo_action_batch(
+        client.app.state.repository,
+        action_batch=action_batch,
+        snapshot=snapshot,
+    )
+
+    assert validation["rejected_actions"] == []
+    assert validation["accepted_actions"][0]["details"] == {
+        "reason_code": "progression.closeout.create_ready",
+        "idempotency_key": "progression:CLOSEOUT:gv_policy:policy:round8d:abc",
+        "source_graph_version": "gv_policy",
+        "affected_node_refs": ["graph:delivery"],
+        "expected_state_transition": "CLOSEOUT_REQUESTED",
+    }
+
+
+def test_closeout_policy_input_parent_uses_effective_graph_completed_ticket():
+    from app.core import workflow_controller
+
+    closeout_input = workflow_controller._build_closeout_policy_input(
+        workflow={
+            "workflow_id": "wf_policy_closeout_effective_parent",
+            "north_star_goal": "Closeout parent must follow the effective graph pointer.",
+        },
+        tickets=[
+            {
+                "ticket_id": "tkt_effective_delivery_done",
+                "status": "COMPLETED",
+                "updated_at": "2026-04-18T10:00:00+08:00",
+            },
+            {
+                "ticket_id": "tkt_stale_delivery_done",
+                "status": "COMPLETED",
+                "updated_at": "2026-04-18T10:05:00+08:00",
+            },
+        ],
+        employees=[
+            {
+                "employee_id": "emp_policy_closeout_frontend",
+                "state": "ACTIVE",
+                "board_approved": True,
+                "role_profile_refs": ["frontend_engineer_primary"],
+                "capabilities": api_test_helpers._capabilities_for_role_profile(
+                    "frontend_engineer_primary"
+                ),
+            }
+        ],
+        approvals=[],
+        incidents=[],
+        closeout_gate_issue=None,
+        created_specs_by_ticket={
+            "tkt_effective_delivery_done": {
+                "output_schema_ref": "source_code_delivery",
+            },
+            "tkt_stale_delivery_done": {
+                "output_schema_ref": "source_code_delivery",
+            },
+            "tkt_stale_closeout": {
+                "output_schema_ref": DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            },
+        },
+        graph_complete=True,
+        completed_ticket_ids=["tkt_effective_delivery_done"],
+    )
+
+    readiness = closeout_input["readiness"]
+    assert readiness["effective_graph_complete"] is True
+    assert readiness["existing_closeout_ticket_id"] is None
+    assert readiness["closeout_parent_ticket_id"] == "tkt_effective_delivery_done"
+    assert readiness["ticket_payload"]["parent_ticket_id"] == "tkt_effective_delivery_done"
+    assert readiness["ticket_payload"]["dispatch_intent"]["dependency_gate_refs"] == [
+        "tkt_effective_delivery_done"
+    ]
+
+
+def test_ceo_snapshot_routes_failed_ticket_recovery_through_policy_input(client):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(client, "wf_policy_failed_recovery_route")
+    _create_and_fail_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_policy_failed_recovery_route",
+        node_id="node_policy_failed_recovery_route",
+        retry_budget=0,
+        failure_kind="TEST_FAILURE",
+    )
+
+    snapshot = next(
+        run["snapshot"]
+        for run in client.app.state.repository.list_ceo_shadow_runs(workflow_id)
+        if run["trigger_type"] == "TICKET_FAILED"
+    )
+
+    recovery_actions = snapshot["progression_policy"]["recovery"]["actions"]
+    recovery_action = next(
+        item
+        for item in recovery_actions
+        if item["ticket_id"] == "tkt_policy_failed_recovery_route"
+    )
+    assert recovery_action["terminal_state"] == "FAILED"
+    assert recovery_action["retry_count"] == 0
+    assert recovery_action["retry_budget"] == 0
+    assert recovery_action["failure_kind"] == "TEST_FAILURE"
+
+    proposal = snapshot["progression_policy_proposals"][0]
+    assert proposal["action_type"] == "INCIDENT"
+    assert proposal["metadata"]["reason_code"] == "progression.incident.retry_budget_exhausted"
+    assert proposal["metadata"]["source_graph_version"] == snapshot["ticket_graph"]["graph_version"]
+    assert proposal["metadata"]["affected_node_refs"] == ["node_policy_failed_recovery_route"]
+    assert proposal["metadata"]["expected_state_transition"] == "INCIDENT_OPENED"
+    assert snapshot["controller_state"]["state"] == "INCIDENT_REQUIRED"
+
+
 def test_ceo_shadow_snapshot_ignores_legacy_hard_constraint_gate_hints_without_structured_requirements(
     client,
     monkeypatch,
@@ -5942,6 +6131,71 @@ def test_deterministic_fallback_does_not_create_backlog_followup_without_policy_
         repository,
         snapshot,
         "Create the next policy-selected backlog ticket.",
+    )
+
+    assert batch.actions[0].action_type == CEOActionType.NO_ACTION
+    assert "policy proposal" in batch.actions[0].payload.reason
+
+
+def test_deterministic_fallback_does_not_create_closeout_without_policy_proposal(client, monkeypatch):
+    _set_deterministic_mode(client)
+    workflow_id = _seed_workflow(
+        client,
+        "wf_no_legacy_closeout_fallback",
+        "Closeout must come from progression policy proposals",
+    )
+    repository = client.app.state.repository
+    _persist_autopilot_workflow_profile(repository, workflow_id)
+    _seed_board_approved_employee(
+        client,
+        employee_id="emp_closeout_no_policy",
+        role_type="frontend_engineer",
+        role_profile_refs=["frontend_engineer_primary"],
+    )
+    monkeypatch.setattr("app.core.ticket_handlers._trigger_ceo_shadow_safely", lambda *args, **kwargs: None)
+    _create_and_complete_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_closeout_no_policy_parent",
+        node_id="node_closeout_no_policy_parent",
+    )
+
+    from app.core import ceo_proposer
+
+    snapshot = {
+        "workflow": {
+            "workflow_id": workflow_id,
+            "workflow_profile": "CEO_AUTOPILOT_FINE_GRAINED",
+            "north_star_goal": "Closeout must wait for policy.",
+        },
+        "approvals": [],
+        "incidents": [],
+        "ticket_summary": {"active_count": 0},
+        "nodes": [{"node_id": "node_closeout_no_policy_parent", "status": "COMPLETED"}],
+        "employees": [
+            {
+                "employee_id": "emp_closeout_no_policy",
+                "state": "ACTIVE",
+                "role_profile_refs": ["frontend_engineer_primary"],
+            }
+        ],
+        "replan_focus": {
+            "controller_state": {
+                "state": "NO_IMMEDIATE_FOLLOWUP",
+                "recommended_action": "NO_ACTION",
+                "blocking_reason": None,
+            },
+            "capability_plan": {
+                "progression_policy_proposals": [],
+            },
+        },
+        "progression_policy_proposals": [],
+    }
+
+    batch = ceo_proposer.build_deterministic_fallback_batch(
+        repository,
+        snapshot,
+        "No policy proposal is available.",
     )
 
     assert batch.actions[0].action_type == CEOActionType.NO_ACTION

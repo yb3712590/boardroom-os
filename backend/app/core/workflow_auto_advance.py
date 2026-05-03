@@ -36,6 +36,7 @@ from app.core.ticket_handlers import (
 )
 from app.core.workflow_controller import workflow_controller_effect
 from app.core.workflow_autopilot import ensure_workflow_atomic_chain_report, workflow_uses_ceo_board_delegate
+from app.core.workflow_progression import recommended_incident_followup_action_from_policy_input
 from app.db.repository import ControlPlaneRepository
 
 
@@ -84,19 +85,19 @@ def _maybe_auto_resolve_open_approval(
 def _provider_incident_should_retry_source_ticket(
     repository: ControlPlaneRepository,
     incident: dict[str, object],
-) -> bool:
+) -> tuple[bool, str | None]:
     ticket_id = str(incident.get("ticket_id") or "").strip()
     if not ticket_id:
-        return False
+        return False, None
 
     with repository.connection() as connection:
         latest_terminal_event = repository.get_latest_ticket_terminal_event(connection, ticket_id)
     if latest_terminal_event is None:
-        return False
+        return False, None
     if latest_terminal_event["event_type"] != EVENT_TICKET_FAILED:
-        return False
+        return False, None
     failure_kind = str((latest_terminal_event.get("payload") or {}).get("failure_kind") or "")
-    return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS
+    return failure_kind in PROVIDER_PAUSE_FAILURE_KINDS, failure_kind
 
 
 def _recommended_incident_followup_action(
@@ -104,36 +105,16 @@ def _recommended_incident_followup_action(
     incident: dict[str, object],
 ) -> IncidentFollowupAction:
     incident_type = str(incident.get("incident_type") or "")
-    if incident_type == INCIDENT_TYPE_TICKET_GRAPH_UNAVAILABLE:
-        return IncidentFollowupAction.REBUILD_TICKET_GRAPH
-    if incident_type == INCIDENT_TYPE_REQUIRED_HOOK_GATE_BLOCKED:
-        return IncidentFollowupAction.REPLAY_REQUIRED_HOOKS
-    if incident_type == INCIDENT_TYPE_GRAPH_HEALTH_CRITICAL:
-        return IncidentFollowupAction.RERUN_CEO_SHADOW
-    if incident_type == INCIDENT_TYPE_PLANNED_PLACEHOLDER_GATE_BLOCKED:
-        return IncidentFollowupAction.RERUN_CEO_SHADOW
-    if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_CRITICAL:
-        return IncidentFollowupAction.RERUN_CEO_SHADOW
-    if incident_type == INCIDENT_TYPE_RUNTIME_LIVENESS_UNAVAILABLE:
-        return IncidentFollowupAction.RESTORE_ONLY
+    policy_incident = dict(incident)
     if incident_type == INCIDENT_TYPE_CEO_SHADOW_PIPELINE_FAILED:
         source_ticket_context = resolve_ceo_shadow_source_ticket_context(repository, incident)
         if source_ticket_context["recommended_restore_action"] is not None:
-            return IncidentFollowupAction(source_ticket_context["recommended_restore_action"])
-        return IncidentFollowupAction.RERUN_CEO_SHADOW
-    if incident_type == INCIDENT_TYPE_RUNTIME_TIMEOUT_ESCALATION:
-        return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_TIMEOUT
-    if incident_type == INCIDENT_TYPE_REPEATED_FAILURE_ESCALATION:
-        return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_FAILURE
-    if incident_type == INCIDENT_TYPE_MAKER_CHECKER_REWORK_ESCALATION:
-        return IncidentFollowupAction.RESTORE_AND_RETRY_MAKER_CHECKER_REWORK
+            policy_incident["recommended_restore_action"] = source_ticket_context["recommended_restore_action"]
     if incident_type == INCIDENT_TYPE_PROVIDER_EXECUTION_PAUSED:
-        if _provider_incident_should_retry_source_ticket(repository, incident):
-            return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE
-        return IncidentFollowupAction.RESTORE_ONLY
-    if incident_type == INCIDENT_TYPE_STAFFING_CONTAINMENT:
-        return IncidentFollowupAction.RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT
-    return IncidentFollowupAction.RESTORE_ONLY
+        provider_retryable, failure_kind = _provider_incident_should_retry_source_ticket(repository, incident)
+        policy_incident["provider_retryable"] = provider_retryable
+        policy_incident["failure_kind"] = failure_kind
+    return IncidentFollowupAction(recommended_incident_followup_action_from_policy_input(policy_incident))
 
 
 def _maybe_auto_resolve_open_incident(
@@ -143,6 +124,9 @@ def _maybe_auto_resolve_open_incident(
     idempotency_key_prefix: str,
     step_index: int,
 ) -> bool:
+    # Round 8E compatibility shell: this scheduler path still executes incident
+    # resolution. Followup selection is policy-derived; orchestration cleanup
+    # belongs to the 8E controller/scheduler pass.
     workflow = repository.get_workflow_projection(workflow_id)
     if not workflow_uses_ceo_board_delegate(workflow):
         return False

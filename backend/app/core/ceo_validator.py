@@ -71,7 +71,11 @@ def _matching_policy_create_ticket_proposal(snapshot: dict[str, Any], action) ->
     for proposal in proposals:
         if not isinstance(proposal, dict):
             continue
-        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+        action_type = str(proposal.get("action_type") or "").strip()
+        if action_type not in {
+            CEOActionType.CREATE_TICKET.value,
+            "CLOSEOUT",
+        }:
             continue
         payload = proposal.get("payload")
         if not isinstance(payload, dict):
@@ -98,7 +102,11 @@ def _has_matching_policy_create_ticket_proposal_for_route(
     for proposal in proposals:
         if not isinstance(proposal, dict):
             continue
-        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+        action_type = str(proposal.get("action_type") or "").strip()
+        if action_type not in {
+            CEOActionType.CREATE_TICKET.value,
+            "CLOSEOUT",
+        }:
             continue
         payload = proposal.get("payload")
         ticket_payload = payload.get("ticket_payload") if isinstance(payload, dict) else None
@@ -430,9 +438,18 @@ def validate_ceo_action_batch(
             continue
 
         if action.action_type == CEOActionType.CREATE_TICKET:
+            matching_policy_proposal = (
+                _matching_policy_create_ticket_proposal(snapshot, action)
+                if snapshot is not None
+                else None
+            )
             if snapshot is not None and action.payload.output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
                 closeout_gate_issue = capability_plan_view(snapshot).get("closeout_gate_issue")
-                if isinstance(closeout_gate_issue, dict) and closeout_gate_issue:
+                if (
+                    isinstance(closeout_gate_issue, dict)
+                    and closeout_gate_issue
+                    and matching_policy_proposal is None
+                ):
                     rejected_actions.append(
                         _action_entry(
                             action,
@@ -548,9 +565,12 @@ def validate_ceo_action_batch(
                 rejected_actions.append(_action_entry(action, "node_id already exists in the current workflow."))
                 continue
             if snapshot is not None:
-                policy_proposal = _matching_policy_create_ticket_proposal(snapshot, action)
-                if policy_proposal is not None:
-                    metadata = policy_proposal.get("metadata") if isinstance(policy_proposal.get("metadata"), dict) else {}
+                if matching_policy_proposal is not None:
+                    metadata = (
+                        matching_policy_proposal.get("metadata")
+                        if isinstance(matching_policy_proposal.get("metadata"), dict)
+                        else {}
+                    )
                     accepted_actions.append(
                         _action_entry(
                             action,

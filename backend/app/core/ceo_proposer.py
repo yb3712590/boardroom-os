@@ -323,6 +323,20 @@ def _should_fallback_to_project_init_kickoff(snapshot: dict) -> bool:
         and not snapshot.get("incidents")
     )
 
+
+def _workflow_is_closeout_candidate(snapshot: dict) -> bool:
+    workflow = snapshot.get("workflow") or {}
+    if not workflow_uses_ceo_board_delegate(workflow):
+        return False
+    if snapshot.get("approvals") or snapshot.get("incidents"):
+        return False
+    ticket_summary = snapshot.get("ticket_summary") or {}
+    if int(ticket_summary.get("active_count") or 0) > 0:
+        return False
+    nodes = list(snapshot.get("nodes") or [])
+    return bool(nodes) and all(str(node.get("status") or "").strip() == "COMPLETED" for node in nodes)
+
+
 def _select_default_assignee(
     snapshot: dict,
     *,
@@ -670,6 +684,9 @@ def _build_existing_backlog_followup_retry_action(
     existing_ticket_id: str,
     completed_ticket_gate_rejection: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    # Round 8E compatibility shell: DB reads below compile recovery facts for the
+    # legacy CEO execution path. New progression decisions must come from
+    # workflow_progression recovery proposals, not from adding branches here.
     current_ticket = repository.get_current_ticket_projection(existing_ticket_id, connection=connection)
     if current_ticket is None:
         return None
@@ -1323,12 +1340,19 @@ def _build_required_governance_ticket_batch(
 def _progression_policy_create_ticket_proposals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     proposals = snapshot.get("progression_policy_proposals")
     if not isinstance(proposals, list):
-        proposals = (capability_plan_view(snapshot).get("progression_policy_proposals") or [])
+        try:
+            proposals = capability_plan_view(snapshot).get("progression_policy_proposals") or []
+        except ValueError:
+            proposals = []
     resolved: list[dict[str, Any]] = []
     for proposal in list(proposals or []):
         if not isinstance(proposal, dict):
             continue
-        if str(proposal.get("action_type") or "").strip() != CEOActionType.CREATE_TICKET.value:
+        action_type = str(proposal.get("action_type") or "").strip()
+        if action_type not in {
+            CEOActionType.CREATE_TICKET.value,
+            "CLOSEOUT",
+        }:
             continue
         payload = proposal.get("payload")
         if not isinstance(payload, dict):
@@ -1626,6 +1650,13 @@ def _build_autopilot_closeout_batch(
     snapshot: dict,
     reason: str,
 ) -> CEOActionBatch | None:
+    # Round 8E compatibility shell: this fallback remains for direct legacy unit
+    # coverage and old snapshots. Fresh closeout routing should arrive as a
+    # CLOSEOUT policy proposal and execute through _build_policy_create_ticket_batch.
+    policy_closeout_batch = _build_policy_create_ticket_batch(snapshot, reason)
+    if policy_closeout_batch is not None:
+        return policy_closeout_batch
+
     workflow = snapshot.get("workflow") or {}
     if not workflow_uses_ceo_board_delegate(workflow):
         return None
@@ -1778,9 +1809,6 @@ def build_deterministic_fallback_batch(
             backlog_followup_batch = _build_backlog_followup_batch(repository, snapshot, reason)
             if backlog_followup_batch is not None:
                 return backlog_followup_batch
-            closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
-            if closeout_batch is not None:
-                return closeout_batch
             return build_no_action_batch(
                 "All currently eligible backlog follow-up plans are already materialized or waiting on graph reduction."
             )
@@ -1794,11 +1822,12 @@ def build_deterministic_fallback_batch(
         )
     if _should_fallback_to_project_init_kickoff(snapshot):
         return _build_project_init_kickoff_batch(snapshot, reason)
-    closeout_batch = _build_autopilot_closeout_batch(repository, snapshot, reason)
-    if closeout_batch is not None:
-        return closeout_batch
     if recommended_action == "NO_ACTION":
-        return build_no_action_batch(reason)
+        return build_no_action_batch(
+            "Closeout requires a CLOSEOUT progression policy proposal."
+            if _workflow_is_closeout_candidate(snapshot)
+            else reason
+        )
     _raise_proposal_contract_error(
         source_component="deterministic_fallback",
         reason_code="unsupported_recommended_action",

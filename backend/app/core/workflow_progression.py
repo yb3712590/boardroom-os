@@ -144,9 +144,51 @@ _INACTIVE_GRAPH_STATUSES = {"CANCELLED", "SUPERSEDED"}
 _IN_FLIGHT_STATUSES = {"LEASED", "EXECUTING"}
 _COMPLETED_STATUSES = {"COMPLETED"}
 
+_INCIDENT_FOLLOWUP_ACTION_BY_TYPE: dict[str, str] = {
+    "TICKET_GRAPH_UNAVAILABLE": "REBUILD_TICKET_GRAPH",
+    "REQUIRED_HOOK_GATE_BLOCKED": "REPLAY_REQUIRED_HOOKS",
+    "GRAPH_HEALTH_CRITICAL": "RERUN_CEO_SHADOW",
+    "PLANNED_PLACEHOLDER_GATE_BLOCKED": "RERUN_CEO_SHADOW",
+    "RUNTIME_LIVENESS_CRITICAL": "RERUN_CEO_SHADOW",
+    "RUNTIME_LIVENESS_UNAVAILABLE": "RESTORE_ONLY",
+    "RUNTIME_TIMEOUT_ESCALATION": "RESTORE_AND_RETRY_LATEST_TIMEOUT",
+    "REPEATED_FAILURE_ESCALATION": "RESTORE_AND_RETRY_LATEST_FAILURE",
+    "MAKER_CHECKER_REWORK_ESCALATION": "RESTORE_AND_RETRY_MAKER_CHECKER_REWORK",
+    "STAFFING_CONTAINMENT": "RESTORE_AND_RETRY_LATEST_STAFFING_CONTAINMENT",
+    "COMPILER_FAILURE": "RECOMPILE_CONTEXT",
+    "EVIDENCE_GAP": "RECOMPILE_CONTEXT",
+    "PACKAGE_STALE": "RECOMPILE_CONTEXT",
+    "BOARD_ADVISORY_ANALYSIS_FAILED": "RERUN_BOARD_ADVISORY_ANALYSIS",
+}
+
 
 def _record_ref(value: Any) -> str:
     return str(value or "").strip()
+
+
+def recommended_incident_followup_action_from_policy_input(
+    incident: dict[str, Any],
+) -> str:
+    incident_type = _record_ref(incident.get("incident_type"))
+    payload = incident.get("payload") if isinstance(incident.get("payload"), dict) else {}
+    recommended_restore_action = _record_ref(
+        incident.get("recommended_restore_action")
+        or payload.get("recommended_restore_action")
+    )
+    if incident_type == "CEO_SHADOW_PIPELINE_FAILED":
+        return recommended_restore_action or "RERUN_CEO_SHADOW"
+    if incident_type == "PROVIDER_EXECUTION_PAUSED":
+        provider_retryable = bool(incident.get("provider_retryable") or payload.get("provider_retryable"))
+        failure_kind = _record_ref(incident.get("failure_kind") or payload.get("failure_kind"))
+        if provider_retryable or failure_kind in {
+            "FIRST_TOKEN_TIMEOUT",
+            "UPSTREAM_UNAVAILABLE",
+            "PROVIDER_RATE_LIMITED",
+            "MALFORMED_STREAM_EVENT",
+        }:
+            return "RESTORE_AND_RETRY_LATEST_PROVIDER_FAILURE"
+        return "RESTORE_ONLY"
+    return _INCIDENT_FOLLOWUP_ACTION_BY_TYPE.get(incident_type, "RESTORE_ONLY")
 
 
 def _node_ref_from_record(record: dict[str, JsonValue]) -> str:
@@ -1104,16 +1146,438 @@ def _graph_patch_fanout_proposal(
     return None
 
 
-def _structured_policy_proposal(
+def _effective_complete_for_closeout(
+    readiness: dict[str, JsonValue],
+    graph_evaluation: ProgressionGraphEvaluation,
+) -> bool:
+    if "effective_graph_complete" in readiness:
+        return bool(readiness.get("effective_graph_complete"))
+    return graph_evaluation.graph_complete
+
+
+def _closeout_affected_node_refs(
+    readiness: dict[str, JsonValue],
+    graph_evaluation: ProgressionGraphEvaluation,
+) -> list[str]:
+    explicit_refs = readiness.get("affected_node_refs")
+    if isinstance(explicit_refs, list):
+        return _stable_unique_strings(list(explicit_refs))
+    node_ref = _proposal_node_ref(readiness)
+    return _stable_unique_strings(
+        [node_ref] if node_ref else list(graph_evaluation.completed_node_refs)
+    )
+
+
+def _closeout_has_illegal_final_evidence(summary: dict[str, JsonValue]) -> bool:
+    status = _record_ref(summary.get("status")).upper()
+    legality_status = _record_ref(summary.get("legality_status")).upper()
+    if status in {"REJECTED", "BLOCKED", "ILLEGAL"}:
+        return True
+    if legality_status in {"REJECTED", "BLOCKED", "ILLEGAL"}:
+        return True
+    return int(summary.get("illegal_ref_count") or 0) > 0
+
+
+def _closeout_policy_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    graph_evaluation: ProgressionGraphEvaluation,
+) -> ActionProposal | None:
+    closeout = dict(policy.closeout)
+    readiness = closeout.get("readiness")
+    if not isinstance(readiness, dict):
+        return None
+    readiness = dict(readiness)
+    if not _effective_complete_for_closeout(readiness, graph_evaluation):
+        return None
+
+    affected_node_refs = _closeout_affected_node_refs(readiness, graph_evaluation)
+    existing_closeout_ticket_id = _record_ref(readiness.get("existing_closeout_ticket_id"))
+    closeout_parent_ticket_id = _record_ref(readiness.get("closeout_parent_ticket_id"))
+    open_incident_refs = _stable_unique_strings(
+        list(readiness.get("open_blocking_incident_refs") or [])
+    )
+    open_approval_refs = _stable_unique_strings(
+        list(readiness.get("open_approval_refs") or [])
+    )
+    gate_issue = readiness.get("delivery_checker_gate_issue")
+    gate_issue = dict(gate_issue) if isinstance(gate_issue, dict) else {}
+    final_evidence_summary = readiness.get("final_evidence_legality_summary")
+    final_evidence_summary = (
+        dict(final_evidence_summary) if isinstance(final_evidence_summary, dict) else {}
+    )
+
+    if existing_closeout_ticket_id:
+        return ActionProposal(
+            action_type=ProgressionActionType.NO_ACTION,
+            metadata=build_action_metadata(
+                action_type=ProgressionActionType.NO_ACTION,
+                reason_code="progression.closeout.duplicate_existing_closeout",
+                source_graph_version=snapshot.graph_version,
+                affected_node_refs=affected_node_refs,
+                expected_state_transition="NO_STATE_CHANGE",
+                policy_ref=policy.policy_ref,
+                idempotency_components={
+                    "existing_closeout_ticket_id": existing_closeout_ticket_id,
+                    "readiness": readiness,
+                },
+            ),
+            payload={
+                "reason": "A closeout ticket already exists for the effective graph.",
+                "existing_closeout_ticket_id": existing_closeout_ticket_id,
+                "closeout_readiness": readiness,
+            },
+        )
+
+    if (
+        open_incident_refs
+        or open_approval_refs
+        or gate_issue
+        or _closeout_has_illegal_final_evidence(final_evidence_summary)
+        or not closeout_parent_ticket_id
+    ):
+        return ActionProposal(
+            action_type=ProgressionActionType.WAIT,
+            metadata=build_action_metadata(
+                action_type=ProgressionActionType.WAIT,
+                reason_code="progression.wait.closeout_blockers",
+                source_graph_version=snapshot.graph_version,
+                affected_node_refs=affected_node_refs,
+                expected_state_transition="WAITING_ON_CLOSEOUT_BLOCKERS",
+                policy_ref=policy.policy_ref,
+                idempotency_components={
+                    "open_incident_refs": open_incident_refs,
+                    "open_approval_refs": open_approval_refs,
+                    "delivery_checker_gate_issue": gate_issue,
+                    "final_evidence_legality_summary": final_evidence_summary,
+                    "closeout_parent_ticket_id": closeout_parent_ticket_id,
+                },
+            ),
+            payload={
+                "wake_condition": "closeout_blockers_resolved",
+                "blocked_by": {
+                    "incident_refs": open_incident_refs,
+                    "approval_refs": open_approval_refs,
+                    "missing_closeout_parent_ticket": not bool(closeout_parent_ticket_id),
+                },
+                "delivery_checker_gate_issue": gate_issue,
+                "final_evidence_legality_summary": final_evidence_summary,
+                "closeout_readiness": readiness,
+            },
+        )
+
+    ticket_payload = readiness.get("ticket_payload")
+    if not isinstance(ticket_payload, dict):
+        return None
+    return ActionProposal(
+        action_type=ProgressionActionType.CLOSEOUT,
+        metadata=build_action_metadata(
+            action_type=ProgressionActionType.CLOSEOUT,
+            reason_code="progression.closeout.create_ready",
+            source_graph_version=snapshot.graph_version,
+            affected_node_refs=affected_node_refs,
+            expected_state_transition="CLOSEOUT_REQUESTED",
+            policy_ref=policy.policy_ref,
+            idempotency_components={
+                "closeout_parent_ticket_id": closeout_parent_ticket_id,
+                "ticket_payload": ticket_payload,
+                "final_evidence_legality_summary": final_evidence_summary,
+            },
+        ),
+        payload={
+            "candidate_ref": _record_ref(readiness.get("candidate_ref")) or "closeout:create",
+            "ticket_payload": dict(ticket_payload),
+            "closeout_parent_ticket_id": closeout_parent_ticket_id,
+            "final_evidence_legality_summary": final_evidence_summary,
+            "closeout_readiness": readiness,
+        },
+    )
+
+
+def _recovery_action_node_ref(action: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(action.get("node_ref"))
+        or _record_ref(action.get("graph_node_id"))
+        or _record_ref(action.get("node_id"))
+    )
+
+
+def _recovery_actions(policy: ProgressionPolicy) -> list[dict[str, JsonValue]]:
+    recovery = dict(policy.recovery)
+    return _records_from_policy_section(recovery, "actions")
+
+
+def _recovery_loop_signals(policy: ProgressionPolicy) -> list[dict[str, JsonValue]]:
+    recovery = dict(policy.recovery)
+    return _records_from_policy_section(recovery, "loop_signals")
+
+
+def _recovery_policy_proposal(
     snapshot: ProgressionSnapshot,
     policy: ProgressionPolicy,
 ) -> ActionProposal | None:
+    for signal in sorted(
+        _recovery_loop_signals(policy),
+        key=lambda item: (_record_ref(item.get("loop_ref")), _recovery_action_node_ref(item)),
+    ):
+        current_count = int(signal.get("current_count") or 0)
+        threshold = int(signal.get("threshold") or 0)
+        if threshold <= 0:
+            continue
+        node_ref = _recovery_action_node_ref(signal)
+        if current_count < threshold:
+            return ActionProposal(
+                action_type=ProgressionActionType.REWORK,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.REWORK,
+                    reason_code="progression.rework.loop_threshold_not_reached",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="REWORK_REQUESTED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"loop_signal": signal},
+                ),
+                payload={
+                    "target_ticket_id": _record_ref(signal.get("target_ticket_id")),
+                    "loop_ref": _record_ref(signal.get("loop_ref")),
+                    "loop_kind": _record_ref(signal.get("loop_kind")),
+                    "current_count": current_count,
+                    "threshold": threshold,
+                    "loop_signal": dict(signal),
+                },
+            )
+        return ActionProposal(
+            action_type=ProgressionActionType.INCIDENT,
+            metadata=build_action_metadata(
+                action_type=ProgressionActionType.INCIDENT,
+                reason_code="progression.incident.loop_threshold_reached",
+                source_graph_version=snapshot.graph_version,
+                affected_node_refs=[node_ref] if node_ref else [],
+                expected_state_transition="INCIDENT_OPENED",
+                policy_ref=policy.policy_ref,
+                idempotency_components={"loop_signal": signal},
+            ),
+            payload={
+                "incident_type": _record_ref(signal.get("incident_type")) or "LOOP_THRESHOLD_REACHED",
+                "loop_ref": _record_ref(signal.get("loop_ref")),
+                "loop_kind": _record_ref(signal.get("loop_kind")),
+                "current_count": current_count,
+                "threshold": threshold,
+                "loop_signal": dict(signal),
+            },
+        )
+
+    for action in sorted(
+        _recovery_actions(policy),
+        key=lambda item: (_record_ref(item.get("action_ref")), _recovery_action_node_ref(item)),
+    ):
+        node_ref = _recovery_action_node_ref(action)
+        ticket_id = _record_ref(action.get("ticket_id"))
+        if bool(action.get("restore_needed")) and not ticket_id:
+            return ActionProposal(
+                action_type=ProgressionActionType.INCIDENT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.INCIDENT,
+                    reason_code="progression.incident.restore_needed_missing_ticket_id",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="INCIDENT_OPENED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "incident_type": _record_ref(action.get("incident_type"))
+                    or "RESTORE_NEEDED_MISSING_TICKET_ID",
+                    "recommended_followup_action": _record_ref(
+                        action.get("recommended_followup_action")
+                    ),
+                    "recovery_action": dict(action),
+                },
+            )
+
+        retry_budget = int(action.get("retry_budget") or 0)
+        retry_count = int(action.get("retry_count") or 0)
+        terminal_state = _record_ref(action.get("terminal_state")).upper()
+        failure_kind = _record_ref(action.get("failure_kind"))
+        unrecoverable_failure_kinds = {
+            _record_ref(item).upper()
+            for item in list(action.get("unrecoverable_failure_kinds") or [])
+            if _record_ref(item)
+        }
+        if (
+            terminal_state in {"FAILED", "TIMED_OUT"}
+            and failure_kind.upper() in unrecoverable_failure_kinds
+        ):
+            return ActionProposal(
+                action_type=ProgressionActionType.INCIDENT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.INCIDENT,
+                    reason_code="progression.incident.unrecoverable_failure_kind",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="INCIDENT_OPENED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "incident_type": _record_ref(action.get("incident_type"))
+                    or "UNRECOVERABLE_FAILURE_KIND",
+                    "source_ticket_id": ticket_id,
+                    "terminal_state": terminal_state,
+                    "failure_kind": failure_kind,
+                    "recovery_action": dict(action),
+                },
+            )
+        if terminal_state in {"FAILED", "TIMED_OUT"} and retry_count >= retry_budget:
+            return ActionProposal(
+                action_type=ProgressionActionType.INCIDENT,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.INCIDENT,
+                    reason_code="progression.incident.retry_budget_exhausted",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="INCIDENT_OPENED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "incident_type": _record_ref(action.get("incident_type"))
+                    or "RETRY_BUDGET_EXHAUSTED",
+                    "source_ticket_id": ticket_id,
+                    "terminal_state": terminal_state,
+                    "failure_kind": failure_kind,
+                    "retry_count": retry_count,
+                    "retry_budget": retry_budget,
+                    "recovery_action": dict(action),
+                },
+            )
+        if terminal_state in {"FAILED", "TIMED_OUT"}:
+            return ActionProposal(
+                action_type=ProgressionActionType.REWORK,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.REWORK,
+                    reason_code="progression.rework.failed_terminal_recovery_target",
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="REWORK_REQUESTED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "source_ticket_id": ticket_id,
+                    "target_ticket_id": _record_ref(action.get("target_ticket_id")) or ticket_id,
+                    "terminal_state": terminal_state,
+                    "failure_kind": failure_kind,
+                    "retry_count": retry_count,
+                    "retry_budget": retry_budget,
+                    "recommended_followup_action": _record_ref(
+                        action.get("recommended_followup_action")
+                    ),
+                    "recovery_action": dict(action),
+                },
+            )
+
+        reuse_gate = action.get("completed_ticket_reuse_gate")
+        if isinstance(reuse_gate, dict):
+            if bool(reuse_gate.get("satisfies")):
+                return ActionProposal(
+                    action_type=ProgressionActionType.NO_ACTION,
+                    metadata=build_action_metadata(
+                        action_type=ProgressionActionType.NO_ACTION,
+                        reason_code="progression.recovery.completed_ticket_reuse_gate_satisfied",
+                        source_graph_version=snapshot.graph_version,
+                        affected_node_refs=[node_ref] if node_ref else [],
+                        expected_state_transition="NO_STATE_CHANGE",
+                        policy_ref=policy.policy_ref,
+                        idempotency_components={"completed_ticket_reuse_gate": reuse_gate},
+                    ),
+                    payload={
+                        "reason": "Completed ticket already satisfies this recovery lane.",
+                        "completed_ticket_reuse_gate": dict(reuse_gate),
+                        "recovery_action": dict(action),
+                    },
+                )
+            lineage_refs = _stable_unique_strings(
+                [
+                    *list(action.get("superseded_lineage_refs") or []),
+                    *list(action.get("invalidated_lineage_refs") or []),
+                ]
+            )
+            if lineage_refs or _record_ref(reuse_gate.get("reason_code")):
+                return ActionProposal(
+                    action_type=ProgressionActionType.REWORK,
+                    metadata=build_action_metadata(
+                        action_type=ProgressionActionType.REWORK,
+                        reason_code="progression.rework.completed_ticket_reuse_blocked_by_lineage",
+                        source_graph_version=snapshot.graph_version,
+                        affected_node_refs=[node_ref] if node_ref else [],
+                        expected_state_transition="REWORK_REQUESTED",
+                        policy_ref=policy.policy_ref,
+                        idempotency_components={
+                            "completed_ticket_reuse_gate": reuse_gate,
+                            "lineage_refs": lineage_refs,
+                        },
+                    ),
+                    payload={
+                        "target_ticket_id": ticket_id,
+                        "completed_ticket_reuse_gate": dict(reuse_gate),
+                        "superseded_lineage_refs": _stable_unique_strings(
+                            list(action.get("superseded_lineage_refs") or [])
+                        ),
+                        "invalidated_lineage_refs": _stable_unique_strings(
+                            list(action.get("invalidated_lineage_refs") or [])
+                        ),
+                        "recovery_action": dict(action),
+                    },
+                )
+
+        finding_kind = _record_ref(action.get("finding_kind"))
+        blocking_findings = [
+            dict(item)
+            for item in list(action.get("blocking_findings") or [])
+            if isinstance(item, dict) and bool(item.get("blocking", True))
+        ]
+        if finding_kind or blocking_findings:
+            reason_code = (
+                "progression.rework.checker_blocking_finding"
+                if finding_kind == "checker_blocking_finding" or blocking_findings
+                else f"progression.rework.{finding_kind}"
+            )
+            return ActionProposal(
+                action_type=ProgressionActionType.REWORK,
+                metadata=build_action_metadata(
+                    action_type=ProgressionActionType.REWORK,
+                    reason_code=reason_code,
+                    source_graph_version=snapshot.graph_version,
+                    affected_node_refs=[node_ref] if node_ref else [],
+                    expected_state_transition="REWORK_REQUESTED",
+                    policy_ref=policy.policy_ref,
+                    idempotency_components={"recovery_action": action},
+                ),
+                payload={
+                    "target_ticket_id": _record_ref(action.get("target_ticket_id")) or ticket_id,
+                    "finding_kind": finding_kind,
+                    "blocking_findings": blocking_findings,
+                    "recovery_action": dict(action),
+                },
+            )
+    return None
+
+
+def _structured_policy_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    graph_evaluation: ProgressionGraphEvaluation | None = None,
+) -> ActionProposal | None:
+    graph_evaluation = graph_evaluation or evaluate_progression_graph(snapshot)
     return (
-        _governance_gate_proposal(snapshot, policy)
+        _recovery_policy_proposal(snapshot, policy)
+        or _governance_gate_proposal(snapshot, policy)
         or _governance_chain_proposal(snapshot, policy)
         or _meeting_requirement_proposal(snapshot, policy)
         or _backlog_fanout_proposal(snapshot, policy)
         or _graph_patch_fanout_proposal(snapshot, policy)
+        or _closeout_policy_proposal(snapshot, policy, graph_evaluation)
     )
 
 
@@ -1344,7 +1808,7 @@ def decide_next_actions(
     if graph_evaluation.graph_reduction_issues:
         return [_graph_reduction_issue_proposal(snapshot, policy, graph_evaluation)]
 
-    structured_policy_proposal = _structured_policy_proposal(snapshot, policy)
+    structured_policy_proposal = _structured_policy_proposal(snapshot, policy, graph_evaluation)
     if structured_policy_proposal is not None:
         return [structured_policy_proposal]
 

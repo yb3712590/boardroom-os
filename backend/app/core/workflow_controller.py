@@ -10,7 +10,12 @@ from app.core.ceo_execution_presets import (
     GOVERNANCE_DOCUMENT_CHAIN_ORDER,
     PROJECT_INIT_AUTOPILOT_ARCHITECTURE_NODE_ID,
 )
-from app.core.constants import EVENT_BOARD_DIRECTIVE_RECEIVED, EVENT_WORKFLOW_CREATED
+from app.core.constants import (
+    EVENT_BOARD_DIRECTIVE_RECEIVED,
+    EVENT_TICKET_FAILED,
+    EVENT_TICKET_TIMED_OUT,
+    EVENT_WORKFLOW_CREATED,
+)
 from app.core.employee_reuse import (
     ROLE_ALREADY_COVERED_REASON_CODE,
     find_reuse_candidate_employee,
@@ -21,6 +26,7 @@ from app.core.output_schemas import (
     ARCHITECTURE_BRIEF_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_REF,
     BACKLOG_RECOMMENDATION_SCHEMA_VERSION,
+    DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
     DETAILED_DESIGN_SCHEMA_REF,
     GOVERNANCE_DOCUMENT_SCHEMA_REFS,
@@ -49,6 +55,7 @@ from app.core.workflow_progression import (
     build_governance_followup_node_id,
     build_governance_followup_summary,
     decide_next_actions,
+    evaluate_progression_graph,
     governance_dependency_gate_refs,
     governance_parent_ticket_id,
     resolve_workflow_progression_adapter,
@@ -56,7 +63,6 @@ from app.core.workflow_progression import (
 )
 from app.core.workflow_completion import (
     evaluate_workflow_closeout_gate_issue,
-    resolve_workflow_closeout_completion,
 )
 from app.db.repository import ControlPlaneRepository
 
@@ -1637,6 +1643,356 @@ def _build_fanout_policy_input(
     return fanout_policy
 
 
+def _latest_closeout_ticket_id(
+    *,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    effective_ticket_ids: list[str] | None = None,
+) -> str | None:
+    effective_ticket_id_set = {
+        str(ticket_id).strip()
+        for ticket_id in list(effective_ticket_ids or [])
+        if str(ticket_id).strip()
+    }
+    for ticket_id, created_spec in sorted(created_specs_by_ticket.items()):
+        if effective_ticket_id_set and ticket_id not in effective_ticket_id_set:
+            continue
+        if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+            return ticket_id
+    return None
+
+
+def _closeout_parent_ticket_id(
+    *,
+    tickets: list[dict[str, Any]],
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    completed_ticket_ids: list[str] | None = None,
+) -> str | None:
+    effective_completed_ticket_ids = {
+        str(ticket_id).strip()
+        for ticket_id in list(completed_ticket_ids or [])
+        if str(ticket_id).strip()
+    }
+    completed_tickets = [
+        ticket
+        for ticket in tickets
+        if str(ticket.get("status") or "").strip() == "COMPLETED"
+        and (
+            not effective_completed_ticket_ids
+            or str(ticket.get("ticket_id") or "").strip() in effective_completed_ticket_ids
+        )
+    ]
+    for ticket in sorted(
+        completed_tickets,
+        key=lambda item: (str(item.get("updated_at") or ""), str(item.get("ticket_id") or "")),
+        reverse=True,
+    ):
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        created_spec = created_specs_by_ticket.get(ticket_id) or {}
+        output_schema_ref = str(created_spec.get("output_schema_ref") or "").strip()
+        if output_schema_ref == MAKER_CHECKER_VERDICT_SCHEMA_REF:
+            maker_ticket_id = str(
+                (created_spec.get("maker_checker_context") or {}).get("maker_ticket_id") or ""
+            ).strip()
+            if maker_ticket_id:
+                return maker_ticket_id
+        if output_schema_ref in {
+            SOURCE_CODE_DELIVERY_SCHEMA_REF,
+            DELIVERY_CHECK_REPORT_SCHEMA_REF,
+        }:
+            return ticket_id
+    return None
+
+
+def _closeout_final_evidence_summary(closeout_gate_issue: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(closeout_gate_issue, dict) and closeout_gate_issue:
+        reason_code = str(closeout_gate_issue.get("reason_code") or "").strip()
+        details = closeout_gate_issue.get("details")
+        details = dict(details) if isinstance(details, dict) else {}
+        return {
+            "status": "REJECTED",
+            "reason_code": reason_code,
+            "illegal_ref_count": (
+                1
+                if reason_code == "closeout_illegal_final_artifact_ref"
+                else 0
+            ),
+            "details": details,
+        }
+    return {
+        "status": "ACCEPTED",
+        "illegal_ref_count": 0,
+    }
+
+
+def _build_closeout_policy_input(
+    *,
+    workflow: dict[str, Any],
+    tickets: list[dict[str, Any]],
+    employees: list[dict[str, Any]],
+    approvals: list[dict[str, Any]],
+    incidents: list[dict[str, Any]],
+    closeout_gate_issue: dict[str, Any] | None,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    graph_complete: bool,
+    completed_ticket_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    workflow_id = str(workflow.get("workflow_id") or "").strip()
+    parent_ticket_id = _closeout_parent_ticket_id(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        completed_ticket_ids=completed_ticket_ids,
+    )
+    closeout_role_profile_ref = "frontend_engineer_primary"
+    assignee_employee_id = _select_default_assignee(
+        employees,
+        role_profile_ref=closeout_role_profile_ref,
+        output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+    )
+    ticket_payload = None
+    if workflow_id and parent_ticket_id and assignee_employee_id:
+        goal = str(
+            workflow.get("north_star_goal")
+            or workflow.get("title")
+            or "the current workflow"
+        ).strip()
+        ticket_payload = _build_ceo_create_ticket_payload(
+            workflow_id=workflow_id,
+            node_id="node_ceo_delivery_closeout",
+            role_profile_ref=closeout_role_profile_ref,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            assignee_employee_id=assignee_employee_id,
+            selection_reason="Collect final delivery evidence and handoff notes into one auditable closeout package.",
+            dependency_gate_refs=[parent_ticket_id],
+            summary=f"Prepare the final delivery closeout package for {goal}.",
+            parent_ticket_id=parent_ticket_id,
+        )
+    return {
+        "readiness": {
+            "effective_graph_complete": graph_complete,
+            "open_blocking_incident_refs": [
+                str(item.get("incident_id") or "").strip()
+                for item in incidents
+                if str(item.get("incident_id") or "").strip()
+            ],
+            "open_approval_refs": [
+                str(item.get("approval_id") or "").strip()
+                for item in approvals
+                if str(item.get("approval_id") or "").strip()
+            ],
+            "delivery_checker_gate_issue": closeout_gate_issue or None,
+            "existing_closeout_ticket_id": _latest_closeout_ticket_id(
+                created_specs_by_ticket=created_specs_by_ticket,
+                effective_ticket_ids=completed_ticket_ids,
+            ),
+            "closeout_parent_ticket_id": parent_ticket_id,
+            "final_evidence_legality_summary": _closeout_final_evidence_summary(
+                closeout_gate_issue
+            ),
+            "ticket_payload": ticket_payload,
+        }
+    }
+
+
+def _ticket_graph_node_refs_by_ticket_id(
+    ticket_graph_snapshot: TicketGraphSnapshot | None,
+) -> dict[str, str]:
+    if ticket_graph_snapshot is None:
+        return {}
+    return {
+        str(node.ticket_id or "").strip(): str(node.graph_node_id or "").strip()
+        for node in ticket_graph_snapshot.nodes
+        if str(node.ticket_id or "").strip() and str(node.graph_node_id or "").strip()
+    }
+
+
+def _node_ref_for_ticket(
+    ticket: dict[str, Any],
+    node_refs_by_ticket_id: dict[str, str],
+) -> str:
+    ticket_id = str(ticket.get("ticket_id") or "").strip()
+    return node_refs_by_ticket_id.get(ticket_id) or str(ticket.get("node_id") or "").strip()
+
+
+def _recommended_terminal_followup_action(
+    *,
+    ticket_status: str,
+    terminal_event_type: str,
+) -> str | None:
+    if terminal_event_type == EVENT_TICKET_TIMED_OUT or ticket_status == "TIMED_OUT":
+        return "RESTORE_AND_RETRY_LATEST_TIMEOUT"
+    if terminal_event_type == EVENT_TICKET_FAILED or ticket_status == "FAILED":
+        return "RESTORE_AND_RETRY_LATEST_FAILURE"
+    return None
+
+
+def _policy_reuse_gate_from_rejection(rejection: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(rejection, dict) or not rejection:
+        return None
+    return {
+        "satisfies": False,
+        "reason_code": str(rejection.get("reason_code") or "").strip(),
+        "completed_ticket_id": str(rejection.get("completed_ticket_id") or "").strip(),
+        "terminal_failed_ticket_id": str(
+            rejection.get("terminal_failed_ticket_id") or ""
+        ).strip(),
+        "details": dict(rejection),
+    }
+
+
+def _build_recovery_policy_input(
+    *,
+    tickets: list[dict[str, Any]],
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+    followup_ticket_plans: list[dict[str, Any]],
+    ticket_graph_snapshot: TicketGraphSnapshot | None,
+    structured_recovery_policy_input: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    recovery_policy = dict(structured_recovery_policy_input or {})
+    actions: list[dict[str, Any]] = [
+        dict(item)
+        for item in list(recovery_policy.get("actions") or [])
+        if isinstance(item, dict)
+    ]
+    seen_action_refs = {
+        str(action.get("action_ref") or "").strip()
+        for action in actions
+        if str(action.get("action_ref") or "").strip()
+    }
+    node_refs_by_ticket_id = _ticket_graph_node_refs_by_ticket_id(ticket_graph_snapshot)
+    effective_current_ticket_ids = (
+        set(node_refs_by_ticket_id)
+        if ticket_graph_snapshot is not None
+        else {
+            str(ticket.get("ticket_id") or "").strip()
+            for ticket in tickets
+            if str(ticket.get("ticket_id") or "").strip()
+        }
+    )
+    for ticket in sorted(
+        tickets,
+        key=lambda item: (
+            str(item.get("updated_at") or ""),
+            str(item.get("ticket_id") or ""),
+        ),
+    ):
+        ticket_status = str(ticket.get("status") or "").strip().upper()
+        if ticket_status not in {"FAILED", "TIMED_OUT"}:
+            continue
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if not ticket_id:
+            continue
+        if ticket_id not in effective_current_ticket_ids:
+            continue
+        action_ref = f"terminal:{ticket_id}"
+        if action_ref in seen_action_refs:
+            continue
+        created_spec = created_specs_by_ticket.get(ticket_id) or {}
+        terminal_event = ticket_terminal_events_by_ticket.get(ticket_id) or {}
+        terminal_payload = terminal_event.get("payload") if isinstance(terminal_event, dict) else {}
+        terminal_payload = terminal_payload if isinstance(terminal_payload, dict) else {}
+        terminal_event_type = (
+            str(terminal_event.get("event_type") or "").strip()
+            if isinstance(terminal_event, dict)
+            else ""
+        )
+        retry_budget = int(created_spec.get("retry_budget") or ticket.get("retry_budget") or 0)
+        retry_count = int(ticket.get("retry_count") or created_spec.get("retry_count") or 0)
+        failure_kind = str(
+            terminal_payload.get("failure_kind")
+            or ticket.get("last_failure_kind")
+            or ticket_status
+        ).strip()
+        actions.append(
+            {
+                "action_ref": action_ref,
+                "node_ref": _node_ref_for_ticket(ticket, node_refs_by_ticket_id),
+                "ticket_id": ticket_id,
+                "terminal_state": ticket_status,
+                "retry_count": retry_count,
+                "retry_budget": retry_budget,
+                "failure_kind": failure_kind,
+                "recommended_followup_action": _recommended_terminal_followup_action(
+                    ticket_status=ticket_status,
+                    terminal_event_type=terminal_event_type,
+                ),
+                "failure_lineage": {
+                    "parent_ticket_id": str(created_spec.get("parent_ticket_id") or "").strip(),
+                    "attempt_no": int(created_spec.get("attempt_no") or 1),
+                    "terminal_event_type": terminal_event_type,
+                },
+            }
+        )
+        seen_action_refs.add(action_ref)
+
+    current_tickets_by_id = {
+        str(ticket.get("ticket_id") or "").strip(): ticket
+        for ticket in tickets
+        if str(ticket.get("ticket_id") or "").strip()
+    }
+    for followup_plan in followup_ticket_plans:
+        if not isinstance(followup_plan, dict):
+            continue
+        existing_ticket_id = str(followup_plan.get("existing_ticket_id") or "").strip()
+        if not existing_ticket_id:
+            continue
+        ticket = current_tickets_by_id.get(existing_ticket_id)
+        if ticket is None:
+            action_ref = f"restore-needed:{existing_ticket_id or 'missing-ticket'}"
+            if action_ref not in seen_action_refs:
+                actions.append(
+                    {
+                        "action_ref": action_ref,
+                        "node_ref": _policy_node_ref_from_ticket_payload(
+                            dict(followup_plan.get("ticket_payload") or {})
+                        ),
+                        "ticket_id": existing_ticket_id,
+                        "restore_needed": True,
+                    }
+                )
+                seen_action_refs.add(action_ref)
+            continue
+        rejection = followup_plan.get("completed_ticket_gate_rejection")
+        reuse_gate = _policy_reuse_gate_from_rejection(
+            rejection if isinstance(rejection, dict) else None
+        )
+        if reuse_gate is None:
+            continue
+        action_ref = f"reuse-gate:{existing_ticket_id}"
+        if action_ref in seen_action_refs:
+            continue
+        actions.append(
+            {
+                "action_ref": action_ref,
+                "node_ref": _node_ref_for_ticket(ticket, node_refs_by_ticket_id),
+                "ticket_id": existing_ticket_id,
+                "completed_ticket_reuse_gate": reuse_gate,
+                "superseded_lineage_refs": (
+                    [reuse_gate["completed_ticket_id"]]
+                    if reuse_gate["reason_code"] == "completed_ticket_superseded"
+                    and reuse_gate["completed_ticket_id"]
+                    else []
+                ),
+                "invalidated_lineage_refs": (
+                    [reuse_gate["completed_ticket_id"]]
+                    if reuse_gate["reason_code"] == "completed_ticket_lineage_invalidated"
+                    and reuse_gate["completed_ticket_id"]
+                    else []
+                ),
+            }
+        )
+        seen_action_refs.add(action_ref)
+
+    recovery_policy["actions"] = actions
+    loop_signals = [
+        dict(item)
+        for item in list(recovery_policy.get("loop_signals") or [])
+        if isinstance(item, dict)
+    ]
+    recovery_policy["loop_signals"] = loop_signals
+    return recovery_policy
+
+
 def _policy_create_ticket_payload(proposal: dict[str, Any]) -> dict[str, Any]:
     payload = proposal.get("payload") or {}
     ticket_payload = payload.get("ticket_payload") if isinstance(payload, dict) else {}
@@ -1754,12 +2110,36 @@ def _controller_state_from_policy_proposal(
                 "recommended_action": "CREATE_TICKET",
                 "blocking_reason": None,
             }
+    if action_type == ProgressionActionType.CLOSEOUT.value:
+        return {
+            "state": "CLOSEOUT_REQUIRED",
+            "recommended_action": "CREATE_TICKET",
+            "blocking_reason": "Structured closeout policy requires a final closeout ticket.",
+        }
+    if action_type == ProgressionActionType.REWORK.value:
+        return {
+            "state": "REWORK_REQUIRED",
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": "Structured recovery policy requires rework before progression continues.",
+        }
+    if action_type == ProgressionActionType.INCIDENT.value:
+        return {
+            "state": "INCIDENT_REQUIRED",
+            "recommended_action": "NO_ACTION",
+            "blocking_reason": "Structured recovery policy requires opening an incident before progression continues.",
+        }
     if action_type == ProgressionActionType.WAIT.value:
         if reason_code == "progression.wait.meeting_requirement":
             return {
                 "state": "MEETING_REQUIRED",
                 "recommended_action": "REQUEST_MEETING",
                 "blocking_reason": "A structured meeting requirement must be approved before fanout.",
+            }
+        if reason_code == "progression.wait.closeout_blockers":
+            return {
+                "state": "CLOSEOUT_GATE_BLOCKED",
+                "recommended_action": "NO_ACTION",
+                "blocking_reason": "Structured closeout policy is waiting on closeout blockers.",
             }
         if reason_code.startswith("progression.wait.governance") and required_governance_ticket_plan is not None:
             return {
@@ -1768,6 +2148,55 @@ def _controller_state_from_policy_proposal(
                 "blocking_reason": "The required governance ticket already exists and must finish first.",
             }
     return None
+
+
+def _is_closeout_or_recovery_policy_proposal(proposal: dict[str, Any] | None) -> bool:
+    if not isinstance(proposal, dict):
+        return False
+    action_type = str(proposal.get("action_type") or "").strip()
+    metadata = proposal.get("metadata") if isinstance(proposal.get("metadata"), dict) else {}
+    reason_code = str((metadata or {}).get("reason_code") or "").strip()
+    if action_type in {
+        ProgressionActionType.CLOSEOUT.value,
+        ProgressionActionType.REWORK.value,
+        ProgressionActionType.INCIDENT.value,
+    }:
+        return True
+    return reason_code.startswith("progression.closeout.") or reason_code.startswith(
+        "progression.wait.closeout"
+    )
+
+
+def _apply_policy_controller_side_effects(
+    *,
+    controller_state: dict[str, Any],
+    employees: list[dict[str, Any]],
+    policy_meeting_candidates: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    controller_meeting_candidate = None
+    if (
+        controller_state["state"] == "ARCHITECT_REQUIRED"
+        and controller_state["recommended_action"] == "CREATE_TICKET"
+        and not _active_board_approved_employees(employees, role_profile_ref="architect_primary")
+    ):
+        controller_state = {
+            "state": "ARCHITECT_REQUIRED",
+            "recommended_action": "HIRE_EMPLOYEE",
+            "blocking_reason": (
+                "Structured architect governance policy requires a board-approved architect before "
+                "the governance ticket can be assigned."
+            ),
+        }
+    if controller_state["state"] == "MEETING_REQUIRED":
+        controller_meeting_candidate = next(
+            (
+                item
+                for item in policy_meeting_candidates
+                if bool(item.get("eligible"))
+            ),
+            policy_meeting_candidates[0] if policy_meeting_candidates else None,
+        )
+    return controller_state, controller_meeting_candidate
 
 
 def build_workflow_controller_view(
@@ -1850,21 +2279,6 @@ def build_workflow_controller_view(
     contract_issues = list(ready_ticket_staffing_assessment["contract_issues"])
     reuse_candidate_employee_ids = list(ready_ticket_staffing_assessment["reuse_candidate_employee_ids"])
     staffing_wait_reasons = list(ready_ticket_staffing_assessment["staffing_wait_reasons"])
-    graph_truth_nodes = [
-        {
-            "node_id": str(node.node_id or node.runtime_node_id or ""),
-            "status": str(node.node_status or "").strip(),
-        }
-        for node in ticket_graph_snapshot.nodes
-    ]
-    closeout_completion = resolve_workflow_closeout_completion(
-        tickets=tickets,
-        nodes=graph_truth_nodes,
-        has_open_approval=bool(approvals),
-        has_open_incident=bool(incidents),
-        created_specs_by_ticket=created_specs_by_ticket,
-        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
-    )
     closeout_gate_issue = evaluate_workflow_closeout_gate_issue(
         tickets=tickets,
         created_specs_by_ticket=created_specs_by_ticket,
@@ -1881,17 +2295,13 @@ def build_workflow_controller_view(
         workflow_id=workflow_id,
         connection=connection,
     )
-    governance_ticket_plans = (
-        []
-        if closeout_completion is not None
-        else _build_governance_progression_ticket_plans(
-            repository,
-            workflow=workflow,
-            tickets=tickets,
-            workflow_nodes=nodes,
-            employees=employees,
-            connection=connection,
-        )
+    governance_ticket_plans = _build_governance_progression_ticket_plans(
+        repository,
+        workflow=workflow,
+        tickets=tickets,
+        workflow_nodes=nodes,
+        employees=employees,
+        connection=connection,
     )
     selected_governance_chain_ticket_plan = next(
         (
@@ -2011,10 +2421,36 @@ def build_workflow_controller_view(
         approvals=approvals,
         incidents=incidents,
     )
+    progression_graph_evaluation = evaluate_progression_graph(progression_snapshot)
+    closeout_policy_input = _build_closeout_policy_input(
+        workflow=workflow,
+        tickets=tickets,
+        employees=employees,
+        approvals=approvals,
+        incidents=incidents,
+        closeout_gate_issue=closeout_gate_issue,
+        created_specs_by_ticket=created_specs_by_ticket,
+        graph_complete=progression_graph_evaluation.graph_complete,
+        completed_ticket_ids=progression_graph_evaluation.completed_ticket_ids,
+    )
+    recovery_policy_input = _build_recovery_policy_input(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        followup_ticket_plans=followup_ticket_plans,
+        ticket_graph_snapshot=ticket_graph_snapshot,
+        structured_recovery_policy_input=(
+            structured_progression_policy_input.get("recovery")
+            if isinstance(structured_progression_policy_input.get("recovery"), dict)
+            else {}
+        ),
+    )
     progression_policy = ProgressionPolicy(
-        policy_ref=f"progression-policy:{workflow_id}:{graph_version}:8c",
+        policy_ref=f"progression-policy:{workflow_id}:{graph_version}:8d",
         governance=governance_policy_input,
         fanout=fanout_policy_input,
+        closeout=closeout_policy_input,
+        recovery=recovery_policy_input,
     )
     progression_policy_proposals = [
         proposal.model_dump(mode="json")
@@ -2060,6 +2496,18 @@ def build_workflow_controller_view(
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Critical graph health recommends pausing new fanout until recovery is confirmed.",
         }
+    elif _is_closeout_or_recovery_policy_proposal(primary_policy_proposal) and (
+        policy_controller_state := _controller_state_from_policy_proposal(
+        primary_policy_proposal,
+        required_governance_ticket_plan=required_governance_ticket_plan,
+        followup_ticket_plans=followup_ticket_plans,
+        )
+    ) is not None:
+        controller_state, controller_meeting_candidate = _apply_policy_controller_side_effects(
+            controller_state=policy_controller_state,
+            employees=employees,
+            policy_meeting_candidates=policy_meeting_candidates,
+        )
     elif closeout_gate_issue:
         controller_state = {
             "state": (
@@ -2110,34 +2558,22 @@ def build_workflow_controller_view(
             "recommended_action": "NO_ACTION",
             "blocking_reason": "Ready tickets already exist on the current mainline.",
         }
-    elif (policy_controller_state := _controller_state_from_policy_proposal(
-        primary_policy_proposal,
-        required_governance_ticket_plan=required_governance_ticket_plan,
-        followup_ticket_plans=followup_ticket_plans,
-    )) is not None:
-        controller_state = policy_controller_state
-        if (
-            controller_state["state"] == "ARCHITECT_REQUIRED"
-            and controller_state["recommended_action"] == "CREATE_TICKET"
-            and not _active_board_approved_employees(employees, role_profile_ref="architect_primary")
-        ):
-            controller_state = {
-                "state": "ARCHITECT_REQUIRED",
-                "recommended_action": "HIRE_EMPLOYEE",
-                "blocking_reason": (
-                    "Structured architect governance policy requires a board-approved architect before "
-                    "the governance ticket can be assigned."
-                ),
-            }
-        if controller_state["state"] == "MEETING_REQUIRED":
-            controller_meeting_candidate = next(
-                (
-                    item
-                    for item in policy_meeting_candidates
-                    if bool(item.get("eligible"))
-                ),
-                policy_meeting_candidates[0] if policy_meeting_candidates else None,
+    elif (
+        not _is_closeout_or_recovery_policy_proposal(primary_policy_proposal)
+        and (
+            policy_controller_state := _controller_state_from_policy_proposal(
+                primary_policy_proposal,
+                required_governance_ticket_plan=required_governance_ticket_plan,
+                followup_ticket_plans=followup_ticket_plans,
             )
+        )
+        is not None
+    ):
+        controller_state, controller_meeting_candidate = _apply_policy_controller_side_effects(
+            controller_state=policy_controller_state,
+            employees=employees,
+            policy_meeting_candidates=policy_meeting_candidates,
+        )
     elif required_governance_ticket_plan is not None:
         missing_assignee = _required_governance_ticket_missing_assignee(required_governance_ticket_plan)
         required_role_profile_ref = str(
