@@ -23,6 +23,7 @@ from app.core.runtime_node_views import (
     resolve_runtime_node_view,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
+from app.core.workflow_progression import ProgressionSnapshot, evaluate_progression_graph
 from tests.test_api import (
     _create_lease_and_start_ticket,
     _employee_freeze_payload,
@@ -32,6 +33,84 @@ from tests.test_api import (
     _ticket_cancel_payload,
     _ticket_create_payload,
 )
+
+
+def _ticket_graph_snapshot_to_progression_snapshot(snapshot) -> ProgressionSnapshot:
+    inactive_refs = {
+        ref
+        for node in snapshot.nodes
+        for ref in [str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()]
+        if ref and str(node.node_status or "").strip() in {"CANCELLED", "SUPERSEDED"}
+    }
+    return ProgressionSnapshot(
+        workflow_id=snapshot.workflow_id,
+        graph_version=snapshot.graph_version,
+        node_refs=[str(node.graph_node_id or "").strip() for node in snapshot.nodes],
+        ticket_refs=[str(node.ticket_id or "").strip() for node in snapshot.nodes if node.ticket_id],
+        graph_nodes=[
+            {
+                "node_ref": str(node.graph_node_id or "").strip(),
+                "node_id": str(node.node_id or "").strip(),
+                "ticket_id": str(node.ticket_id or "").strip(),
+                "ticket_status": str(node.ticket_status or "").strip(),
+                "node_status": str(node.node_status or "").strip(),
+                "blocking_reason_code": str(node.blocking_reason_code or "").strip(),
+            }
+            for node in snapshot.nodes
+            if str(node.graph_node_id or "").strip()
+        ],
+        graph_edges=[
+            {
+                "edge_type": str(edge.edge_type or "").strip(),
+                "source_node_ref": str(edge.source_graph_node_id or "").strip(),
+                "target_node_ref": str(edge.target_graph_node_id or "").strip(),
+                "source_ticket_id": str(edge.source_ticket_id or "").strip(),
+                "target_ticket_id": str(edge.target_ticket_id or "").strip(),
+            }
+            for edge in snapshot.edges
+        ],
+        cancelled_refs=[
+            ref
+            for ref in inactive_refs
+            if any(
+                ref in {str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()}
+                and str(node.node_status or "").strip() == "CANCELLED"
+                for node in snapshot.nodes
+            )
+        ],
+        superseded_refs=[
+            ref
+            for ref in inactive_refs
+            if any(
+                ref in {str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()}
+                and str(node.node_status or "").strip() == "SUPERSEDED"
+                for node in snapshot.nodes
+            )
+        ],
+        graph_reduction_issues=[
+            {
+                "issue_code": issue.issue_code,
+                "detail": issue.detail,
+                "ticket_id": issue.ticket_id,
+                "node_id": issue.node_id,
+                "node_ref": issue.node_id,
+                "related_ticket_id": issue.related_ticket_id,
+            }
+            for issue in snapshot.reduction_issues
+        ],
+        blocked_ticket_ids=list(snapshot.index_summary.blocked_ticket_ids),
+        blocked_node_refs=list(snapshot.index_summary.blocked_node_ids),
+        in_flight_ticket_ids=list(snapshot.index_summary.in_flight_ticket_ids),
+        in_flight_node_refs=list(snapshot.index_summary.in_flight_node_ids),
+        blocked_reasons=[
+            {
+                "reason_code": item.reason_code,
+                "ticket_ids": list(item.ticket_ids),
+                "node_refs": list(item.node_ids),
+            }
+            for item in snapshot.index_summary.blocked_reasons
+        ],
+    )
 
 
 def _seed_ticket_created_event(
@@ -1453,6 +1532,197 @@ def test_ticket_graph_snapshot_excludes_cancelled_lane_from_effective_edges(clie
         f"{cancelled_node_id}::review" in {source, target}
         for _edge_type, source, target in edge_tuples
     )
+
+
+def test_ticket_graph_snapshot_prefers_runtime_pointer_over_newer_updated_at(client):
+    workflow_id = "wf_ticket_graph_current_pointer_runtime_wins"
+    node_id = "node_current_pointer_runtime_wins"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Runtime graph pointer should not be overwritten by newer stale ticket updates.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_current_pointer_runtime",
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_current_pointer_late_old",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_current_pointer_late_old",
+                node_id=node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="BUILD",
+            ),
+        },
+        occurred_at="2026-03-28T10:31:00+08:00",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET latest_ticket_id = ?, updated_at = ?, version = version + 1
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("tkt_current_pointer_runtime", "2026-03-28T10:30:00+08:00", workflow_id, node_id),
+        )
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-03-28T10:40:00+08:00", "tkt_current_pointer_late_old"),
+        )
+
+    snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    graph_node = next(node for node in snapshot.nodes if node.graph_node_id == node_id)
+
+    assert graph_node.ticket_id == "tkt_current_pointer_runtime"
+    assert "tkt_current_pointer_late_old" not in snapshot.index_summary.ready_ticket_ids
+
+
+def test_ticket_graph_snapshot_reports_reduction_issue_instead_of_updated_at_pointer_guess(client):
+    workflow_id = "wf_ticket_graph_current_pointer_missing"
+    node_id = "node_current_pointer_missing"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ambiguous graph lanes should not use updated_at as current pointer.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_current_pointer_missing_old",
+        node_id=node_id,
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_ticket_created_event(
+        client,
+        workflow_id=workflow_id,
+        idempotency_key=f"test-seed-ticket-created:{workflow_id}:tkt_current_pointer_missing_newer",
+        ticket_payload={
+            **_ticket_create_payload(
+                workflow_id=workflow_id,
+                ticket_id="tkt_current_pointer_missing_newer",
+                node_id=node_id,
+                role_profile_ref="frontend_engineer_primary",
+                output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+                delivery_stage="BUILD",
+            ),
+        },
+        occurred_at="2026-03-28T10:31:00+08:00",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            DELETE FROM runtime_node_projection
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            (workflow_id, node_id),
+        )
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET updated_at = ?
+            WHERE ticket_id = ?
+            """,
+            ("2026-03-28T10:40:00+08:00", "tkt_current_pointer_missing_newer"),
+        )
+
+    snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+
+    assert snapshot.index_summary.ready_ticket_ids == []
+    assert snapshot.index_summary.reduction_issue_count == 1
+    assert snapshot.reduction_issues[0].issue_code == "graph.current_pointer.missing_explicit"
+    assert snapshot.index_summary.blocked_node_ids == [node_id]
+    assert snapshot.index_summary.blocked_graph_node_ids == [node_id]
+    assert snapshot.index_summary.blocked_reasons[0].reason_code == "GRAPH_REDUCTION_ISSUE"
+
+
+def test_ticket_graph_snapshot_policy_matches_recomputed_graph_indexes(client):
+    workflow_id = "wf_ticket_graph_policy_index_equivalence"
+    _ensure_scoped_workflow(
+        client,
+        workflow_id=workflow_id,
+        tenant_id="tenant_default",
+        workspace_id="ws_default",
+        goal="Ticket graph facade should expose the same indexes as progression policy.",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_policy_ready",
+        node_id="node_policy_ready",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_policy_running",
+        node_id="node_policy_running",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    _seed_created_ticket(
+        client,
+        workflow_id=workflow_id,
+        ticket_id="tkt_policy_blocked",
+        node_id="node_policy_blocked",
+        role_profile_ref="frontend_engineer_primary",
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        delivery_stage="BUILD",
+    )
+    repository = client.app.state.repository
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE ticket_projection
+            SET status = ?
+            WHERE ticket_id = ?
+            """,
+            ("EXECUTING", "tkt_policy_running"),
+        )
+        connection.execute(
+            """
+            UPDATE runtime_node_projection
+            SET status = ?, blocking_reason_code = ?
+            WHERE workflow_id = ? AND graph_node_id = ?
+            """,
+            ("BLOCKED", "PACKAGE_STALE", workflow_id, "node_policy_blocked"),
+        )
+
+    snapshot = build_ticket_graph_snapshot(repository, workflow_id)
+    policy_snapshot = _ticket_graph_snapshot_to_progression_snapshot(snapshot)
+    evaluation = evaluate_progression_graph(policy_snapshot)
+
+    assert snapshot.index_summary.ready_ticket_ids == evaluation.ready_ticket_ids
+    assert snapshot.index_summary.ready_graph_node_ids == evaluation.ready_node_refs
+    assert snapshot.index_summary.blocked_ticket_ids == evaluation.blocked_ticket_ids
+    assert snapshot.index_summary.blocked_graph_node_ids == evaluation.blocked_node_refs
+    assert snapshot.index_summary.in_flight_ticket_ids == evaluation.in_flight_ticket_ids
+    assert snapshot.index_summary.in_flight_graph_node_ids == evaluation.in_flight_node_refs
 
 
 def test_graph_health_report_detects_fanout_too_wide(client):

@@ -60,6 +60,18 @@ class ProgressionSnapshot(StrictModel):
     graph_version: str = Field(min_length=1)
     node_refs: list[str] = Field(default_factory=list)
     ticket_refs: list[str] = Field(default_factory=list)
+    graph_nodes: list[dict[str, JsonValue]] = Field(default_factory=list)
+    graph_edges: list[dict[str, JsonValue]] = Field(default_factory=list)
+    runtime_nodes: list[dict[str, JsonValue]] = Field(default_factory=list)
+    ticket_lineage: list[dict[str, JsonValue]] = Field(default_factory=list)
+    replacements: list[dict[str, JsonValue]] = Field(default_factory=list)
+    superseded_refs: list[str] = Field(default_factory=list)
+    cancelled_refs: list[str] = Field(default_factory=list)
+    graph_reduction_issues: list[dict[str, JsonValue]] = Field(default_factory=list)
+    blocked_reasons: list[dict[str, JsonValue]] = Field(default_factory=list)
+    completed_ticket_ids: list[str] = Field(default_factory=list)
+    completed_node_refs: list[str] = Field(default_factory=list)
+    stale_orphan_pending_refs: list[str] = Field(default_factory=list)
     ready_ticket_ids: list[str] = Field(default_factory=list)
     ready_node_refs: list[str] = Field(default_factory=list)
     blocked_ticket_ids: list[str] = Field(default_factory=list)
@@ -81,6 +93,23 @@ class ProgressionPolicy(StrictModel):
     create_ticket_candidates: list[dict[str, JsonValue]] = Field(default_factory=list)
     wait_reason_code: str = "progression.wait_for_blockers"
     no_action_reason_code: str = "progression.no_action"
+
+
+class ProgressionGraphEvaluation(StrictModel):
+    current_ticket_ids_by_node_ref: dict[str, str] = Field(default_factory=dict)
+    effective_node_refs: list[str] = Field(default_factory=list)
+    effective_edges: list[dict[str, JsonValue]] = Field(default_factory=list)
+    ready_ticket_ids: list[str] = Field(default_factory=list)
+    ready_node_refs: list[str] = Field(default_factory=list)
+    blocked_ticket_ids: list[str] = Field(default_factory=list)
+    blocked_node_refs: list[str] = Field(default_factory=list)
+    in_flight_ticket_ids: list[str] = Field(default_factory=list)
+    in_flight_node_refs: list[str] = Field(default_factory=list)
+    completed_ticket_ids: list[str] = Field(default_factory=list)
+    completed_node_refs: list[str] = Field(default_factory=list)
+    graph_complete: bool = False
+    stale_orphan_pending_refs: list[str] = Field(default_factory=list)
+    graph_reduction_issues: list[dict[str, JsonValue]] = Field(default_factory=list)
 
 
 _GOVERNANCE_ROLE_PRIORITY_BY_SCHEMA: dict[str, tuple[str, ...]] = {
@@ -111,6 +140,406 @@ _DEFAULT_TRANSITION_BY_ACTION_TYPE: dict[ProgressionActionType, str] = {
     ProgressionActionType.NO_ACTION: "NO_STATE_CHANGE",
 }
 
+_INACTIVE_GRAPH_STATUSES = {"CANCELLED", "SUPERSEDED"}
+_IN_FLIGHT_STATUSES = {"LEASED", "EXECUTING"}
+_COMPLETED_STATUSES = {"COMPLETED"}
+
+
+def _record_ref(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _node_ref_from_record(record: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(record.get("node_ref"))
+        or _record_ref(record.get("graph_node_id"))
+        or _record_ref(record.get("node_id"))
+    )
+
+
+def _edge_source_ref(edge: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(edge.get("source_node_ref"))
+        or _record_ref(edge.get("source_graph_node_id"))
+        or _record_ref(edge.get("source_node_id"))
+    )
+
+
+def _edge_target_ref(edge: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(edge.get("target_node_ref"))
+        or _record_ref(edge.get("target_graph_node_id"))
+        or _record_ref(edge.get("target_node_id"))
+    )
+
+
+def _ticket_id_from_record(record: dict[str, JsonValue]) -> str:
+    return _record_ref(record.get("ticket_id"))
+
+
+def _runtime_current_ticket_id(record: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(record.get("latest_ticket_id"))
+        or _record_ref(record.get("current_ticket_id"))
+        or _record_ref(record.get("ticket_id"))
+    )
+
+
+def _status_from_record(record: dict[str, JsonValue], key: str) -> str:
+    return _record_ref(record.get(key)).upper()
+
+
+def _replacement_new_ref(record: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(record.get("new_node_ref"))
+        or _record_ref(record.get("new_graph_node_id"))
+        or _record_ref(record.get("new_node_id"))
+    )
+
+
+def _replacement_old_ref(record: dict[str, JsonValue]) -> str:
+    return (
+        _record_ref(record.get("old_node_ref"))
+        or _record_ref(record.get("old_graph_node_id"))
+        or _record_ref(record.get("old_node_id"))
+    )
+
+
+def _replacement_new_ticket_id(record: dict[str, JsonValue]) -> str:
+    return _record_ref(record.get("new_ticket_id"))
+
+
+def _replacement_old_ticket_id(record: dict[str, JsonValue]) -> str:
+    return _record_ref(record.get("old_ticket_id"))
+
+
+def _inactive_refs(snapshot: ProgressionSnapshot) -> set[str]:
+    return {
+        *_stable_unique_strings(snapshot.cancelled_refs),
+        *_stable_unique_strings(snapshot.superseded_refs),
+    }
+
+
+def _node_alias_refs(record: dict[str, JsonValue], node_ref: str) -> set[str]:
+    return {
+        ref
+        for ref in {
+            node_ref,
+            _record_ref(record.get("graph_node_id")),
+            _record_ref(record.get("node_id")),
+            _record_ref(record.get("runtime_node_id")),
+        }
+        if ref
+    }
+
+
+def _append_graph_reduction_issue(
+    issues: list[dict[str, JsonValue]],
+    *,
+    issue_code: str,
+    node_ref: str,
+    detail: str,
+    related_ticket_id: str | None = None,
+) -> None:
+    issues.append(
+        {
+            "issue_code": issue_code,
+            "node_ref": node_ref,
+            "detail": detail,
+            "related_ticket_id": related_ticket_id,
+            "recoverable": False,
+        }
+    )
+
+
+def evaluate_progression_graph(snapshot: ProgressionSnapshot) -> ProgressionGraphEvaluation:
+    has_structured_nodes = bool(snapshot.graph_nodes or snapshot.runtime_nodes)
+    inactive_refs = _inactive_refs(snapshot)
+    stale_orphan_refs = set(_stable_unique_strings(snapshot.stale_orphan_pending_refs))
+    candidate_nodes_by_ref: dict[str, list[dict[str, JsonValue]]] = {}
+    runtime_nodes_by_ref: dict[str, dict[str, JsonValue]] = {}
+    runtime_current_ticket_ids_by_ref: dict[str, str] = {}
+    graph_reduction_issues = [dict(item) for item in snapshot.graph_reduction_issues]
+    current_ticket_ids_by_node_ref: dict[str, str] = {}
+
+    for runtime_node in snapshot.runtime_nodes:
+        node_ref = _node_ref_from_record(runtime_node)
+        if not node_ref:
+            continue
+        runtime_nodes_by_ref[node_ref] = dict(runtime_node)
+        latest_ticket_id = _runtime_current_ticket_id(runtime_node)
+        if latest_ticket_id:
+            runtime_current_ticket_ids_by_ref[node_ref] = latest_ticket_id
+
+    for node in snapshot.graph_nodes:
+        node_ref = _node_ref_from_record(node)
+        if not node_ref:
+            continue
+        normalized_node = dict(node)
+        candidate_nodes_by_ref.setdefault(node_ref, []).append(normalized_node)
+        ticket_id = _ticket_id_from_record(node)
+        if _status_from_record(node, "node_status") in _INACTIVE_GRAPH_STATUSES:
+            inactive_refs.update(_node_alias_refs(normalized_node, node_ref))
+            if ticket_id:
+                inactive_refs.add(ticket_id)
+        if _status_from_record(node, "ticket_status") in _INACTIVE_GRAPH_STATUSES:
+            inactive_refs.update(_node_alias_refs(normalized_node, node_ref))
+            if ticket_id:
+                inactive_refs.add(ticket_id)
+
+    replacement_records = [dict(item) for item in snapshot.replacements]
+    for edge in snapshot.graph_edges:
+        if _record_ref(edge.get("edge_type")).upper() != "REPLACES":
+            continue
+        replacement_records.append(
+            {
+                "old_node_ref": _edge_target_ref(edge),
+                "new_node_ref": _edge_source_ref(edge),
+                "old_ticket_id": _record_ref(edge.get("target_ticket_id")),
+                "new_ticket_id": _record_ref(edge.get("source_ticket_id")),
+            }
+        )
+    replacement_current_ticket_ids_by_ref: dict[str, str] = {}
+    for replacement in replacement_records:
+        old_ref = _replacement_old_ref(replacement)
+        new_ref = _replacement_new_ref(replacement)
+        old_ticket_id = _replacement_old_ticket_id(replacement)
+        new_ticket_id = _replacement_new_ticket_id(replacement)
+        if old_ref:
+            inactive_refs.add(old_ref)
+        if old_ticket_id:
+            inactive_refs.add(old_ticket_id)
+        if new_ref and new_ticket_id:
+            replacement_current_ticket_ids_by_ref[new_ref] = new_ticket_id
+
+    node_by_ref: dict[str, dict[str, JsonValue]] = {}
+    for node_ref, candidates in sorted(candidate_nodes_by_ref.items()):
+        active_candidates = [
+            candidate
+            for candidate in candidates
+            if not (
+                _node_alias_refs(candidate, node_ref) & inactive_refs
+                or _ticket_id_from_record(candidate) in inactive_refs
+            )
+        ]
+        if not active_candidates:
+            continue
+        explicit_ticket_id = (
+            runtime_current_ticket_ids_by_ref.get(node_ref)
+            or replacement_current_ticket_ids_by_ref.get(node_ref)
+        )
+        selected_node: dict[str, JsonValue] | None = None
+        if explicit_ticket_id:
+            for candidate in active_candidates:
+                if _ticket_id_from_record(candidate) == explicit_ticket_id:
+                    selected_node = candidate
+                    break
+            if selected_node is None:
+                issue_code = (
+                    "graph.current_pointer.runtime_latest_missing"
+                    if node_ref in runtime_current_ticket_ids_by_ref
+                    else "graph.current_pointer.replacement_current_missing"
+                )
+                _append_graph_reduction_issue(
+                    graph_reduction_issues,
+                    issue_code=issue_code,
+                    node_ref=node_ref,
+                    detail=(
+                        f"Graph lane {node_ref} points to current ticket "
+                        f"{explicit_ticket_id}, but that ticket is not present in the structured snapshot."
+                    ),
+                    related_ticket_id=explicit_ticket_id,
+                )
+                continue
+        elif len(active_candidates) == 1:
+            selected_node = active_candidates[0]
+        else:
+            candidate_ticket_ids = _stable_unique_strings(
+                [_ticket_id_from_record(candidate) for candidate in active_candidates]
+            )
+            _append_graph_reduction_issue(
+                graph_reduction_issues,
+                issue_code="graph.current_pointer.missing_explicit",
+                node_ref=node_ref,
+                detail=(
+                    f"Graph lane {node_ref} has multiple candidate tickets but no explicit "
+                    "runtime current pointer or replacement edge."
+                ),
+                related_ticket_id=",".join(candidate_ticket_ids) or None,
+            )
+            continue
+        if selected_node is None:
+            continue
+        node_by_ref[node_ref] = selected_node
+        selected_ticket_id = _ticket_id_from_record(selected_node)
+        if selected_ticket_id:
+            current_ticket_ids_by_node_ref[node_ref] = selected_ticket_id
+
+    effective_node_refs: list[str] = []
+    ready_ticket_ids: list[str] = []
+    ready_node_refs: list[str] = []
+    blocked_ticket_ids: list[str] = []
+    blocked_node_refs: list[str] = []
+    in_flight_ticket_ids: list[str] = []
+    in_flight_node_refs: list[str] = []
+    completed_ticket_ids: list[str] = []
+    completed_node_refs: list[str] = []
+
+    explicit_blocked_ticket_ids = (
+        set()
+        if has_structured_nodes
+        else set(_stable_unique_strings(snapshot.blocked_ticket_ids))
+    )
+    explicit_blocked_node_refs = (
+        set()
+        if has_structured_nodes
+        else set(_stable_unique_strings(snapshot.blocked_node_refs))
+    )
+    explicit_in_flight_ticket_ids = (
+        set()
+        if has_structured_nodes
+        else set(_stable_unique_strings(snapshot.in_flight_ticket_ids))
+    )
+    explicit_in_flight_node_refs = (
+        set()
+        if has_structured_nodes
+        else set(_stable_unique_strings(snapshot.in_flight_node_refs))
+    )
+    explicit_completed_ticket_ids = set(_stable_unique_strings(snapshot.completed_ticket_ids))
+    explicit_completed_node_refs = set(_stable_unique_strings(snapshot.completed_node_refs))
+    blocked_ticket_ids_from_reasons: set[str] = set()
+    blocked_node_refs_from_reasons: set[str] = set()
+    for reason in snapshot.blocked_reasons:
+        blocked_ticket_ids_from_reasons.update(
+            _stable_unique_strings(list(reason.get("ticket_ids") or []))
+            if isinstance(reason.get("ticket_ids"), list)
+            else []
+        )
+        node_values = reason.get("node_refs")
+        if not isinstance(node_values, list):
+            node_values = reason.get("node_ids")
+        blocked_node_refs_from_reasons.update(
+            _stable_unique_strings(list(node_values or []))
+            if isinstance(node_values, list)
+            else []
+        )
+
+    for node_ref, node in sorted(node_by_ref.items()):
+        ticket_id = _ticket_id_from_record(node)
+        node_alias_refs = _node_alias_refs(node, node_ref)
+        if node_alias_refs & inactive_refs or ticket_id in inactive_refs:
+            continue
+        if node_alias_refs & stale_orphan_refs or ticket_id in stale_orphan_refs:
+            continue
+        runtime_node = runtime_nodes_by_ref.get(node_ref) or {}
+        effective_node_refs.append(node_ref)
+        ticket_status = _status_from_record(node, "ticket_status")
+        node_status = _status_from_record(node, "node_status") or _status_from_record(runtime_node, "status")
+        blocking_reason_code = (
+            _record_ref(node.get("blocking_reason_code"))
+            or _record_ref(runtime_node.get("blocking_reason_code"))
+        )
+        is_blocked = (
+            ticket_id in explicit_blocked_ticket_ids
+            or ticket_id in blocked_ticket_ids_from_reasons
+            or bool(node_alias_refs & explicit_blocked_node_refs)
+            or bool(node_alias_refs & blocked_node_refs_from_reasons)
+            or bool(blocking_reason_code)
+            or ticket_status == "BLOCKED_FOR_BOARD_REVIEW"
+            or node_status == "BLOCKED_FOR_BOARD_REVIEW"
+        )
+        is_in_flight = (
+            ticket_id in explicit_in_flight_ticket_ids
+            or bool(node_alias_refs & explicit_in_flight_node_refs)
+            or ticket_status in _IN_FLIGHT_STATUSES
+            or node_status == "EXECUTING"
+        )
+        is_completed = (
+            ticket_id in explicit_completed_ticket_ids
+            or bool(node_alias_refs & explicit_completed_node_refs)
+            or ticket_status in _COMPLETED_STATUSES
+            or node_status in _COMPLETED_STATUSES
+        )
+
+        if is_blocked:
+            if ticket_id:
+                blocked_ticket_ids.append(ticket_id)
+            blocked_node_refs.append(node_ref)
+        if is_in_flight:
+            if ticket_id:
+                in_flight_ticket_ids.append(ticket_id)
+            in_flight_node_refs.append(node_ref)
+            continue
+        if is_blocked:
+            continue
+        if is_completed:
+            if ticket_id:
+                completed_ticket_ids.append(ticket_id)
+            completed_node_refs.append(node_ref)
+            continue
+        if ticket_status == "PENDING" or node_status == "PENDING":
+            if ticket_id:
+                ready_ticket_ids.append(ticket_id)
+            ready_node_refs.append(node_ref)
+
+    effective_edges: list[dict[str, JsonValue]] = []
+    for edge in snapshot.graph_edges:
+        source_ref = _edge_source_ref(edge)
+        target_ref = _edge_target_ref(edge)
+        source_ticket_id = _record_ref(edge.get("source_ticket_id"))
+        target_ticket_id = _record_ref(edge.get("target_ticket_id"))
+        if (
+            source_ref in inactive_refs
+            or target_ref in inactive_refs
+            or source_ticket_id in inactive_refs
+            or target_ticket_id in inactive_refs
+        ):
+            continue
+        if source_ref not in effective_node_refs or target_ref not in effective_node_refs:
+            continue
+        if _record_ref(edge.get("edge_type")).upper() == "REPLACES":
+            continue
+        effective_edges.append(dict(edge))
+
+    graph_complete = (
+        bool(effective_node_refs)
+        and not ready_ticket_ids
+        and not blocked_ticket_ids
+        and not in_flight_ticket_ids
+        and set(effective_node_refs) == set(completed_node_refs)
+    )
+
+    return ProgressionGraphEvaluation(
+        current_ticket_ids_by_node_ref={
+            key: current_ticket_ids_by_node_ref[key]
+            for key in sorted(current_ticket_ids_by_node_ref)
+            if key not in inactive_refs
+            and key not in stale_orphan_refs
+            and current_ticket_ids_by_node_ref[key] not in inactive_refs
+            and current_ticket_ids_by_node_ref[key] not in stale_orphan_refs
+        },
+        effective_node_refs=_stable_unique_strings(effective_node_refs),
+        effective_edges=sorted(
+            effective_edges,
+            key=lambda item: (
+                _record_ref(item.get("edge_type")),
+                _edge_source_ref(item),
+                _edge_target_ref(item),
+            ),
+        ),
+        ready_ticket_ids=_stable_unique_strings(ready_ticket_ids),
+        ready_node_refs=_stable_unique_strings(ready_node_refs),
+        blocked_ticket_ids=_stable_unique_strings(blocked_ticket_ids),
+        blocked_node_refs=_stable_unique_strings(blocked_node_refs),
+        in_flight_ticket_ids=_stable_unique_strings(in_flight_ticket_ids),
+        in_flight_node_refs=_stable_unique_strings(in_flight_node_refs),
+        completed_ticket_ids=_stable_unique_strings(completed_ticket_ids),
+        completed_node_refs=_stable_unique_strings(completed_node_refs),
+        graph_complete=graph_complete,
+        stale_orphan_pending_refs=_stable_unique_strings(list(stale_orphan_refs)),
+        graph_reduction_issues=graph_reduction_issues,
+    )
+
 
 def _stable_unique_strings(values: list[Any]) -> list[str]:
     return sorted({str(value).strip() for value in values if str(value).strip()})
@@ -131,6 +560,21 @@ def _stable_value(value: Any) -> Any:
     if isinstance(value, StrEnum):
         return value.value
     return value
+
+
+def _has_structured_graph_input(snapshot: ProgressionSnapshot) -> bool:
+    return bool(
+        snapshot.graph_nodes
+        or snapshot.graph_edges
+        or snapshot.runtime_nodes
+        or snapshot.ticket_lineage
+        or snapshot.replacements
+        or snapshot.superseded_refs
+        or snapshot.cancelled_refs
+        or snapshot.completed_ticket_ids
+        or snapshot.completed_node_refs
+        or snapshot.stale_orphan_pending_refs
+    )
 
 
 def build_action_metadata(
@@ -200,10 +644,37 @@ def _ids_from_records(records: list[dict[str, JsonValue]], key: str) -> list[str
     return _stable_unique_strings([str(record.get(key) or "").strip() for record in records])
 
 
-def _wait_proposal(snapshot: ProgressionSnapshot, policy: ProgressionPolicy) -> ActionProposal:
+def _wait_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    graph_evaluation: ProgressionGraphEvaluation | None = None,
+) -> ActionProposal:
+    graph_evaluation = graph_evaluation or evaluate_progression_graph(snapshot)
+    use_structured_graph = _has_structured_graph_input(snapshot)
+    in_flight_ticket_ids = (
+        graph_evaluation.in_flight_ticket_ids
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.in_flight_ticket_ids)
+    )
+    in_flight_node_refs = (
+        graph_evaluation.in_flight_node_refs
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.in_flight_node_refs)
+    )
+    reason_code = policy.wait_reason_code
+    wake_condition = "approval_or_incident_or_in_flight_resolved"
+    if snapshot.approvals:
+        reason_code = "progression.wait.open_approval"
+        wake_condition = "approval_resolved"
+    elif snapshot.incidents:
+        reason_code = "progression.wait.open_incident"
+        wake_condition = "incident_resolved"
+    elif in_flight_ticket_ids or in_flight_node_refs:
+        reason_code = "progression.wait.in_flight_runtime"
+        wake_condition = "runtime_ticket_finished"
     affected_node_refs = _stable_unique_strings(
         [
-            *snapshot.in_flight_node_refs,
+            *in_flight_node_refs,
             *_refs_from_records(snapshot.incidents, ref_key="node_ref", fallback_key="node_id"),
             *_refs_from_records(snapshot.approvals, ref_key="node_ref", fallback_key="node_id"),
         ]
@@ -211,13 +682,13 @@ def _wait_proposal(snapshot: ProgressionSnapshot, policy: ProgressionPolicy) -> 
     blocked_by = {
         "approval_refs": _ids_from_records(snapshot.approvals, "approval_id"),
         "incident_refs": _ids_from_records(snapshot.incidents, "incident_id"),
-        "in_flight_ticket_ids": _stable_unique_strings(snapshot.in_flight_ticket_ids),
+        "in_flight_ticket_ids": _stable_unique_strings(in_flight_ticket_ids),
     }
     return ActionProposal(
         action_type=ProgressionActionType.WAIT,
         metadata=build_action_metadata(
             action_type=ProgressionActionType.WAIT,
-            reason_code=policy.wait_reason_code,
+            reason_code=reason_code,
             source_graph_version=snapshot.graph_version,
             affected_node_refs=affected_node_refs,
             expected_state_transition="WAITING_ON_BLOCKERS",
@@ -225,7 +696,7 @@ def _wait_proposal(snapshot: ProgressionSnapshot, policy: ProgressionPolicy) -> 
             idempotency_components=blocked_by,
         ),
         payload={
-            "wake_condition": "approval_or_incident_or_in_flight_resolved",
+            "wake_condition": wake_condition,
             "blocked_by": blocked_by,
         },
     )
@@ -262,23 +733,118 @@ def _create_ticket_proposal(
     )
 
 
-def _no_action_proposal(snapshot: ProgressionSnapshot, policy: ProgressionPolicy) -> ActionProposal:
+def _no_action_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    graph_evaluation: ProgressionGraphEvaluation | None = None,
+) -> ActionProposal:
+    graph_evaluation = graph_evaluation or evaluate_progression_graph(snapshot)
+    use_structured_graph = _has_structured_graph_input(snapshot)
+    blocked_ticket_ids = (
+        graph_evaluation.blocked_ticket_ids
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.blocked_ticket_ids)
+    )
+    blocked_node_refs = (
+        graph_evaluation.blocked_node_refs
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.blocked_node_refs)
+    )
+    reason_code = policy.no_action_reason_code
+    reason = "No structured policy action is currently eligible."
+    affected_node_refs: list[str] = []
+    idempotency_context: dict[str, Any] = {
+        "workflow_id": snapshot.workflow_id,
+        "ready_ticket_ids": (
+            graph_evaluation.ready_ticket_ids
+            if use_structured_graph
+            else _stable_unique_strings(snapshot.ready_ticket_ids)
+        ),
+        "ready_node_refs": (
+            graph_evaluation.ready_node_refs
+            if use_structured_graph
+            else _stable_unique_strings(snapshot.ready_node_refs)
+        ),
+    }
+    if graph_evaluation.graph_complete and graph_evaluation.stale_orphan_pending_refs:
+        reason_code = "progression.stale_orphan_pending_ignored"
+        reason = "Only stale or orphan pending refs remain outside the effective graph."
+        affected_node_refs = list(graph_evaluation.stale_orphan_pending_refs)
+        idempotency_context["stale_orphan_pending_refs"] = graph_evaluation.stale_orphan_pending_refs
+    elif graph_evaluation.graph_complete:
+        reason_code = "progression.graph_complete_no_closeout_in_8b"
+        reason = "The effective graph is complete; closeout routing remains in Round 8D."
+        affected_node_refs = list(graph_evaluation.completed_node_refs)
+        idempotency_context["completed_ticket_ids"] = graph_evaluation.completed_ticket_ids
+    elif blocked_ticket_ids or blocked_node_refs or snapshot.blocked_reasons:
+        reason_code = "progression.blocked_no_recovery_action"
+        reason = "Blocked graph nodes have no structured recovery action in Round 8B."
+        affected_node_refs = list(blocked_node_refs)
+        idempotency_context["blocked_ticket_ids"] = blocked_ticket_ids
+        idempotency_context["blocked_node_refs"] = blocked_node_refs
     return ActionProposal(
         action_type=ProgressionActionType.NO_ACTION,
         metadata=build_action_metadata(
             action_type=ProgressionActionType.NO_ACTION,
-            reason_code=policy.no_action_reason_code,
+            reason_code=reason_code,
             source_graph_version=snapshot.graph_version,
-            affected_node_refs=[],
+            affected_node_refs=affected_node_refs,
             expected_state_transition="NO_STATE_CHANGE",
             policy_ref=policy.policy_ref,
-            idempotency_components={
-                "workflow_id": snapshot.workflow_id,
-                "ready_ticket_ids": snapshot.ready_ticket_ids,
-                "ready_node_refs": snapshot.ready_node_refs,
-            },
+            idempotency_components=idempotency_context,
         ),
-        payload={"reason": "No structured policy action is currently eligible."},
+        payload={"reason": reason},
+    )
+
+
+def _graph_reduction_issue_proposal(
+    snapshot: ProgressionSnapshot,
+    policy: ProgressionPolicy,
+    graph_evaluation: ProgressionGraphEvaluation | None = None,
+) -> ActionProposal:
+    graph_evaluation = graph_evaluation or evaluate_progression_graph(snapshot)
+    issues = [dict(item) for item in graph_evaluation.graph_reduction_issues]
+    affected_node_refs = _stable_unique_strings(
+        [
+            _record_ref(item.get("node_ref"))
+            or _record_ref(item.get("graph_node_id"))
+            or _record_ref(item.get("node_id"))
+            for item in issues
+        ]
+    )
+    recoverable = all(bool(item.get("recoverable", True)) for item in issues)
+    if recoverable:
+        return ActionProposal(
+            action_type=ProgressionActionType.WAIT,
+            metadata=build_action_metadata(
+                action_type=ProgressionActionType.WAIT,
+                reason_code="progression.wait.graph_reduction_issue",
+                source_graph_version=snapshot.graph_version,
+                affected_node_refs=affected_node_refs,
+                expected_state_transition="WAITING_ON_GRAPH_REDUCTION",
+                policy_ref=policy.policy_ref,
+                idempotency_components={"graph_reduction_issues": issues},
+            ),
+            payload={
+                "wake_condition": "graph_reduction_issue_resolved",
+                "graph_reduction_issues": issues,
+            },
+        )
+    return ActionProposal(
+        action_type=ProgressionActionType.INCIDENT,
+        metadata=build_action_metadata(
+            action_type=ProgressionActionType.INCIDENT,
+            reason_code="progression.incident.graph_reduction_issue",
+            source_graph_version=snapshot.graph_version,
+            affected_node_refs=affected_node_refs,
+            expected_state_transition="INCIDENT_OPENED",
+            policy_ref=policy.policy_ref,
+            idempotency_components={"graph_reduction_issues": issues},
+        ),
+        payload={
+            "incident_type": "GRAPH_REDUCTION_ISSUE",
+            "graph_reduction_issues": issues,
+        },
     )
 
 
@@ -286,8 +852,24 @@ def decide_next_actions(
     snapshot: ProgressionSnapshot,
     policy: ProgressionPolicy,
 ) -> list[ActionProposal]:
-    if snapshot.approvals or snapshot.incidents or snapshot.in_flight_ticket_ids or snapshot.in_flight_node_refs:
-        return [_wait_proposal(snapshot, policy)]
+    graph_evaluation = evaluate_progression_graph(snapshot)
+    use_structured_graph = _has_structured_graph_input(snapshot)
+    in_flight_ticket_ids = (
+        graph_evaluation.in_flight_ticket_ids
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.in_flight_ticket_ids)
+    )
+    in_flight_node_refs = (
+        graph_evaluation.in_flight_node_refs
+        if use_structured_graph
+        else _stable_unique_strings(snapshot.in_flight_node_refs)
+    )
+
+    if snapshot.approvals or snapshot.incidents or in_flight_ticket_ids or in_flight_node_refs:
+        return [_wait_proposal(snapshot, policy, graph_evaluation)]
+
+    if graph_evaluation.graph_reduction_issues:
+        return [_graph_reduction_issue_proposal(snapshot, policy, graph_evaluation)]
 
     if policy.create_ticket_candidates:
         ordered_candidates = sorted(
@@ -299,7 +881,7 @@ def decide_next_actions(
         )
         return [_create_ticket_proposal(snapshot, policy, ordered_candidates[0])]
 
-    return [_no_action_proposal(snapshot, policy)]
+    return [_no_action_proposal(snapshot, policy, graph_evaluation)]
 
 
 def resolve_workflow_progression_adapter(workflow: dict[str, Any] | None) -> str:

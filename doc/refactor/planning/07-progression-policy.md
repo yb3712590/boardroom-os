@@ -22,6 +22,17 @@ decide_next_actions(snapshot, policy) -> ActionProposal[]
 
 8A 没有迁移 controller、scheduler、CEO proposer、backlog fanout、meeting/architect gate、closeout、rework 或 restore 主路径。后续批次必须继承 8A 的 contract，不得重新定义不兼容的 snapshot/policy/action proposal 语义。
 
+## Round 8B 实现状态
+
+8B 已把 effective graph pointer 与 ready/blocked/in-flight/complete 索引收进 progression policy：
+
+- `ProgressionSnapshot` 增加结构化 graph nodes、graph edges、runtime nodes、ticket lineage、replacement/supersession/cancellation、graph reduction issue、blocked reason、completed index 和 stale/orphan pending refs。
+- `evaluate_progression_graph(snapshot)` 是纯函数，只消费 snapshot，不读取 repository、provider raw transcript、artifact 正文或外部文件。
+- `REPLACES` 指向的新 ticket/node 是 current；`SUPERSEDED` / `CANCELLED` 仍保留 lineage 可见性，但不进入 effective readiness、effective edges 或 complete。
+- orphan pending / stale snapshot node 作为 diagnostic 处理，不阻断 effective graph complete。
+- `decide_next_actions()` 为 open approval、open incident、in-flight runtime、graph reduction issue、stale/orphan pending、blocked node 无恢复动作、graph complete 输出稳定 `WAIT` / `INCIDENT` / `NO_ACTION` reason code。
+- `ticket_graph.py` 仍是 DB snapshot facade，但 index summary 通过 policy evaluation 回填；controller 只保留 8E 前的兼容壳，fanout、meeting/architect、closeout/rework/restore 主判断尚未迁移。
+
 ## 输入
 
 Policy engine 输入必须是结构化对象：
@@ -86,6 +97,12 @@ Policy 纯函数不得读取：
 - `FAILED` / `TIMED_OUT` ticket 只有被 recovery action 引用时参与恢复。
 - orphan pending 不能阻断 graph complete。
 - late completed/output 的 old provider attempt 只保留 lineage，不参与 current ticket、graph pointer、artifact/evidence 推进。
+
+8B 实现边界：
+
+- `updated_at` 只能作为历史/展示字段；没有 runtime current pointer 或 `REPLACES` lineage 时，policy/facade 记录 `graph.current_pointer.missing_explicit`，不再用最新更新时间猜 current。
+- `REPLACES` edge 可在 graph facade 中作为 lineage edge 展示，但不进入 policy effective edges。
+- 015 stale gate 的完整 replay 仍归 Phase 7；8B 覆盖结构化等价 stale/orphan snapshot 场景。
 
 ## Ready 判断
 
@@ -152,12 +169,14 @@ Rework target 必须指向能修复问题的 upstream node，而不是默认把 
 
 - Round 8A：六类 action metadata helper 有独立单测，覆盖 reason code、idempotency key、source graph version、affected node refs、expected state transition 和 policy ref。
 - Round 8A：相同 snapshot + policy 输出稳定 action proposals。
+- Round 8B：policy 单测覆盖 `REPLACES` current pointer、`CANCELLED` / `SUPERSEDED` effective edge 排除、orphan pending 不阻断 graph complete，以及 approval/incident/in-flight/blocked/graph reduction/stale-orphan reason code。
+- Round 8B：ticket graph facade 测试覆盖 runtime pointer 优先于 newer stale `updated_at`，以及缺 explicit pointer 时产生 graph reduction issue。
 - 015 中出现的 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 都能由 policy 测试覆盖。
 - Scheduler 不再承担业务推进判断。
 
 ## 后续批次依赖
 
-- Round 8B：把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
-- Round 8C：把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch。
+- Round 8B：已把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
+- Round 8C：把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch；8B 已提供 current/effective indexes，8C 不应重新引入 substring hint 或 hardcoded milestone fanout。
 - Round 8D：把 closeout、rework、restore 和 incident follow-up 推进判断迁入 policy。
 - Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断，并补齐 Phase 4 全部验收证据。

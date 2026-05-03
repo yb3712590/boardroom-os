@@ -55,10 +55,10 @@
 
 ## Phase 4：Progression policy engine
 
-- [x] `decide_next_actions(snapshot, policy)` 可独立测试（Round 8A：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py -q`）。
-- [x] CREATE_TICKET / WAIT / REWORK / CLOSEOUT / INCIDENT / NO_ACTION 都有 reason code（Round 8A metadata helper 测试覆盖 reason code / idempotency key / source graph version / affected node refs / expected state transition / policy ref；controller/scheduler 主路径尚未迁移）。
-- [ ] Effective graph pointer 不受 orphan pending 干扰。
-- [ ] CANCELLED/SUPERSEDED 节点不参与 effective edges。
+- [x] `decide_next_actions(snapshot, policy)` 可独立测试（Round 8A/8B：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py -q`）。
+- [x] CREATE_TICKET / WAIT / REWORK / CLOSEOUT / INCIDENT / NO_ACTION 都有 reason code（Round 8A metadata helper + Round 8B approval/incident/in-flight/blocked/graph reduction/stale-orphan/graph-complete reason code 测试覆盖；controller/scheduler 主路径尚未迁移）。
+- [x] Effective graph pointer 不受 orphan pending 干扰（Round 8B policy 单测覆盖 orphan pending 不阻断 graph complete，015 replay 仍归 Phase 7）。
+- [x] CANCELLED/SUPERSEDED 节点不参与 effective edges（Round 8B policy 单测覆盖；ticket graph facade 保留 `REPLACES` lineage 展示但不进入 policy effective edges）。
 - [ ] substring hint 不再驱动会议/架构 gate。
 - [ ] hardcoded backlog milestone fanout 被 policy/graph patch 替代。
 

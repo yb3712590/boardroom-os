@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.contracts.ticket_graph import (
@@ -71,14 +70,6 @@ def _resolve_node_kind(created_spec: dict[str, Any]) -> str:
     if output_schema_ref == DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF or delivery_stage == "CLOSEOUT":
         return "CLOSEOUT"
     return "IMPLEMENTATION"
-
-
-def _ticket_sort_key(ticket: dict[str, Any]) -> tuple[float, str]:
-    updated_at = ticket.get("updated_at")
-    ticket_id = str(ticket.get("ticket_id") or "").strip()
-    if isinstance(updated_at, datetime):
-        return (updated_at.timestamp(), ticket_id)
-    return (float("-inf"), ticket_id)
 
 
 def _append_edge(
@@ -245,6 +236,42 @@ def _resolve_parent_lane_anchor(
     return None
 
 
+def _choose_current_ticket_id_for_graph_node(
+    *,
+    graph_node_id: str,
+    candidate_ticket_ids: list[str],
+    runtime_node_projection: dict[str, Any],
+    node_status_overrides: dict[str, str],
+) -> tuple[str | None, dict[str, Any] | None]:
+    runtime_latest_ticket_id = str(runtime_node_projection.get("latest_ticket_id") or "").strip()
+    if runtime_latest_ticket_id:
+        if runtime_latest_ticket_id in candidate_ticket_ids:
+            return runtime_latest_ticket_id, None
+        return None, {
+            "issue_code": "graph.current_pointer.runtime_latest_missing",
+            "detail": (
+                f"Runtime graph lane {graph_node_id} points to latest ticket "
+                f"{runtime_latest_ticket_id}, but that ticket is not present in ticket_projection."
+            ),
+            "related_ticket_id": runtime_latest_ticket_id,
+        }
+    if str(node_status_overrides.get(graph_node_id) or "").strip() in {
+        NODE_STATUS_CANCELLED,
+        NODE_STATUS_SUPERSEDED,
+    }:
+        return sorted(candidate_ticket_ids)[0] if candidate_ticket_ids else None, None
+    if len(candidate_ticket_ids) == 1:
+        return candidate_ticket_ids[0], None
+    return None, {
+        "issue_code": "graph.current_pointer.missing_explicit",
+        "detail": (
+            f"Graph lane {graph_node_id} has multiple candidate tickets but no explicit "
+            "runtime current pointer or replacement edge."
+        ),
+        "related_ticket_id": ",".join(sorted(candidate_ticket_ids)) or None,
+    }
+
+
 def build_ticket_graph_snapshot(
     repository: "ControlPlaneRepository",
     workflow_id: str,
@@ -314,7 +341,8 @@ def build_ticket_graph_snapshot(
     created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
     identities_by_ticket_id: dict[str, TicketGraphIdentity] = {}
     latest_ticket_id_by_graph_node_id: dict[str, str] = {}
-    latest_sort_key_by_graph_node_id: dict[str, tuple[int, float, str]] = {}
+    candidate_ticket_ids_by_graph_node_id: dict[str, list[str]] = {}
+    current_pointer_issues: list[dict[str, Any]] = []
 
     for ticket in tickets:
         ticket_id = str(ticket["ticket_id"])
@@ -326,22 +354,25 @@ def build_ticket_graph_snapshot(
             runtime_node_id=str(ticket.get("node_id") or created_spec.get("node_id") or "").strip(),
         )
         identities_by_ticket_id[ticket_id] = identity
+        candidate_ticket_ids_by_graph_node_id.setdefault(identity.graph_node_id, []).append(ticket_id)
+
+    for graph_node_id, candidate_ticket_ids in sorted(candidate_ticket_ids_by_graph_node_id.items()):
         runtime_node_projection = (
-            runtime_node_projection_by_graph_node_id.get(identity.graph_node_id) or {}
+            runtime_node_projection_by_graph_node_id.get(graph_node_id) or {}
         )
-        is_runtime_latest_ticket = (
-            str(runtime_node_projection.get("latest_ticket_id") or "").strip() == ticket_id
+        selected_ticket_id, current_pointer_issue = _choose_current_ticket_id_for_graph_node(
+            graph_node_id=graph_node_id,
+            candidate_ticket_ids=sorted(candidate_ticket_ids),
+            runtime_node_projection=runtime_node_projection,
+            node_status_overrides={},
         )
-        sort_key = (
-            1 if is_runtime_latest_ticket else 0,
-            *_ticket_sort_key(ticket),
-        )
-        if sort_key >= latest_sort_key_by_graph_node_id.get(
-            identity.graph_node_id,
-            (0, float("-inf"), ""),
-        ):
-            latest_sort_key_by_graph_node_id[identity.graph_node_id] = sort_key
-            latest_ticket_id_by_graph_node_id[identity.graph_node_id] = ticket_id
+        if current_pointer_issue is not None:
+            current_pointer_issue["graph_node_id"] = graph_node_id
+            current_pointer_issue["node_id"] = identities_by_ticket_id[candidate_ticket_ids[0]].runtime_node_id
+            current_pointer_issues.append(current_pointer_issue)
+            continue
+        if selected_ticket_id:
+            latest_ticket_id_by_graph_node_id[graph_node_id] = selected_ticket_id
 
     nodes: list[TicketGraphNode] = []
     for graph_node_id in sorted(latest_ticket_id_by_graph_node_id):
@@ -428,6 +459,16 @@ def build_ticket_graph_snapshot(
             reason_code="GRAPH_REDUCTION_ISSUE",
             ticket_id=ticket_id,
             node_id=node_id,
+        )
+
+    for current_pointer_issue in current_pointer_issues:
+        record_issue(
+            issue_code=str(current_pointer_issue.get("issue_code") or "graph.current_pointer.issue"),
+            detail=str(current_pointer_issue.get("detail") or ""),
+            ticket_id=None,
+            node_id=str(current_pointer_issue.get("node_id") or "") or None,
+            graph_node_id=str(current_pointer_issue.get("graph_node_id") or "") or None,
+            related_ticket_id=str(current_pointer_issue.get("related_ticket_id") or "") or None,
         )
 
     for graph_node_id in sorted(latest_ticket_id_by_graph_node_id):
@@ -641,6 +682,42 @@ def build_ticket_graph_snapshot(
     for edge_type, source_graph_node_id, target_graph_node_id in sorted(graph_patch_overlay.effective_edge_keys):
         source_node = current_node_by_graph_node_id.get(source_graph_node_id)
         target_node = current_node_by_graph_node_id.get(target_graph_node_id)
+        if edge_type == "REPLACES":
+            source_identity = None
+            target_identity = None
+            for identity in identities_by_ticket_id.values():
+                if identity.graph_node_id == source_graph_node_id:
+                    source_identity = identity
+                if identity.graph_node_id == target_graph_node_id:
+                    target_identity = identity
+            _append_edge(
+                effective_edges,
+                effective_seen_edges,
+                edge_type=edge_type,
+                graph_version=graph_version,
+                workflow_id=workflow_id,
+                source_ticket_id=(
+                    latest_ticket_id_by_graph_node_id.get(source_graph_node_id)
+                    or (source_node.ticket_id if source_node is not None else None)
+                ),
+                target_ticket_id=(
+                    latest_ticket_id_by_graph_node_id.get(target_graph_node_id)
+                    or (target_node.ticket_id if target_node is not None else None)
+                ),
+                source_graph_node_id=source_graph_node_id,
+                target_graph_node_id=target_graph_node_id,
+                source_runtime_node_id=(
+                    str(source_node.runtime_node_id or source_node.node_id)
+                    if source_node is not None
+                    else (source_identity.runtime_node_id if source_identity is not None else source_graph_node_id)
+                ),
+                target_runtime_node_id=(
+                    str(target_node.runtime_node_id or target_node.node_id)
+                    if target_node is not None
+                    else (target_identity.runtime_node_id if target_identity is not None else target_graph_node_id)
+                ),
+            )
+            continue
         if source_node is None or target_node is None:
             record_issue(
                 issue_code="graph.patch.edge.missing_current_lane",
@@ -840,6 +917,146 @@ def build_ticket_graph_snapshot(
         )
         for reason_code, entry in sorted(blocked_reason_map.items())
     ]
+    inactive_refs = {
+        ref
+        for node in nodes
+        for ref in [str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()]
+        if ref and str(node.node_status or "").strip() in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}
+    }
+    replacements_for_policy = [
+        {
+            "old_node_ref": str(edge.target_graph_node_id or "").strip(),
+            "new_node_ref": str(edge.source_graph_node_id or "").strip(),
+            "old_ticket_id": str(edge.target_ticket_id or "").strip(),
+            "new_ticket_id": str(edge.source_ticket_id or "").strip(),
+        }
+        for edge in edges
+        if str(edge.edge_type or "").strip() == "REPLACES"
+    ]
+    ticket_lineage_for_policy = []
+    for edge in edges:
+        if str(edge.edge_type or "").strip() not in {"REPLACES", "PARENT_OF", "REVIEWS"}:
+            continue
+        ticket_lineage_for_policy.append(
+            {
+                "lineage_type": str(edge.edge_type or "").strip(),
+                "source_node_ref": str(edge.source_graph_node_id or "").strip(),
+                "target_node_ref": str(edge.target_graph_node_id or "").strip(),
+                "source_ticket_id": str(edge.source_ticket_id or "").strip(),
+                "target_ticket_id": str(edge.target_ticket_id or "").strip(),
+            }
+        )
+    from app.core.workflow_progression import ProgressionSnapshot, evaluate_progression_graph
+
+    graph_policy_evaluation = evaluate_progression_graph(
+        ProgressionSnapshot(
+            workflow_id=workflow_id,
+            graph_version=graph_version,
+            node_refs=[str(node.graph_node_id or "").strip() for node in nodes],
+            ticket_refs=[str(node.ticket_id or "").strip() for node in nodes if node.ticket_id],
+            runtime_nodes=[
+                {
+                    "node_ref": str(row.get("graph_node_id") or "").strip(),
+                    "node_id": str(row.get("node_id") or "").strip(),
+                    "latest_ticket_id": str(row.get("latest_ticket_id") or "").strip(),
+                    "status": str(row.get("status") or "").strip(),
+                    "blocking_reason_code": str(row.get("blocking_reason_code") or "").strip(),
+                }
+                for row in runtime_node_projection_by_graph_node_id.values()
+                if str(row.get("graph_node_id") or "").strip()
+            ],
+            graph_nodes=[
+                {
+                    "node_ref": str(node.graph_node_id or "").strip(),
+                    "node_id": str(node.node_id or "").strip(),
+                    "ticket_id": str(node.ticket_id or "").strip(),
+                    "ticket_status": str(node.ticket_status or "").strip(),
+                    "node_status": str(node.node_status or "").strip(),
+                    "blocking_reason_code": str(node.blocking_reason_code or "").strip(),
+                }
+                for node in nodes
+                if str(node.graph_node_id or "").strip()
+            ],
+            graph_edges=[
+                {
+                    "edge_type": str(edge.edge_type or "").strip(),
+                    "source_node_ref": str(edge.source_graph_node_id or "").strip(),
+                    "target_node_ref": str(edge.target_graph_node_id or "").strip(),
+                    "source_ticket_id": str(edge.source_ticket_id or "").strip(),
+                    "target_ticket_id": str(edge.target_ticket_id or "").strip(),
+                }
+                for edge in edges
+            ],
+            ticket_lineage=ticket_lineage_for_policy,
+            replacements=replacements_for_policy,
+            cancelled_refs=[
+                ref
+                for ref in inactive_refs
+                if any(
+                    ref in {str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()}
+                    and str(node.node_status or "").strip() == NODE_STATUS_CANCELLED
+                    for node in nodes
+                )
+            ],
+            superseded_refs=[
+                ref
+                for ref in inactive_refs
+                if any(
+                    ref in {str(node.graph_node_id or "").strip(), str(node.ticket_id or "").strip()}
+                    and str(node.node_status or "").strip() == NODE_STATUS_SUPERSEDED
+                    for node in nodes
+                )
+            ],
+            graph_reduction_issues=[
+                {
+                    "issue_code": issue.issue_code,
+                    "detail": issue.detail,
+                    "ticket_id": issue.ticket_id,
+                    "node_id": issue.node_id,
+                    "node_ref": issue.node_id,
+                    "graph_node_id": next(
+                        (
+                            str(current_pointer_issue.get("graph_node_id") or "").strip()
+                            for current_pointer_issue in current_pointer_issues
+                            if str(current_pointer_issue.get("node_id") or "").strip()
+                            == str(issue.node_id or "").strip()
+                            and str(current_pointer_issue.get("issue_code") or "").strip()
+                            == str(issue.issue_code or "").strip()
+                        ),
+                        None,
+                    ),
+                    "related_ticket_id": issue.related_ticket_id,
+                }
+                for issue in reduction_issues
+            ],
+            blocked_ticket_ids=sorted(set(blocked_ticket_ids)),
+            blocked_node_refs=sorted(set(blocked_node_ids)),
+            in_flight_ticket_ids=sorted(set(in_flight_ticket_ids)),
+            in_flight_node_refs=sorted(set(in_flight_node_ids)),
+            blocked_reasons=[
+                {
+                    "reason_code": item.reason_code,
+                    "ticket_ids": list(item.ticket_ids),
+                    "node_refs": list(item.node_ids),
+                }
+                for item in blocked_reasons
+            ],
+        )
+    )
+    blocked_graph_node_ids_from_reduction_issues = sorted(
+        {
+            str(issue.get("graph_node_id") or "").strip()
+            for issue in current_pointer_issues
+            if str(issue.get("graph_node_id") or "").strip()
+        }
+    )
+    blocked_runtime_node_ids_from_reduction_issues = sorted(
+        {
+            str(issue.get("node_id") or "").strip()
+            for issue in current_pointer_issues
+            if str(issue.get("node_id") or "").strip()
+        }
+    )
 
     return TicketGraphSnapshot(
         workflow_id=workflow_id,
@@ -856,15 +1073,39 @@ def build_ticket_graph_snapshot(
             ),
         ),
         index_summary=TicketGraphIndexSummary(
-            ready_ticket_ids=sorted(set(ready_ticket_ids)),
-            ready_node_ids=sorted(set(ready_node_ids)),
-            ready_graph_node_ids=sorted(set(ready_graph_node_ids)),
-            blocked_ticket_ids=sorted(set(blocked_ticket_ids)),
-            blocked_node_ids=sorted(set(blocked_node_ids)),
-            blocked_graph_node_ids=sorted(set(blocked_graph_node_ids)),
-            in_flight_ticket_ids=sorted(set(in_flight_ticket_ids)),
-            in_flight_node_ids=sorted(set(in_flight_node_ids)),
-            in_flight_graph_node_ids=sorted(set(in_flight_graph_node_ids)),
+            ready_ticket_ids=list(graph_policy_evaluation.ready_ticket_ids),
+            ready_node_ids=sorted(
+                {
+                    str(current_node_by_graph_node_id[node_ref].runtime_node_id or current_node_by_graph_node_id[node_ref].node_id)
+                    for node_ref in graph_policy_evaluation.ready_node_refs
+                    if node_ref in current_node_by_graph_node_id
+                }
+            ),
+            ready_graph_node_ids=list(graph_policy_evaluation.ready_node_refs),
+            blocked_ticket_ids=list(graph_policy_evaluation.blocked_ticket_ids),
+            blocked_node_ids=sorted(
+                {
+                    str(current_node_by_graph_node_id[node_ref].runtime_node_id or current_node_by_graph_node_id[node_ref].node_id)
+                    for node_ref in graph_policy_evaluation.blocked_node_refs
+                    if node_ref in current_node_by_graph_node_id
+                }
+                | set(blocked_runtime_node_ids_from_reduction_issues)
+            ),
+            blocked_graph_node_ids=sorted(
+                {
+                    *graph_policy_evaluation.blocked_node_refs,
+                    *blocked_graph_node_ids_from_reduction_issues,
+                }
+            ),
+            in_flight_ticket_ids=list(graph_policy_evaluation.in_flight_ticket_ids),
+            in_flight_node_ids=sorted(
+                {
+                    str(current_node_by_graph_node_id[node_ref].runtime_node_id or current_node_by_graph_node_id[node_ref].node_id)
+                    for node_ref in graph_policy_evaluation.in_flight_node_refs
+                    if node_ref in current_node_by_graph_node_id
+                }
+            ),
+            in_flight_graph_node_ids=list(graph_policy_evaluation.in_flight_node_refs),
             critical_path_node_ids=sorted(critical_path_runtime_node_ids),
             critical_path_graph_node_ids=sorted(critical_path_graph_node_ids),
             blocked_reasons=blocked_reasons,

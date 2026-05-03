@@ -12,6 +12,7 @@ from app.core.workflow_progression import (
     build_action_metadata,
     build_project_init_kickoff_spec,
     decide_next_actions,
+    evaluate_progression_graph,
     resolve_workflow_progression_adapter,
     select_governance_role_and_assignee,
 )
@@ -118,7 +119,7 @@ def test_decide_next_actions_returns_stable_wait_for_open_blockers() -> None:
         {
             "action_type": "WAIT",
             "metadata": {
-                "reason_code": "progression.wait_for_blockers",
+                "reason_code": "progression.wait.open_approval",
                 "idempotency_key": first[0]["metadata"]["idempotency_key"],
                 "source_graph_version": "gv_42",
                 "affected_node_refs": ["graph:node_a", "graph:node_b", "graph:node_c"],
@@ -126,7 +127,7 @@ def test_decide_next_actions_returns_stable_wait_for_open_blockers() -> None:
                 "policy_ref": "policy:round8a",
             },
             "payload": {
-                "wake_condition": "approval_or_incident_or_in_flight_resolved",
+                "wake_condition": "approval_resolved",
                 "blocked_by": {
                     "approval_refs": ["appr_a"],
                     "incident_refs": ["inc_b"],
@@ -205,6 +206,310 @@ def test_decide_next_actions_returns_stable_no_action_without_candidates() -> No
         "policy_ref": "policy:round8a",
     }
     assert first[0]["payload"] == {"reason": "No structured policy action is currently eligible."}
+
+
+def test_policy_effective_graph_uses_replaces_and_ignores_inactive_edges() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_parent",
+                "ticket_id": "ticket_parent",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            },
+            {
+                "node_ref": "graph:node_old",
+                "ticket_id": "ticket_old",
+                "ticket_status": "PENDING",
+                "node_status": "SUPERSEDED",
+            },
+            {
+                "node_ref": "graph:node_new",
+                "ticket_id": "ticket_new",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+            {
+                "node_ref": "graph:node_cancelled",
+                "ticket_id": "ticket_cancelled",
+                "ticket_status": "CANCELLED",
+                "node_status": "CANCELLED",
+            },
+        ],
+        graph_edges=[
+            {
+                "edge_type": "REPLACES",
+                "source_node_ref": "graph:node_new",
+                "target_node_ref": "graph:node_old",
+                "source_ticket_id": "ticket_new",
+                "target_ticket_id": "ticket_old",
+            },
+            {
+                "edge_type": "DEPENDS_ON",
+                "source_node_ref": "graph:node_cancelled",
+                "target_node_ref": "graph:node_new",
+                "source_ticket_id": "ticket_cancelled",
+                "target_ticket_id": "ticket_new",
+            },
+        ],
+        replacements=[
+            {
+                "old_node_ref": "graph:node_old",
+                "new_node_ref": "graph:node_new",
+                "old_ticket_id": "ticket_old",
+                "new_ticket_id": "ticket_new",
+            }
+        ],
+        superseded_refs=["graph:node_old", "ticket_old"],
+        cancelled_refs=["graph:node_cancelled", "ticket_cancelled"],
+    )
+
+    evaluation = evaluate_progression_graph(snapshot)
+
+    assert evaluation.current_ticket_ids_by_node_ref["graph:node_new"] == "ticket_new"
+    assert "graph:node_old" not in evaluation.effective_node_refs
+    assert "graph:node_cancelled" not in evaluation.effective_node_refs
+    assert evaluation.effective_edges == []
+    assert evaluation.ready_ticket_ids == ["ticket_new"]
+    assert "ticket_old" not in evaluation.ready_ticket_ids
+    assert "ticket_cancelled" not in evaluation.completed_ticket_ids
+
+
+def test_policy_runtime_pointer_selects_current_and_missing_pointer_blocks_reduction() -> None:
+    runtime_pointer_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_current",
+                "ticket_id": "ticket_current",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+            {
+                "node_ref": "graph:node_current",
+                "ticket_id": "ticket_late_old",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+        ],
+        runtime_nodes=[
+            {
+                "node_ref": "graph:node_current",
+                "node_id": "runtime:node_current",
+                "latest_ticket_id": "ticket_current",
+                "status": "PENDING",
+            }
+        ],
+    )
+    missing_pointer_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_ambiguous",
+                "ticket_id": "ticket_old",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+            {
+                "node_ref": "graph:node_ambiguous",
+                "ticket_id": "ticket_newer_late_output",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+        ]
+    )
+
+    runtime_evaluation = evaluate_progression_graph(runtime_pointer_snapshot)
+    missing_pointer_evaluation = evaluate_progression_graph(missing_pointer_snapshot)
+    missing_pointer_proposal = decide_next_actions(
+        missing_pointer_snapshot,
+        ProgressionPolicy(policy_ref="policy:round8b"),
+    )[0]
+
+    assert runtime_evaluation.current_ticket_ids_by_node_ref == {
+        "graph:node_current": "ticket_current"
+    }
+    assert runtime_evaluation.ready_ticket_ids == ["ticket_current"]
+    assert "ticket_late_old" not in runtime_evaluation.ready_ticket_ids
+    assert missing_pointer_evaluation.ready_ticket_ids == []
+    assert missing_pointer_evaluation.graph_reduction_issues[0]["issue_code"] == (
+        "graph.current_pointer.missing_explicit"
+    )
+    assert missing_pointer_proposal.action_type == ProgressionActionType.INCIDENT
+    assert missing_pointer_proposal.metadata.reason_code == "progression.incident.graph_reduction_issue"
+
+
+def test_policy_orphan_pending_does_not_block_graph_complete() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_delivery",
+                "ticket_id": "ticket_delivery",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            },
+            {
+                "node_ref": "graph:node_stale_orphan",
+                "ticket_id": "ticket_stale_orphan",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+        ],
+        stale_orphan_pending_refs=["graph:node_stale_orphan", "ticket_stale_orphan"],
+    )
+
+    evaluation = evaluate_progression_graph(snapshot)
+    proposals = decide_next_actions(snapshot, ProgressionPolicy(policy_ref="policy:round8b"))
+
+    assert evaluation.graph_complete is True
+    assert evaluation.completed_ticket_ids == ["ticket_delivery"]
+    assert "ticket_stale_orphan" not in evaluation.ready_ticket_ids
+    assert proposals[0].action_type == ProgressionActionType.NO_ACTION
+    assert proposals[0].metadata.reason_code == "progression.stale_orphan_pending_ignored"
+
+
+def test_policy_stale_orphan_reason_does_not_hide_effective_blocked_node() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_blocked",
+                "ticket_id": "ticket_blocked",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+                "blocking_reason_code": "PACKAGE_STALE",
+            },
+            {
+                "node_ref": "graph:node_stale_orphan",
+                "ticket_id": "ticket_stale_orphan",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+            },
+        ],
+        stale_orphan_pending_refs=["graph:node_stale_orphan", "ticket_stale_orphan"],
+    )
+
+    proposal = decide_next_actions(snapshot, ProgressionPolicy(policy_ref="policy:round8b"))[0]
+
+    assert proposal.action_type == ProgressionActionType.NO_ACTION
+    assert proposal.metadata.reason_code == "progression.blocked_no_recovery_action"
+    assert proposal.metadata.affected_node_refs == ["graph:node_blocked"]
+
+
+def test_policy_graph_complete_wait_and_blocked_reason_codes_are_stable() -> None:
+    graph_complete_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_done",
+                "ticket_id": "ticket_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    approval_snapshot = _minimal_progression_snapshot(
+        approvals=[{"approval_id": "approval_a", "node_ref": "graph:node_review"}]
+    )
+    incident_snapshot = _minimal_progression_snapshot(
+        incidents=[{"incident_id": "incident_a", "node_ref": "graph:node_incident"}]
+    )
+    in_flight_snapshot = _minimal_progression_snapshot(
+        in_flight_ticket_ids=["ticket_running"],
+        in_flight_node_refs=["graph:node_running"],
+    )
+    graph_issue_snapshot = _minimal_progression_snapshot(
+        graph_reduction_issues=[
+            {
+                "issue_code": "graph.current_pointer.missing_explicit",
+                "node_ref": "graph:node_ambiguous",
+                "recoverable": False,
+            }
+        ]
+    )
+    blocked_snapshot = _minimal_progression_snapshot(
+        blocked_ticket_ids=["ticket_blocked"],
+        blocked_node_refs=["graph:node_blocked"],
+        blocked_reasons=[
+            {
+                "reason_code": "EXPLICIT_BLOCKING_REASON:PACKAGE_STALE",
+                "ticket_ids": ["ticket_blocked"],
+                "node_refs": ["graph:node_blocked"],
+            }
+        ],
+    )
+    policy = ProgressionPolicy(policy_ref="policy:round8b")
+
+    assert decide_next_actions(graph_complete_snapshot, policy)[0].metadata.reason_code == (
+        "progression.graph_complete_no_closeout_in_8b"
+    )
+    assert decide_next_actions(approval_snapshot, policy)[0].metadata.reason_code == (
+        "progression.wait.open_approval"
+    )
+    assert decide_next_actions(incident_snapshot, policy)[0].metadata.reason_code == (
+        "progression.wait.open_incident"
+    )
+    assert decide_next_actions(in_flight_snapshot, policy)[0].metadata.reason_code == (
+        "progression.wait.in_flight_runtime"
+    )
+    graph_issue_proposal = decide_next_actions(graph_issue_snapshot, policy)[0]
+    assert graph_issue_proposal.action_type == ProgressionActionType.INCIDENT
+    assert graph_issue_proposal.metadata.reason_code == "progression.incident.graph_reduction_issue"
+    assert decide_next_actions(blocked_snapshot, policy)[0].metadata.reason_code == (
+        "progression.blocked_no_recovery_action"
+    )
+
+
+def test_decide_next_actions_uses_policy_recomputed_graph_indexes() -> None:
+    policy = ProgressionPolicy(policy_ref="policy:round8b")
+    in_flight_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_running",
+                "ticket_id": "ticket_running",
+                "ticket_status": "EXECUTING",
+                "node_status": "EXECUTING",
+            }
+        ]
+    )
+    blocked_snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_blocked",
+                "ticket_id": "ticket_blocked",
+                "ticket_status": "PENDING",
+                "node_status": "PENDING",
+                "blocking_reason_code": "PACKAGE_STALE",
+            }
+        ]
+    )
+
+    in_flight_proposal = decide_next_actions(in_flight_snapshot, policy)[0]
+    blocked_proposal = decide_next_actions(blocked_snapshot, policy)[0]
+
+    assert in_flight_proposal.action_type == ProgressionActionType.WAIT
+    assert in_flight_proposal.metadata.reason_code == "progression.wait.in_flight_runtime"
+    assert in_flight_proposal.payload["blocked_by"]["in_flight_ticket_ids"] == ["ticket_running"]
+    assert blocked_proposal.action_type == ProgressionActionType.NO_ACTION
+    assert blocked_proposal.metadata.reason_code == "progression.blocked_no_recovery_action"
+    assert blocked_proposal.metadata.affected_node_refs == ["graph:node_blocked"]
+
+
+def test_policy_keeps_blocked_index_for_in_flight_blocked_nodes() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:node_running_blocked",
+                "ticket_id": "ticket_running_blocked",
+                "ticket_status": "EXECUTING",
+                "node_status": "EXECUTING",
+                "blocking_reason_code": "INCIDENT_OPEN",
+            }
+        ]
+    )
+
+    evaluation = evaluate_progression_graph(snapshot)
+
+    assert evaluation.in_flight_ticket_ids == ["ticket_running_blocked"]
+    assert evaluation.in_flight_node_refs == ["graph:node_running_blocked"]
+    assert evaluation.blocked_ticket_ids == ["ticket_running_blocked"]
+    assert evaluation.blocked_node_refs == ["graph:node_running_blocked"]
 
 
 def test_action_metadata_is_stable_for_all_round8a_action_types() -> None:

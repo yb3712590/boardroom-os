@@ -93,7 +93,7 @@ Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignmen
 任务：
 
 - [x] Round 8A：建立 `ProgressionSnapshot` / `ProgressionPolicy` / `ActionProposal` contract，并实现可独立测试的 `decide_next_actions(snapshot, policy)` 最小骨架。
-- [ ] 建立 effective graph pointer 规则。
+- [x] Round 8B：建立 effective graph pointer 规则；`REPLACES` 新票为 current，`CANCELLED` / `SUPERSEDED` 不参与 effective edges/readiness/complete，orphan pending 不阻断 graph complete，缺 explicit pointer 不用 `updated_at` 猜测。
 - [x] Round 8A：统一 CREATE_TICKET / REWORK / CLOSEOUT / INCIDENT / WAIT / NO_ACTION 的 metadata helper。
 - 移除 substring/hardcoded milestone 作为推进依据。
 - [ ] 迁移 controller/runtime/scheduler/CEO proposer 主路径业务判断。
@@ -102,10 +102,11 @@ Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignmen
 
 - [x] Round 8A：相同 snapshot + policy 输出稳定 action proposals（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py -q`）。
 - [x] Round 8A：六类 action metadata helper 覆盖 reason code、idempotency key、source graph version、affected node refs、expected state transition 和 policy ref。
+- [x] Round 8B：effective graph pointer、orphan pending、CANCELLED/SUPERSEDED effective edge 排除、approval/incident/in-flight/blocked/graph reduction/stale-orphan reason code 有 policy 单测；ticket graph facade 通过 policy 回填 ready/blocked/in-flight indexes。
 - 015 的 stale gate、orphan pending、restore-needed、BR-100 loop 有 policy 回归。
 - Scheduler 不再做业务判断。
 
-8A 边界：controller、scheduler、CEO proposer 的 fanout、meeting/architect gate、closeout、rework/restore orchestration 尚未迁移；后续 8B-8E 继续收口。
+8B 边界：controller、scheduler、CEO proposer 的 fanout、meeting/architect gate、closeout、rework/restore orchestration 尚未迁移；controller 中 graph wait/ready/blocked 仍保留 8E 兼容壳。8C 继续迁 governance gate、architect/meeting gate 和 backlog fanout，必须消费 8B 的 current/effective graph indexes。
 
 ## Phase 5：Deliverable contract + checker/rework 重建
 

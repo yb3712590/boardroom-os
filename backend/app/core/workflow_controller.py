@@ -1348,6 +1348,10 @@ def build_workflow_controller_view(
     graph_blocked_node_ids = list(graph_index_summary.get("blocked_node_ids") or [])
     graph_in_flight_ticket_ids = list(graph_index_summary.get("in_flight_ticket_ids") or [])
     graph_has_reduction_issues = int(graph_index_summary.get("reduction_issue_count") or 0) > 0
+    # Round 8B compatibility shell: graph ready/blocked/in-flight indexes are now
+    # compiled by progression policy through ticket_graph. Controller-specific
+    # fanout, governance, meeting, closeout, and recovery states remain here until
+    # the Round 8E controller/scheduler consolidation.
     hard_constraints = _load_workflow_hard_constraints(connection, workflow_id)
     created_specs_by_ticket = {
         str(ticket["ticket_id"]): repository.get_latest_ticket_created_payload(connection, str(ticket["ticket_id"])) or {}

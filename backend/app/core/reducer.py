@@ -1759,6 +1759,7 @@ def rebuild_node_projections(events: Iterable[dict]) -> list[dict]:
 
 def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
     created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
+    event_types_by_ticket_id: dict[str, set[str]] = {}
     projections: dict[tuple[str, str], dict[str, Any]] = {}
     graph_version_int_by_workflow: dict[str, int] = {}
     graph_mutation_events = {
@@ -1777,9 +1778,11 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
 
     for event in events:
         payload = _event_payload(event)
+        ticket_id = str(payload.get("ticket_id") or "").strip()
+        if ticket_id:
+            event_types_by_ticket_id.setdefault(ticket_id, set()).add(str(event["event_type"]))
         if event["event_type"] != EVENT_TICKET_CREATED:
             continue
-        ticket_id = str(payload.get("ticket_id") or "").strip()
         if not ticket_id:
             continue
         created_specs_by_ticket_id[ticket_id] = dict(payload)
@@ -1807,7 +1810,18 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
                 created_spec=created_spec,
                 runtime_node_id=str(payload.get("node_id") or created_spec.get("node_id") or "").strip(),
             )
-        except GraphIdentityResolutionError:
+        except GraphIdentityResolutionError as exc:
+            ticket_event_types = event_types_by_ticket_id.get(ticket_id, set())
+            has_runtime_followup = bool(
+                ticket_event_types
+                - {
+                    EVENT_TICKET_CREATED,
+                }
+            )
+            if event_type == EVENT_TICKET_CREATED and not has_runtime_followup:
+                raise
+            if "graph_contract" in str(exc):
+                continue
             continue
         key = (workflow_id, identity.graph_node_id)
         base_projection = {
