@@ -116,7 +116,17 @@ def test_run_board_riddle_drill_generates_chinese_parallel_report_archive_and_bo
             },
         )()
 
-    monkeypatch.setattr("app.core.board_riddle_drill.invoke_openai_compat_response", _fake_provider)
+    import app.core.board_riddle_drill as board_riddle_drill_module
+
+    original_selection = board_riddle_drill_module._require_live_openai_selection
+    selection_target_refs: list[str] = []
+
+    def _capture_selection_target_ref(repository, store, **kwargs):
+        selection_target_refs.append(str(kwargs["target_ref"]))
+        return original_selection(repository, store, **kwargs)
+
+    monkeypatch.setattr(board_riddle_drill_module, "invoke_openai_compat_response", _fake_provider)
+    monkeypatch.setattr(board_riddle_drill_module, "_require_live_openai_selection", _capture_selection_target_ref)
 
     report = run_board_riddle_drill(
         client.app.state.repository,
@@ -150,6 +160,7 @@ def test_run_board_riddle_drill_generates_chinese_parallel_report_archive_and_bo
     assert report["employee_runs"][0]["submitted_answer"] == "两盏亮着。"
     assert report["employee_runs"][0]["dispatch_context"]["employee"]["role_name_zh"]
     assert report["employee_runs"][0]["dispatch_context"]["assignment"]["question"].startswith("第")
+    assert not any(target_ref.startswith("role_profile:") for target_ref in selection_target_refs)
 
 
 def test_run_board_riddle_drill_rejects_local_deterministic_fallback(client, set_ticket_time):

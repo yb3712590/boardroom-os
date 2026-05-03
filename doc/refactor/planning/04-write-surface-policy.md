@@ -79,6 +79,17 @@ Phase 1 has codified the current fixed workspace write-surface profile in `backe
 
 This phase intentionally does not refactor actor lifecycle, hiring, role template assignment, provider selection, provider streaming, or progression policy. Future flexible project directory layouts should be introduced by parameterizing this contract profile, not by reintroducing role-name-to-root branches in ticket handlers or runtime code.
 
+## Phase 3 closure status
+
+Round 7A–7E kept the Phase 1 write-surface boundary intact while moving runtime identity to actor / assignment / lease:
+
+- Scheduler eligibility now consumes `actor_projection` and compiled `required_capabilities`; it does not map role names to writable roots.
+- Context compiler execution package identity carries `actor_id` / `assignment_id` / `lease_id`; `allowed_write_set` remains capability/directory-contract derived.
+- Unknown legacy `role_profile_ref` no longer compiles into a `role_profile:*` runtime execution key, so it cannot become an indirect write-root selector.
+- Provider `role_bindings` remain import/display preference data only and do not influence write-surface policy.
+
+Round 7E grep acceptance focuses on runtime, scheduler, provider selection and context compiler paths; any remaining `role_profile_ref` usage must stay in governance templates, product display, legacy input compilation or tests.
+
 
 
 ```yaml

@@ -444,6 +444,7 @@ def test_reducer_keeps_assignment_history_separate_from_lease_timeout():
         "required_capabilities": ["source.modify.backend", "test.run.backend"],
         "status": "ASSIGNED",
         "assignment_reason": "capability_match",
+        "provider_selection": {},
         "assigned_at": "2026-05-02T10:01:00+08:00",
         "updated_at": "2026-05-02T10:01:00+08:00",
         "version": 2,

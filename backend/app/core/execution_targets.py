@@ -443,17 +443,8 @@ def resolve_execution_target_ref_from_ticket_spec(created_spec: dict[str, Any] |
     if inferred_execution_contract is not None:
         return str(inferred_execution_contract["execution_target_ref"])
 
-    role_profile_ref = str(created_spec.get("role_profile_ref") or "").strip()
-    if role_profile_ref:
-        return f"role_profile:{role_profile_ref}"
     return None
 
-
-def legacy_target_refs_for_execution_target(execution_target_ref: str | None) -> tuple[str, ...]:
-    definition = get_execution_target_definition_by_ref(execution_target_ref)
-    if definition is None or definition.role_profile_ref is None:
-        return ()
-    return (f"role_profile:{definition.role_profile_ref}",)
 
 
 def execution_target_capability_tag_values(execution_target_ref: str | None) -> set[str]:

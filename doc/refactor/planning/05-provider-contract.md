@@ -133,12 +133,14 @@ empty assistant count = 0
 
 ## Runtime Provider Provenance
 
-Round 7D 已把 runtime provider provenance 与 provider-only smoke 字段对齐：
+Round 7D–7E 已把 runtime provider provenance 与 provider-only smoke 字段对齐并完成 legacy role-binding 收口：
 
 - assignment payload / `assignment_projection.provider_selection` 记录 `preferred_provider_id`、`preferred_model`、`actual_provider_id`、`actual_model`、`selection_reason`、`policy_reason`、`fallback_reason`、`provider_health_snapshot`、`cost_class`、`latency_class`。
 - provider audit event 与 result evidence 使用同名字段记录 preferred vs actual provider/model；failover success 的 `actual_provider_id` / `actual_model` 必须是最终执行 provider。
-- runtime provider selection 以 actor provider preference、ticket runtime preference 和 default provider 为输入；旧 `role_bindings` 不再作为 runtime execution key。
+- runtime provider selection 以 ticket/actor runtime preference、actor provider preference 和 default provider 为输入；旧 `role_bindings` 不再作为 runtime execution key 或 selection branch。
 - provider failover 只使用 provider config 上的 `fallback_provider_ids`，并记录 `selection_reason=provider_failover`、`policy_reason=provider_fallback:<primary_provider_id>` 和 `fallback_reason`。
+- `role_bindings` / `provider_model_entries` 只保留为历史配置导入、sharded routing snapshot、API 展示和 RoleTemplate 默认 provider preference 来源；`binding_target_ref` 在新 selection/failover 结果中保持 `None`。
+- legacy `role_profile:*` target 不再驱动 provider failover capability floor，避免 role template 重新成为 provider fallback chain。
 
 ## 观测指标
 

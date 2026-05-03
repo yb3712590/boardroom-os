@@ -77,12 +77,12 @@
 
 Round 7C 已把 Assignment 与 Lease 拆为独立 runtime identity；`TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` 及 assignment/lease projections 已落地，ticket lease/start/timeout、scheduler dispatch、context compiler 和 execution package meta 均携带 `actor_id` / `assignment_id` / `lease_id`。`lease_owner` 只保留为 legacy display/migration alias，不再驱动新 runtime execution identity。
 
-Round 7D 已完成 provider provenance 强迁移：assignment payload/projection、provider audit event 和 runtime result evidence 统一记录 preferred/actual provider/model、selection/policy/fallback reason、provider health snapshot、cost/latency class；provider selection 不再使用 `role_bindings` 或 binding chain 作为 runtime execution key，provider failover 只使用 provider config `fallback_provider_ids` 并把 final execution 的 actual provider/model 记录为 fallback provider。
+Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignment payload/projection、provider audit event 和 runtime result evidence 统一记录 preferred/actual provider/model、selection/policy/fallback reason、provider health snapshot、cost/latency class；provider selection 不再使用 `role_bindings` 或 binding chain 作为 runtime execution key，provider failover 只使用 provider config `fallback_provider_ids` 并把 final execution 的 actual provider/model 记录为 fallback provider。Round 7E 删除未知 legacy `role_profile_ref -> role_profile:*` runtime execution key fallback 和未引用 legacy binding helper；`role_bindings` / `provider_model_entries` 仅作为配置导入、sharded routing snapshot、API 展示和 RoleTemplate 默认 preference 来源保留。
 
 验收：
 
 - [x] 派工由 required capabilities 驱动：Round 7B scheduler consumes `actor_projection` plus compiled `required_capabilities` through `assignment_resolver`.
-- [x] 角色名不再决定 write root。
+- [x] 角色名不再决定 write root 或 runtime execution key：Round 7E grep/test evidence covers runtime, scheduler, provider selection and context compiler paths; unknown legacy `role_profile_ref` no longer becomes `role_profile:*` execution target.
 - [x] no eligible worker 不会 silent stall：Round 7B emits explicit no-eligible actor scheduler diagnostic with suggested actions.
 - [x] Assignment 与 Lease 分离：Round 7C introduced `TICKET_ASSIGNED` and `TICKET_LEASE_GRANTED`, assignment/lease projections, ticket `actor_id` / `assignment_id` / `lease_id`, and runtime/context compiler identity propagation.
 

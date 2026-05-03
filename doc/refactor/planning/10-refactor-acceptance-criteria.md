@@ -45,12 +45,13 @@
 
 ## Phase 3：Actor / Role lifecycle
 
-- [x] Actor registry 有 enable/suspend/deactivate/replace 状态机（Round 7A: `pytest backend/tests/test_reducer.py::test_reducer_rebuilds_actor_projection_from_independent_actor_events -q`）。
-- [x] RoleTemplate 只映射 capability，不作为 runtime 执行键（Round 7A: `pytest backend/tests/test_execution_targets.py::test_role_template_capability_contract_does_not_emit_runtime_execution_key -q`）。
-- [x] Assignment 与 Lease 分离（Round 7C: `TICKET_ASSIGNED` / `TICKET_LEASE_GRANTED` plus assignment/lease projections; ticket lease/start/timeout and context compiler/runtime package carry `actor_id` / `assignment_id` / `lease_id`）。
-- [x] `excluded_employee_ids` 有作用域，不会继承污染（Round 7B: retry/rework 清空 legacy list，并使用 scoped exclusions）。
-- [x] no eligible actor 产生显式 action 或 incident（Round 7B: scheduler diagnostic `NO_ELIGIBLE_ACTOR` carries candidate details and suggested actions）。
-- [x] provider preferred/actual 记录完整（Round 7D: assignment payload/projection、provider audit event、runtime result assumptions/attempt log 均记录 `preferred_provider_id` / `actual_provider_id` 与 model/failover provenance）。
+- [x] Actor registry 有 enable/suspend/deactivate/replace 状态机（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_reducer.py::test_reducer_rebuilds_actor_projection_from_independent_actor_events -q`）。
+- [x] RoleTemplate 只映射 capability，不作为 runtime 执行键（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_execution_targets.py::test_role_template_capability_contract_does_not_emit_runtime_execution_key backend/tests/test_execution_targets.py::test_unknown_role_profile_ref_is_not_runtime_execution_key -q`）。
+- [x] Assignment 与 Lease 分离（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_reducer.py::test_reducer_keeps_assignment_history_separate_from_lease_timeout backend/tests/test_api.py::test_repository_persists_assignment_and_lease_projections backend/tests/test_scheduler_runner.py::test_scheduler_replacement_actor_gets_new_assignment_without_old_lease -q`）。
+- [x] `excluded_employee_ids` 有作用域，不会继承污染（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_assignment_resolver.py backend/tests/test_scheduler_runner.py::test_scheduler_blocks_rework_fix_when_only_capable_actor_is_scoped_excluded -q`）。
+- [x] no eligible actor 产生显式 action 或 incident（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_assignment_resolver.py::test_resolver_returns_complete_suggested_actions_in_required_order backend/tests/test_scheduler_runner.py::test_scheduler_does_not_lease_without_enabled_actor_registry_entry -q`）。
+- [x] provider preferred/actual 记录完整（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_scheduler_runner.py::test_scheduler_assignment_records_provider_provenance_from_actor_preference backend/tests/test_scheduler_runner.py::test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic backend/tests/test_runtime_provider_center.py::test_resolve_provider_failover_uses_provider_fallbacks_not_binding_chain -q`）。
+- [x] role/profile/provider legacy surface 已收口（grep runtime/scheduler/provider/context compiler 确认无未知 `role_profile_ref -> role_profile:*` execution key、无 `role_bindings` selection/failover branch；`role_bindings` / `provider_model_entries` 仅为导入、routing snapshot、API 展示和 RoleTemplate 默认 preference 来源）。
 
 ## Phase 4：Progression policy engine
 

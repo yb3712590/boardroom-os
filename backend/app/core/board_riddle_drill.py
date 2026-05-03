@@ -69,6 +69,7 @@ _ROLE_SEQUENCE = (
     "governance_architect",
     "governance_cto",
 )
+_BOARD_RIDDLE_EMPLOYEE_TARGET_REF = "board_riddle_drill:employee_assignment"
 _ROLE_NAMES_ZH = {
     "frontend_engineer": "前端工程师",
     "checker": "质量检查员",
@@ -675,7 +676,7 @@ def _run_employee_assignment(
     selection = _require_live_openai_selection(
         repository,
         store,
-        target_ref=f"role_profile:{candidate['role_profile_refs'][0]}",
+        target_ref=_BOARD_RIDDLE_EMPLOYEE_TARGET_REF,
         preferred_provider_id=preferred_provider_id,
         preferred_model=preferred_model,
         employee_provider_id=candidate["provider_id"],

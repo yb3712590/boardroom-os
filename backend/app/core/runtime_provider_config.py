@@ -592,9 +592,17 @@ def provider_meets_target_capability_floor(provider: RuntimeProviderConfigEntry,
     capability_values = {tag.value for tag in provider.capability_tags}
     if not capability_values:
         return True
-    if target_ref.endswith("checker_primary") or "checker" in target_ref:
+    normalized_target_ref = str(target_ref or "").strip()
+    if normalized_target_ref.startswith("role_profile:"):
+        return True
+    if "checker" in normalized_target_ref or "review" in normalized_target_ref:
         return "review" in capability_values
-    if target_ref == ROLE_BINDING_CEO_SHADOW or "governance" in target_ref or "scope" in target_ref:
+    if (
+        normalized_target_ref == ROLE_BINDING_CEO_SHADOW
+        or "governance" in normalized_target_ref
+        or "scope" in normalized_target_ref
+        or "advisory" in normalized_target_ref
+    ):
         return "planning" in capability_values and "structured_output" in capability_values
     return "implementation" in capability_values and "structured_output" in capability_values
 

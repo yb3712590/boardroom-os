@@ -28,6 +28,7 @@
 - Round 7B：Capability assignment resolver。
 - Round 7C：Assignment / Lease identity split。
 - Round 7D：Provider provenance 强迁移。
+- Round 7E：Phase 3 集成收口与验收。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -38,7 +39,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 7E：Phase 3 集成收口与验收** 开始。Round 7E 必须继承 7A–7D 已落地的 actor/capability/assignment/lease/provider provenance 模型，专注清理遗留 role/template runtime key 和 provider config legacy surface。
+下一轮新会话应从 **Round 8：Progression policy engine 抽离** 开始。Round 7A–7E 已完成 Phase 3 Actor / Role lifecycle 收口，后续不得在 Phase 4 中重新引入 role name / role_profile_ref / `role_bindings` 作为 runtime execution key、write root、scheduler eligibility 或 provider failover chain。
 
 ---
 

@@ -12,6 +12,7 @@ from app.core.runtime_provider_config import (
     RuntimeProviderSelection,
     RuntimeProviderStoredConfig,
     build_provider_model_entry_ref,
+    provider_meets_target_capability_floor,
     resolve_runtime_provider_config,
     resolve_provider_failover_selections,
     resolve_provider_selection,
@@ -415,6 +416,28 @@ def test_save_runtime_provider_command_preserves_explicit_request_total_timeout(
     assert loaded is not None
     assert loaded.providers[0].timeout_sec == 45.0
     assert loaded.providers[0].request_total_timeout_sec == 45.0
+
+
+def test_provider_capability_floor_ignores_legacy_role_profile_target_ref() -> None:
+    review_only_provider = RuntimeProviderConfigEntry(
+        provider_id="prov_review",
+        adapter_kind="openai_compat",
+        label="Review",
+        enabled=True,
+        base_url="https://api.review.test/v1",
+        api_key="sk-review",
+        preferred_model="gpt-review",
+        capability_tags=["structured_output", "review"],
+    )
+
+    assert provider_meets_target_capability_floor(
+        review_only_provider,
+        target_ref="role_profile:checker_primary",
+    ) is True
+    assert provider_meets_target_capability_floor(
+        review_only_provider,
+        target_ref="role_profile:frontend_engineer_primary",
+    ) is True
 
 
 def test_resolve_provider_selection_uses_default_provider_without_actor_preference(tmp_path: Path) -> None:

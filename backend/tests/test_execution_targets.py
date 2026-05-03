@@ -2,6 +2,7 @@ from app.core.execution_targets import (
     build_role_template_capability_contract,
     compile_required_capabilities_for_ticket_spec,
     infer_execution_contract_payload,
+    resolve_execution_target_ref_from_ticket_spec,
 )
 from app.core.output_schemas import SOURCE_CODE_DELIVERY_SCHEMA_REF
 
@@ -49,6 +50,15 @@ def test_role_template_capability_contract_does_not_emit_runtime_execution_key()
     }
     assert "execution_target_ref" not in contract
     assert "runtime_execution_key" not in contract
+
+
+def test_unknown_role_profile_ref_is_not_runtime_execution_key() -> None:
+    assert resolve_execution_target_ref_from_ticket_spec(
+        {
+            "role_profile_ref": "legacy_runtime_worker_primary",
+            "output_schema_ref": SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        }
+    ) is None
 
 
 def test_compile_required_capabilities_prefers_explicit_contract_capabilities() -> None:

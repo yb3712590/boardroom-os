@@ -279,8 +279,23 @@ Round 7D 已把 provider preferred/actual provenance 贯穿 assignment、executi
 - `backend/tests/test_scheduler_runner.py::test_scheduler_assignment_records_provider_provenance_from_actor_preference`
 - `backend/tests/test_scheduler_runner.py::test_runtime_provider_rate_limit_failover_uses_fallback_provider_before_deterministic`
 
-仍留给 Round 7E：
+## Round 7E 最终收口状态
 
-- 全仓库收口 remaining role/template/provider config legacy surface，确认 `role_profile_ref` 仅作为治理模板、产品展示、legacy input -> capability/preference 编译来源保留。
-- 对 `runtime_provider_config.py` 中仍为历史配置 shape 保留的 `role_bindings` / provider model entry API 做最终边界标注或删除测试依赖。
-- 用 grep + targeted tests 为 Phase 3 全部 checkbox 建立最终证据。
+Round 7E 已完成 Phase 3 集成收口，不重新设计 7A–7D 模型，只删除和隔离残余 role-template runtime key：
+
+- `resolve_execution_target_ref_from_ticket_spec()` 不再把未知 legacy `role_profile_ref` 编译成 `role_profile:*` runtime execution key；未知 legacy role template 只能作为不可执行输入被拒绝或继续由显式 `execution_contract` 编译。
+- 未引用的 `legacy_target_refs_for_execution_target()` 已删除，provider selection/failover 不再有 execution target -> role binding target chain 的回退入口。
+- `runtime_provider_config.py` 中 `role_bindings` / `provider_model_entries` 只保留为历史配置导入、sharded routing snapshot、runtime provider API 展示和 RoleTemplate 默认 provider preference 的来源；`resolve_provider_selection()` 只按 runtime preference、actor provider preference、default provider 选择，`resolve_provider_failover_selections()` 只按 provider `fallback_provider_ids` 选择。
+- provider failover 的 legacy `role_profile:*` target 不再驱动 capability floor；专用 drill/provider 路径使用非 role-profile target ref。
+- `role_profile_ref` 的保留边界为治理模板、产品展示、legacy ticket input -> capability/preference 编译、测试 fixture；runtime kernel 的派工、execution identity、write root 和 provider failover 不以 role name 决策。
+
+Round 7E 证据：
+
+- `backend/tests/test_execution_targets.py::test_unknown_role_profile_ref_is_not_runtime_execution_key`
+- `backend/tests/test_runtime_provider_center.py::test_provider_capability_floor_ignores_legacy_role_profile_target_ref`
+- `backend/tests/test_runtime_provider_center.py::test_resolve_provider_selection_ignores_role_binding_and_uses_default_provider`
+- `backend/tests/test_runtime_provider_center.py::test_resolve_provider_failover_uses_provider_fallbacks_not_binding_chain`
+- `backend/tests/test_board_riddle_drill.py::test_run_board_riddle_drill_generates_chinese_parallel_report_archive_and_board_review`
+
+Phase 3 剩余依赖已全部转为后续 phase 输入：Round 8 只可抽离 progression policy，不得把 role template、employee title 或 provider role binding chain 重新放回 scheduler/runtime/provider 决策路径。
+
