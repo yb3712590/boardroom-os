@@ -92,16 +92,20 @@ Round 7D–7E 已完成 provider provenance 与 Phase 3 集成收口：assignmen
 
 任务：
 
-- 实现 `decide_next_actions()`。
-- 建立 effective graph pointer 规则。
-- 统一 CREATE_TICKET / REWORK / CLOSEOUT / INCIDENT / WAIT / NO_ACTION。
+- [x] Round 8A：建立 `ProgressionSnapshot` / `ProgressionPolicy` / `ActionProposal` contract，并实现可独立测试的 `decide_next_actions(snapshot, policy)` 最小骨架。
+- [ ] 建立 effective graph pointer 规则。
+- [x] Round 8A：统一 CREATE_TICKET / REWORK / CLOSEOUT / INCIDENT / WAIT / NO_ACTION 的 metadata helper。
 - 移除 substring/hardcoded milestone 作为推进依据。
+- [ ] 迁移 controller/runtime/scheduler/CEO proposer 主路径业务判断。
 
 验收：
 
-- 相同 snapshot 输出稳定 action proposals。
+- [x] Round 8A：相同 snapshot + policy 输出稳定 action proposals（`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py -q`）。
+- [x] Round 8A：六类 action metadata helper 覆盖 reason code、idempotency key、source graph version、affected node refs、expected state transition 和 policy ref。
 - 015 的 stale gate、orphan pending、restore-needed、BR-100 loop 有 policy 回归。
 - Scheduler 不再做业务判断。
+
+8A 边界：controller、scheduler、CEO proposer 的 fanout、meeting/architect gate、closeout、rework/restore orchestration 尚未迁移；后续 8B-8E 继续收口。
 
 ## Phase 5：Deliverable contract + checker/rework 重建
 

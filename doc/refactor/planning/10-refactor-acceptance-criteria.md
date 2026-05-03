@@ -55,8 +55,8 @@
 
 ## Phase 4：Progression policy engine
 
-- [ ] `decide_next_actions(snapshot, policy)` 可独立测试。
-- [ ] CREATE_TICKET / WAIT / REWORK / CLOSEOUT / INCIDENT / NO_ACTION 都有 reason code。
+- [x] `decide_next_actions(snapshot, policy)` 可独立测试（Round 8A：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_progression.py -q`）。
+- [x] CREATE_TICKET / WAIT / REWORK / CLOSEOUT / INCIDENT / NO_ACTION 都有 reason code（Round 8A metadata helper 测试覆盖 reason code / idempotency key / source graph version / affected node refs / expected state transition / policy ref；controller/scheduler 主路径尚未迁移）。
 - [ ] Effective graph pointer 不受 orphan pending 干扰。
 - [ ] CANCELLED/SUPERSEDED 节点不参与 effective edges。
 - [ ] substring hint 不再驱动会议/架构 gate。

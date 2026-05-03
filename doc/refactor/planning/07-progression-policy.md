@@ -7,8 +7,20 @@
 核心函数：
 
 ```text
-decide_next_actions(graph, assets, incidents, policy) -> ActionProposal[]
+decide_next_actions(snapshot, policy) -> ActionProposal[]
 ```
+
+## Round 8A 实现状态
+
+8A 已在 `backend/app/core/workflow_progression.py` 落地最小 policy contract：
+
+- `ProgressionSnapshot` 是结构化只读输入，覆盖 workflow、graph version、node/ticket refs、ready/blocked/in-flight indexes、incidents、approvals、actor availability 和 provider availability。
+- `ProgressionPolicy` 是显式策略输入，覆盖 governance、fanout、closeout、recovery policy input，并允许外层传入结构化 `create_ticket_candidates`、wait reason 和 no-action reason。
+- `ActionProposal` 是 policy 输出，当前承载 `CREATE_TICKET`、`WAIT`、`REWORK`、`CLOSEOUT`、`INCIDENT`、`NO_ACTION` 六类 action contract。
+- `build_action_metadata()` 为六类 action 生成统一 metadata：reason code、idempotency key、source graph version、affected node refs、expected state transition、policy ref。
+- `decide_next_actions(snapshot, policy)` 目前只覆盖最小骨架：open approvals/incidents/in-flight 输出 `WAIT`，结构化 create-ticket candidate 输出 `CREATE_TICKET`，无合法动作输出 `NO_ACTION`。
+
+8A 没有迁移 controller、scheduler、CEO proposer、backlog fanout、meeting/architect gate、closeout、rework 或 restore 主路径。后续批次必须继承 8A 的 contract，不得重新定义不兼容的 snapshot/policy/action proposal 语义。
 
 ## 输入
 
@@ -26,11 +38,12 @@ Policy engine 输入必须是结构化对象：
 - governance profile；
 - deliverable contract status。
 
-不得读取：
+Policy 纯函数不得读取：
 
 - freeform hard_constraints 文本进行 substring 判断；
 - markdown 当前正文作为真实状态；
 - provider raw transcript 作为推进依据；
+- DB、artifact 文件正文或外部文件正文；
 - stale snapshot 中的 orphan pending 作为 active truth。
 
 ## 输出 Action
@@ -137,7 +150,14 @@ Rework target 必须指向能修复问题的 upstream node，而不是默认把 
 
 ## 验收标准
 
-- 每种 action 有独立单测。
-- 相同 snapshot + policy 输出稳定 action proposals。
+- Round 8A：六类 action metadata helper 有独立单测，覆盖 reason code、idempotency key、source graph version、affected node refs、expected state transition 和 policy ref。
+- Round 8A：相同 snapshot + policy 输出稳定 action proposals。
 - 015 中出现的 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 都能由 policy 测试覆盖。
 - Scheduler 不再承担业务推进判断。
+
+## 后续批次依赖
+
+- Round 8B：把 effective graph pointer、ready/blocked/complete 判断迁入 policy。
+- Round 8C：把 governance gate、architect/meeting gate 和 backlog fanout 迁入结构化 policy input / graph patch。
+- Round 8D：把 closeout、rework、restore 和 incident follow-up 推进判断迁入 policy。
+- Round 8E：收口 controller/runtime/scheduler/proposer 旧业务判断，并补齐 Phase 4 全部验收证据。
