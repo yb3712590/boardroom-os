@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import Field
 
 from app.contracts.common import JsonValue, StrictModel
+from app.core.workspace_path_contracts import CAPABILITY_WRITE_SURFACES
 
 
 DELIVERABLE_CONTRACT_VERSION = "v1"
@@ -34,6 +35,33 @@ DEFAULT_ALLOWED_EVIDENCE_KINDS = {
     "security_check",
     "source_inventory",
     "unit_test",
+}
+
+EVIDENCE_LEGALITY_ACCEPTED = "ACCEPTED"
+EVIDENCE_LEGALITY_SUPERSEDED = "SUPERSEDED"
+EVIDENCE_LEGALITY_PLACEHOLDER = "PLACEHOLDER"
+EVIDENCE_LEGALITY_ARCHIVE = "ARCHIVE"
+EVIDENCE_LEGALITY_UNKNOWN_REF = "UNKNOWN_REF"
+EVIDENCE_LEGALITY_STALE_CURRENT_POINTER = "STALE_CURRENT_POINTER"
+EVIDENCE_LEGALITY_ILLEGAL_KIND = "ILLEGAL_KIND"
+
+CURRENT_POINTER_CURRENT = "CURRENT"
+
+_INVALID_EVIDENCE_LEGALITY_STATUSES = {
+    EVIDENCE_LEGALITY_SUPERSEDED,
+    EVIDENCE_LEGALITY_PLACEHOLDER,
+    EVIDENCE_LEGALITY_ARCHIVE,
+    EVIDENCE_LEGALITY_UNKNOWN_REF,
+    EVIDENCE_LEGALITY_STALE_CURRENT_POINTER,
+    EVIDENCE_LEGALITY_ILLEGAL_KIND,
+}
+
+_INVALID_CURRENT_POINTER_STATUSES = {
+    EVIDENCE_LEGALITY_SUPERSEDED,
+    EVIDENCE_LEGALITY_ARCHIVE,
+    "STALE",
+    "UNKNOWN",
+    EVIDENCE_LEGALITY_STALE_CURRENT_POINTER,
 }
 
 
@@ -97,28 +125,38 @@ class DeliverableContract(StrictModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class DeliverableEvidence(StrictModel):
+class EvidenceItem(StrictModel):
     evidence_ref: str = Field(min_length=1)
     evidence_kind: str = Field(min_length=1)
     acceptance_criteria_refs: list[str] = Field(default_factory=list)
     source_surface_refs: list[str] = Field(default_factory=list)
     producer_ticket_id: str | None = None
+    producer_node_ref: str | None = None
     artifact_kind: str | None = None
     legality_status: str | None = None
+    current_pointer_status: str | None = None
+    current_artifact_ref: str | None = None
     supersedes_refs: list[str] = Field(default_factory=list)
+    superseded_by_refs: list[str] = Field(default_factory=list)
+    placeholder: bool = False
+    archive: bool = False
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class DeliverableEvidencePack(StrictModel):
+class EvidencePack(StrictModel):
     workflow_id: str = Field(min_length=1)
     graph_version: str = Field(min_length=1)
-    evidence: list[DeliverableEvidence] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
     final_evidence_refs: list[str] = Field(default_factory=list)
     source_surface_evidence: list[dict[str, JsonValue]] = Field(default_factory=list)
     review_gate_results: list[dict[str, JsonValue]] = Field(default_factory=list)
     supersede_summary: list[dict[str, JsonValue]] = Field(default_factory=list)
     closeout_summary: dict[str, JsonValue] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+DeliverableEvidence = EvidenceItem
+DeliverableEvidencePack = EvidencePack
 
 
 class DeliverableEvaluationPolicy(StrictModel):
@@ -181,7 +219,13 @@ def _stable_hash(value: Any, *, length: int = 12) -> str:
 
 
 def _stable_unique_strings(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[str]:
-    return sorted({str(value).strip() for value in list(values or []) if str(value).strip()})
+    return sorted(
+        {
+            str(value).strip()
+            for value in list(values or [])
+            if value is not None and str(value).strip()
+        }
+    )
 
 
 def _stable_dicts(values: list[Any] | None) -> list[dict[str, JsonValue]]:
@@ -193,6 +237,197 @@ def _stable_dicts(values: list[Any] | None) -> list[dict[str, JsonValue]]:
         if isinstance(item, dict) and item:
             normalized.append(item)
     return sorted(normalized, key=_stable_json)
+
+
+def _asset_ref(value: dict[str, Any], fallback_prefix: str, index: int) -> str:
+    for key in ("asset_ref", "ref", "scope_ref", "decision_ref", "design_ref", "backlog_ref"):
+        candidate = str(value.get(key) or "").strip()
+        if candidate:
+            return candidate
+    return f"{fallback_prefix}:{index}"
+
+
+def _metadata_list(metadata: dict[str, JsonValue] | None, key: str) -> list[dict[str, Any]]:
+    values = (metadata or {}).get(key)
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if isinstance(value, dict)]
+
+
+def _surface_id_from_refs(*refs: str) -> str:
+    for ref in refs:
+        normalized = str(ref or "").strip()
+        if normalized:
+            return f"surface.{_stable_hash({'ref': normalized}, length=10)}"
+    return f"surface.{_stable_hash({'empty': True}, length=10)}"
+
+
+def _capability_path_patterns(capabilities: list[str]) -> list[str]:
+    patterns: list[str] = []
+    for capability in capabilities:
+        for pattern in CAPABILITY_WRITE_SURFACES.get(capability, ()):
+            normalized = str(pattern).replace("{ticket_id}", "*")
+            if normalized not in patterns:
+                patterns.append(normalized)
+    return sorted(patterns)
+
+
+def _append_unique(target: list[str], values: list[Any] | tuple[Any, ...] | set[Any] | None) -> None:
+    for value in _stable_unique_strings(values):
+        if value not in target:
+            target.append(value)
+
+
+def _surface_bucket(
+    surfaces: dict[str, dict[str, Any]],
+    surface_id: str,
+) -> dict[str, Any]:
+    if surface_id not in surfaces:
+        surfaces[surface_id] = {
+            "surface_id": surface_id,
+            "path_patterns": [],
+            "owning_capabilities": [],
+            "expected_behavior": "",
+            "acceptance_criteria_refs": [],
+            "required_evidence_kinds": [],
+            "minimum_non_placeholder_evidence": [],
+            "required_tests": [],
+            "metadata": {
+                "locked_scope_refs": [],
+                "governance_decision_refs": [],
+                "architecture_design_asset_refs": [],
+                "backlog_recommendation_refs": [],
+            },
+        }
+    return surfaces[surface_id]
+
+
+def _merge_surface_payload(
+    bucket: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    metadata_ref_key: str | None = None,
+    metadata_ref: str | None = None,
+) -> None:
+    _append_unique(
+        bucket["acceptance_criteria_refs"],
+        payload.get("acceptance_criteria_refs") or payload.get("acceptance_refs")
+        if isinstance(payload.get("acceptance_criteria_refs") or payload.get("acceptance_refs"), list)
+        else [],
+    )
+    capability_values: list[Any] = []
+    for key in ("owning_capabilities", "required_capabilities"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            capability_values.extend(value)
+    capability_values.append(payload.get("capability"))
+    capabilities = _stable_unique_strings(capability_values)
+    _append_unique(bucket["owning_capabilities"], capabilities)
+    path_patterns = _stable_unique_strings(
+        payload.get("path_patterns") or payload.get("paths")
+        if isinstance(payload.get("path_patterns") or payload.get("paths"), list)
+        else []
+    )
+    _append_unique(bucket["path_patterns"], path_patterns)
+    _append_unique(bucket["path_patterns"], _capability_path_patterns(capabilities))
+    _append_unique(
+        bucket["required_evidence_kinds"],
+        payload.get("required_evidence_kinds") or payload.get("required_evidence")
+        if isinstance(payload.get("required_evidence_kinds") or payload.get("required_evidence"), list)
+        else [],
+    )
+    _append_unique(
+        bucket["minimum_non_placeholder_evidence"],
+        payload.get("minimum_non_placeholder_evidence")
+        if isinstance(payload.get("minimum_non_placeholder_evidence"), list)
+        else [],
+    )
+    _append_unique(
+        bucket["required_tests"],
+        payload.get("required_tests") or payload.get("required_checks")
+        if isinstance(payload.get("required_tests") or payload.get("required_checks"), list)
+        else [],
+    )
+    expected_behavior = str(payload.get("expected_behavior") or payload.get("summary") or "").strip()
+    if expected_behavior and not bucket["expected_behavior"]:
+        bucket["expected_behavior"] = expected_behavior
+    if metadata_ref_key and metadata_ref:
+        metadata = bucket["metadata"]
+        refs = metadata.setdefault(metadata_ref_key, [])
+        if metadata_ref not in refs:
+            refs.append(metadata_ref)
+
+
+def _compile_required_source_surfaces_from_inputs(
+    *,
+    locked_scope: list[Any] | None,
+    acceptance_criteria: list[AcceptanceCriterion],
+    metadata: dict[str, JsonValue] | None,
+) -> list[RequiredSourceSurface]:
+    surfaces: dict[str, dict[str, Any]] = {}
+
+    for index, value in enumerate(list(locked_scope or [])):
+        if not isinstance(value, dict):
+            continue
+        surface_id = str(value.get("surface_id") or "").strip() or _surface_id_from_refs(
+            str(value.get("scope_ref") or ""),
+            str(value.get("ref") or ""),
+        )
+        bucket = _surface_bucket(surfaces, surface_id)
+        _merge_surface_payload(
+            bucket,
+            value,
+            metadata_ref_key="locked_scope_refs",
+            metadata_ref=_asset_ref(value, "scope", index),
+        )
+
+    for key, ref_key, fallback in (
+        ("governance_decisions", "governance_decision_refs", "decision"),
+        ("architecture_design_assets", "architecture_design_asset_refs", "design"),
+        ("backlog_recommendations", "backlog_recommendation_refs", "backlog"),
+    ):
+        for index, value in enumerate(_metadata_list(metadata, key)):
+            surface_id = str(value.get("surface_id") or "").strip() or _surface_id_from_refs(
+                str(value.get("asset_ref") or ""),
+                str(value.get("ref") or ""),
+            )
+            bucket = _surface_bucket(surfaces, surface_id)
+            _merge_surface_payload(
+                bucket,
+                value,
+                metadata_ref_key=ref_key,
+                metadata_ref=_asset_ref(value, fallback, index),
+            )
+
+    for value in _metadata_list(metadata, "allowed_write_set"):
+        surface_id = str(value.get("surface_id") or "").strip() or _surface_id_from_refs(
+            str(value.get("capability") or ""),
+            str(value.get("path") or ""),
+        )
+        bucket = _surface_bucket(surfaces, surface_id)
+        _merge_surface_payload(bucket, value)
+
+    acceptance_ids = [item.criterion_id for item in acceptance_criteria]
+    for bucket in surfaces.values():
+        if not bucket["acceptance_criteria_refs"]:
+            bucket["acceptance_criteria_refs"] = list(acceptance_ids)
+        for key in (
+            "path_patterns",
+            "owning_capabilities",
+            "acceptance_criteria_refs",
+            "required_evidence_kinds",
+            "minimum_non_placeholder_evidence",
+            "required_tests",
+        ):
+            bucket[key] = _stable_unique_strings(bucket[key])
+        for metadata_key, metadata_refs in list(bucket["metadata"].items()):
+            bucket["metadata"][metadata_key] = _stable_unique_strings(metadata_refs)
+
+    return [
+        surface
+        for surface in (_normalize_required_source_surface(value) for value in surfaces.values())
+        if surface is not None
+    ]
 
 
 def _normalize_acceptance_criterion(value: Any) -> tuple[AcceptanceCriterion, bool] | None:
@@ -380,6 +615,14 @@ def compile_deliverable_contract(
         for item in (_normalize_required_source_surface(value) for value in list(required_source_surfaces or []))
         if item is not None
     ]
+    compiled_surfaces = _compile_required_source_surfaces_from_inputs(
+        locked_scope=locked_scope,
+        acceptance_criteria=normalized_acceptance,
+        metadata=metadata,
+    )
+    surfaces_by_id: dict[str, RequiredSourceSurface] = {}
+    for surface in [*compiled_surfaces, *normalized_surfaces]:
+        surfaces_by_id[surface.surface_id] = surface
     normalized_evidence = [
         item
         for item in (_normalize_required_evidence(value) for value in list(required_evidence or []))
@@ -401,7 +644,7 @@ def compile_deliverable_contract(
         "acceptance_criteria": [item.model_dump(mode="json") for item in normalized_acceptance],
         "required_source_surfaces": [
             item.model_dump(mode="json")
-            for item in sorted(normalized_surfaces, key=lambda item: item.surface_id)
+            for item in sorted(surfaces_by_id.values(), key=lambda item: item.surface_id)
         ],
         "required_evidence": [
             item.model_dump(mode="json")
@@ -503,15 +746,93 @@ def _finding(
     )
 
 
+def _normalized_evidence_legality_status(evidence: EvidenceItem) -> str:
+    status = str(evidence.legality_status or "").strip().upper()
+    if status:
+        return status
+    if evidence.placeholder:
+        return EVIDENCE_LEGALITY_PLACEHOLDER
+    if evidence.archive:
+        return EVIDENCE_LEGALITY_ARCHIVE
+    return EVIDENCE_LEGALITY_ACCEPTED
+
+
+def _normalized_current_pointer_status(evidence: EvidenceItem) -> str:
+    return str(evidence.current_pointer_status or CURRENT_POINTER_CURRENT).strip().upper()
+
+
+def _evidence_ref_basename(evidence: EvidenceItem) -> str:
+    return evidence.evidence_ref.replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+
+
+def _metadata_bool(evidence: EvidenceItem, *keys: str) -> bool:
+    return any(bool(evidence.metadata.get(key)) for key in keys)
+
+
+def _metadata_has_items(evidence: EvidenceItem, key: str) -> bool:
+    value = evidence.metadata.get(key)
+    return isinstance(value, list) and bool(value)
+
+
+def _evidence_invalid_reasons(evidence: EvidenceItem) -> list[str]:
+    reasons: list[str] = []
+    legality_status = _normalized_evidence_legality_status(evidence)
+    current_pointer_status = _normalized_current_pointer_status(evidence)
+    if legality_status in _INVALID_EVIDENCE_LEGALITY_STATUSES:
+        reasons.append(legality_status)
+    if current_pointer_status in _INVALID_CURRENT_POINTER_STATUSES:
+        pointer_reason = {
+            "STALE": EVIDENCE_LEGALITY_STALE_CURRENT_POINTER,
+            "UNKNOWN": EVIDENCE_LEGALITY_UNKNOWN_REF,
+            EVIDENCE_LEGALITY_STALE_CURRENT_POINTER: EVIDENCE_LEGALITY_STALE_CURRENT_POINTER,
+            EVIDENCE_LEGALITY_SUPERSEDED: EVIDENCE_LEGALITY_SUPERSEDED,
+            EVIDENCE_LEGALITY_ARCHIVE: EVIDENCE_LEGALITY_ARCHIVE,
+        }.get(current_pointer_status, current_pointer_status)
+        if pointer_reason not in reasons:
+            reasons.append(pointer_reason)
+    if evidence.placeholder and EVIDENCE_LEGALITY_PLACEHOLDER not in reasons:
+        reasons.append(EVIDENCE_LEGALITY_PLACEHOLDER)
+    if evidence.archive and EVIDENCE_LEGALITY_ARCHIVE not in reasons:
+        reasons.append(EVIDENCE_LEGALITY_ARCHIVE)
+    if evidence.superseded_by_refs and EVIDENCE_LEGALITY_SUPERSEDED not in reasons:
+        reasons.append(EVIDENCE_LEGALITY_SUPERSEDED)
+    if _evidence_ref_basename(evidence) == "source.py" and EVIDENCE_LEGALITY_PLACEHOLDER not in reasons:
+        reasons.append(EVIDENCE_LEGALITY_PLACEHOLDER)
+    if (
+        _metadata_bool(
+            evidence,
+            "stdout_fallback",
+            "runtime_fallback_stdout",
+            "provider_fallback",
+            "no_business_assertions",
+        )
+        or _metadata_has_items(evidence, "placeholder_reasons")
+    ) and EVIDENCE_LEGALITY_PLACEHOLDER not in reasons:
+        reasons.append(EVIDENCE_LEGALITY_PLACEHOLDER)
+    return sorted(reasons)
+
+
+def _evidence_can_satisfy_contract(evidence: EvidenceItem) -> bool:
+    return not _evidence_invalid_reasons(evidence)
+
+
+def _contract_satisfying_evidence(evidence_pack: EvidencePack) -> list[EvidenceItem]:
+    return [
+        evidence
+        for evidence in evidence_pack.evidence
+        if _evidence_can_satisfy_contract(evidence)
+    ]
+
+
 def _required_evidence_is_satisfied(
     required: RequiredEvidence,
-    evidence_pack: DeliverableEvidencePack,
+    evidence_pack: EvidencePack,
 ) -> bool:
     if not required.required:
         return True
     matching = [
         evidence
-        for evidence in evidence_pack.evidence
+        for evidence in _contract_satisfying_evidence(evidence_pack)
         if evidence.evidence_kind == required.evidence_kind
         and (
             not required.acceptance_criteria_refs
@@ -525,9 +846,62 @@ def _required_evidence_is_satisfied(
     return len(matching) >= required.minimum_count
 
 
+def _required_evidence_for_surfaces(contract: DeliverableContract) -> list[RequiredEvidence]:
+    required: list[RequiredEvidence] = []
+    existing_keys = {
+        (
+            item.evidence_kind,
+            tuple(item.acceptance_criteria_refs),
+            tuple(item.source_surface_refs),
+        )
+        for item in contract.required_evidence
+    }
+    for surface in contract.required_source_surfaces:
+        for evidence_kind in surface.required_evidence_kinds:
+            key = (
+                evidence_kind,
+                tuple(surface.acceptance_criteria_refs),
+                (surface.surface_id,),
+            )
+            if key in existing_keys:
+                continue
+            required.append(
+                RequiredEvidence(
+                    evidence_id=f"ev_{surface.surface_id}_{evidence_kind}_{_stable_hash(key, length=8)}",
+                    evidence_kind=evidence_kind,
+                    acceptance_criteria_refs=list(surface.acceptance_criteria_refs),
+                    source_surface_refs=[surface.surface_id],
+                )
+            )
+    return sorted(required, key=lambda item: item.evidence_id)
+
+
+def _required_acceptance_surface_evidence(contract: DeliverableContract) -> dict[tuple[str, str], set[str]]:
+    required: dict[tuple[str, str], set[str]] = {}
+    for surface in contract.required_source_surfaces:
+        for acceptance_ref in surface.acceptance_criteria_refs:
+            key = (acceptance_ref, surface.surface_id)
+            required.setdefault(key, set()).update(surface.required_evidence_kinds)
+    return required
+
+
+def _satisfied_evidence_kinds_for_acceptance_surface(
+    *,
+    evidence_pack: EvidencePack,
+    acceptance_ref: str,
+    surface_ref: str,
+) -> set[str]:
+    return {
+        evidence.evidence_kind
+        for evidence in _contract_satisfying_evidence(evidence_pack)
+        if acceptance_ref in evidence.acceptance_criteria_refs
+        and surface_ref in evidence.source_surface_refs
+    }
+
+
 def evaluate_deliverable_contract(
     contract: DeliverableContract,
-    evidence_pack: DeliverableEvidencePack,
+    evidence_pack: EvidencePack,
     policy: DeliverableEvaluationPolicy,
 ) -> DeliverableEvaluation:
     findings: list[ContractFinding] = []
@@ -566,6 +940,39 @@ def evaluate_deliverable_contract(
                 )
             )
 
+    invalid_evidence = [
+        evidence
+        for evidence in evidence_pack.evidence
+        if _evidence_invalid_reasons(evidence)
+    ]
+    if invalid_evidence:
+        findings.append(
+            _finding(
+                reason_code="invalid_evidence_for_contract",
+                summary="Evidence pack contains placeholder, superseded, archive, unknown, illegal, or stale-pointer evidence.",
+                acceptance_criteria_refs=[
+                    ref
+                    for evidence in invalid_evidence
+                    for ref in evidence.acceptance_criteria_refs
+                ],
+                evidence_refs=[evidence.evidence_ref for evidence in invalid_evidence],
+                source_surface_refs=[
+                    ref
+                    for evidence in invalid_evidence
+                    for ref in evidence.source_surface_refs
+                ],
+                metadata={
+                    "invalid_statuses": _stable_unique_strings(
+                        [
+                            reason
+                            for evidence in invalid_evidence
+                            for reason in _evidence_invalid_reasons(evidence)
+                        ]
+                    )
+                },
+            )
+        )
+
     missing_required_evidence = [
         required
         for required in contract.required_evidence
@@ -591,6 +998,48 @@ def evaluate_deliverable_contract(
                     "missing_evidence_kinds": _stable_unique_strings(
                         [required.evidence_kind for required in missing_required_evidence]
                     )
+                },
+            )
+        )
+
+    acceptance_surface_missing: list[dict[str, Any]] = []
+    for (acceptance_ref, surface_ref), required_kinds in sorted(
+        _required_acceptance_surface_evidence(contract).items()
+    ):
+        satisfied_kinds = _satisfied_evidence_kinds_for_acceptance_surface(
+            evidence_pack=evidence_pack,
+            acceptance_ref=acceptance_ref,
+            surface_ref=surface_ref,
+        )
+        missing_kinds = sorted(required_kinds.difference(satisfied_kinds))
+        if missing_kinds:
+            acceptance_surface_missing.append(
+                {
+                    "acceptance_ref": acceptance_ref,
+                    "surface_ref": surface_ref,
+                    "missing_evidence_kinds": missing_kinds,
+                }
+            )
+    if acceptance_surface_missing:
+        findings.append(
+            _finding(
+                reason_code="acceptance_missing_required_evidence",
+                summary="Critical acceptance criteria are missing required source, test, check, git, or closeout evidence.",
+                acceptance_criteria_refs=[
+                    item["acceptance_ref"] for item in acceptance_surface_missing
+                ],
+                source_surface_refs=[
+                    item["surface_ref"] for item in acceptance_surface_missing
+                ],
+                metadata={
+                    "missing_by_acceptance_surface": acceptance_surface_missing,
+                    "missing_evidence_kinds": _stable_unique_strings(
+                        [
+                            kind
+                            for item in acceptance_surface_missing
+                            for kind in item["missing_evidence_kinds"]
+                        ]
+                    ),
                 },
             )
         )
@@ -628,6 +1077,6 @@ def evaluate_deliverable_contract(
         findings=findings,
         blocking_finding_count=blocking_count,
         acceptance_criteria_count=len(contract.acceptance_criteria),
-        required_evidence_count=len(contract.required_evidence),
+        required_evidence_count=len(contract.required_evidence) + len(_required_evidence_for_surfaces(contract)),
         final_evidence_ref_count=len(evidence_pack.final_evidence_refs),
     )

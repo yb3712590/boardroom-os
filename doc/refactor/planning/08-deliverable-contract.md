@@ -195,8 +195,30 @@ Stable id rules:
 - `evaluation_fingerprint = de_<contract_id>_<hash>`.
 - Hashes are derived from canonical JSON with sorted keys, ASCII output and stable list normalization.
 
-9B dependencies:
+## Round 9B implementation status
 
-- Map source surfaces to artifact legality and capability write surfaces.
-- Build evidence pack mapping from source/test/check/git/closeout evidence to acceptance criteria.
-- Add placeholder source/evidence blocking beyond the 9A empty/unknown/missing skeleton.
+Round 9B has extended the pure evaluator and compiler in `backend/app/core/deliverable_contract.py`.
+
+Implemented additions:
+
+- `EvidenceItem` / `EvidencePack` are now the structured evidence input. `DeliverableEvidence` / `DeliverableEvidencePack` remain as compatibility aliases.
+- Each evidence item records evidence ref, producer ticket, producer node, source surface refs, artifact kind, legality status, acceptance refs, supersede refs, placeholder/archive flags and current pointer status.
+- Required source surfaces can be compiled from structured locked scope, governance decisions, architecture/design assets, backlog recommendations and allowed write set metadata.
+- Capability path patterns come from `CAPABILITY_WRITE_SURFACES`; role names, ticket summaries and checker notes are not used as source surface authority.
+
+Evaluator additions:
+
+- Only accepted current evidence can satisfy required evidence.
+- Superseded, placeholder, archive, unknown, illegal-kind and stale current pointer evidence produces `invalid_evidence_for_contract` and cannot satisfy required evidence.
+- Source surface required evidence kinds are mapped to acceptance criteria. Missing source/test/check/git/closeout evidence produces `acceptance_missing_required_evidence`.
+- Placeholder source/test fallback remains fail-closed through structured evidence facts such as `placeholder=true`, `legality_status=PLACEHOLDER`, `stdout_fallback=true` or placeholder reason metadata.
+
+9B verification:
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py -q` -> `34 passed`.
+
+9C dependencies:
+
+- Checker verdict / `APPROVED_WITH_NOTES` gate must consume `DeliverableEvaluation` and must not override blocking findings.
+- Failed delivery report convergence still needs structured `ConvergencePolicy`; freeform checker notes or graph terminal state must not satisfy the contract.
+- Rework target routing and closeout final evidence table remain later Round 9D/9E work.

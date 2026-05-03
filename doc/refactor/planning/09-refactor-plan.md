@@ -122,26 +122,36 @@ Phase 4 边界：governance chain、architect/meeting gate、backlog fanout、cl
 
 目标：closeout 证明 PRD 满足，而不是 graph terminal。
 
-Round 9A 已完成最小 contract/evaluator skeleton：
+Round 9A 已完成最小 contract/evaluator skeleton，Round 9B 已完成 source surface / evidence pack 映射：
 
 - `backend/app/core/deliverable_contract.py` 定义版本化 `DeliverableContract`、`DeliverableEvaluation` 和 `ContractFinding`。
 - `compile_deliverable_contract()` 可从结构化 PRD / charter / ticket acceptance 输入编译 contract。
-- `evaluate_deliverable_contract()` 是纯函数 evaluator；9A 只覆盖 missing acceptance、missing required evidence、unknown evidence kind 和 empty final evidence 的 blocking findings。
+- `compile_deliverable_contract()` 可从 locked scope、governance/design/backlog assets 和 allowed write set metadata 编译 required source surfaces。
+- `EvidencePack` / `EvidenceItem` 映射 source/test/check/git/closeout evidence 到 acceptance criteria、source surface、producer ticket/node 和 artifact legality。
+- `evaluate_deliverable_contract()` 是纯函数 evaluator；9A 覆盖 missing acceptance、missing required evidence、unknown evidence kind 和 empty final evidence，9B 覆盖 invalid evidence、placeholder/source-test fallback、acceptance 缺 required source/test/check/git/closeout evidence。
 - `workflow_completion.py` 和 `ticket_handlers.py` 只新增 closeout preview helper，没有迁移 checker verdict、rework target 或 closeout final evidence 主路径。
 
 任务：
 
 - [x] 将 PRD acceptance 编译为 deliverable contract（Round 9A skeleton）。
 - [x] 建立稳定 contract id、finding id 和 evaluation fingerprint（Round 9A skeleton）。
+- [x] 将 required source surfaces 映射到 capability write surfaces 和 required evidence kinds（Round 9B）。
+- [x] 将 evidence pack 映射到 acceptance criteria，并拒绝 superseded/placeholder/archive/unknown/stale pointer evidence（Round 9B）。
 - checker verdict 与 deliverable contract 解耦。
 - rework target 指向能修问题的 upstream node。
 - `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap。
 
 验收：
 
-- placeholder source/evidence 不能通过 closeout。
+- placeholder source/evidence 不能通过 contract evaluator。
 - failed delivery report 有结构化 convergence policy 才能放行。
-- final evidence set 不包含 superseded/old placeholder 资产。
+- final evidence set 不包含 superseded/old placeholder 资产；Round 9B 已覆盖 evaluator 层拒绝，closeout table 主路径留给 9E。
+
+Round 9B 证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py -q` -> `34 passed`。
+
+下一入口：Round 9C Checker verdict / convergence policy gate。不得用 checker notes、graph terminal 或 failed delivery report freeform 文本覆盖 blocking contract gap。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 

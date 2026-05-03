@@ -159,6 +159,13 @@ Worker 不能自行扩大 allowed write set。
 - provider fallback 自动生成的默认 source/test payload；
 - 没有 changed file inventory 的 source delivery。
 
+Round 9B 将这些阻断规则接入 deliverable evaluator 的结构化证据层：
+
+- evidence pack 必须带 `legality_status`、`current_pointer_status`、`placeholder`、`archive`、`source_surface_refs` 和 `acceptance_criteria_refs`。
+- `ACCEPTED` + `CURRENT` + 非 placeholder/archive 的 evidence 才能满足 required evidence。
+- `SUPERSEDED`、`PLACEHOLDER`、`ARCHIVE`、`UNKNOWN_REF`、`ILLEGAL_KIND`、`STALE_CURRENT_POINTER` 都不能满足 required evidence。
+- `source.py`、泛化 `1 passed`、runtime fallback stdout、无业务断言等正文判断必须先由外层编译成结构化 placeholder facts；evaluator 不读取 artifact 正文。
+
 ## Closeout 写入限制
 
 `closeout.write` 只能引用：
