@@ -34,6 +34,7 @@
 - Round 8C：Governance / fanout structured policy input。
 - Round 8D：Closeout / recovery / incident followup policy route。
 - Round 8E：Controller / runtime / scheduler policy 收口与 Phase 4 验收。
+- Round 9A：DeliverableContract 与 evaluator 骨架。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -44,7 +45,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 9A：DeliverableContract 与 evaluator 骨架** 开始。Round 8A–8E 已完成 Phase 4 Progression policy engine 收口；后续不得重新引入 role name / role_profile_ref / `role_bindings` 作为 runtime execution key、write root、scheduler eligibility 或 provider failover chain，也不得把 closeout/fanout/rework 推进判断移回 controller/scheduler/proposer。
+下一轮新会话应从 **Round 9B：Source surface / evidence pack mapping** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；后续不得重新设计 9A 的 contract id/finding id/evaluation fingerprint 规则，也不得把 checker verdict、graph terminal、checker notes freeform 文本或 closeout final refs 主路径当成 contract satisfaction。
 
 ---
 

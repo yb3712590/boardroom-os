@@ -122,9 +122,17 @@ Phase 4 边界：governance chain、architect/meeting gate、backlog fanout、cl
 
 目标：closeout 证明 PRD 满足，而不是 graph terminal。
 
+Round 9A 已完成最小 contract/evaluator skeleton：
+
+- `backend/app/core/deliverable_contract.py` 定义版本化 `DeliverableContract`、`DeliverableEvaluation` 和 `ContractFinding`。
+- `compile_deliverable_contract()` 可从结构化 PRD / charter / ticket acceptance 输入编译 contract。
+- `evaluate_deliverable_contract()` 是纯函数 evaluator；9A 只覆盖 missing acceptance、missing required evidence、unknown evidence kind 和 empty final evidence 的 blocking findings。
+- `workflow_completion.py` 和 `ticket_handlers.py` 只新增 closeout preview helper，没有迁移 checker verdict、rework target 或 closeout final evidence 主路径。
+
 任务：
 
-- 将 PRD acceptance 编译为 deliverable contract。
+- [x] 将 PRD acceptance 编译为 deliverable contract（Round 9A skeleton）。
+- [x] 建立稳定 contract id、finding id 和 evaluation fingerprint（Round 9A skeleton）。
 - checker verdict 与 deliverable contract 解耦。
 - rework target 指向能修问题的 upstream node。
 - `APPROVED_WITH_NOTES` 不得覆盖 blocking contract gap。

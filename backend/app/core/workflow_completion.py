@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.core.deliverable_contract import (
+    DeliverableContract,
+    DeliverableEvaluation,
+    DeliverableEvaluationPolicy,
+    compile_closeout_evidence_pack,
+    evaluate_deliverable_contract,
+)
 from app.core.output_schemas import (
     CONSENSUS_DOCUMENT_SCHEMA_REF,
     DELIVERY_CHECK_REPORT_SCHEMA_REF,
@@ -436,6 +443,29 @@ def _collect_closeout_final_artifact_refs(payloads: list[dict[str, Any]]) -> set
             if str(ref).strip()
         )
     return refs
+
+
+def evaluate_closeout_deliverable_contract_preview(
+    *,
+    contract: DeliverableContract,
+    closeout_terminal_payload: dict[str, Any],
+    policy: DeliverableEvaluationPolicy | None = None,
+) -> DeliverableEvaluation:
+    closeout_payloads = _payload_dicts_from_terminal_payload(closeout_terminal_payload)
+    evidence_pack = compile_closeout_evidence_pack(
+        workflow_id=contract.workflow_id,
+        graph_version=contract.graph_version,
+        final_evidence_refs=list(_collect_closeout_final_artifact_refs(closeout_payloads)),
+        closeout_summary={
+            "payload_count": len(closeout_payloads),
+            "source": "workflow_completion.closeout_preview",
+        },
+    )
+    return evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        policy or DeliverableEvaluationPolicy(policy_ref="policy:round9a.closeout_preview"),
+    )
 
 
 def _has_documentation_evidence(payloads: list[dict[str, Any]]) -> bool:

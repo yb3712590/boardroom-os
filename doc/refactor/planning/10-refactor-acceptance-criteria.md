@@ -76,12 +76,14 @@ Round 8E 证据：
 
 ## Phase 5：Deliverable contract
 
-- [ ] PRD acceptance criteria 可编译成 `DeliverableContract`。
+- [x] PRD acceptance criteria 可编译成 `DeliverableContract`（Round 9A：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py -q`）。
 - [ ] Required source surfaces 有路径、capability、evidence 映射。
 - [ ] Evidence pack 能映射到 acceptance criteria。
 - [ ] `APPROVED_WITH_NOTES` 不放行 blocking contract gap。
 - [ ] closeout package 包含 contract version 和 final evidence table。
 - [ ] superseded/placeholder evidence 不进入 final evidence set。
+
+Round 9A 证据：contract/evaluator skeleton 已覆盖 missing acceptance、missing required evidence、unknown evidence kind、empty final evidence 和重复 evaluation 稳定输出。checker/rework/closeout 主路径尚未迁移。
 
 ## Phase 6：Replay / resume / checkpoint
 

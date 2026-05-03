@@ -130,6 +130,13 @@ from app.core.ceo_scheduler import (
 from app.core.ceo_execution_presets import build_internal_governance_review_request
 from app.core.decomposition import build_decomposition_recovery_plan, build_decomposition_ticket_specs
 from app.core.developer_inspector import DeveloperInspectorStore, PersistedDeveloperInspectorArtifact
+from app.core.deliverable_contract import (
+    DeliverableContract,
+    DeliverableEvaluation,
+    DeliverableEvaluationPolicy,
+    compile_closeout_evidence_pack,
+    evaluate_deliverable_contract,
+)
 from app.core.execution_targets import (
     compile_required_capabilities_for_ticket_spec,
     employee_supports_execution_contract,
@@ -1947,6 +1954,33 @@ def _validate_closeout_delivery_hooks(
                 f"got {artifact_ref} ({final_ref_check.status.value})."
             )
     return None
+
+
+def preview_closeout_deliverable_contract_evaluation(
+    *,
+    contract: DeliverableContract,
+    result_payload: dict[str, Any],
+    policy: DeliverableEvaluationPolicy | None = None,
+) -> DeliverableEvaluation:
+    final_artifact_refs = [
+        str(item).strip()
+        for item in list(result_payload.get("final_artifact_refs") or [])
+        if str(item).strip()
+    ]
+    evidence_pack = compile_closeout_evidence_pack(
+        workflow_id=contract.workflow_id,
+        graph_version=contract.graph_version,
+        final_evidence_refs=final_artifact_refs,
+        closeout_summary={
+            "source": "ticket_handlers.closeout_preview",
+            "final_artifact_ref_count": len(final_artifact_refs),
+        },
+    )
+    return evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        policy or DeliverableEvaluationPolicy(policy_ref="policy:round9a.closeout_preview"),
+    )
 
 
 def _validate_governance_document_hooks(

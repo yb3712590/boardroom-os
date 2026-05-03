@@ -159,3 +159,44 @@ PRD acceptance satisfied by these source/evidence/check refs
 - Placeholder detection 有测试。
 - Closeout 只接受 current graph final evidence。
 - 015 replay 包可用于验证旧问题被阻断。
+
+## Round 9A implementation status
+
+Round 9A has landed the minimal versioned contract and pure evaluator skeleton in `backend/app/core/deliverable_contract.py`.
+
+Implemented contract objects:
+
+- `DeliverableContract`
+- `AcceptanceCriterion`
+- `RequiredSourceSurface`
+- `RequiredEvidence`
+- `CloseoutObligation`
+- `DeliverableEvidencePack`
+- `DeliverableEvaluationPolicy`
+- `DeliverableEvaluation`
+- `ContractFinding`
+
+Compiler boundary:
+
+- `compile_deliverable_contract()` consumes only structured PRD / charter / ticket acceptance inputs supplied by the caller.
+- `compile_ticket_acceptance_deliverable_contract()` is a minimal ticket acceptance compiler for later integration.
+- The compiler records workflow id, graph version, PRD refs, locked scope, acceptance criteria, source surfaces, evidence requirements, review gates, placeholder rules, supersede rules and closeout obligations.
+
+Evaluator boundary:
+
+- `evaluate_deliverable_contract(contract, evidence_pack, policy)` is pure. It does not read DB rows, artifact file bodies, provider raw transcript, markdown body text or checker notes freeform text.
+- Round 9A fail-closed findings cover missing acceptance criteria, missing required evidence, unknown evidence kind and empty final evidence.
+- `workflow_completion.py` and `ticket_handlers.py` only expose closeout preview helpers. They do not replace the old checker, rework or closeout decision paths in this batch.
+
+Stable id rules:
+
+- `contract_id = dc_<workflow_id>_<contract_version>_<hash>`.
+- `finding_id = cf_<reason_code>_<hash>`.
+- `evaluation_fingerprint = de_<contract_id>_<hash>`.
+- Hashes are derived from canonical JSON with sorted keys, ASCII output and stable list normalization.
+
+9B dependencies:
+
+- Map source surfaces to artifact legality and capability write surfaces.
+- Build evidence pack mapping from source/test/check/git/closeout evidence to acceptance criteria.
+- Add placeholder source/evidence blocking beyond the 9A empty/unknown/missing skeleton.
