@@ -188,9 +188,12 @@ Round 9E 证据：
 
 - Round 10A：已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult`、event id cursor 恢复入口、稳定 watermark hash 和 fail-closed diagnostic。
 - Round 10B：已在同一 contract 上增加 `graph_version` resume kind；`gv_<event sequence_no>` 映射到明确 event range / projection version / replay watermark，并从 event log 重放后重算 effective graph pointer、ready/blocked/complete index。
+- Round 10C：已在同一 contract 上增加 `ticket_id` / `incident_id` resume kind；两者默认恢复到最新 event 或显式 event cursor，并复用 replay watermark / projection version / event range / diagnostic 语义。
+- Round 10C：ticket resume 从 event log 重建 projection 后保留 terminal/in-flight 状态、runtime node view、assignment/lease context、current graph pointer 和 related artifact/evidence/process asset refs。
+- Round 10C：incident resume 保留 incident status、source ticket context、followup action、incident/recovery action lineage 和 Phase 4 `recovery.actions` 形状的 rework/restore policy input。
+- Round 10C：缺 ticket、缺 incident、source ticket 不一致、source ticket 缺失、runtime node view 断裂都会 fail-closed。
 - 增量 projection checkpoint。
 - event replay 性能预算。
-- resume from ticket/incident。
 - replay bundle materializer。
 - 禁止人工投影补写作为正常路径。
 
@@ -198,6 +201,7 @@ Round 9E 证据：
 
 - resume from event id 已由 `backend/tests/test_replay_resume.py` 覆盖；正常路径不调用 projection repair。
 - 从中间 graph version 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 graph version watermark、full replay equivalence、orphan pending/effective edge、late old attempt / late old cancellation 不改 current pointer 语义，以及缺失/断层/event range mismatch/hash missing/hash mismatch/projection rebuild failed fail-closed。
+- 从 ticket id / incident id 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 ticket terminal/in-flight、runtime node view、assignment/lease、related refs、incident source ticket、followup/recovery lineage 和缺上下文 fail-closed。
 - 1GB 级 DB 不需要每次全量 JSON replay。
 - replay 后 artifact/doc view hash 一致。
 

@@ -7,10 +7,16 @@ from typing import Any
 from datetime import datetime
 
 from app.core.constants import (
+    EVENT_INCIDENT_OPENED,
+    EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_GRAPH_PATCH_APPLIED,
+    EVENT_TICKET_ASSIGNED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
+    EVENT_TICKET_FAILED,
+    EVENT_TICKET_LEASE_GRANTED,
+    EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     SCHEMA_VERSION,
 )
@@ -33,6 +39,8 @@ from app.core.replay_resume import (
     build_replay_resume_request,
     resume_replay_from_event_id,
     resume_replay_from_graph_version,
+    resume_replay_from_incident_id,
+    resume_replay_from_ticket_id,
 )
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.workflow_progression import ProgressionSnapshot, evaluate_progression_graph
@@ -52,7 +60,7 @@ def _event(
         "event_id": event_id,
         "event_type": event_type,
         "workflow_id": workflow_id,
-        "occurred_at": datetime.fromisoformat(f"2026-05-04T10:0{sequence_no}:00+08:00"),
+        "occurred_at": datetime.fromisoformat(f"2026-05-04T10:{sequence_no:02d}:00+08:00"),
         "payload_json": json.dumps(payload, sort_keys=True),
     }
 
@@ -461,6 +469,197 @@ def _orphan_pending_events() -> list[dict]:
     ]
 
 
+def _ticket_resume_terminal_events() -> list[dict]:
+    return [
+        _event(
+            1,
+            "evt_ticket_resume_wf",
+            EVENT_WORKFLOW_CREATED,
+            _workflow_event_payload("Ticket resume"),
+        ),
+        _event(
+            2,
+            "evt_ticket_resume_created",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload(
+                "tkt_ticket_resume_done",
+                "node_ticket_resume_done",
+                status_detail={
+                    "input_artifact_refs": ["art://input/spec.md"],
+                    "input_process_asset_refs": ["prd://resume-ticket@1"],
+                    "retry_budget": 2,
+                },
+            ),
+        ),
+        _event(
+            3,
+            "evt_ticket_resume_completed",
+            EVENT_TICKET_COMPLETED,
+            _ticket_event_payload(
+                "tkt_ticket_resume_done",
+                "node_ticket_resume_done",
+                status_detail={
+                    "artifact_refs": ["art://runtime/tkt_ticket_resume_done/source-code.tsx"],
+                    "verification_evidence_refs": ["evidence://pytest/ticket-resume"],
+                    "produced_process_assets": [
+                        {
+                            "process_asset_ref": "SOURCE_CODE_DELIVERY:scd_tkt_ticket_resume_done@1",
+                            "canonical_ref": "SOURCE_CODE_DELIVERY:scd_tkt_ticket_resume_done@1",
+                            "process_asset_kind": "SOURCE_CODE_DELIVERY",
+                            "workflow_id": "wf_replay",
+                            "producer_ticket_id": "tkt_ticket_resume_done",
+                            "producer_node_id": "node_ticket_resume_done",
+                            "graph_version": "gv_3",
+                            "content_hash": "sha256:ticket-resume-source",
+                            "visibility_status": "CONSUMABLE",
+                            "summary": "Ticket resume source delivery",
+                        }
+                    ],
+                },
+            ),
+        ),
+    ]
+
+
+def _ticket_resume_in_flight_events() -> list[dict]:
+    return [
+        _event(
+            1,
+            "evt_ticket_inflight_wf",
+            EVENT_WORKFLOW_CREATED,
+            _workflow_event_payload("Ticket resume in flight"),
+        ),
+        _event(
+            2,
+            "evt_ticket_inflight_created",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload(
+                "tkt_ticket_resume_inflight",
+                "node_ticket_resume_inflight",
+                status_detail={"retry_budget": 2},
+            ),
+        ),
+        _event(
+            3,
+            "evt_ticket_inflight_assigned",
+            EVENT_TICKET_ASSIGNED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_ticket_resume_inflight",
+                "node_id": "node_ticket_resume_inflight",
+                "assignment_id": "asg_ticket_resume_inflight",
+                "actor_id": "emp_resume_worker",
+                "required_capabilities": ["frontend_engineering"],
+                "assignment_reason": "resume fixture assignment",
+                "provider_selection": {"provider_id": "prov_openai_compat"},
+            },
+        ),
+        _event(
+            4,
+            "evt_ticket_inflight_lease",
+            EVENT_TICKET_LEASE_GRANTED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_ticket_resume_inflight",
+                "node_id": "node_ticket_resume_inflight",
+                "assignment_id": "asg_ticket_resume_inflight",
+                "lease_id": "lease_ticket_resume_inflight",
+                "actor_id": "emp_resume_worker",
+                "lease_timeout_sec": 600,
+                "lease_expires_at": "2026-05-04T10:24:00+08:00",
+            },
+        ),
+        _event(
+            5,
+            "evt_ticket_inflight_started",
+            EVENT_TICKET_STARTED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_ticket_resume_inflight",
+                "node_id": "node_ticket_resume_inflight",
+                "started_by": "emp_resume_worker",
+                "actor_id": "emp_resume_worker",
+                "assignment_id": "asg_ticket_resume_inflight",
+                "lease_id": "lease_ticket_resume_inflight",
+            },
+        ),
+    ]
+
+
+def _incident_resume_events() -> list[dict]:
+    return [
+        _event(
+            1,
+            "evt_incident_resume_wf",
+            EVENT_WORKFLOW_CREATED,
+            _workflow_event_payload("Incident resume"),
+        ),
+        _event(
+            2,
+            "evt_incident_source_created",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload(
+                "tkt_incident_resume_source",
+                "node_incident_resume_source",
+                status_detail={"retry_budget": 2},
+            ),
+        ),
+        _event(
+            3,
+            "evt_incident_source_failed",
+            EVENT_TICKET_FAILED,
+            _ticket_event_payload(
+                "tkt_incident_resume_source",
+                "node_incident_resume_source",
+                status_detail={
+                    "failure_kind": "RUNTIME_ERROR",
+                    "failure_message": "resume fixture failure",
+                    "failure_fingerprint": "fp:incident-resume-source",
+                },
+            ),
+        ),
+        _event(
+            4,
+            "evt_incident_opened",
+            EVENT_INCIDENT_OPENED,
+            {
+                "incident_id": "inc_resume_failure",
+                "ticket_id": "tkt_incident_resume_source",
+                "node_id": "node_incident_resume_source",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "OPEN",
+                "severity": "HIGH",
+                "fingerprint": "incident:resume-failure",
+                "latest_failure_kind": "RUNTIME_ERROR",
+            },
+        ),
+        _event(
+            5,
+            "evt_incident_recovery_started",
+            EVENT_INCIDENT_RECOVERY_STARTED,
+            {
+                "incident_id": "inc_resume_failure",
+                "ticket_id": "tkt_incident_resume_source",
+                "node_id": "node_incident_resume_source",
+                "status": "RECOVERING",
+                "followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                "followup_ticket_id": "tkt_incident_resume_followup",
+                "recovery_action": {
+                    "action_ref": "recovery:inc_resume_failure:retry-source",
+                    "ticket_id": "tkt_incident_resume_source",
+                    "target_ticket_id": "tkt_incident_resume_source",
+                    "node_ref": "node_incident_resume_source",
+                    "terminal_state": "FAILED",
+                    "failure_kind": "RUNTIME_ERROR",
+                    "retry_count": 0,
+                    "retry_budget": 2,
+                    "recommended_followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+                },
+            },
+        ),
+    ]
+
+
 def test_resume_from_event_id_returns_explicit_watermark_boundary():
     request = build_replay_resume_request(
         resume_kind="event_id",
@@ -656,6 +855,242 @@ def test_resume_from_graph_version_returns_watermark_and_projection_summary():
         for edge in result.projection_summary["effective_edges"]
     )
     assert result.diagnostic["reason_code"] == "resume_ready"
+
+
+def test_resume_from_ticket_id_returns_watermark_runtime_assignment_lease_and_refs():
+    request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=5,
+        ticket_id="tkt_ticket_resume_inflight",
+    )
+
+    result = resume_replay_from_ticket_id(_ticket_resume_in_flight_events(), request)
+
+    assert result.status == "READY"
+    assert result.event_cursor == "evt_ticket_inflight_started"
+    assert result.projection_version == 5
+    assert result.replay_watermark is not None
+    assert result.replay_watermark.resume_kind == "ticket_id"
+    assert result.replay_watermark.event_range == {
+        "start_sequence_no": 1,
+        "end_sequence_no": 5,
+    }
+    assert result.projection_summary is not None
+    ticket_context = result.projection_summary["ticket_context"]
+    assert ticket_context["ticket_id"] == "tkt_ticket_resume_inflight"
+    assert ticket_context["status"] == "EXECUTING"
+    assert ticket_context["is_in_flight"] is True
+    assert ticket_context["is_terminal"] is False
+    assert ticket_context["runtime_node_view"] == {
+        "node_id": "node_ticket_resume_inflight",
+        "graph_node_id": "node_ticket_resume_inflight",
+        "runtime_node_id": "node_ticket_resume_inflight",
+        "ticket_id": "tkt_ticket_resume_inflight",
+        "is_placeholder": False,
+        "materialization_state": "materialized",
+        "placeholder_status": None,
+        "reason_code": None,
+        "open_incident_id": None,
+        "materialization_hint": None,
+    }
+    assert ticket_context["assignment"]["assignment_id"] == "asg_ticket_resume_inflight"
+    assert ticket_context["assignment"]["actor_id"] == "emp_resume_worker"
+    assert ticket_context["lease"]["lease_id"] == "lease_ticket_resume_inflight"
+    assert ticket_context["lease"]["status"] == "EXECUTING"
+    assert result.projection_summary["current_ticket_ids_by_node_ref"] == {
+        "node_ticket_resume_inflight": "tkt_ticket_resume_inflight",
+    }
+
+
+def test_resume_from_ticket_id_preserves_terminal_state_and_related_refs():
+    request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=3,
+        ticket_id="tkt_ticket_resume_done",
+    )
+
+    result = resume_replay_from_ticket_id(_ticket_resume_terminal_events(), request)
+
+    assert result.status == "READY"
+    assert result.projection_summary is not None
+    ticket_context = result.projection_summary["ticket_context"]
+    assert ticket_context["status"] == "COMPLETED"
+    assert ticket_context["terminal_state"] == "COMPLETED"
+    assert ticket_context["is_terminal"] is True
+    assert ticket_context["is_in_flight"] is False
+    assert ticket_context["related_artifact_refs"] == [
+        "art://input/spec.md",
+        "art://runtime/tkt_ticket_resume_done/source-code.tsx",
+    ]
+    assert ticket_context["related_evidence_refs"] == ["evidence://pytest/ticket-resume"]
+    assert ticket_context["related_process_asset_refs"] == [
+        "SOURCE_CODE_DELIVERY:scd_tkt_ticket_resume_done@1",
+        "prd://resume-ticket@1",
+    ]
+
+
+def test_resume_from_incident_id_preserves_source_ticket_followup_and_recovery_lineage():
+    request = build_replay_resume_request(
+        resume_kind="incident_id",
+        event_cursor=None,
+        projection_version=5,
+        incident_id="inc_resume_failure",
+        ticket_id="tkt_incident_resume_source",
+    )
+
+    result = resume_replay_from_incident_id(_incident_resume_events(), request)
+
+    assert result.status == "READY"
+    assert result.event_cursor == "evt_incident_recovery_started"
+    assert result.replay_watermark is not None
+    assert result.replay_watermark.resume_kind == "incident_id"
+    assert result.projection_summary is not None
+    incident_context = result.projection_summary["incident_context"]
+    assert incident_context["incident_id"] == "inc_resume_failure"
+    assert incident_context["status"] == "RECOVERING"
+    assert incident_context["source_ticket_context"]["ticket_id"] == "tkt_incident_resume_source"
+    assert incident_context["source_ticket_context"]["status"] == "FAILED"
+    assert incident_context["followup_action"] == "RESTORE_AND_RETRY_LATEST_FAILURE"
+    assert incident_context["recommended_followup_action"] == "RESTORE_AND_RETRY_LATEST_FAILURE"
+    assert incident_context["recovery_action_lineage"] == [
+        {
+            "action_ref": "recovery:inc_resume_failure:retry-source",
+            "ticket_id": "tkt_incident_resume_source",
+            "target_ticket_id": "tkt_incident_resume_source",
+            "node_ref": "node_incident_resume_source",
+            "terminal_state": "FAILED",
+            "failure_kind": "RUNTIME_ERROR",
+            "retry_count": 0,
+            "retry_budget": 2,
+            "recommended_followup_action": "RESTORE_AND_RETRY_LATEST_FAILURE",
+        }
+    ]
+    assert incident_context["rework_restore_policy_input"] == {
+        "actions": incident_context["recovery_action_lineage"],
+    }
+    assert [event["event_type"] for event in incident_context["incident_event_lineage"]] == [
+        "INCIDENT_OPENED",
+        "INCIDENT_RECOVERY_STARTED",
+    ]
+    assert result.projection_summary["current_ticket_ids_by_node_ref"] == {
+        "node_incident_resume_source": "tkt_incident_resume_source",
+    }
+
+
+def test_ticket_id_resume_fails_closed_when_ticket_is_missing():
+    request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=3,
+        ticket_id="tkt_missing_resume",
+    )
+
+    result = resume_replay_from_ticket_id(_ticket_resume_terminal_events(), request)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.projection_summary is None
+    assert result.diagnostic["reason_code"] == "ticket_resume_ticket_missing"
+
+
+def test_incident_id_resume_fails_closed_when_incident_is_missing():
+    request = build_replay_resume_request(
+        resume_kind="incident_id",
+        event_cursor=None,
+        projection_version=5,
+        incident_id="inc_missing_resume",
+    )
+
+    result = resume_replay_from_incident_id(_incident_resume_events(), request)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.projection_summary is None
+    assert result.diagnostic["reason_code"] == "incident_resume_incident_missing"
+
+
+def test_incident_id_resume_fails_closed_when_pinned_source_ticket_mismatches():
+    request = build_replay_resume_request(
+        resume_kind="incident_id",
+        event_cursor=None,
+        projection_version=5,
+        incident_id="inc_resume_failure",
+        ticket_id="tkt_wrong_source",
+    )
+
+    result = resume_replay_from_incident_id(_incident_resume_events(), request)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.projection_summary is None
+    assert result.diagnostic["reason_code"] == "incident_source_ticket_mismatch"
+
+
+def test_incident_id_resume_fails_closed_when_source_ticket_context_is_missing():
+    events = [
+        _event(
+            1,
+            "evt_incident_missing_source_wf",
+            EVENT_WORKFLOW_CREATED,
+            _workflow_event_payload("Incident missing source"),
+        ),
+        _event(
+            2,
+            "evt_incident_missing_source_opened",
+            EVENT_INCIDENT_OPENED,
+            {
+                "incident_id": "inc_missing_source",
+                "ticket_id": "tkt_missing_source",
+                "node_id": "node_missing_source",
+                "incident_type": "REPEATED_FAILURE_ESCALATION",
+                "status": "OPEN",
+                "severity": "HIGH",
+                "fingerprint": "incident:missing-source",
+            },
+        ),
+    ]
+    request = build_replay_resume_request(
+        resume_kind="incident_id",
+        event_cursor=None,
+        projection_version=2,
+        incident_id="inc_missing_source",
+    )
+
+    result = resume_replay_from_incident_id(events, request)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.projection_summary is None
+    assert result.diagnostic["reason_code"] == "incident_source_ticket_missing"
+
+
+def test_ticket_id_resume_fails_closed_when_runtime_node_view_is_broken(monkeypatch):
+    import app.core.replay_resume as replay_resume_module
+    from app.core.runtime_node_views import RuntimeNodeViewResolutionError
+
+    def _raise_broken_runtime_node_view(*args, **kwargs):
+        raise RuntimeNodeViewResolutionError("runtime node view fixture break")
+
+    monkeypatch.setattr(
+        replay_resume_module,
+        "build_runtime_graph_node_views",
+        _raise_broken_runtime_node_view,
+    )
+    request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=5,
+        ticket_id="tkt_ticket_resume_inflight",
+    )
+
+    result = resume_replay_from_ticket_id(_ticket_resume_in_flight_events(), request)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.projection_summary is None
+    assert result.diagnostic["reason_code"] == "runtime_node_view_broken"
 
 
 def test_graph_version_resume_matches_full_replay_projection_summary():

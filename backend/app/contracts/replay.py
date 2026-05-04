@@ -13,6 +13,8 @@ class ReplayResumeRequest(StrictModel):
     event_cursor: str | None
     graph_version: str | None = None
     expected_graph_patch_hash: str | None = None
+    ticket_id: str | None = None
+    incident_id: str | None = None
     projection_version: int | None
     event_range: dict[str, int] | None
     schema_version: str
