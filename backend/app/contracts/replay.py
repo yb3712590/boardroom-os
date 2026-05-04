@@ -51,6 +51,34 @@ class ReplayCheckpoint(StrictModel):
     projection_payloads: dict[str, list[dict[str, JsonValue]]]
 
 
+class ReplayHashManifest(StrictModel):
+    status: ReplayStatus
+    source_event_range: dict[str, int] | None
+    checkpoint_refs: list[dict[str, JsonValue]]
+    artifact_refs: list[str]
+    storage_refs: list[dict[str, JsonValue]]
+    content_hashes: dict[str, str | None]
+    materialization_status: dict[str, str]
+    document_materialized_views: dict[str, JsonValue]
+    diagnostics: list[dict[str, JsonValue]]
+    replay_compatibility: dict[str, JsonValue]
+    manifest_hash: str
+
+
+class ReplayBundleReport(StrictModel):
+    status: ReplayStatus
+    resume_source: dict[str, JsonValue]
+    source_event_range: dict[str, int] | None
+    checkpoint_watermark: dict[str, JsonValue] | None
+    checkpoint_refs: list[dict[str, JsonValue]]
+    projection_version: int | None
+    artifact_hash_manifest: dict[str, JsonValue]
+    document_materialized_views: dict[str, JsonValue]
+    diagnostics: dict[str, JsonValue]
+    replay_compatibility: dict[str, JsonValue]
+    report_hash: str
+
+
 class ReplayResumeResult(StrictModel):
     status: ReplayStatus
     resume_request: ReplayResumeRequest

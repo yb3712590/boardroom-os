@@ -27,6 +27,7 @@ from app.core.constants import (
     SCHEMA_VERSION,
 )
 from app.core.planned_placeholder_projection import rebuild_planned_placeholder_projections
+from app.core.artifact_store import ArtifactStore, STORAGE_BACKEND_LOCAL_FILE
 from app.core.reducer import (
     rebuild_actor_projections,
     rebuild_assignment_projections,
@@ -45,7 +46,9 @@ from app.core.replay_resume import (
     DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
     REPLAY_RESUME_CONTRACT_VERSION,
     build_projection_checkpoint_from_replay_events,
+    build_replay_bundle_report,
     build_replay_checkpoint,
+    build_replay_hash_manifest,
     build_replay_resume_request,
     _apply_incremental_projection_events,
     resume_replay_with_checkpoint,
@@ -82,6 +85,39 @@ def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload, dict):
         return payload
     return json.loads(str(event["payload_json"]))
+
+
+def _repository_with_materialized_artifact(tmp_path, *, content: str = "hello replay"):
+    artifact_store = ArtifactStore(tmp_path / "artifacts")
+    repository = ControlPlaneRepository(tmp_path / "replay.db", 1000, artifact_store=artifact_store)
+    repository.initialize()
+    materialized = artifact_store.materialize_text("reports/ops/replay-note.txt", content)
+    with repository.transaction() as connection:
+        repository.save_artifact_record(
+            connection,
+            artifact_ref="art://runtime/tkt_replay_hash/replay-note.txt",
+            workflow_id="wf_replay",
+            ticket_id="tkt_replay_hash",
+            node_id="node_replay_hash",
+            logical_path="reports/ops/replay-note.txt",
+            kind="TEXT",
+            media_type="text/plain",
+            materialization_status="MATERIALIZED",
+            lifecycle_status="ACTIVE",
+            storage_backend=materialized.storage_backend,
+            storage_relpath=materialized.storage_relpath,
+            storage_object_key=materialized.storage_object_key,
+            storage_delete_status=materialized.storage_delete_status,
+            content_hash=materialized.content_hash,
+            size_bytes=materialized.size_bytes,
+            retention_class="PERSISTENT",
+            expires_at=None,
+            deleted_at=None,
+            deleted_by=None,
+            delete_reason=None,
+            created_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
+        )
+    return repository, artifact_store, materialized
 
 
 def _insert_full_replay_event(connection, event: dict[str, Any]) -> None:
@@ -1903,3 +1939,157 @@ def test_resume_with_checkpoint_fails_closed_when_checkpoint_is_already_invalida
     assert result.status == "FAILED"
     assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
     assert result.diagnostic["invalidated_by"] == ["checkpoint_already_invalidated"]
+
+
+def test_replay_hash_manifest_verifies_materialized_artifact_storage(tmp_path):
+    repository, artifact_store, materialized = _repository_with_materialized_artifact(tmp_path)
+    source_event_range = {"start_sequence_no": 1, "end_sequence_no": 2}
+
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        source_event_range,
+    )
+
+    assert manifest.status == "READY"
+    assert manifest.source_event_range == source_event_range
+    assert manifest.artifact_refs == ["art://runtime/tkt_replay_hash/replay-note.txt"]
+    assert manifest.storage_refs == [
+        {
+            "artifact_ref": "art://runtime/tkt_replay_hash/replay-note.txt",
+            "logical_path": "reports/ops/replay-note.txt",
+            "materialization_status": "MATERIALIZED",
+            "storage_backend": STORAGE_BACKEND_LOCAL_FILE,
+            "storage_relpath": "reports/ops/replay-note.txt",
+            "storage_object_key": None,
+            "content_hash": materialized.content_hash,
+            "size_bytes": materialized.size_bytes,
+        }
+    ]
+    assert manifest.content_hashes == {
+        "art://runtime/tkt_replay_hash/replay-note.txt": materialized.content_hash
+    }
+    assert manifest.materialization_status == {
+        "art://runtime/tkt_replay_hash/replay-note.txt": "MATERIALIZED"
+    }
+    assert manifest.diagnostics == [
+        {
+            "reason_code": "artifact_hash_verified",
+            "artifact_ref": "art://runtime/tkt_replay_hash/replay-note.txt",
+            "content_hash": materialized.content_hash,
+        }
+    ]
+    assert manifest.document_materialized_views["status"] == "DEFERRED_TO_ROUND_10F"
+    assert manifest.manifest_hash
+
+
+def test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics(tmp_path):
+    repository, artifact_store, _materialized = _repository_with_materialized_artifact(tmp_path)
+    events = _graph_equivalence_events()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        expected_graph_patch_hash="hash-graph-version-resume",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_replay_checkpoint(events, checkpoint_request)
+    resume_result = resume_replay_with_checkpoint(events, checkpoint_request, checkpoint=checkpoint)
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        resume_result.event_range,
+        checkpoint=checkpoint,
+    )
+
+    report = build_replay_bundle_report(resume_result, manifest, checkpoint=checkpoint)
+
+    assert report.status == "READY"
+    assert report.source_event_range == {"start_sequence_no": 1, "end_sequence_no": 5}
+    assert report.projection_version == 5
+    assert report.resume_source == {
+        "resume_kind": "graph_version",
+        "event_cursor": "evt_graph_patch",
+        "graph_version": "gv_5",
+        "ticket_id": None,
+        "incident_id": None,
+        "request_hash": resume_result.resume_request.request_hash,
+    }
+    assert report.checkpoint_watermark == checkpoint.event_watermark.model_dump(mode="json")
+    assert report.checkpoint_refs == [
+        {
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "checkpoint_hash": checkpoint.checkpoint_hash,
+            "event_cursor": checkpoint.event_watermark.event_cursor,
+            "watermark_hash": checkpoint.event_watermark.watermark_hash,
+            "projection_version": checkpoint.projection_version,
+        }
+    ]
+    assert report.artifact_hash_manifest["artifact_refs"] == [
+        "art://runtime/tkt_replay_hash/replay-note.txt"
+    ]
+    assert report.diagnostics["resume"]["reason_code"] == "resume_ready"
+    assert report.diagnostics["artifact_hash_manifest"][0]["reason_code"] == "artifact_hash_verified"
+    assert report.document_materialized_views["status"] == "DEFERRED_TO_ROUND_10F"
+    assert report.report_hash
+
+
+def test_replay_hash_manifest_fails_closed_when_artifact_missing(tmp_path):
+    artifact_store = ArtifactStore(tmp_path / "artifacts")
+    repository = ControlPlaneRepository(tmp_path / "replay.db", 1000, artifact_store=artifact_store)
+    repository.initialize()
+
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/missing.txt"],
+        {"start_sequence_no": 1, "end_sequence_no": 1},
+    )
+
+    assert manifest.status == "FAILED"
+    assert manifest.diagnostics[0]["reason_code"] == "missing_artifact"
+    assert manifest.diagnostics[0]["artifact_ref"] == "art://runtime/missing.txt"
+
+
+def test_replay_hash_manifest_fails_closed_when_storage_hash_mismatches(tmp_path):
+    repository, artifact_store, _materialized = _repository_with_materialized_artifact(tmp_path)
+    (artifact_store.root / "reports/ops/replay-note.txt").write_text("tampered", encoding="utf-8")
+
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        {"start_sequence_no": 1, "end_sequence_no": 1},
+    )
+
+    assert manifest.status == "FAILED"
+    assert manifest.diagnostics[0]["reason_code"] == "artifact_hash_mismatch"
+    assert manifest.diagnostics[0]["artifact_ref"] == "art://runtime/tkt_replay_hash/replay-note.txt"
+
+
+def test_replay_hash_manifest_fails_closed_when_materialized_storage_ref_unregistered(tmp_path):
+    repository, artifact_store, _materialized = _repository_with_materialized_artifact(tmp_path)
+    with repository.transaction() as connection:
+        connection.execute(
+            """
+            UPDATE artifact_index
+            SET storage_relpath = NULL,
+                storage_object_key = NULL
+            WHERE artifact_ref = ?
+            """,
+            ("art://runtime/tkt_replay_hash/replay-note.txt",),
+        )
+
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        {"start_sequence_no": 1, "end_sequence_no": 1},
+    )
+
+    assert manifest.status == "FAILED"
+    assert manifest.diagnostics[0]["reason_code"] == "unregistered_storage_ref"
+    assert manifest.diagnostics[0]["artifact_ref"] == "art://runtime/tkt_replay_hash/replay-note.txt"

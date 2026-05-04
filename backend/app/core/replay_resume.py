@@ -7,7 +7,14 @@ from tempfile import TemporaryDirectory
 from datetime import datetime
 from typing import Any
 
-from app.contracts.replay import ReplayCheckpoint, ReplayResumeRequest, ReplayResumeResult, ReplayWatermark
+from app.contracts.replay import (
+    ReplayBundleReport,
+    ReplayCheckpoint,
+    ReplayHashManifest,
+    ReplayResumeRequest,
+    ReplayResumeResult,
+    ReplayWatermark,
+)
 from app.core.constants import (
     ACTOR_STATUS_ACTIVE,
     BLOCKING_REASON_BOARD_REJECTED,
@@ -96,6 +103,7 @@ from app.core.reducer import (
 )
 from app.core.planned_placeholder_projection import rebuild_planned_placeholder_projections
 from app.db.repository import ControlPlaneRepository
+from app.core.artifact_store import ArtifactStore
 
 REPLAY_RESUME_CONTRACT_VERSION = "replay-resume.v1"
 REPLAY_CHECKPOINT_VERSION = "replay-checkpoint.v1"
@@ -122,6 +130,11 @@ DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY = {
     "checkpoint_payload": REPLAY_CHECKPOINT_VERSION,
     "artifact_hash_manifest_ref": None,
     "replay_bundle_report_ref": None,
+}
+DEFAULT_REPLAY_HASH_COMPATIBILITY = {
+    "artifact_hash_manifest": "replay-hash-manifest.v1",
+    "replay_bundle_report": "replay-bundle-report.v1",
+    "document_materialized_view": "DEFERRED_TO_ROUND_10F",
 }
 _TERMINAL_TICKET_STATUSES = {"CANCELLED", "COMPLETED", "FAILED", "TIMED_OUT"}
 _IN_FLIGHT_TICKET_STATUSES = {"LEASED", "EXECUTING"}
@@ -294,6 +307,72 @@ def _checkpoint_hash(checkpoint: ReplayCheckpoint | dict[str, Any]) -> str:
     return _sha256(_checkpoint_hash_payload(checkpoint))
 
 
+def _checkpoint_refs(checkpoint: ReplayCheckpoint | None) -> list[dict[str, Any]]:
+    if checkpoint is None:
+        return []
+    return [
+        {
+            "checkpoint_id": checkpoint.checkpoint_id,
+            "checkpoint_hash": checkpoint.checkpoint_hash,
+            "event_cursor": checkpoint.event_watermark.event_cursor,
+            "watermark_hash": checkpoint.event_watermark.watermark_hash,
+            "projection_version": checkpoint.projection_version,
+        }
+    ]
+
+
+def _document_materialized_views_deferred() -> dict[str, Any]:
+    return {
+        "status": "DEFERRED_TO_ROUND_10F",
+        "entries": [],
+        "diagnostics": [
+            {
+                "reason_code": "deferred_to_round_10f",
+                "message": "Document materialized view hash verification is reserved for Round 10F.",
+            }
+        ],
+    }
+
+
+def _hash_manifest_hash_payload(manifest: ReplayHashManifest | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(manifest, ReplayHashManifest):
+        payload = manifest.model_dump(mode="json")
+    else:
+        payload = dict(manifest)
+    payload.pop("manifest_hash", None)
+    return payload
+
+
+def _hash_manifest_hash(manifest: ReplayHashManifest | dict[str, Any]) -> str:
+    return _sha256(_hash_manifest_hash_payload(manifest))
+
+
+def _bundle_report_hash_payload(report: ReplayBundleReport | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(report, ReplayBundleReport):
+        payload = report.model_dump(mode="json")
+    else:
+        payload = dict(report)
+    payload.pop("report_hash", None)
+    return payload
+
+
+def _bundle_report_hash(report: ReplayBundleReport | dict[str, Any]) -> str:
+    return _sha256(_bundle_report_hash_payload(report))
+
+
+def _artifact_storage_ref(artifact: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_ref": str(artifact.get("artifact_ref") or ""),
+        "logical_path": artifact.get("logical_path"),
+        "materialization_status": artifact.get("materialization_status"),
+        "storage_backend": str(artifact.get("storage_backend") or "LOCAL_FILE"),
+        "storage_relpath": artifact.get("storage_relpath"),
+        "storage_object_key": artifact.get("storage_object_key"),
+        "content_hash": artifact.get("content_hash"),
+        "size_bytes": artifact.get("size_bytes"),
+    }
+
+
 def build_replay_watermark(
     events: list[dict[str, Any]],
     request: ReplayResumeRequest,
@@ -316,6 +395,157 @@ def build_replay_watermark(
         **watermark_payload,
         watermark_hash=_sha256(watermark_payload),
     )
+
+
+def build_replay_hash_manifest(
+    repository: ControlPlaneRepository,
+    artifact_store: ArtifactStore | None,
+    artifact_refs: list[str],
+    source_event_range: dict[str, int] | None,
+    *,
+    checkpoint: ReplayCheckpoint | None = None,
+    replay_compatibility: dict[str, Any] | None = None,
+) -> ReplayHashManifest:
+    diagnostics: list[dict[str, Any]] = []
+    storage_refs_by_artifact: dict[str, dict[str, Any]] = {}
+    content_hashes: dict[str, str | None] = {}
+    materialization_status: dict[str, str] = {}
+    normalized_artifact_refs = sorted(_stable_unique(list(artifact_refs)))
+
+    for artifact_ref in normalized_artifact_refs:
+        artifact = repository.get_artifact_by_ref(artifact_ref)
+        if artifact is None:
+            diagnostics.append(
+                {
+                    "reason_code": "missing_artifact",
+                    "artifact_ref": artifact_ref,
+                    "message": "Replay artifact hash verification requires an artifact_index row.",
+                }
+            )
+            continue
+
+        status = str(artifact.get("materialization_status") or "").strip()
+        materialization_status[artifact_ref] = status
+        content_hashes[artifact_ref] = (
+            str(artifact.get("content_hash")).strip()
+            if artifact.get("content_hash") is not None
+            else None
+        )
+        storage_ref = _artifact_storage_ref(artifact)
+        storage_refs_by_artifact[artifact_ref] = storage_ref
+
+        if status != "MATERIALIZED":
+            diagnostics.append(
+                {
+                    "reason_code": "artifact_not_materialized",
+                    "artifact_ref": artifact_ref,
+                    "materialization_status": status,
+                    "message": "Replay artifact hash verification only reads storage for MATERIALIZED artifacts.",
+                }
+            )
+            continue
+
+        storage_relpath = str(artifact.get("storage_relpath") or "").strip() or None
+        storage_object_key = str(artifact.get("storage_object_key") or "").strip() or None
+        if storage_relpath is None and storage_object_key is None:
+            diagnostics.append(
+                {
+                    "reason_code": "unregistered_storage_ref",
+                    "artifact_ref": artifact_ref,
+                    "message": "Materialized artifact has no registered storage_relpath or storage_object_key.",
+                }
+            )
+            continue
+
+        expected_content_hash = content_hashes[artifact_ref]
+        if not expected_content_hash:
+            diagnostics.append(
+                {
+                    "reason_code": "missing_content_hash",
+                    "artifact_ref": artifact_ref,
+                    "message": "Materialized artifact is missing content_hash in artifact_index.",
+                }
+            )
+            continue
+
+        if artifact_store is None:
+            diagnostics.append(
+                {
+                    "reason_code": "storage_read_failed",
+                    "artifact_ref": artifact_ref,
+                    "message": "Artifact store is unavailable for replay hash verification.",
+                }
+            )
+            continue
+
+        try:
+            content = artifact_store.read_bytes(
+                storage_relpath,
+                storage_object_key=storage_object_key,
+            )
+        except Exception as exc:
+            diagnostics.append(
+                {
+                    "reason_code": "storage_read_failed",
+                    "artifact_ref": artifact_ref,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+            )
+            continue
+
+        actual_content_hash = hashlib.sha256(content).hexdigest()
+        if actual_content_hash != expected_content_hash:
+            diagnostics.append(
+                {
+                    "reason_code": "artifact_hash_mismatch",
+                    "artifact_ref": artifact_ref,
+                    "expected_content_hash": expected_content_hash,
+                    "actual_content_hash": actual_content_hash,
+                }
+            )
+            continue
+
+        diagnostics.append(
+            {
+                "reason_code": "artifact_hash_verified",
+                "artifact_ref": artifact_ref,
+                "content_hash": expected_content_hash,
+            }
+        )
+
+    failed_reason_codes = {
+        "missing_artifact",
+        "unregistered_storage_ref",
+        "missing_content_hash",
+        "storage_read_failed",
+        "artifact_hash_mismatch",
+    }
+    status = (
+        "FAILED"
+        if any(item.get("reason_code") in failed_reason_codes for item in diagnostics)
+        else "READY"
+    )
+    storage_refs = [
+        storage_refs_by_artifact[artifact_ref]
+        for artifact_ref in normalized_artifact_refs
+        if artifact_ref in storage_refs_by_artifact
+    ]
+    manifest_payload = {
+        "status": status,
+        "source_event_range": dict(source_event_range) if source_event_range is not None else None,
+        "checkpoint_refs": _checkpoint_refs(checkpoint),
+        "artifact_refs": normalized_artifact_refs,
+        "storage_refs": storage_refs,
+        "content_hashes": content_hashes,
+        "materialization_status": materialization_status,
+        "document_materialized_views": _document_materialized_views_deferred(),
+        "diagnostics": diagnostics,
+        "replay_compatibility": dict(replay_compatibility or DEFAULT_REPLAY_HASH_COMPATIBILITY),
+        "manifest_hash": "",
+    }
+    manifest_payload["manifest_hash"] = _hash_manifest_hash(manifest_payload)
+    return ReplayHashManifest.model_validate(manifest_payload)
 
 
 def _events_through_cursor(
@@ -1513,6 +1743,57 @@ def _checkpoint_diagnostic(
         ),
         "invalidated_by": list(invalidated_by or []),
     }
+
+
+def build_replay_bundle_report(
+    resume_result: ReplayResumeResult,
+    artifact_manifest: ReplayHashManifest,
+    *,
+    checkpoint: ReplayCheckpoint | None = None,
+    resume_source: dict[str, Any] | None = None,
+) -> ReplayBundleReport:
+    resolved_resume_source = resume_source or {
+        "resume_kind": resume_result.resume_request.resume_kind,
+        "event_cursor": resume_result.resume_request.event_cursor,
+        "graph_version": resume_result.resume_request.graph_version,
+        "ticket_id": resume_result.resume_request.ticket_id,
+        "incident_id": resume_result.resume_request.incident_id,
+        "request_hash": resume_result.resume_request.request_hash,
+    }
+    checkpoint_watermark = (
+        checkpoint.event_watermark.model_dump(mode="json")
+        if checkpoint is not None
+        else None
+    )
+    document_materialized_views = _document_materialized_views_deferred()
+    report_status = (
+        "READY"
+        if resume_result.status == "READY" and artifact_manifest.status == "READY"
+        else "FAILED"
+    )
+    report_payload = {
+        "status": report_status,
+        "resume_source": resolved_resume_source,
+        "source_event_range": (
+            dict(resume_result.event_range)
+            if resume_result.event_range is not None
+            else None
+        ),
+        "checkpoint_watermark": checkpoint_watermark,
+        "checkpoint_refs": _checkpoint_refs(checkpoint),
+        "projection_version": resume_result.projection_version,
+        "artifact_hash_manifest": artifact_manifest.model_dump(mode="json"),
+        "document_materialized_views": document_materialized_views,
+        "diagnostics": {
+            "resume": dict(resume_result.diagnostic),
+            "artifact_hash_manifest": artifact_manifest.diagnostics,
+            "document_materialized_views": document_materialized_views["diagnostics"],
+        },
+        "replay_compatibility": dict(artifact_manifest.replay_compatibility),
+        "report_hash": "",
+    }
+    report_payload["report_hash"] = _bundle_report_hash(report_payload)
+    return ReplayBundleReport.model_validate(report_payload)
 
 
 def _summary_from_checkpoint_repository(
