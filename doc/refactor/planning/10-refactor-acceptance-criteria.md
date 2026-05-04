@@ -120,7 +120,7 @@ Round 9E 证据：
 
 ## Phase 7：015 replay 包验证
 
-- [ ] 能导入 015 replay DB/artifacts。
+- [x] 能导入 015 replay DB/artifacts。Round 11A 证据：`ReplayImportManifest` status `READY`，manifest path `D:/Projects/boardroom-os/.pytest-tmp/replay-import-015/replay-import-manifest.json`，manifest hash `8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`，idempotency key `replay-import:3a209b15acc022ff85a35f27efa4f5857f3151d51aaaf391dd7408cf866332b8`，event range `1..15801`，artifact index `362`，target DB event count `15801`。验证：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" tests/test_replay_import.py tests/test_replay_resume.py::test_replay_hash_manifest_verifies_materialized_artifact_storage -q` -> `8 passed, 1 warning`；015 CLI smoke 和 repeat `--expected-manifest` 均 exit 0；`rg -n "UPDATE .*projection|INSERT INTO .*projection|refresh_projections|manual.*projection|projection_repair" backend/app/core/replay_import.py backend/app/replay_import_cli.py` -> 无命中。
 - [ ] 能定位并重放关键 provider failure。
 - [ ] 能重放 BR-032 auth contract mismatch。
 - [ ] 能阻断 BR-040/BR-041 placeholder delivery。

@@ -33,6 +33,47 @@
 - P09 记录 provider 交付占位产物但 maker-checker 仍放行。
 - replay 包里存在 baseline frontend placeholder view 和 shallow smoke/checklist evidence。
 
+## Round 11A replay import 记录（2026-05-04）
+
+Round 11A 只验证 015 replay DB/artifacts/logs 可以无人工 DB/projection/event 注入导入到新目标库，并生成稳定 `ReplayImportManifest`；本轮没有判断 provider、BR-032、BR-040/BR-041、graph/progression 或 closeout 是否通过。
+
+### 输入与 manifest
+
+- Source DB：`D:/Projects/boardroom-os-replay/library_management_autopilot_live_015_full_replay_20260430/backend/data/scenarios/library_management_autopilot_live_015/boardroom_os.db`
+- Artifact root：`D:/Projects/boardroom-os-replay/library_management_autopilot_live_015_full_replay_20260430/backend/data/scenarios/library_management_autopilot_live_015/artifacts`
+- Log refs：`run_report.json`、`audit-summary.md`、`integration-monitor-report.md`
+- Manifest：`D:/Projects/boardroom-os/.pytest-tmp/replay-import-015/replay-import-manifest.json`
+- Manifest hash：`8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`
+- Idempotency key：`replay-import:3a209b15acc022ff85a35f27efa4f5857f3151d51aaaf391dd7408cf866332b8`
+
+### 导入事实
+
+- Status：`READY`
+- Event range：`1..15801`
+- Event count：`15801`
+- Target DB event count：`15801`
+- Artifact index：`362` rows；其中 `LOCAL_FILE=361`、`INLINE_DB=1`
+- Target DB artifact index：`362` rows
+- Process asset index：`393` rows
+- Schema：app `2026-03-28.boardroom.v1`，SQLite `user_version=0`，`schema_version=145`
+- DB sha256：`4094836432b17030d21f0d0b1fbf7c19c935940f9912e288fc9079a748610fcf`
+- Artifact tree sha256：`336d1ab44e01e1ae77a516b577bb3072a30660bb41441d7607d8b0aca7358061`
+- Registered artifact tree sha256：`ea5cbd11ab7aa49e4bf6f155ba882d2f5edddf59b42a217844a4ed7a8296410f`
+- Event log hash：`56a621cc7f57e5879cc76d89eb5e74eff44d9522306a57292d7ac83804fe7320`
+- Artifact index hash：`d220f1d58db2623c268a1116fee63c08b1414b044c462ba4617b807f6fc8908f`
+
+### 导入诊断
+
+- `artifact_tree_noise_detected`：`26851` 个 AppleDouble / `PaxHeader` archive metadata 文件；归类为 `replay/import issue`，不是 runtime bug。
+- `unregistered_artifact_files_detected`：`11594` 个 artifact root 下未登记文件；导入记录但不作为业务验证依据。
+- `mutable_storage_relpath_detected`：`10` 个同一 `storage_relpath` 被多个 artifact rows 复用的 workspace 文件；artifact root 中保留最新 bytes，旧 row 由 DB hash 和 artifact index hash 覆盖。
+- `inline_db_artifact_recorded`：`art://runtime/tkt_7a888035b4ff/delivery-closeout-package.json` 无 artifact root storage；内容由 DB hash 覆盖。
+- `source_projection_mismatch`：`workflow_projection`、`ticket_projection`、`runtime_node_projection`、`execution_attempt_projection`、`process_asset_index` 与 reducer 重建 hash 不一致；导入目标库使用 event reducer 重建 projection，不复制 source projection rows，也不调用 projection repair。
+
+### 11B 依赖
+
+Round 11B Provider failure replay 必须从 11A manifest 继承 event range、DB/artifact/log hash、artifact refs、`INLINE_DB` closeout artifact 诊断、projection mismatch 诊断和 mutable storage relpath 诊断。11B 不得把这些 import diagnostics 归类为 provider/runtime/product/contract issue。
+
 ## 当前目录结构问题
 
 ### 文档入口过多

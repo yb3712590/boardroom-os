@@ -219,15 +219,22 @@ Round 9E 证据：
 
 任务：
 
-- 导入 015 replay 包。
+- [x] Round 11A：导入 015 replay 包。已新增 `ReplayImportManifest`、read-only source DB import harness 和 CLI；source DB 用 SQLite `mode=ro` 打开，目标 DB 从 events reducer 重建 projection，只复制 `artifact_index` metadata，不复制 source projection rows。
 - 重放关键 incident/rework/closeout 路径。
 - 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
 
 验收：
 
-- 无人工 DB/projection 注入。
+- [x] Round 11A import harness 无人工 DB/projection/event 注入。证据：`python -m app.replay_import_cli ... --manifest-out D:/Projects/boardroom-os/.pytest-tmp/replay-import-015/replay-import-manifest.json` 输出 `READY`；重复导入使用 `--expected-manifest` 仍输出同一 `manifest_hash=8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53` 和 `idempotency_key=replay-import:3a209b15acc022ff85a35f27efa4f5857f3151d51aaaf391dd7408cf866332b8`。
 - closeout 不能绕过 deliverable contract。
 - 输出 replay audit report。
+
+Round 11A 证据边界：
+
+- 已导入 event range `1..15801`、`artifact_index=362`、`process_asset_index=393`；目标 DB event count 为 `15801`。
+- 输入 hash：DB `4094836432b17030d21f0d0b1fbf7c19c935940f9912e288fc9079a748610fcf`，artifact tree `336d1ab44e01e1ae77a516b577bb3072a30660bb41441d7607d8b0aca7358061`，registered artifact tree `ea5cbd11ab7aa49e4bf6f155ba882d2f5edddf59b42a217844a4ed7a8296410f`，event log `56a621cc7f57e5879cc76d89eb5e74eff44d9522306a57292d7ac83804fe7320`，artifact index `d220f1d58db2623c268a1116fee63c08b1414b044c462ba4617b807f6fc8908f`。
+- Import diagnostics 只归类为 `replay/import issue`：AppleDouble / `PaxHeader` archive metadata、未登记 artifact root 文件、mutable workspace storage path、`INLINE_DB` artifact、source projection mismatch。
+- Round 11A 没有验证 provider failure、BR-032、BR-040/BR-041、orphan pending、graph/progression 或 closeout；这些从 Round 11B 开始依赖 11A manifest 的 event range、hash、artifact refs 和 diagnostics。
 
 ## Phase 8：新 live scenario clean run
 

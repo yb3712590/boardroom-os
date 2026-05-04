@@ -79,6 +79,25 @@ class ReplayBundleReport(StrictModel):
     report_hash: str
 
 
+class ReplayImportManifest(StrictModel):
+    status: ReplayStatus
+    manifest_version: str
+    input_db_path: str
+    artifact_root: str
+    log_refs: list[str]
+    input_hashes: dict[str, JsonValue]
+    schema: dict[str, JsonValue]
+    event_range: dict[str, int] | None
+    event_count: int
+    workflow_ids: list[str]
+    artifact_count: int
+    local_file_artifact_count: int
+    inline_db_artifact_count: int
+    import_diagnostics: list[dict[str, JsonValue]]
+    idempotency_key: str
+    manifest_hash: str
+
+
 class ReplayResumeResult(StrictModel):
     status: ReplayStatus
     resume_request: ReplayResumeRequest
