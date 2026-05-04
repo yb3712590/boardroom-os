@@ -109,13 +109,13 @@ Round 9E 证据：
 
 ## Phase 6：Replay / resume / checkpoint
 
-- [ ] 支持 resume from event id。
+- [x] 支持 resume from event id。证据：`backend/tests/test_replay_resume.py::test_resume_from_event_id_returns_explicit_watermark_boundary`。
 - [ ] 支持 resume from graph version。
 - [ ] 支持 resume from ticket id。
 - [ ] 支持 resume from incident id。
 - [ ] projection checkpoint 避免每次全量 JSON replay。
 - [ ] replay 后 doc/materialized view hash 可验证。
-- [ ] 不需要人工补写 projection/index。
+- [x] event id resume 正常路径不需要人工补写 projection/index。证据：`backend/tests/test_replay_resume.py::test_resume_normal_path_does_not_touch_projection_repair`，以及 `rg -n "refresh_projections|INSERT INTO .*projection|UPDATE .*projection" backend/app/core/replay_resume.py backend/tests/test_replay_resume.py`。
 
 ## Phase 7：015 replay 包验证
 

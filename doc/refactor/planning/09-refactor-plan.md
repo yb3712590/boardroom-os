@@ -178,7 +178,7 @@ Round 9E 证据：
 - closeout final refs 混入治理文档 / backlog recommendation：Round 9E 覆盖 `test_closeout_gate_rejects_illegal_final_artifact_ref_kind`、`test_closeout_gate_rejects_backlog_recommendation_final_artifact_ref_kind` 和 deliverable final table governance/backlog exclusion。
 - manual closeout recovery：Round 9E 覆盖 `backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table`；真实 015 replay 仍归 Phase 7。
 
-下一入口：Round 10A Replay resume contract 与 event cursor。不得把 Phase 6 replay/resume/checkpoint 或 Phase 7 015 full replay 塞回 Phase 5。
+下一入口：Round 10B Graph version resume。Round 10A 已建立 Replay resume contract 与 event cursor；不得把 graph/ticket/incident/checkpoint 或 Phase 7 015 full replay 塞回 event cursor 批次。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 
@@ -186,14 +186,16 @@ Round 9E 证据：
 
 任务：
 
+- Round 10A：已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult`、event id cursor 恢复入口、稳定 watermark hash 和 fail-closed diagnostic。
 - 增量 projection checkpoint。
 - event replay 性能预算。
-- resume from event/version/ticket/incident。
+- resume from graph version/ticket/incident。
 - replay bundle materializer。
 - 禁止人工投影补写作为正常路径。
 
 验收：
 
+- resume from event id 已由 `backend/tests/test_replay_resume.py` 覆盖；正常路径不调用 projection repair。
 - 从中间 graph version 恢复不需要人工 DB/projection 注入。
 - 1GB 级 DB 不需要每次全量 JSON replay。
 - replay 后 artifact/doc view hash 一致。

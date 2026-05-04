@@ -329,5 +329,6 @@ Round 9E verification:
 
 Remaining Phase 6/7 dependencies:
 
-- Phase 6 still owns replay resume contract, event cursor, checkpoints and replay bundle materialization.
+- Round 10A has implemented the minimal replay resume contract and event cursor boundary. Phase 5 deliverable contract semantics are unchanged; replay only records cursor/version/hash diagnostics.
+- Phase 6 still owns graph version resume, ticket/incident resume, checkpoints and replay bundle materialization.
 - Phase 7 still owns 015 full replay import and replay-case validation for BR-040, BR-041, BR-100 and closeout/manual recovery on real 015 data.
