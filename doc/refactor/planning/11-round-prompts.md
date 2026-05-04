@@ -44,6 +44,7 @@
 - Round 10C：Ticket / incident resume。
 - Round 10D：Projection checkpoint。
 - Round 10E：Artifact hash 与 replay bundle report。
+- Round 10F：Document materialization from events/process assets。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -54,7 +55,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 10F：Document materialization from events/process assets** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行；Round 9D 已把 blocking contract gap 编译为 Phase 4 recovery input，并将 rework target 指向 upstream source surface / producer ticket / producer node，缺 current producer ticket 时输出 incident/action；Round 9E 已把 closeout package 放行收口到 contract version/id、evaluation fingerprint 和 final evidence table。Round 10A 已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult` 最小 contract、event id cursor 恢复入口、稳定 watermark hash 和缺 cursor / 越界 / projection version 不匹配 / event range 不连续的 fail-closed 诊断。Round 10B 已在同一 contract 上增加 graph version resume，`gv_<event sequence_no>` 映射到明确 event range / projection version / replay watermark，并重放事件重算 effective graph pointer、ready/blocked/complete index；graph version 缺失、断层、graph patch hash 不匹配都会 fail-closed。Round 10C 已在同一 contract 上增加 ticket id / incident id resume，默认恢复到最新 event 或显式 event cursor，并保留 ticket terminal/in-flight、runtime node view、assignment/lease、artifact/evidence/process asset refs、incident status、source ticket context、followup action 和 recovery action lineage；缺 ticket、缺 incident、source ticket 不一致、source ticket 缺失、runtime node view 断裂都会 fail-closed。Round 10D 已定义 `ReplayCheckpoint`，保存 projection payload、event watermark、schema/version/hash、covered projections 和 compatibility；有效 checkpoint 从 watermark 后增量 replay，无效 checkpoint 默认 fail-closed，显式 full replay fallback 会写 diagnostic；schema/version/watermark/hash/projection set/compatibility mismatch 均有测试覆盖。Round 10E 已定义 `ReplayHashManifest` / `ReplayBundleReport`，可验证 artifact index 与 materialized storage content hash 一致；缺 artifact、未登记 storage ref、hash mismatch 均 fail-closed，并为 document/materialized view hash 预留 `DEFERRED_TO_ROUND_10F` section。后续不得重新设计 9A/9B/9C/9D/9E 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary、convergence policy、rework target 或 final evidence table 语义，也不得把 checker verdict、graph terminal、checker notes freeform 文本、manual closeout recovery、closeout final refs 或人工 projection repair 主路径当成 contract satisfaction。
+下一轮新会话应从 **Round 11A：015 replay import harness** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行；Round 9D 已把 blocking contract gap 编译为 Phase 4 recovery input，并将 rework target 指向 upstream source surface / producer ticket / producer node，缺 current producer ticket 时输出 incident/action；Round 9E 已把 closeout package 放行收口到 contract version/id、evaluation fingerprint 和 final evidence table。Round 10A 已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult` 最小 contract、event id cursor 恢复入口、稳定 watermark hash 和缺 cursor / 越界 / projection version 不匹配 / event range 不连续的 fail-closed 诊断。Round 10B 已在同一 contract 上增加 graph version resume，`gv_<event sequence_no>` 映射到明确 event range / projection version / replay watermark，并重放事件重算 effective graph pointer、ready/blocked/complete index；graph version 缺失、断层、graph patch hash 不匹配都会 fail-closed。Round 10C 已在同一 contract 上增加 ticket id / incident id resume，默认恢复到最新 event 或显式 event cursor，并保留 ticket terminal/in-flight、runtime node view、assignment/lease、artifact/evidence/process asset refs、incident status、source ticket context、followup action 和 recovery action lineage；缺 ticket、缺 incident、source ticket 不一致、source ticket 缺失、runtime node view 断裂都会 fail-closed。Round 10D 已定义 `ReplayCheckpoint`，保存 projection payload、event watermark、schema/version/hash、covered projections 和 compatibility；有效 checkpoint 从 watermark 后增量 replay，无效 checkpoint 默认 fail-closed，显式 full replay fallback 会写 diagnostic；schema/version/watermark/hash/projection set/compatibility mismatch 均有测试覆盖。Round 10E 已定义 `ReplayHashManifest` / `ReplayBundleReport`，可验证 artifact index 与 materialized storage content hash 一致；缺 artifact、未登记 storage ref、hash mismatch 均 fail-closed。Round 10F 已定义 `boardroom-document-view.v1`，从 event/process asset/artifact metadata/content 重新物化 document view，并把 source event range、process asset refs、artifact refs、document refs、hash 和 diagnostics 接入 replay bundle/report；缺 artifact、非法 process asset、非法 evidence lineage 均 fail-closed。后续不得重新设计 9A/9B/9C/9D/9E 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary、convergence policy、rework target 或 final evidence table 语义，也不得把 checker verdict、graph terminal、checker notes freeform 文本、manual closeout recovery、closeout final refs 或人工 projection repair 主路径当成 contract satisfaction。
 
 ---
 
@@ -1414,10 +1415,10 @@ Round 10E implementation status:
 - `backend/app/core/replay_resume.py` 提供 `build_replay_hash_manifest()` / `build_replay_bundle_report()` 纯函数。Manifest 只从 `artifact_index` 与已登记 artifact storage 读取事实并重算 sha256，不新增 DB 表，不人工补写 materialized files。
 - Artifact hash verification 对缺 artifact、缺 content hash、未登记 storage ref、storage read failed、hash mismatch 均返回 `FAILED` diagnostic；不会降级成 warning 后继续通过。
 - Replay bundle report 写入 checkpoint watermark、checkpoint refs、resume source、projection version、artifact hash manifest 和 diagnostics。
-- Document/materialized view section 已预留，状态为 `DEFERRED_TO_ROUND_10F`；本批没有实现 document view 重物化主路径。
-- 10F 必须复用 10E 的 manifest/report section，从 event log、process asset、artifact metadata 和 artifact content 重新物化 document view，并把 document hash 接入 replay bundle/report。
+- Document/materialized view section 在 10E 仅预留，10F 已替换为 `boardroom-document-view.v1` materialized view hash section。
+- 10F 已复用 10E 的 manifest/report section，从 event log、process asset、artifact metadata 和 artifact content 重新物化 document view，并把 document hash 接入 replay bundle/report。
 
-下一轮新会话应从 **Round 10F：Document materialization from events/process assets** 开始。
+下一轮新会话应从 **Round 11A：015 replay import harness** 开始。
 
 ---
 
@@ -1462,6 +1463,16 @@ Round 10E implementation status:
 - replay bundle/report 包含 document materialization hash、source refs 和 diagnostics。
 - Phase 6 acceptance criteria 每个勾选项都有测试命令或 grep 证据。
 ```
+
+Round 10F implementation status:
+
+- `boardroom-document-view.v1` 已落在 `backend/app/core/boardroom_document_materializer.py`，document view 从 replay 后的 `process_asset_index`、artifact metadata 和已登记 artifact storage content hash 重算。
+- `build_replay_hash_manifest()` 支持 `document_process_asset_refs`，并把 document materialized view section 写入 `ReplayHashManifest`；空 document refs 输出 READY 空 section，不再输出旧 deferred section。
+- `build_replay_bundle_report()` 复用 manifest 中的 document section，报告列出 source event range、process asset refs、artifact refs、document refs、content hash 和 diagnostics。
+- 缺 artifact、非法 process asset、非 CONSUMABLE process asset、linked process asset 缺失、artifact storage/hash mismatch 均 fail-closed。
+- `backend/tests/test_boardroom_document_materializer.py` 覆盖正常、缺 artifact、非法 process asset、非法 evidence lineage；`backend/tests/test_replay_resume.py` 覆盖 manifest/report 接入和 full rematerialization hash 稳定。
+
+下一轮新会话应从 **Round 11A：015 replay import harness** 开始。
 
 ---
 

@@ -112,13 +112,15 @@ Policy Engine 是从当前 runtime 中拆出的主要目标。它替代散落在
 
 - 执行目录 contract。
 - 维护 workspace refs 与 artifact refs 映射。
-- 从 event、projection、asset materialize 人类可读审计文档。
+- 从 event、projection、process asset、artifact metadata 和已登记 artifact content materialize 人类可读审计文档。
+- replay document view hash 必须可由 event range、process asset refs、artifact refs 和 storage content hash 重算。
 - 生成 closeout package 和 replay bundle。
 
 不负责：
 
 - 让 markdown 反向驱动状态机。
 - 让 worker 自由选择写入目录。
+- 依赖手工补写 markdown 作为 replay/resume 的恢复输入。
 
 ## Layer 6: Governance Templates
 

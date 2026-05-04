@@ -28,6 +28,7 @@ from app.core.constants import (
 )
 from app.core.planned_placeholder_projection import rebuild_planned_placeholder_projections
 from app.core.artifact_store import ArtifactStore, STORAGE_BACKEND_LOCAL_FILE
+from app.core.boardroom_document_materializer import BOARDROOM_DOCUMENT_VIEW_VERSION
 from app.core.reducer import (
     rebuild_actor_projections,
     rebuild_assignment_projections,
@@ -118,6 +119,72 @@ def _repository_with_materialized_artifact(tmp_path, *, content: str = "hello re
             created_at=datetime.fromisoformat("2026-05-04T10:00:00+08:00"),
         )
     return repository, artifact_store, materialized
+
+
+def _repository_with_replay_document_process_asset(tmp_path):
+    repository, artifact_store, materialized = _repository_with_materialized_artifact(
+        tmp_path,
+        content='{"summary":"Replay document source"}',
+    )
+    process_asset_ref = "pa://governance-document/tkt_replay_hash@1"
+    events = [
+        _event(
+            1,
+            "evt_replay_doc_wf",
+            EVENT_WORKFLOW_CREATED,
+            {
+                "north_star_goal": "Replay document view",
+                "budget_cap": 500000,
+                "deadline_at": None,
+                "title": "Replay document view",
+            },
+        ),
+        _event(
+            2,
+            "evt_replay_doc_ticket",
+            EVENT_TICKET_CREATED,
+            {
+                "ticket_id": "tkt_replay_hash",
+                "node_id": "node_replay_hash",
+                "retry_budget": 1,
+                "timeout_sla_sec": 1800,
+                "priority": "normal",
+            },
+        ),
+        _event(
+            3,
+            "evt_replay_doc_completed",
+            EVENT_TICKET_COMPLETED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_replay_hash",
+                "node_id": "node_replay_hash",
+                "produced_process_assets": [
+                    {
+                        "process_asset_ref": process_asset_ref,
+                        "canonical_ref": process_asset_ref,
+                        "version_int": 1,
+                        "process_asset_kind": "GOVERNANCE_DOCUMENT",
+                        "workflow_id": "wf_replay",
+                        "producer_ticket_id": "tkt_replay_hash",
+                        "producer_node_id": "node_replay_hash",
+                        "graph_version": "gv_3",
+                        "visibility_status": "CONSUMABLE",
+                        "summary": "Replay document source",
+                        "source_metadata": {
+                            "source_artifact_ref": "art://runtime/tkt_replay_hash/replay-note.txt",
+                            "linked_artifact_refs": [
+                                "art://runtime/tkt_replay_hash/replay-note.txt"
+                            ],
+                        },
+                    }
+                ],
+            },
+        ),
+    ]
+    with repository.transaction() as connection:
+        repository.replace_process_asset_index(connection, rebuild_process_asset_index(events))
+    return repository, artifact_store, materialized, process_asset_ref
 
 
 def _insert_full_replay_event(connection, event: dict[str, Any]) -> None:
@@ -1980,12 +2047,69 @@ def test_replay_hash_manifest_verifies_materialized_artifact_storage(tmp_path):
             "content_hash": materialized.content_hash,
         }
     ]
-    assert manifest.document_materialized_views["status"] == "DEFERRED_TO_ROUND_10F"
+    assert manifest.document_materialized_views["status"] == "READY"
+    assert manifest.document_materialized_views["document_view_version"] == BOARDROOM_DOCUMENT_VIEW_VERSION
+    assert manifest.document_materialized_views["process_asset_refs"] == []
+    assert manifest.document_materialized_views["document_refs"] == []
     assert manifest.manifest_hash
 
 
+def test_replay_hash_manifest_includes_materialized_document_view_hash(tmp_path):
+    repository, artifact_store, materialized, process_asset_ref = _repository_with_replay_document_process_asset(tmp_path)
+    source_event_range = {"start_sequence_no": 1, "end_sequence_no": 3}
+
+    manifest = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        source_event_range,
+        document_process_asset_refs=[process_asset_ref],
+    )
+
+    document_views = manifest.document_materialized_views
+    assert manifest.status == "READY"
+    assert document_views["status"] == "READY"
+    assert document_views["document_view_version"] == BOARDROOM_DOCUMENT_VIEW_VERSION
+    assert document_views["source_event_range"] == source_event_range
+    assert document_views["process_asset_refs"] == [process_asset_ref]
+    assert document_views["artifact_refs"] == ["art://runtime/tkt_replay_hash/replay-note.txt"]
+    assert document_views["document_refs"][0].startswith("doc://materialized-view/process-asset/")
+    document_ref = document_views["document_refs"][0]
+    assert document_views["content_hashes"][document_ref]
+    assert document_views["entries"][0]["artifact_refs"] == [
+        "art://runtime/tkt_replay_hash/replay-note.txt"
+    ]
+    assert document_views["diagnostics"][0]["reason_code"] == "materialized_document_hash_verified"
+    assert manifest.content_hashes == {
+        "art://runtime/tkt_replay_hash/replay-note.txt": materialized.content_hash
+    }
+
+
+def test_replay_document_view_hash_matches_full_rematerialization(tmp_path):
+    repository, artifact_store, _materialized, process_asset_ref = _repository_with_replay_document_process_asset(tmp_path)
+    source_event_range = {"start_sequence_no": 1, "end_sequence_no": 3}
+
+    first = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        source_event_range,
+        document_process_asset_refs=[process_asset_ref],
+    )
+    rematerialized = build_replay_hash_manifest(
+        repository,
+        artifact_store,
+        ["art://runtime/tkt_replay_hash/replay-note.txt"],
+        source_event_range,
+        document_process_asset_refs=[process_asset_ref],
+    )
+
+    assert first.document_materialized_views["content_hashes"] == rematerialized.document_materialized_views["content_hashes"]
+    assert first.document_materialized_views["document_refs"] == rematerialized.document_materialized_views["document_refs"]
+
+
 def test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics(tmp_path):
-    repository, artifact_store, _materialized = _repository_with_materialized_artifact(tmp_path)
+    repository, artifact_store, _materialized, process_asset_ref = _repository_with_replay_document_process_asset(tmp_path)
     events = _graph_equivalence_events()
     checkpoint_request = build_replay_resume_request(
         resume_kind="graph_version",
@@ -2003,6 +2127,7 @@ def test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnosti
         ["art://runtime/tkt_replay_hash/replay-note.txt"],
         resume_result.event_range,
         checkpoint=checkpoint,
+        document_process_asset_refs=[process_asset_ref],
     )
 
     report = build_replay_bundle_report(resume_result, manifest, checkpoint=checkpoint)
@@ -2033,7 +2158,18 @@ def test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnosti
     ]
     assert report.diagnostics["resume"]["reason_code"] == "resume_ready"
     assert report.diagnostics["artifact_hash_manifest"][0]["reason_code"] == "artifact_hash_verified"
-    assert report.document_materialized_views["status"] == "DEFERRED_TO_ROUND_10F"
+    assert report.document_materialized_views["status"] == "READY"
+    assert report.document_materialized_views["process_asset_refs"] == [process_asset_ref]
+    assert report.document_materialized_views["artifact_refs"] == [
+        "art://runtime/tkt_replay_hash/replay-note.txt"
+    ]
+    assert report.document_materialized_views["document_refs"][0].startswith(
+        "doc://materialized-view/process-asset/"
+    )
+    document_ref = report.document_materialized_views["document_refs"][0]
+    assert report.document_materialized_views["content_hashes"][document_ref]
+    assert report.document_materialized_views["diagnostics"][0]["reason_code"] == "materialized_document_hash_verified"
+    assert report.diagnostics["document_materialized_views"] == report.document_materialized_views["diagnostics"]
     assert report.report_hash
 
 

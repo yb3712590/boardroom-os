@@ -178,7 +178,7 @@ Round 9E 证据：
 - closeout final refs 混入治理文档 / backlog recommendation：Round 9E 覆盖 `test_closeout_gate_rejects_illegal_final_artifact_ref_kind`、`test_closeout_gate_rejects_backlog_recommendation_final_artifact_ref_kind` 和 deliverable final table governance/backlog exclusion。
 - manual closeout recovery：Round 9E 覆盖 `backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table`；真实 015 replay 仍归 Phase 7。
 
-下一入口：Round 10F Document materialization from events/process assets。Round 10A 已建立 Replay resume contract 与 event cursor；Round 10B 已实现 graph version resume，并证明 graph version resume 与同一事件集 full replay 的 effective graph pointer / projection summary 等价；Round 10C 已实现 ticket / incident resume；Round 10D 已建立 projection checkpoint 和 invalidation；Round 10E 已建立 artifact hash manifest 与 replay bundle report，可验证 artifact index / materialized storage 的 content hash，并为 document materialized view hash 预留 `DEFERRED_TO_ROUND_10F` section。不得把 document materialization 或 Phase 7 015 full replay 塞回 artifact hash 批次。
+下一入口：Round 11A 015 replay import harness。Round 10A 已建立 Replay resume contract 与 event cursor；Round 10B 已实现 graph version resume，并证明 graph version resume 与同一事件集 full replay 的 effective graph pointer / projection summary 等价；Round 10C 已实现 ticket / incident resume；Round 10D 已建立 projection checkpoint 和 invalidation；Round 10E 已建立 artifact hash manifest 与 replay bundle report，可验证 artifact index / materialized storage 的 content hash；Round 10F 已把 document materialized view hash 接入同一 replay bundle/report，并从 event/process asset/artifact metadata/content 重新物化 document view。Phase 7 的 015 full replay import 和 case 验证从 Round 11A 开始。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 
@@ -198,9 +198,10 @@ Round 9E 证据：
 - Round 10D：schema version、contract version、projection version、event watermark、checkpoint hash、covered projection set 和 compatibility mismatch 都会输出 checkpoint invalidation diagnostic。
 - Round 10E：已定义 `ReplayHashManifest` / `ReplayBundleReport`，字段覆盖 source event range、checkpoint refs/watermark、resume source、projection version、artifact refs、storage refs、content hash、materialization status、diagnostics 和 replay compatibility。
 - Round 10E：artifact hash verifier 只读取 `artifact_index` 与已登记 storage bytes 重算 sha256；缺 artifact、缺 content hash、缺 storage ref、storage read failed 或 hash mismatch 都 fail-closed，不人工补写 materialized files。
-- Round 10E：document materialized view section 只预留 `DEFERRED_TO_ROUND_10F`，Round 10F 负责从 event/process asset/artifact metadata/content 重新物化 document view 并接入同一 report。
-- event replay 性能预算。
-- replay bundle materializer。
+- Round 10F：已定义 `boardroom-document-view.v1`，document materialized view section 列出 source event range、process asset refs、artifact refs、document refs、content hash 和 diagnostics。
+- Round 10F：document view 只从 replay 后的 `process_asset_index`、artifact metadata 和已登记 artifact storage content hash 重新物化；不读取手工补写 markdown 或 workspace receipt 作为恢复输入。
+- Round 10F：缺 artifact、非法 process asset、非 CONSUMABLE lineage、linked process asset 缺失、artifact storage/hash mismatch 都 fail-closed。
+- replay bundle materializer 已覆盖 artifact hash manifest 与 document materialized view hash。
 - 禁止人工投影补写作为正常路径。
 
 验收：
@@ -210,7 +211,7 @@ Round 9E 证据：
 - 从 ticket id / incident id 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 ticket terminal/in-flight、runtime node view、assignment/lease、related refs、incident source ticket、followup/recovery lineage 和缺上下文 fail-closed。
 - Projection checkpoint 避免每次全量 JSON replay；`backend/tests/test_replay_resume.py` 覆盖 checkpoint write/read、增量 replay event count/starting cursor、schema/version/hash/watermark/projection set/compatibility invalidation、stale checkpoint fail-closed 和显式 full replay fallback；`backend/tests/test_reducer.py` 覆盖 checkpoint payload 与 reducer full replay projection 等价；`backend/tests/test_scheduler_runner.py` 覆盖 scheduler/resume checkpoint 正常路径不调用 projection repair。
 - replay 后 artifact hash 可验证；`backend/tests/test_replay_resume.py::test_replay_hash_manifest_verifies_materialized_artifact_storage` 覆盖 materialized storage hash，`test_replay_hash_manifest_fails_closed_when_artifact_missing`、`test_replay_hash_manifest_fails_closed_when_storage_hash_mismatches`、`test_replay_hash_manifest_fails_closed_when_materialized_storage_ref_unregistered` 覆盖 fail-closed，`test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics` 覆盖 replay bundle report。
-- replay 后 document/materialized view hash 仍归 Round 10F；10E 只提供 report section 和接口，不勾 Phase 6 doc/materialized view hash 验收。
+- replay 后 document/materialized view hash 可验证；`backend/tests/test_boardroom_document_materializer.py` 覆盖正常、缺 artifact、非法 process asset 和非法 evidence lineage fail-closed；`backend/tests/test_replay_resume.py::test_replay_hash_manifest_includes_materialized_document_view_hash`、`test_replay_document_view_hash_matches_full_rematerialization`、`test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics` 覆盖 hash manifest/report 接入和 full rematerialization hash 稳定。
 
 ## Phase 7：015 replay 包验证
 

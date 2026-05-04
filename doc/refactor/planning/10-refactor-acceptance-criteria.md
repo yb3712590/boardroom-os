@@ -7,7 +7,7 @@
 - [ ] Provider streaming smoke 在同一 API 配置下达到外部 AI 编程框架同级稳定性。
 - [ ] Runtime kernel 不硬编码 CEO、员工、角色模板或业务 milestone。
 - [ ] Closeout 证明 PRD acceptance，而不是只证明 graph terminal。
-- [ ] 文档视图可从 event/process asset 重新物化。
+- [x] 文档视图可从 event/process asset 重新物化。证据：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_boardroom_document_materializer.py backend/tests/test_replay_resume.py -q` 覆盖 document materialized view hash、source refs、diagnostics 和 fail-closed。
 
 ## Phase 0：文档与边界冻结
 
@@ -115,7 +115,7 @@ Round 9E 证据：
 - [x] 支持 resume from incident id。证据：`backend/tests/test_replay_resume.py::test_resume_from_incident_id_preserves_source_ticket_followup_and_recovery_lineage`、`backend/tests/test_replay_resume.py::test_incident_id_resume_fails_closed_when_incident_is_missing`、`backend/tests/test_replay_resume.py::test_incident_id_resume_fails_closed_when_pinned_source_ticket_mismatches`、`backend/tests/test_replay_resume.py::test_incident_id_resume_fails_closed_when_source_ticket_context_is_missing`。
 - [x] projection checkpoint 避免每次全量 JSON replay。证据：`backend/tests/test_replay_resume.py::test_replay_checkpoint_write_read_round_trip`、`backend/tests/test_replay_resume.py::test_resume_with_checkpoint_replays_only_events_after_watermark`、`backend/tests/test_replay_resume.py` checkpoint invalidation 测试、`backend/tests/test_reducer.py::test_replay_checkpoint_payload_matches_reducer_full_replay`、`backend/tests/test_scheduler_runner.py::test_scheduler_resume_checkpoint_path_does_not_repair_projection_rows`。
 - [x] replay 后 artifact hash 可验证。证据：`backend/tests/test_replay_resume.py::test_replay_hash_manifest_verifies_materialized_artifact_storage`、`backend/tests/test_replay_resume.py::test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics`、`backend/tests/test_replay_resume.py::test_replay_hash_manifest_fails_closed_when_artifact_missing`、`backend/tests/test_replay_resume.py::test_replay_hash_manifest_fails_closed_when_storage_hash_mismatches`、`backend/tests/test_replay_resume.py::test_replay_hash_manifest_fails_closed_when_materialized_storage_ref_unregistered`。
-- [ ] replay 后 doc/materialized view hash 可验证。
+- [x] replay 后 doc/materialized view hash 可验证。证据：`backend/tests/test_boardroom_document_materializer.py::test_materialize_document_view_from_replayed_process_asset_and_artifact_content`、`test_materialize_document_view_fails_closed_when_artifact_is_missing`、`test_materialize_document_view_fails_closed_when_process_asset_is_invalid`、`test_materialize_document_view_fails_closed_when_evidence_lineage_is_invalid`；`backend/tests/test_replay_resume.py::test_replay_hash_manifest_includes_materialized_document_view_hash`、`test_replay_document_view_hash_matches_full_rematerialization`、`test_replay_bundle_report_includes_resume_checkpoint_artifacts_and_diagnostics`。
 - [x] event id resume 正常路径不需要人工补写 projection/index。证据：`backend/tests/test_replay_resume.py::test_resume_normal_path_does_not_touch_projection_repair`，以及 `rg -n "refresh_projections|INSERT INTO .*projection|UPDATE .*projection" backend/app/core/replay_resume.py backend/tests/test_replay_resume.py`。
 
 ## Phase 7：015 replay 包验证

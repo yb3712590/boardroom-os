@@ -88,6 +88,11 @@ from app.core.workflow_progression import (
     evaluate_progression_graph,
     recommended_incident_followup_action_from_policy_input,
 )
+from app.core.boardroom_document_materializer import (
+    BOARDROOM_DOCUMENT_VIEW_VERSION,
+    materialize_document_views_from_process_assets,
+    verify_artifact_storage_content_hash,
+)
 from app.core.reducer import (
     rebuild_actor_projections,
     rebuild_assignment_projections,
@@ -134,7 +139,7 @@ DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY = {
 DEFAULT_REPLAY_HASH_COMPATIBILITY = {
     "artifact_hash_manifest": "replay-hash-manifest.v1",
     "replay_bundle_report": "replay-bundle-report.v1",
-    "document_materialized_view": "DEFERRED_TO_ROUND_10F",
+    "document_materialized_view": BOARDROOM_DOCUMENT_VIEW_VERSION,
 }
 _TERMINAL_TICKET_STATUSES = {"CANCELLED", "COMPLETED", "FAILED", "TIMED_OUT"}
 _IN_FLIGHT_TICKET_STATUSES = {"LEASED", "EXECUTING"}
@@ -321,16 +326,19 @@ def _checkpoint_refs(checkpoint: ReplayCheckpoint | None) -> list[dict[str, Any]
     ]
 
 
-def _document_materialized_views_deferred() -> dict[str, Any]:
+def _document_materialized_views_empty(
+    source_event_range: dict[str, int] | None,
+) -> dict[str, Any]:
     return {
-        "status": "DEFERRED_TO_ROUND_10F",
+        "status": "READY",
+        "document_view_version": BOARDROOM_DOCUMENT_VIEW_VERSION,
+        "source_event_range": dict(source_event_range) if source_event_range is not None else None,
+        "process_asset_refs": [],
+        "artifact_refs": [],
+        "document_refs": [],
+        "content_hashes": {},
         "entries": [],
-        "diagnostics": [
-            {
-                "reason_code": "deferred_to_round_10f",
-                "message": "Document materialized view hash verification is reserved for Round 10F.",
-            }
-        ],
+        "diagnostics": [],
     }
 
 
@@ -405,6 +413,7 @@ def build_replay_hash_manifest(
     *,
     checkpoint: ReplayCheckpoint | None = None,
     replay_compatibility: dict[str, Any] | None = None,
+    document_process_asset_refs: list[str] | None = None,
 ) -> ReplayHashManifest:
     diagnostics: list[dict[str, Any]] = []
     storage_refs_by_artifact: dict[str, dict[str, Any]] = {}
@@ -413,16 +422,18 @@ def build_replay_hash_manifest(
     normalized_artifact_refs = sorted(_stable_unique(list(artifact_refs)))
 
     for artifact_ref in normalized_artifact_refs:
-        artifact = repository.get_artifact_by_ref(artifact_ref)
+        verification = verify_artifact_storage_content_hash(
+            repository,
+            artifact_store,
+            artifact_ref,
+        )
+        artifact = verification.get("artifact")
+        diagnostic = verification.get("diagnostic")
         if artifact is None:
-            diagnostics.append(
-                {
-                    "reason_code": "missing_artifact",
-                    "artifact_ref": artifact_ref,
-                    "message": "Replay artifact hash verification requires an artifact_index row.",
-                }
-            )
+            if diagnostic is not None:
+                diagnostics.append(dict(diagnostic))
             continue
+        assert isinstance(artifact, dict)
 
         status = str(artifact.get("materialization_status") or "").strip()
         materialization_status[artifact_ref] = status
@@ -434,83 +445,15 @@ def build_replay_hash_manifest(
         storage_ref = _artifact_storage_ref(artifact)
         storage_refs_by_artifact[artifact_ref] = storage_ref
 
-        if status != "MATERIALIZED":
-            diagnostics.append(
-                {
-                    "reason_code": "artifact_not_materialized",
-                    "artifact_ref": artifact_ref,
-                    "materialization_status": status,
-                    "message": "Replay artifact hash verification only reads storage for MATERIALIZED artifacts.",
-                }
-            )
-            continue
-
-        storage_relpath = str(artifact.get("storage_relpath") or "").strip() or None
-        storage_object_key = str(artifact.get("storage_object_key") or "").strip() or None
-        if storage_relpath is None and storage_object_key is None:
-            diagnostics.append(
-                {
-                    "reason_code": "unregistered_storage_ref",
-                    "artifact_ref": artifact_ref,
-                    "message": "Materialized artifact has no registered storage_relpath or storage_object_key.",
-                }
-            )
-            continue
-
-        expected_content_hash = content_hashes[artifact_ref]
-        if not expected_content_hash:
-            diagnostics.append(
-                {
-                    "reason_code": "missing_content_hash",
-                    "artifact_ref": artifact_ref,
-                    "message": "Materialized artifact is missing content_hash in artifact_index.",
-                }
-            )
-            continue
-
-        if artifact_store is None:
-            diagnostics.append(
-                {
-                    "reason_code": "storage_read_failed",
-                    "artifact_ref": artifact_ref,
-                    "message": "Artifact store is unavailable for replay hash verification.",
-                }
-            )
-            continue
-
-        try:
-            content = artifact_store.read_bytes(
-                storage_relpath,
-                storage_object_key=storage_object_key,
-            )
-        except Exception as exc:
-            diagnostics.append(
-                {
-                    "reason_code": "storage_read_failed",
-                    "artifact_ref": artifact_ref,
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc),
-                }
-            )
-            continue
-
-        actual_content_hash = hashlib.sha256(content).hexdigest()
-        if actual_content_hash != expected_content_hash:
-            diagnostics.append(
-                {
-                    "reason_code": "artifact_hash_mismatch",
-                    "artifact_ref": artifact_ref,
-                    "expected_content_hash": expected_content_hash,
-                    "actual_content_hash": actual_content_hash,
-                }
-            )
+        if diagnostic is not None:
+            diagnostics.append(dict(diagnostic))
             continue
 
         diagnostics.append(
             {
                 "reason_code": "artifact_hash_verified",
                 "artifact_ref": artifact_ref,
-                "content_hash": expected_content_hash,
+                "content_hash": content_hashes[artifact_ref],
             }
         )
 
@@ -521,9 +464,20 @@ def build_replay_hash_manifest(
         "storage_read_failed",
         "artifact_hash_mismatch",
     }
+    document_materialized_views = (
+        materialize_document_views_from_process_assets(
+            repository,
+            artifact_store,
+            process_asset_refs=list(document_process_asset_refs or []),
+            source_event_range=source_event_range,
+        )
+        if document_process_asset_refs
+        else _document_materialized_views_empty(source_event_range)
+    )
     status = (
         "FAILED"
         if any(item.get("reason_code") in failed_reason_codes for item in diagnostics)
+        or document_materialized_views.get("status") == "FAILED"
         else "READY"
     )
     storage_refs = [
@@ -539,7 +493,7 @@ def build_replay_hash_manifest(
         "storage_refs": storage_refs,
         "content_hashes": content_hashes,
         "materialization_status": materialization_status,
-        "document_materialized_views": _document_materialized_views_deferred(),
+        "document_materialized_views": document_materialized_views,
         "diagnostics": diagnostics,
         "replay_compatibility": dict(replay_compatibility or DEFAULT_REPLAY_HASH_COMPATIBILITY),
         "manifest_hash": "",
@@ -1765,10 +1719,14 @@ def build_replay_bundle_report(
         if checkpoint is not None
         else None
     )
-    document_materialized_views = _document_materialized_views_deferred()
+    document_materialized_views = dict(artifact_manifest.document_materialized_views)
     report_status = (
         "READY"
-        if resume_result.status == "READY" and artifact_manifest.status == "READY"
+        if (
+            resume_result.status == "READY"
+            and artifact_manifest.status == "READY"
+            and document_materialized_views.get("status") != "FAILED"
+        )
         else "FAILED"
     )
     report_payload = {

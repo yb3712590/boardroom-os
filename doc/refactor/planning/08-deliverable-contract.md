@@ -131,7 +131,8 @@ Closeout package 必须包含：
 - unresolved non-blocking notes；
 - risk disposition；
 - replay bundle refs；
-- audit materialization refs。
+- audit materialization refs；
+- document materialized view refs and hashes when replay bundle materializes audit documents.
 
 Closeout 不能只写：
 
@@ -329,6 +330,6 @@ Round 9E verification:
 
 Remaining Phase 6/7 dependencies:
 
-- Round 10A has implemented the minimal replay resume contract and event cursor boundary. Phase 5 deliverable contract semantics are unchanged; replay only records cursor/version/hash diagnostics.
-- Phase 6 still owns graph version resume, ticket/incident resume, checkpoints and replay bundle materialization.
+- Round 10A-10F have implemented replay resume, graph version resume, ticket/incident resume, checkpoints, artifact hash manifest, replay bundle report and document materialized view hash verification. Phase 5 deliverable contract semantics are unchanged; replay records cursor/version/hash/document diagnostics.
+- Phase 6 document views are materialized from event/process asset/artifact metadata/content. They do not depend on manually rewritten markdown files.
 - Phase 7 still owns 015 full replay import and replay-case validation for BR-040, BR-041, BR-100 and closeout/manual recovery on real 015 data.
