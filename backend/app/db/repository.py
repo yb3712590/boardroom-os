@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.contracts.advisory import BoardAdvisoryAnalysisRun, BoardAdvisorySession
+from app.contracts.replay import ReplayCheckpoint
 from app.config import get_settings
 from app.contracts.governance import GovernanceProfile
 from app.contracts.runtime import CompileManifest, CompiledContextBundle, CompiledExecutionPackage
@@ -166,6 +167,7 @@ class ControlPlaneRepository:
             self._ensure_compile_manifest_shape(connection)
             self._ensure_compiled_execution_package_shape(connection)
             self._ensure_process_asset_index_shape(connection)
+            self._ensure_replay_checkpoint_shape(connection)
             self._ensure_governance_profile_shape(connection)
             self._ensure_board_advisory_session_shape(connection)
             self._ensure_board_advisory_analysis_run_shape(connection)
@@ -940,6 +942,68 @@ class ControlPlaneRepository:
         with self.connection() as owned_connection:
             rows = owned_connection.execute(query, params).fetchall()
             return [self._convert_process_asset_index_row(row) for row in rows]
+
+    def save_replay_checkpoint(
+        self,
+        connection: sqlite3.Connection,
+        checkpoint: ReplayCheckpoint,
+    ) -> None:
+        payload = checkpoint.model_dump(mode="json")
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO replay_checkpoint (
+                checkpoint_id,
+                checkpoint_version,
+                projection_version,
+                schema_version,
+                contract_version,
+                event_cursor,
+                event_watermark_hash,
+                checkpoint_hash,
+                created_at,
+                invalidated_by_json,
+                covered_projections_json,
+                compatibility_json,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                checkpoint.checkpoint_id,
+                checkpoint.checkpoint_version,
+                checkpoint.projection_version,
+                checkpoint.schema_version,
+                checkpoint.contract_version,
+                checkpoint.event_watermark.event_cursor,
+                checkpoint.event_watermark.watermark_hash,
+                checkpoint.checkpoint_hash,
+                checkpoint.created_at.isoformat(),
+                json.dumps(checkpoint.invalidated_by, sort_keys=True),
+                json.dumps(list(checkpoint.covered_projections), sort_keys=True),
+                json.dumps(checkpoint.compatibility, sort_keys=True),
+                json.dumps(payload, sort_keys=True),
+            ),
+        )
+
+    def get_replay_checkpoint(
+        self,
+        checkpoint_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> ReplayCheckpoint | None:
+        query = "SELECT payload_json FROM replay_checkpoint WHERE checkpoint_id = ?"
+        params = (checkpoint_id,)
+        if connection is not None:
+            row = connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return ReplayCheckpoint.model_validate(json.loads(row["payload_json"]))
+
+        self.initialize()
+        with self.connection() as owned_connection:
+            row = owned_connection.execute(query, params).fetchone()
+            if row is None:
+                return None
+            return ReplayCheckpoint.model_validate(json.loads(row["payload_json"]))
 
     def get_process_asset_index_entry(
         self,
@@ -8665,6 +8729,57 @@ class ControlPlaneRepository:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_process_asset_index_kind_visibility ON process_asset_index(process_asset_kind, visibility_status)"
+        )
+
+    def _ensure_replay_checkpoint_shape(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS replay_checkpoint (
+                checkpoint_id TEXT PRIMARY KEY,
+                checkpoint_version TEXT NOT NULL,
+                projection_version INTEGER NOT NULL,
+                schema_version TEXT NOT NULL,
+                contract_version TEXT NOT NULL,
+                event_cursor TEXT NOT NULL,
+                event_watermark_hash TEXT NOT NULL,
+                checkpoint_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                invalidated_by_json TEXT NOT NULL DEFAULT '[]',
+                covered_projections_json TEXT NOT NULL DEFAULT '[]',
+                compatibility_json TEXT NOT NULL DEFAULT '{}',
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(replay_checkpoint)").fetchall()
+        }
+        required_columns = {
+            "checkpoint_id": "TEXT",
+            "checkpoint_version": "TEXT",
+            "projection_version": "INTEGER",
+            "schema_version": "TEXT",
+            "contract_version": "TEXT",
+            "event_cursor": "TEXT",
+            "event_watermark_hash": "TEXT",
+            "checkpoint_hash": "TEXT",
+            "created_at": "TEXT",
+            "invalidated_by_json": "TEXT NOT NULL DEFAULT '[]'",
+            "covered_projections_json": "TEXT NOT NULL DEFAULT '[]'",
+            "compatibility_json": "TEXT NOT NULL DEFAULT '{}'",
+            "payload_json": "TEXT",
+        }
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE replay_checkpoint ADD COLUMN {column_name} {column_type}"
+                )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_replay_checkpoint_projection_version ON replay_checkpoint(projection_version)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_replay_checkpoint_event_cursor ON replay_checkpoint(event_cursor)"
         )
 
     def _ensure_governance_profile_shape(self, connection: sqlite3.Connection) -> None:

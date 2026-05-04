@@ -178,7 +178,7 @@ Round 9E 证据：
 - closeout final refs 混入治理文档 / backlog recommendation：Round 9E 覆盖 `test_closeout_gate_rejects_illegal_final_artifact_ref_kind`、`test_closeout_gate_rejects_backlog_recommendation_final_artifact_ref_kind` 和 deliverable final table governance/backlog exclusion。
 - manual closeout recovery：Round 9E 覆盖 `backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table`；真实 015 replay 仍归 Phase 7。
 
-下一入口：Round 10C Ticket / incident resume。Round 10A 已建立 Replay resume contract 与 event cursor；Round 10B 已实现 graph version resume，并证明 graph version resume 与同一事件集 full replay 的 effective graph pointer / projection summary 等价。不得把 ticket/incident/checkpoint 或 Phase 7 015 full replay 塞回 graph version 批次。
+下一入口：Round 10E Artifact hash / replay bundle report。Round 10A 已建立 Replay resume contract 与 event cursor；Round 10B 已实现 graph version resume，并证明 graph version resume 与同一事件集 full replay 的 effective graph pointer / projection summary 等价；Round 10C 已实现 ticket / incident resume；Round 10D 已建立 projection checkpoint 和 invalidation。不得把 artifact hash、document materialization 或 Phase 7 015 full replay 塞回 checkpoint 批次。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 
@@ -192,7 +192,10 @@ Round 9E 证据：
 - Round 10C：ticket resume 从 event log 重建 projection 后保留 terminal/in-flight 状态、runtime node view、assignment/lease context、current graph pointer 和 related artifact/evidence/process asset refs。
 - Round 10C：incident resume 保留 incident status、source ticket context、followup action、incident/recovery action lineage 和 Phase 4 `recovery.actions` 形状的 rework/restore policy input。
 - Round 10C：缺 ticket、缺 incident、source ticket 不一致、source ticket 缺失、runtime node view 断裂都会 fail-closed。
-- 增量 projection checkpoint。
+- Round 10D：已定义 `ReplayCheckpoint`，字段覆盖 checkpoint id/version、event watermark、projection version、schema version、contract version、invalidated_by、created_at、hash、covered projections、compatibility 和 projection payloads。
+- Round 10D：checkpoint 存储边界为 `replay_checkpoint` 表，保存 checkpoint JSON；正常 resume 不手写 projection/index row，也不调用 projection repair。
+- Round 10D：`resume_replay_with_checkpoint()` 复用 10A–10C 四类 resume contract。有效 checkpoint 从 checkpoint watermark 后增量 replay；无效 checkpoint 默认 fail-closed，只有显式 `allow_full_replay_fallback=True` 才 full replay fallback 并写 diagnostic。
+- Round 10D：schema version、contract version、projection version、event watermark、checkpoint hash、covered projection set 和 compatibility mismatch 都会输出 checkpoint invalidation diagnostic。
 - event replay 性能预算。
 - replay bundle materializer。
 - 禁止人工投影补写作为正常路径。
@@ -202,7 +205,7 @@ Round 9E 证据：
 - resume from event id 已由 `backend/tests/test_replay_resume.py` 覆盖；正常路径不调用 projection repair。
 - 从中间 graph version 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 graph version watermark、full replay equivalence、orphan pending/effective edge、late old attempt / late old cancellation 不改 current pointer 语义，以及缺失/断层/event range mismatch/hash missing/hash mismatch/projection rebuild failed fail-closed。
 - 从 ticket id / incident id 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 ticket terminal/in-flight、runtime node view、assignment/lease、related refs、incident source ticket、followup/recovery lineage 和缺上下文 fail-closed。
-- 1GB 级 DB 不需要每次全量 JSON replay。
+- Projection checkpoint 避免每次全量 JSON replay；`backend/tests/test_replay_resume.py` 覆盖 checkpoint write/read、增量 replay event count/starting cursor、schema/version/hash/watermark/projection set/compatibility invalidation、stale checkpoint fail-closed 和显式 full replay fallback；`backend/tests/test_reducer.py` 覆盖 checkpoint payload 与 reducer full replay projection 等价；`backend/tests/test_scheduler_runner.py` 覆盖 scheduler/resume checkpoint 正常路径不调用 projection repair。
 - replay 后 artifact/doc view hash 一致。
 
 ## Phase 7：015 replay 包验证

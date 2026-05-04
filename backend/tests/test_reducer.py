@@ -72,6 +72,12 @@ from app.core.reducer import (
     rebuild_ticket_projections,
     rebuild_workflow_projections,
 )
+from app.core.replay_resume import (
+    DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+    build_projection_checkpoint_from_replay_events,
+    build_replay_resume_request,
+)
 
 
 def test_reducer_rebuilds_projection_from_workflow_created_events():
@@ -135,6 +141,61 @@ def test_repository_projection_matches_reducer_replay(client):
 
     assert any(item["workflow_id"] == active_workflow["workflow_id"] for item in replayed)
     assert max(item["version"] for item in replayed) == active_workflow["version"]
+
+
+def test_replay_checkpoint_payload_matches_reducer_full_replay():
+    events = [
+        {
+            "sequence_no": 1,
+            "event_id": "evt_checkpoint_wf",
+            "event_type": EVENT_WORKFLOW_CREATED,
+            "workflow_id": "wf_checkpoint",
+            "occurred_at": datetime.fromisoformat("2026-05-04T10:01:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "north_star_goal": "Checkpoint reducer parity",
+                    "budget_cap": 500000,
+                    "deadline_at": None,
+                    "title": "Checkpoint reducer parity",
+                }
+            ),
+        },
+        {
+            "sequence_no": 2,
+            "event_id": "evt_checkpoint_ticket",
+            "event_type": EVENT_TICKET_CREATED,
+            "workflow_id": "wf_checkpoint",
+            "occurred_at": datetime.fromisoformat("2026-05-04T10:02:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "ticket_id": "tkt_checkpoint",
+                    "node_id": "node_checkpoint",
+                    "graph_contract": {"lane_kind": "execution"},
+                    "retry_budget": 1,
+                    "timeout_sla_sec": 1800,
+                    "priority": "normal",
+                }
+            ),
+        },
+    ]
+    request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_checkpoint_ticket",
+        projection_version=2,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 2},
+    )
+
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events,
+        request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+
+    assert checkpoint.projection_payloads["workflow"] == rebuild_workflow_projections(events)
+    assert checkpoint.projection_payloads["ticket"] == rebuild_ticket_projections(events)
+    assert checkpoint.projection_payloads["node"] == rebuild_node_projections(events)
+    assert checkpoint.projection_payloads["runtime_node"] == rebuild_runtime_node_projections(events)
 
 
 def test_reducer_rebuilds_employee_projection_through_hire_replace_freeze_and_restore():

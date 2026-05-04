@@ -7,15 +7,21 @@ from typing import Any
 from datetime import datetime
 
 from app.core.constants import (
+    EVENT_BOARD_REVIEW_REQUIRED,
+    BLOCKING_REASON_PROVIDER_REQUIRED,
     EVENT_INCIDENT_OPENED,
     EVENT_INCIDENT_RECOVERY_STARTED,
     EVENT_GRAPH_PATCH_APPLIED,
     EVENT_TICKET_ASSIGNED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
     EVENT_TICKET_CANCELLED,
     EVENT_TICKET_COMPLETED,
     EVENT_TICKET_CREATED,
     EVENT_TICKET_FAILED,
     EVENT_TICKET_LEASE_GRANTED,
+    EVENT_PROVIDER_ATTEMPT_FINISHED,
+    EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
+    EVENT_PROVIDER_ATTEMPT_STARTED,
     EVENT_TICKET_STARTED,
     EVENT_WORKFLOW_CREATED,
     SCHEMA_VERSION,
@@ -35,8 +41,14 @@ from app.core.reducer import (
     rebuild_workflow_projections,
 )
 from app.core.replay_resume import (
+    DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
     REPLAY_RESUME_CONTRACT_VERSION,
+    build_projection_checkpoint_from_replay_events,
+    build_replay_checkpoint,
     build_replay_resume_request,
+    _apply_incremental_projection_events,
+    resume_replay_with_checkpoint,
     resume_replay_from_event_id,
     resume_replay_from_graph_version,
     resume_replay_from_incident_id,
@@ -1316,3 +1328,578 @@ def test_resume_normal_path_does_not_touch_projection_repair(monkeypatch, client
 
     assert result.status == "READY"
     assert called["refresh_projections"] is False
+
+
+def test_replay_checkpoint_write_read_round_trip(tmp_path):
+    repository = ControlPlaneRepository(tmp_path / "checkpoint.db", 1000)
+    repository.initialize()
+    request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        expected_graph_patch_hash="hash-graph-version-resume",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_replay_checkpoint(
+        _graph_equivalence_events(),
+        request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+
+    with repository.transaction() as connection:
+        repository.save_replay_checkpoint(connection, checkpoint)
+        loaded = repository.get_replay_checkpoint(checkpoint.checkpoint_id, connection=connection)
+
+    assert loaded == checkpoint
+    assert loaded is not None
+    assert loaded.checkpoint_hash == checkpoint.checkpoint_hash
+    assert loaded.covered_projections == DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS
+    assert loaded.invalidated_by == []
+
+
+def test_resume_with_checkpoint_replays_only_events_after_watermark():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    resumed = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+    full = resume_replay_from_graph_version(events, resume_request)
+
+    assert resumed.status == "READY"
+    assert resumed.projection_summary == full.projection_summary
+    assert resumed.diagnostic["checkpoint"]["mode"] == "incremental"
+    assert resumed.diagnostic["checkpoint"]["start_after_event_cursor"] == "evt_graph_patch"
+    assert resumed.diagnostic["checkpoint"]["incremental_event_count"] == 1
+    assert resumed.diagnostic["checkpoint"]["incremental_start_sequence_no"] == 6
+
+
+def test_resume_with_checkpoint_fails_closed_on_schema_version_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"schema_version": "schema.v0"})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["schema_version_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_contract_version_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"contract_version": "replay-resume.v0"})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["contract_version_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_projection_version_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"projection_version": 4})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["projection_version_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_event_watermark_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+    stale_watermark = checkpoint.event_watermark.model_copy(update={"event_cursor": "evt_graph_old"})
+    checkpoint = checkpoint.model_copy(update={"event_watermark": stale_watermark})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["event_watermark_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_hash_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"checkpoint_hash": "sha256:tampered"})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["checkpoint_hash_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_projection_set_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=("workflow", "ticket"),
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["covered_projection_set_mismatch"]
+
+
+def test_resume_with_checkpoint_fails_closed_on_compatibility_mismatch():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility={**DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY, "projection_reducer": "old"},
+    )
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.replay_watermark is None
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["compatibility_mismatch"]
+
+
+def test_resume_with_stale_checkpoint_requires_explicit_full_replay_fallback():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"checkpoint_hash": "sha256:stale"})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    failed = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+    fallback = resume_replay_with_checkpoint(
+        events,
+        resume_request,
+        checkpoint=checkpoint,
+        allow_full_replay_fallback=True,
+    )
+
+    assert failed.status == "FAILED"
+    assert failed.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert fallback.status == "READY"
+    assert fallback.diagnostic["checkpoint"]["mode"] == "full_replay_fallback"
+    assert fallback.diagnostic["checkpoint"]["invalidated_by"] == ["checkpoint_hash_mismatch"]
+
+
+def test_event_ticket_and_incident_resume_can_use_checkpoint():
+    events = _incident_resume_events()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_incident_source_created",
+        projection_version=2,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 2},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:2],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+
+    event_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_incident_source_failed",
+        projection_version=3,
+    )
+    ticket_request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=5,
+        ticket_id="tkt_incident_resume_source",
+    )
+    incident_request = build_replay_resume_request(
+        resume_kind="incident_id",
+        event_cursor=None,
+        projection_version=5,
+        incident_id="inc_resume_failure",
+        ticket_id="tkt_incident_resume_source",
+    )
+
+    event_result = resume_replay_with_checkpoint(events, event_request, checkpoint=checkpoint)
+    ticket_result = resume_replay_with_checkpoint(events, ticket_request, checkpoint=checkpoint)
+    incident_result = resume_replay_with_checkpoint(events, incident_request, checkpoint=checkpoint)
+
+    assert event_result.status == "READY"
+    assert event_result.diagnostic["checkpoint"]["incremental_event_count"] == 1
+    assert ticket_result.status == "READY"
+    assert ticket_result.projection_summary == resume_replay_from_ticket_id(events, ticket_request).projection_summary
+    assert incident_result.status == "READY"
+    assert incident_result.projection_summary == resume_replay_from_incident_id(events, incident_request).projection_summary
+
+
+def test_checkpoint_incremental_replay_preserves_board_review_requested_completion():
+    events = [
+        _event(1, "evt_board_wf", EVENT_WORKFLOW_CREATED, _workflow_event_payload("Checkpoint board review")),
+        _event(
+            2,
+            "evt_board_ticket",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload("tkt_board_review", "node_board_review"),
+        ),
+        _event(
+            3,
+            "evt_board_completed_pending_review",
+            EVENT_TICKET_COMPLETED,
+            _ticket_event_payload(
+                "tkt_board_review",
+                "node_board_review",
+                status_detail={"board_review_requested": True},
+            ),
+        ),
+        _event(
+            4,
+            "evt_board_review_required",
+            EVENT_BOARD_REVIEW_REQUIRED,
+            _ticket_event_payload("tkt_board_review", "node_board_review"),
+        ),
+    ]
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_board_ticket",
+        projection_version=2,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 2},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:2],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+    resume_request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=4,
+        ticket_id="tkt_board_review",
+    )
+
+    resumed = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+    full = resume_replay_from_ticket_id(events, resume_request)
+
+    assert resumed.status == "READY"
+    assert resumed.projection_summary == full.projection_summary
+    assert "node_board_review" in resumed.projection_summary["blocked_node_refs"]
+    assert "node_board_review" not in resumed.projection_summary["completed_node_refs"]
+
+
+def test_checkpoint_incremental_replay_preserves_precondition_blocking_reason():
+    events = [
+        _event(1, "evt_block_wf", EVENT_WORKFLOW_CREATED, _workflow_event_payload("Checkpoint blocked")),
+        _event(
+            2,
+            "evt_block_ticket",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload("tkt_blocked", "node_blocked"),
+        ),
+        _event(
+            3,
+            "evt_blocked_precondition",
+            EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+            _ticket_event_payload(
+                "tkt_blocked",
+                "node_blocked",
+                status_detail={"reason_code": BLOCKING_REASON_PROVIDER_REQUIRED},
+            ),
+        ),
+    ]
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_block_ticket",
+        projection_version=2,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 2},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:2],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+    resume_request = build_replay_resume_request(
+        resume_kind="ticket_id",
+        event_cursor=None,
+        projection_version=3,
+        ticket_id="tkt_blocked",
+    )
+
+    resumed = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+    full = resume_replay_from_ticket_id(events, resume_request)
+
+    assert resumed.status == "READY"
+    assert resumed.projection_summary == full.projection_summary
+    assert resumed.projection_summary["index_summary"]["blocked_reasons"] == [
+        {
+            "reason_code": f"EXPLICIT_BLOCKING_REASON:{BLOCKING_REASON_PROVIDER_REQUIRED}",
+            "ticket_ids": ["tkt_blocked"],
+            "node_ids": ["node_blocked"],
+            "count": 1,
+        }
+    ]
+
+
+def test_checkpoint_incremental_replay_preserves_terminal_attempt_projection():
+    events = [
+        _event(1, "evt_attempt_wf", EVENT_WORKFLOW_CREATED, _workflow_event_payload("Checkpoint attempt")),
+        _event(
+            2,
+            "evt_attempt_ticket",
+            EVENT_TICKET_CREATED,
+            _ticket_event_payload("tkt_attempt", "node_attempt"),
+        ),
+        _event(
+            3,
+            "evt_attempt_started",
+            EVENT_PROVIDER_ATTEMPT_STARTED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_attempt",
+                "node_id": "node_attempt",
+                "attempt_id": "attempt_checkpoint",
+                "attempt_no": 1,
+                "idempotency_key": "attempt-key",
+            },
+        ),
+        _event(
+            4,
+            "evt_attempt_finished",
+            EVENT_PROVIDER_ATTEMPT_FINISHED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_attempt",
+                "node_id": "node_attempt",
+                "attempt_id": "attempt_checkpoint",
+                "attempt_no": 1,
+                "status": "COMPLETED",
+            },
+        ),
+        _event(
+            5,
+            "evt_attempt_late_heartbeat",
+            EVENT_PROVIDER_ATTEMPT_HEARTBEAT_RECORDED,
+            {
+                "workflow_id": "wf_replay",
+                "ticket_id": "tkt_attempt",
+                "node_id": "node_attempt",
+                "attempt_id": "attempt_checkpoint",
+                "attempt_no": 1,
+            },
+        ),
+    ]
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_attempt_finished",
+        projection_version=4,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 4},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:4],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+
+    resumed = resume_replay_with_checkpoint(
+        events,
+        build_replay_resume_request(
+            resume_kind="event_id",
+            event_cursor="evt_attempt_late_heartbeat",
+            projection_version=5,
+        ),
+        checkpoint=checkpoint,
+    )
+
+    assert resumed.status == "READY"
+    assert checkpoint.projection_payloads["execution_attempt"][0]["state"] == "COMPLETED"
+    incrementally_replayed = _apply_incremental_projection_events(
+        checkpoint.projection_payloads,
+        events[4:],
+        target_events=events,
+    )
+    assert incrementally_replayed["execution_attempt"] == rebuild_execution_attempt_projections(events)
+
+
+def test_resume_with_checkpoint_fails_closed_when_checkpoint_is_already_invalidated():
+    events = _graph_equivalence_events_with_late_old_complete()
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor="evt_graph_patch",
+        projection_version=5,
+        graph_version="gv_5",
+        event_range={"start_sequence_no": 1, "end_sequence_no": 5},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events[:5],
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    ).model_copy(update={"invalidated_by": ["manual_invalidation"]})
+    resume_request = build_replay_resume_request(
+        resume_kind="graph_version",
+        event_cursor=None,
+        projection_version=6,
+        graph_version="gv_6",
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "FAILED"
+    assert result.diagnostic["reason_code"] == "checkpoint_invalidated"
+    assert result.diagnostic["invalidated_by"] == ["checkpoint_already_invalidated"]

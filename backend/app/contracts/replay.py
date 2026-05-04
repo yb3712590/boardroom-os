@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from app.contracts.common import JsonValue, StrictModel
@@ -33,6 +34,21 @@ class ReplayWatermark(StrictModel):
     event_log_hash: str
     request_hash: str
     watermark_hash: str
+
+
+class ReplayCheckpoint(StrictModel):
+    checkpoint_id: str
+    checkpoint_version: str
+    event_watermark: ReplayWatermark
+    projection_version: int
+    schema_version: str
+    contract_version: str
+    invalidated_by: list[str]
+    created_at: datetime
+    checkpoint_hash: str
+    covered_projections: tuple[str, ...]
+    compatibility: dict[str, JsonValue]
+    projection_payloads: dict[str, list[dict[str, JsonValue]]]
 
 
 class ReplayResumeResult(StrictModel):

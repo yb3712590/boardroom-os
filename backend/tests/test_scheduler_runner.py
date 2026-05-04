@@ -57,6 +57,13 @@ from app.core.runtime_provider_config import (
     RuntimeProviderSelection,
     RuntimeProviderStoredConfig,
 )
+from app.core.replay_resume import (
+    DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+    build_projection_checkpoint_from_replay_events,
+    build_replay_resume_request,
+    resume_replay_with_checkpoint,
+)
 from app.core.ticket_graph import build_ticket_graph_snapshot
 from app.core.ticket_handlers import run_scheduler_tick
 from app.scheduler_runner import run_scheduler_loop, run_scheduler_once
@@ -6938,3 +6945,80 @@ def test_scheduler_progresses_ready_ticket_after_ceo_hire(client, monkeypatch, s
     assert ticket_projection is not None
     assert ticket_projection["status"] == "LEASED"
     assert leased_events[-1]["payload"]["actor_id"] == "emp_backend_backup"
+
+
+def test_scheduler_resume_checkpoint_path_does_not_repair_projection_rows(client, monkeypatch):
+    repository = client.app.state.repository
+    called = {"refresh_projections": False}
+    events = [
+        {
+            "sequence_no": 1,
+            "event_id": "evt_scheduler_resume_wf",
+            "event_type": "WORKFLOW_CREATED",
+            "workflow_id": "wf_scheduler_resume",
+            "occurred_at": datetime.fromisoformat("2026-05-04T10:01:00+08:00"),
+            "payload": {
+                "north_star_goal": "Scheduler resume checkpoint",
+                "budget_cap": 500000,
+                "deadline_at": None,
+                "title": "Scheduler resume checkpoint",
+            },
+        },
+        {
+            "sequence_no": 2,
+            "event_id": "evt_scheduler_resume_ticket",
+            "event_type": "TICKET_CREATED",
+            "workflow_id": "wf_scheduler_resume",
+            "occurred_at": datetime.fromisoformat("2026-05-04T10:02:00+08:00"),
+            "payload": {
+                "ticket_id": "tkt_scheduler_resume",
+                "node_id": "node_scheduler_resume",
+                "graph_contract": {"lane_kind": "execution"},
+                "retry_budget": 1,
+                "timeout_sla_sec": 1800,
+                "priority": "normal",
+            },
+        },
+        {
+            "sequence_no": 3,
+            "event_id": "evt_scheduler_resume_done",
+            "event_type": "TICKET_COMPLETED",
+            "workflow_id": "wf_scheduler_resume",
+            "occurred_at": datetime.fromisoformat("2026-05-04T10:03:00+08:00"),
+            "payload": {
+                "ticket_id": "tkt_scheduler_resume",
+                "node_id": "node_scheduler_resume",
+                "graph_contract": {"lane_kind": "execution"},
+            },
+        },
+    ]
+    checkpoint_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_scheduler_resume_ticket",
+        projection_version=2,
+        event_range={"start_sequence_no": 1, "end_sequence_no": 2},
+    )
+    checkpoint = build_projection_checkpoint_from_replay_events(
+        events,
+        checkpoint_request,
+        covered_projections=DEFAULT_REPLAY_CHECKPOINT_PROJECTIONS,
+        compatibility=DEFAULT_REPLAY_CHECKPOINT_COMPATIBILITY,
+    )
+
+    def _forbid_refresh_projections(*args, **kwargs):
+        called["refresh_projections"] = True
+        raise AssertionError("checkpoint resume must not repair projection rows")
+
+    monkeypatch.setattr(repository, "refresh_projections", _forbid_refresh_projections)
+    resume_request = build_replay_resume_request(
+        resume_kind="event_id",
+        event_cursor="evt_scheduler_resume_done",
+        projection_version=3,
+    )
+
+    result = resume_replay_with_checkpoint(events, resume_request, checkpoint=checkpoint)
+
+    assert result.status == "READY"
+    assert result.diagnostic["checkpoint"]["mode"] == "incremental"
+    assert result.diagnostic["checkpoint"]["incremental_event_count"] == 1
+    assert called["refresh_projections"] is False
