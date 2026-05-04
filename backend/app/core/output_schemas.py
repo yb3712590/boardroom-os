@@ -1375,9 +1375,51 @@ def _delivery_check_report_schema_body() -> dict[str, Any]:
 def _delivery_closeout_package_schema_body() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["summary", "final_artifact_refs", "handoff_notes"],
+        "required": [
+            "summary",
+            "deliverable_contract_version",
+            "deliverable_contract_id",
+            "evaluation_fingerprint",
+            "final_evidence_table",
+            "final_artifact_refs",
+            "handoff_notes",
+        ],
         "properties": {
             "summary": {"type": "string"},
+            "deliverable_contract_version": {"type": "string"},
+            "deliverable_contract_id": {"type": "string"},
+            "evaluation_fingerprint": {"type": "string"},
+            "final_evidence_table": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "acceptance_criterion_ref",
+                        "evidence_ref",
+                        "producer_ticket_id",
+                        "producer_node_ref",
+                        "source_surface_ref",
+                        "artifact_kind",
+                        "legality_status",
+                        "current_status",
+                        "supersede_status",
+                        "finding_disposition",
+                    ],
+                    "properties": {
+                        "acceptance_criterion_ref": {"type": "string"},
+                        "evidence_ref": {"type": "string"},
+                        "producer_ticket_id": {"type": "string"},
+                        "producer_node_ref": {"type": "string"},
+                        "source_surface_ref": {"type": "string"},
+                        "artifact_kind": {"type": "string"},
+                        "legality_status": {"type": "string"},
+                        "current_status": {"type": "string"},
+                        "supersede_status": {"type": "string"},
+                        "finding_disposition": {"type": "string"},
+                    },
+                },
+            },
             "final_artifact_refs": {
                 "type": "array",
                 "minItems": 1,
@@ -1593,6 +1635,56 @@ def _validate_delivery_check_report_payload(payload: dict[str, Any]) -> None:
 def _validate_delivery_closeout_package_payload(payload: dict[str, Any]) -> None:
     payload = _require_object(payload)
     _require_non_empty_string(payload, "summary", label="Delivery closeout package payload.summary")
+    _require_non_empty_string(
+        payload,
+        "deliverable_contract_version",
+        label="Delivery closeout package payload.deliverable_contract_version",
+    )
+    _require_non_empty_string(
+        payload,
+        "deliverable_contract_id",
+        label="Delivery closeout package payload.deliverable_contract_id",
+    )
+    _require_non_empty_string(
+        payload,
+        "evaluation_fingerprint",
+        label="Delivery closeout package payload.evaluation_fingerprint",
+    )
+    final_evidence_table = _require_array(
+        payload,
+        "final_evidence_table",
+        label="Delivery closeout package payload.final_evidence_table",
+        non_empty=True,
+    )
+    for index, row in enumerate(final_evidence_table):
+        field_prefix = f"final_evidence_table[{index}]"
+        if not isinstance(row, dict):
+            _raise_schema_validation_error(
+                field_path=field_prefix,
+                expected="object",
+                actual_value=row,
+                message="Each final evidence table row must be an object.",
+            )
+        for field_name in (
+            "acceptance_criterion_ref",
+            "evidence_ref",
+            "producer_ticket_id",
+            "producer_node_ref",
+            "source_surface_ref",
+            "artifact_kind",
+            "legality_status",
+            "current_status",
+            "supersede_status",
+            "finding_disposition",
+        ):
+            value = row.get(field_name, _MISSING)
+            if not isinstance(value, str) or not value.strip():
+                _raise_schema_validation_error(
+                    field_path=f"{field_prefix}.{field_name}",
+                    expected="non-empty string",
+                    actual_value=value,
+                    message=f"Final evidence table row requires {field_name}.",
+                )
     _require_string_array(
         payload,
         "final_artifact_refs",

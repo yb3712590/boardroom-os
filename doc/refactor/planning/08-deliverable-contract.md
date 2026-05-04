@@ -121,7 +121,10 @@ Checker verdict 不是最终真相。最终判断顺序：
 Closeout package 必须包含：
 
 - deliverable contract version；
+- deliverable contract id；
+- evaluation fingerprint；
 - acceptance criteria status table；
+- final evidence table；
 - final source surfaces；
 - final evidence refs；
 - supersede summary；
@@ -141,6 +144,21 @@ runtime graph completed
 ```text
 PRD acceptance satisfied by these source/evidence/check refs
 ```
+
+Round 9E 将 closeout 的 runtime 放行口径收口为 `DeliverableEvaluation` + final evidence table。`final_artifact_refs` 继续保留为 API/display 兼容字段，但不能单独证明 contract satisfaction。
+
+Final evidence table 的固定列为：
+
+- acceptance criterion；
+- evidence ref；
+- producer ticket；
+- producer node/source surface；
+- artifact kind；
+- legality status；
+- supersede/current status；
+- finding disposition。
+
+Final evidence table 只能由 evaluator 认可的 current + legal evidence 编译。`SUPERSEDED`、`PLACEHOLDER`、`ARCHIVE`、`UNKNOWN_REF`、`STALE_CURRENT_POINTER`、`ILLEGAL_KIND`、governance-only docs 和 backlog recommendation-only refs 不得进入 final table。
 
 ## 015 回归要求
 
@@ -242,9 +260,9 @@ Integrated gates:
 - `output_schemas.py` validates optional `maker_checker_verdict.convergence_policy` through the structured model.
 - `workflow_controller.py`, `ceo_snapshot.py` and `graph_health.py` approved-review checks are marked as API display / legacy input compiler only, not contract satisfaction.
 
-Still deferred:
+Round 9E follow-up:
 
-- Round 9E must build the final evidence table and closeout package contract version surface.
+- Final evidence table and closeout package contract version surface have been implemented in Round 9E. Remaining replay/resume/checkpoint validation stays in Phase 6/7.
 
 9C verification:
 
@@ -271,11 +289,45 @@ Integrated paths:
 - `workflow_completion.py` carries contract gate blocking findings and compiled recovery actions into the closeout gate issue.
 - `workflow_controller.py` remains an input compiler and policy caller. It does not parse checker notes or artifact bodies to choose rework targets.
 
-Still deferred:
+Round 9E follow-up:
 
-- Round 9E must build the closeout final evidence table and expose the contract version in closeout packages.
+- Closeout final evidence table and closeout package contract version surface have been implemented in Round 9E. Remaining 015 full replay validation stays in Phase 7.
 
 9D verification:
 
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_progression.py -q` covers upstream source target, missing test evidence target, checker-only target, missing current producer incident, controller recovery input, and BR-040/BR-041 placeholder equivalence.
 - `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework -q` covers failed delivery checker rework and convergence fallback paths.
+
+## Round 9E implementation status
+
+Round 9E completes the Phase 5 closeout contract integration.
+
+Implemented additions:
+
+- `FinalEvidenceTableRow`, `FinalEvidenceTable` and `compile_final_evidence_table()` are defined in `backend/app/core/deliverable_contract.py`.
+- Closeout package schema now requires `deliverable_contract_version`, `deliverable_contract_id`, `evaluation_fingerprint` and `final_evidence_table`.
+- Runtime closeout normalization and ticket result submit hooks compile closeout payload contract fields from `DeliverableEvaluation` and the final evidence table.
+- Workflow completion re-evaluates the closeout contract and rejects missing/mismatched contract id, version, fingerprint or final evidence table.
+- Progression closeout readiness now carries contract id, contract version, evaluation fingerprint, final table row count and blocking finding count. `CLOSEOUT` proposals require contract satisfied and a non-empty final table summary.
+- Current graph pointer filtering is applied when compiling closeout final evidence, so stale old attempts do not enter the final evidence set.
+
+Legacy helper boundaries:
+
+- `_delivery_closeout_final_artifact_refs()` remains an input compiler for runtime payload normalization only.
+- `classify_closeout_final_artifact_ref()` remains an artifact legality / evaluation helper and API-display vocabulary source.
+- Existing checker verdict helpers remain execution shells or input compilers; they do not override blocking `DeliverableEvaluation` findings.
+- Existing closeout package refs remain API/display compatibility fields; runtime completion uses contract id/version/fingerprint plus final evidence table.
+- Failed delivery checker rework keeps the Round 9D upstream target semantics and still requires structured convergence policy for allowed failed-report gaps.
+
+Round 9E verification:
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py backend/tests/test_output_schemas.py -q` covers PRD acceptance compiler, source surface mapping, evidence pack mapping, closeout schema contract fields, final table row fields, and superseded/placeholder/archive/unknown/stale/governance/backlog evidence exclusion.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_autopilot.py backend/tests/test_workflow_progression.py -q` covers closeout contract/table gate, stale old attempt exclusion, governance/backlog final ref rejection, graph terminal not replacing contract satisfaction, and closeout proposal contract readiness.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q` covers failed delivery checker rework and structured convergence policy.
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_closeout_internal_checker_approved_returns_completion_summary backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table -q` covers closeout package contract fields and manual closeout recovery not bypassing the contract.
+- `rg -n "graph terminal|checker notes|freeform|final_artifact_refs.*satisf" backend/app/core` and `rg -n "_delivery_closeout_final_artifact_refs|classify_closeout_final_artifact_ref|evaluate_deliverable_contract|final_evidence_table" backend/app/core` are the grep acceptance checks for old release paths and retained helper boundaries.
+
+Remaining Phase 6/7 dependencies:
+
+- Phase 6 still owns replay resume contract, event cursor, checkpoints and replay bundle materialization.
+- Phase 7 still owns 015 full replay import and replay-case validation for BR-040, BR-041, BR-100 and closeout/manual recovery on real 015 data.

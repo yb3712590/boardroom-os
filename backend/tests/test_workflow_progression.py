@@ -792,6 +792,11 @@ def test_policy_creates_closeout_with_stable_metadata() -> None:
                     "final_evidence_legality_summary": {
                         "status": "ACCEPTED",
                         "illegal_ref_count": 0,
+                        "contract_id": "dc_wf_policy_contract_v1_hash",
+                        "contract_version": "v1",
+                        "evaluation_fingerprint": "de_dc_wf_policy_contract_v1_hash_hash",
+                        "blocking_finding_count": 0,
+                        "final_evidence_table_row_count": 1,
                     },
                     "ticket_payload": {
                         "workflow_id": "wf_policy_contract",
@@ -899,6 +904,53 @@ def test_policy_blocks_closeout_for_open_incident_approval_gate_or_illegal_evide
     assert proposal.payload["blocked_by"]["approval_refs"] == ["approval_open"]
     assert proposal.payload["delivery_checker_gate_issue"]["reason_code"] == "delivery_check_failed"
     assert proposal.payload["final_evidence_legality_summary"]["illegal_ref_count"] == 1
+
+
+def test_policy_blocks_closeout_without_satisfied_contract_final_table() -> None:
+    snapshot = _minimal_progression_snapshot(
+        graph_nodes=[
+            {
+                "node_ref": "graph:delivery",
+                "ticket_id": "tkt_delivery_done",
+                "ticket_status": "COMPLETED",
+                "node_status": "COMPLETED",
+            }
+        ]
+    )
+    policy = ProgressionPolicy.model_validate(
+        {
+            "policy_ref": "policy:round9e",
+            "closeout": {
+                "readiness": {
+                    "effective_graph_complete": True,
+                    "closeout_parent_ticket_id": "tkt_delivery_done",
+                    "final_evidence_legality_summary": {
+                        "status": "ACCEPTED",
+                        "illegal_ref_count": 0,
+                        "contract_id": "dc_wf_policy_contract_v1_hash",
+                        "contract_version": "v1",
+                        "evaluation_fingerprint": "de_dc_wf_policy_contract_v1_hash_hash",
+                        "blocking_finding_count": 0,
+                        "final_evidence_table_row_count": 0,
+                    },
+                    "ticket_payload": {
+                        "workflow_id": "wf_policy_contract",
+                        "node_id": "node_ceo_delivery_closeout",
+                        "role_profile_ref": "frontend_engineer_primary",
+                        "output_schema_ref": DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+                        "summary": "Prepare the final closeout package.",
+                        "parent_ticket_id": "tkt_delivery_done",
+                    },
+                }
+            },
+        }
+    )
+
+    proposal = decide_next_actions(snapshot, policy)[0]
+
+    assert proposal.action_type == ProgressionActionType.WAIT
+    assert proposal.metadata.reason_code == "progression.wait.closeout_blockers"
+    assert proposal.payload["final_evidence_legality_summary"]["final_evidence_table_row_count"] == 0
 
 
 def test_policy_creates_rework_for_checker_blocking_finding() -> None:
@@ -1508,6 +1560,11 @@ def test_phase4_action_proposals_expose_required_acceptance_metadata() -> None:
                             "final_evidence_legality_summary": {
                                 "status": "ACCEPTED",
                                 "illegal_ref_count": 0,
+                                "contract_id": "dc_wf_phase4_v1_hash",
+                                "contract_version": "v1",
+                                "evaluation_fingerprint": "de_dc_wf_phase4_v1_hash_hash",
+                                "blocking_finding_count": 0,
+                                "final_evidence_table_row_count": 1,
                             },
                             "ticket_payload": {
                                 **ticket_payload,

@@ -10,6 +10,7 @@ from app.core.deliverable_contract import (
     DeliverableEvidencePack,
     EvidencePack,
     checker_contract_gate,
+    compile_final_evidence_table,
     compile_deliverable_contract,
     compile_contract_rework_recovery_actions,
     evaluate_deliverable_contract,
@@ -433,6 +434,26 @@ def test_evidence_pack_maps_current_source_test_check_git_and_closeout_to_accept
     assert evaluation.status == "SATISFIED"
     assert evaluation.blocking_finding_count == 0
 
+    final_table = compile_final_evidence_table(
+        contract=contract,
+        evidence_pack=evidence_pack,
+        evaluation=evaluation,
+    )
+
+    assert final_table.contract_id == contract.contract_id
+    assert final_table.contract_version == contract.contract_version
+    assert final_table.evaluation_fingerprint == evaluation.evaluation_fingerprint
+    assert [row.evidence_ref for row in final_table.rows] == refs
+    assert final_table.rows[0].acceptance_criterion_ref == "AC-loan-api"
+    assert final_table.rows[0].producer_ticket_id == "tkt_impl"
+    assert final_table.rows[0].producer_node_ref == "node://impl"
+    assert final_table.rows[0].source_surface_ref == "surface.loan_backend"
+    assert final_table.rows[0].artifact_kind == "WORKSPACE_SOURCE"
+    assert final_table.rows[0].legality_status == "ACCEPTED"
+    assert final_table.rows[0].current_status == "CURRENT"
+    assert final_table.rows[0].supersede_status == "CURRENT"
+    assert final_table.rows[0].finding_disposition == "SATISFIED"
+
 
 def test_critical_acceptance_missing_source_test_check_git_or_closeout_evidence_blocks() -> None:
     contract = compile_deliverable_contract(
@@ -706,6 +727,80 @@ def test_superseded_archive_unknown_and_stale_pointer_evidence_do_not_satisfy_re
         "SUPERSEDED",
         "UNKNOWN_REF",
     ]
+
+    final_table = compile_final_evidence_table(
+        contract=contract,
+        evidence_pack=evidence_pack,
+        evaluation=evaluation,
+    )
+
+    assert final_table.rows == []
+
+
+def test_governance_and_backlog_recommendation_refs_do_not_enter_final_evidence_table() -> None:
+    contract = compile_deliverable_contract(
+        workflow_id="wf_round9e_governance_final_refs",
+        graph_version="gv_9e_governance_final_refs",
+        acceptance_criteria=[
+            {"criterion_id": "AC-governance", "description": "Delivery must cite implementation evidence."}
+        ],
+        required_evidence=[
+            {
+                "evidence_id": "ev_source",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": ["AC-governance"],
+                "source_surface_refs": ["surface.governance"],
+            }
+        ],
+    )
+    evidence_pack = EvidencePack.model_validate(
+        {
+            "workflow_id": "wf_round9e_governance_final_refs",
+            "graph_version": "gv_9e_governance_final_refs",
+            "evidence": [
+                {
+                    "evidence_ref": "art://runtime/tkt_arch/governance/architecture-brief.json",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_arch",
+                    "producer_node_ref": "node_arch",
+                    "source_surface_refs": ["surface.governance"],
+                    "artifact_kind": "GOVERNANCE_DOCUMENT",
+                    "legality_status": "ILLEGAL_KIND",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-governance"],
+                },
+                {
+                    "evidence_ref": "art://runtime/tkt_backlog/backlog-recommendation.json",
+                    "evidence_kind": "source_inventory",
+                    "producer_ticket_id": "tkt_backlog",
+                    "producer_node_ref": "node_backlog",
+                    "source_surface_refs": ["surface.governance"],
+                    "artifact_kind": "GOVERNANCE_DOCUMENT",
+                    "legality_status": "ILLEGAL_KIND",
+                    "current_pointer_status": "CURRENT",
+                    "acceptance_criteria_refs": ["AC-governance"],
+                },
+            ],
+            "final_evidence_refs": [
+                "art://runtime/tkt_arch/governance/architecture-brief.json",
+                "art://runtime/tkt_backlog/backlog-recommendation.json",
+            ],
+        }
+    )
+
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9e.governance-final-refs"),
+    )
+    final_table = compile_final_evidence_table(
+        contract=contract,
+        evidence_pack=evidence_pack,
+        evaluation=evaluation,
+    )
+
+    assert evaluation.status == ContractEvaluationStatus.BLOCKED
+    assert final_table.rows == []
 
 
 def _blocking_contract_evaluation():

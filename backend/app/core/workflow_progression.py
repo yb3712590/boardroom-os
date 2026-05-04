@@ -1178,6 +1178,15 @@ def _closeout_has_illegal_final_evidence(summary: dict[str, JsonValue]) -> bool:
     return int(summary.get("illegal_ref_count") or 0) > 0
 
 
+def _closeout_contract_ready(summary: dict[str, JsonValue]) -> bool:
+    status = _record_ref(summary.get("status")).upper()
+    if status and status not in {"ACCEPTED", "SATISFIED"}:
+        return False
+    if int(summary.get("blocking_finding_count") or 0) > 0:
+        return False
+    return int(summary.get("final_evidence_table_row_count") or 0) > 0
+
+
 def _closeout_policy_proposal(
     snapshot: ProgressionSnapshot,
     policy: ProgressionPolicy,
@@ -1234,6 +1243,7 @@ def _closeout_policy_proposal(
         or open_approval_refs
         or gate_issue
         or _closeout_has_illegal_final_evidence(final_evidence_summary)
+        or not _closeout_contract_ready(final_evidence_summary)
         or not closeout_parent_ticket_id
     ):
         return ActionProposal(

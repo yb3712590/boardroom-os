@@ -62,6 +62,7 @@ from app.core.workflow_progression import (
     select_governance_role_and_assignee,
 )
 from app.core.workflow_completion import (
+    build_closeout_final_evidence_contract_summary_from_events,
     evaluate_workflow_closeout_gate_issue,
 )
 from app.db.repository import ControlPlaneRepository
@@ -1714,11 +1715,18 @@ def _closeout_final_evidence_summary(closeout_gate_issue: dict[str, Any] | None)
                 if reason_code == "closeout_illegal_final_artifact_ref"
                 else 0
             ),
+            "contract_id": details.get("contract_id"),
+            "contract_version": details.get("contract_version"),
+            "evaluation_fingerprint": details.get("evaluation_fingerprint"),
+            "blocking_finding_count": details.get("blocking_finding_count", 0),
+            "final_evidence_table_row_count": details.get("final_evidence_table_row_count", 0),
             "details": details,
         }
     return {
         "status": "ACCEPTED",
         "illegal_ref_count": 0,
+        "blocking_finding_count": 0,
+        "final_evidence_table_row_count": 0,
     }
 
 
@@ -1732,6 +1740,8 @@ def _build_closeout_policy_input(
     closeout_gate_issue: dict[str, Any] | None,
     created_specs_by_ticket: dict[str, dict[str, Any]],
     graph_complete: bool,
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None] | None = None,
+    graph_version: str = "legacy-closeout-gate",
     completed_ticket_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     workflow_id = str(workflow.get("workflow_id") or "").strip()
@@ -1785,6 +1795,20 @@ def _build_closeout_policy_input(
             "closeout_parent_ticket_id": parent_ticket_id,
             "final_evidence_legality_summary": _closeout_final_evidence_summary(
                 closeout_gate_issue
+            )
+            if closeout_gate_issue is not None
+            else build_closeout_final_evidence_contract_summary_from_events(
+                workflow_id=workflow_id,
+                graph_version=graph_version,
+                created_specs_by_ticket=created_specs_by_ticket,
+                ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket or {},
+                effective_ticket_ids={
+                    str(ticket_id).strip()
+                    for ticket_id in list(completed_ticket_ids or [])
+                    if str(ticket_id).strip()
+                }
+                if completed_ticket_ids is not None
+                else None,
             ),
             "ticket_payload": ticket_payload,
         }
@@ -2442,6 +2466,8 @@ def build_workflow_controller_view(
         incidents=incidents,
         closeout_gate_issue=closeout_gate_issue,
         created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        graph_version=graph_version,
         graph_complete=progression_graph_evaluation.graph_complete,
         completed_ticket_ids=progression_graph_evaluation.completed_ticket_ids,
     )

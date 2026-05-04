@@ -2063,6 +2063,85 @@ def test_closeout_gate_rejects_illegal_final_artifact_ref_kind():
     assert issue["details"]["status"] == "ILLEGAL_KIND"
 
 
+def test_closeout_gate_rejects_backlog_recommendation_final_artifact_ref_kind():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    build_ticket_id = "tkt_closeout_gate_backlog_build"
+    closeout_ticket_id = "tkt_closeout_gate_backlog_closeout"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    source_ref = f"art://workspace/{build_ticket_id}/source/src/app/main.py"
+    backlog_ref = f"art://runtime/{build_ticket_id}/backlog/backlog-recommendation.json"
+    tickets = [
+        {
+            "ticket_id": build_ticket_id,
+            "node_id": "node_closeout_gate_backlog_build",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": closeout_ticket_id,
+            "node_id": "node_closeout_gate_backlog_closeout",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        build_ticket_id: {
+            "ticket_id": build_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        closeout_ticket_id: {
+            "ticket_id": closeout_ticket_id,
+            "output_schema_ref": "delivery_closeout_package",
+            "parent_ticket_id": build_ticket_id,
+        },
+    }
+    terminal_events = {
+        build_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": build_ticket_id,
+                "payload": {
+                    "source_file_refs": [source_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [source_ref],
+            },
+        },
+        closeout_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": closeout_ticket_id,
+                "payload": {
+                    "summary": "Closeout references a backlog recommendation.",
+                    "final_artifact_refs": [backlog_ref],
+                    "documentation_updates": [
+                        {
+                            "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                            "status": "UPDATED",
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+        closeout_ticket=tickets[1],
+        closeout_terminal_event=terminal_events[closeout_ticket_id],
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "closeout_illegal_final_artifact_ref"
+    assert issue["details"]["status"] == "ILLEGAL_KIND"
+
+
 def test_closeout_gate_rejects_placeholder_final_artifact_ref():
     from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
 
@@ -2155,6 +2234,192 @@ def test_closeout_gate_rejects_placeholder_final_artifact_ref():
     assert issue is not None
     assert issue["reason_code"] == "closeout_illegal_final_artifact_ref"
     assert issue["details"]["status"] == "PLACEHOLDER"
+
+
+def test_closeout_gate_rejects_stale_old_attempt_final_artifact_ref():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    old_ticket_id = "tkt_closeout_gate_stale_build_old"
+    current_ticket_id = "tkt_closeout_gate_stale_build_current"
+    closeout_ticket_id = "tkt_closeout_gate_stale_closeout"
+    old_ref = f"art://workspace/{old_ticket_id}/source/src/app/main.py"
+    current_ref = f"art://workspace/{current_ticket_id}/source/src/app/main.py"
+    old_time = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    current_time = datetime.fromisoformat("2026-03-28T10:03:00+08:00")
+    closeout_time = datetime.fromisoformat("2026-03-28T10:04:00+08:00")
+    tickets = [
+        {
+            "ticket_id": old_ticket_id,
+            "node_id": "node_closeout_gate_stale_build",
+            "status": "COMPLETED",
+            "updated_at": old_time,
+        },
+        {
+            "ticket_id": current_ticket_id,
+            "node_id": "node_closeout_gate_stale_build",
+            "status": "COMPLETED",
+            "updated_at": current_time,
+        },
+        {
+            "ticket_id": closeout_ticket_id,
+            "node_id": "node_closeout_gate_stale_closeout",
+            "status": "COMPLETED",
+            "updated_at": closeout_time,
+        },
+    ]
+    created_specs = {
+        old_ticket_id: {
+            "ticket_id": old_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        current_ticket_id: {
+            "ticket_id": current_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+        },
+        closeout_ticket_id: {
+            "ticket_id": closeout_ticket_id,
+            "output_schema_ref": "delivery_closeout_package",
+            "parent_ticket_id": current_ticket_id,
+        },
+    }
+    terminal_events = {
+        old_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": old_time,
+            "payload": {
+                "ticket_id": old_ticket_id,
+                "payload": {
+                    "source_file_refs": [old_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [old_ref],
+            },
+        },
+        current_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": current_time,
+            "payload": {
+                "ticket_id": current_ticket_id,
+                "payload": {
+                    "source_file_refs": [current_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [current_ref],
+            },
+        },
+        closeout_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": closeout_time,
+            "payload": {
+                "ticket_id": closeout_ticket_id,
+                "payload": {
+                    "summary": "Closeout references a stale old attempt.",
+                    "final_artifact_refs": [old_ref],
+                    "documentation_updates": [
+                        {
+                            "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                            "status": "UPDATED",
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+        closeout_ticket=tickets[2],
+        closeout_terminal_event=terminal_events[closeout_ticket_id],
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "closeout_illegal_final_artifact_ref"
+    assert issue["details"]["status"] == "UNKNOWN_REF"
+
+
+def test_closeout_gate_requires_contract_version_and_final_evidence_table():
+    from app.core.workflow_completion import evaluate_workflow_closeout_gate_issue
+
+    build_ticket_id = "tkt_closeout_gate_contract_build"
+    closeout_ticket_id = "tkt_closeout_gate_contract_closeout"
+    occurred_at = datetime.fromisoformat("2026-03-28T10:00:00+08:00")
+    source_ref = f"art://workspace/{build_ticket_id}/source/src/app/main.py"
+    tickets = [
+        {
+            "ticket_id": build_ticket_id,
+            "node_id": "node_closeout_gate_contract_build",
+            "status": "COMPLETED",
+            "updated_at": occurred_at,
+        },
+        {
+            "ticket_id": closeout_ticket_id,
+            "node_id": "node_closeout_gate_contract_closeout",
+            "status": "COMPLETED",
+            "updated_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+        },
+    ]
+    created_specs = {
+        build_ticket_id: {
+            "ticket_id": build_ticket_id,
+            "output_schema_ref": "source_code_delivery",
+            "delivery_stage": "BUILD",
+            "acceptance_criteria": ["Must implement the approved delivery slice."],
+        },
+        closeout_ticket_id: {
+            "ticket_id": closeout_ticket_id,
+            "output_schema_ref": "delivery_closeout_package",
+            "parent_ticket_id": build_ticket_id,
+        },
+    }
+    terminal_events = {
+        build_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": occurred_at,
+            "payload": {
+                "ticket_id": build_ticket_id,
+                "payload": {
+                    "source_file_refs": [source_ref],
+                    "verification_evidence_refs": [],
+                },
+                "artifact_refs": [source_ref],
+            },
+        },
+        closeout_ticket_id: {
+            "event_type": "TICKET_COMPLETED",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload": {
+                "ticket_id": closeout_ticket_id,
+                "payload": {
+                    "summary": "Closeout references source evidence but lacks the contract table.",
+                    "final_artifact_refs": [source_ref],
+                    "handoff_notes": ["Final evidence remains linked back to source delivery."],
+                    "documentation_updates": [
+                        {
+                            "doc_ref": "10-project/docs/tracking/active-tasks.md",
+                            "status": "UPDATED",
+                            "summary": "Marked closeout evidence sync landed.",
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    issue = evaluate_workflow_closeout_gate_issue(
+        tickets=tickets,
+        created_specs_by_ticket=created_specs,
+        ticket_terminal_events_by_ticket=terminal_events,
+        closeout_ticket=tickets[1],
+        closeout_terminal_event=terminal_events[closeout_ticket_id],
+    )
+
+    assert issue is not None
+    assert issue["reason_code"] == "closeout_missing_final_evidence_table"
+
 
 def test_autopilot_closeout_fail_closed_payload_does_not_complete_workflow(client):
     workflow_id = "wf_autopilot_fail_closed_closeout"

@@ -255,6 +255,7 @@ from app.core.workflow_autopilot import (
     ensure_workflow_atomic_chain_report,
     workflow_uses_ceo_board_delegate,
 )
+from app.core.workflow_completion import build_closeout_contract_payload_fields
 from app.core.workflow_scope import resolve_workflow_scope
 from app.core.workspace_path_contracts import (
     ArtifactRefKind,
@@ -2222,6 +2223,67 @@ def _validate_closeout_delivery_hooks(
                 f"got {artifact_ref} ({final_ref_check.status.value})."
             )
     return None
+
+
+def _source_and_check_ticket_ids_for_closeout_refs(refs: set[str]) -> tuple[set[str], set[str]]:
+    source_ticket_ids: set[str] = set()
+    check_ticket_ids: set[str] = set()
+    for artifact_ref in refs:
+        contract = resolve_artifact_ref_contract(artifact_ref)
+        if contract.kind == ArtifactRefKind.WORKSPACE_SOURCE and contract.ticket_id:
+            source_ticket_ids.add(contract.ticket_id)
+        if contract.kind in {ArtifactRefKind.DELIVERY_CHECK_REPORT, ArtifactRefKind.DELIVERY_REPORT} and contract.ticket_id:
+            check_ticket_ids.add(contract.ticket_id)
+    return source_ticket_ids, check_ticket_ids
+
+
+def _with_closeout_contract_payload_fields(
+    repository: ControlPlaneRepository,
+    *,
+    created_spec: dict[str, Any],
+    payload: TicketResultSubmitCommand,
+) -> TicketResultSubmitCommand:
+    if str(created_spec.get("output_schema_ref") or "").strip() != DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF:
+        return payload
+    result_payload = payload.payload if isinstance(payload.payload, dict) else {}
+    final_artifact_refs = [
+        str(item).strip()
+        for item in list(result_payload.get("final_artifact_refs") or [])
+        if str(item).strip()
+    ]
+    if not final_artifact_refs:
+        return payload
+    known_artifact_refs = _closeout_known_final_artifact_refs(
+        repository,
+        created_spec=created_spec,
+        closeout_artifact_refs=[],
+    )
+    source_ticket_ids, check_ticket_ids = _source_and_check_ticket_ids_for_closeout_refs(known_artifact_refs)
+    contract_fields = build_closeout_contract_payload_fields(
+        workflow_id=payload.workflow_id,
+        graph_version=str(created_spec.get("graph_version") or "legacy-closeout-gate"),
+        final_artifact_refs=final_artifact_refs,
+        known_final_refs=known_artifact_refs or set(final_artifact_refs),
+        placeholder_final_refs={
+            ref for ref in known_artifact_refs.union(final_artifact_refs) if _is_placeholder_final_artifact_ref(ref)
+        },
+        source_delivery_ticket_ids=source_ticket_ids,
+        delivery_check_ticket_ids=check_ticket_ids,
+        closeout_ticket_id=payload.ticket_id,
+    )
+    updated_payload = {**result_payload, **contract_fields}
+    updated_written_artifacts = []
+    for item in payload.written_artifacts:
+        if isinstance(item.content_json, dict):
+            updated_written_artifacts.append(item.model_copy(update={"content_json": updated_payload}))
+        else:
+            updated_written_artifacts.append(item)
+    return payload.model_copy(
+        update={
+            "payload": updated_payload,
+            "written_artifacts": updated_written_artifacts,
+        }
+    )
 
 
 def preview_closeout_deliverable_contract_evaluation(
@@ -8119,6 +8181,12 @@ def handle_ticket_result_submit(
             ticket_id=payload.ticket_id,
             reason=compiled_execution_package_guard_reason,
         )
+
+    payload = _with_closeout_contract_payload_fields(
+        repository,
+        created_spec=created_spec,
+        payload=payload,
+    )
 
     try:
         validate_output_payload(

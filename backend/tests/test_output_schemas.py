@@ -696,6 +696,23 @@ def test_output_schema_registry_accepts_valid_delivery_closeout_package_payload_
         submitted_schema_version="delivery_closeout_package_v1",
         payload={
             "summary": "Delivery closeout package is ready for internal review.",
+            "deliverable_contract_version": "v1",
+            "deliverable_contract_id": "dc_wf_closeout_v1_hash",
+            "evaluation_fingerprint": "de_dc_wf_closeout_v1_hash_hash",
+            "final_evidence_table": [
+                {
+                    "acceptance_criterion_ref": "AC-closeout",
+                    "evidence_ref": "art://runtime/tkt_closeout_001/delivery-closeout-package.json",
+                    "producer_ticket_id": "tkt_closeout_001",
+                    "producer_node_ref": "node_closeout_001",
+                    "source_surface_ref": "surface.closeout",
+                    "artifact_kind": "CLOSEOUT_PACKAGE",
+                    "legality_status": "ACCEPTED",
+                    "current_status": "CURRENT",
+                    "supersede_status": "CURRENT",
+                    "finding_disposition": "SATISFIED",
+                }
+            ],
             "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
             "handoff_notes": [
                 "Board-approved final option is captured in this closeout package.",
@@ -717,6 +734,53 @@ def test_output_schema_registry_accepts_valid_delivery_closeout_package_payload_
     )
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "deliverable_contract_version",
+        "deliverable_contract_id",
+        "evaluation_fingerprint",
+        "final_evidence_table",
+    ],
+)
+def test_output_schema_registry_rejects_delivery_closeout_package_missing_contract_fields(
+    missing_field: str,
+) -> None:
+    payload = {
+        "summary": "Delivery closeout package is ready for internal review.",
+        "deliverable_contract_version": "v1",
+        "deliverable_contract_id": "dc_wf_closeout_v1_hash",
+        "evaluation_fingerprint": "de_dc_wf_closeout_v1_hash_hash",
+        "final_evidence_table": [
+            {
+                "acceptance_criterion_ref": "AC-closeout",
+                "evidence_ref": "art://runtime/tkt_closeout_001/delivery-closeout-package.json",
+                "producer_ticket_id": "tkt_closeout_001",
+                "producer_node_ref": "node_closeout_001",
+                "source_surface_ref": "surface.closeout",
+                "artifact_kind": "CLOSEOUT_PACKAGE",
+                "legality_status": "ACCEPTED",
+                "current_status": "CURRENT",
+                "supersede_status": "CURRENT",
+                "finding_disposition": "SATISFIED",
+            }
+        ],
+        "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
+        "handoff_notes": ["Final evidence remains linked back to the board review pack."],
+    }
+    payload.pop(missing_field)
+
+    with pytest.raises(Exception) as exc_info:
+        validate_output_payload(
+            schema_ref="delivery_closeout_package",
+            schema_version=1,
+            submitted_schema_version="delivery_closeout_package_v1",
+            payload=payload,
+        )
+
+    assert getattr(exc_info.value, "field_path", None) == missing_field
+
+
 def test_output_schema_registry_rejects_delivery_closeout_package_invalid_documentation_update_status() -> None:
     with pytest.raises(Exception) as exc_info:
         validate_output_payload(
@@ -725,6 +789,23 @@ def test_output_schema_registry_rejects_delivery_closeout_package_invalid_docume
             submitted_schema_version="delivery_closeout_package_v1",
             payload={
                 "summary": "Delivery closeout package is ready for internal review.",
+                "deliverable_contract_version": "v1",
+                "deliverable_contract_id": "dc_wf_closeout_v1_hash",
+                "evaluation_fingerprint": "de_dc_wf_closeout_v1_hash_hash",
+                "final_evidence_table": [
+                    {
+                        "acceptance_criterion_ref": "AC-closeout",
+                        "evidence_ref": "art://runtime/tkt_closeout_001/delivery-closeout-package.json",
+                        "producer_ticket_id": "tkt_closeout_001",
+                        "producer_node_ref": "node_closeout_001",
+                        "source_surface_ref": "surface.closeout",
+                        "artifact_kind": "CLOSEOUT_PACKAGE",
+                        "legality_status": "ACCEPTED",
+                        "current_status": "CURRENT",
+                        "supersede_status": "CURRENT",
+                        "finding_disposition": "SATISFIED",
+                    }
+                ],
                 "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
                 "handoff_notes": ["Final evidence remains linked back to the board review pack."],
                 "documentation_updates": [
@@ -764,6 +845,23 @@ def test_output_schema_registry_rejects_delivery_closeout_package_documentation_
             submitted_schema_version="delivery_closeout_package_v1",
             payload={
                 "summary": "Delivery closeout package is ready for internal review.",
+                "deliverable_contract_version": "v1",
+                "deliverable_contract_id": "dc_wf_closeout_v1_hash",
+                "evaluation_fingerprint": "de_dc_wf_closeout_v1_hash_hash",
+                "final_evidence_table": [
+                    {
+                        "acceptance_criterion_ref": "AC-closeout",
+                        "evidence_ref": "art://runtime/tkt_closeout_001/delivery-closeout-package.json",
+                        "producer_ticket_id": "tkt_closeout_001",
+                        "producer_node_ref": "node_closeout_001",
+                        "source_surface_ref": "surface.closeout",
+                        "artifact_kind": "CLOSEOUT_PACKAGE",
+                        "legality_status": "ACCEPTED",
+                        "current_status": "CURRENT",
+                        "supersede_status": "CURRENT",
+                        "finding_disposition": "SATISFIED",
+                    }
+                ],
                 "final_artifact_refs": ["art://runtime/tkt_closeout_001/delivery-closeout-package.json"],
                 "handoff_notes": ["Final evidence remains linked back to the board review pack."],
                 "documentation_updates": [documentation_update],

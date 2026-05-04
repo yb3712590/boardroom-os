@@ -10,6 +10,7 @@ from app.core.deliverable_contract import (
     DeliverableEvaluation,
     DeliverableEvaluationPolicy,
     compile_closeout_evidence_pack,
+    compile_final_evidence_table,
     compile_contract_rework_recovery_actions,
     compile_deliverable_contract,
     checker_contract_gate,
@@ -25,8 +26,10 @@ from app.core.output_schemas import (
     UI_MILESTONE_REVIEW_SCHEMA_REF,
 )
 from app.core.workspace_path_contracts import (
+    ArtifactRefKind,
     CloseoutFinalRefStatus,
     classify_closeout_final_artifact_ref,
+    resolve_artifact_ref_contract,
 )
 
 ACTIVE_TICKET_STATUSES = {
@@ -555,9 +558,12 @@ def _collect_schema_artifact_refs(
     output_schema_ref: str,
     created_specs_by_ticket: dict[str, dict[str, Any]],
     ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+    effective_ticket_ids: set[str] | None = None,
 ) -> set[str]:
     refs: set[str] = set()
     for ticket_id, created_spec in created_specs_by_ticket.items():
+        if effective_ticket_ids is not None and ticket_id not in effective_ticket_ids:
+            continue
         if str(created_spec.get("output_schema_ref") or "").strip() != output_schema_ref:
             continue
         refs.update(
@@ -570,6 +576,9 @@ def _collect_schema_artifact_refs(
 
 def _payload_dicts_from_terminal_payload(terminal_payload: dict[str, Any]) -> list[dict[str, Any]]:
     payloads = [terminal_payload]
+    nested_payload = terminal_payload.get("payload")
+    if isinstance(nested_payload, dict):
+        payloads.append(nested_payload)
     for written_artifact in list(terminal_payload.get("written_artifacts") or []):
         if not isinstance(written_artifact, dict):
             continue
@@ -610,6 +619,373 @@ def _collect_closeout_final_artifact_refs(payloads: list[dict[str, Any]]) -> set
     return refs
 
 
+def _evidence_kind_for_artifact_kind(kind: ArtifactRefKind) -> str:
+    if kind == ArtifactRefKind.WORKSPACE_SOURCE:
+        return "source_inventory"
+    if kind in {ArtifactRefKind.TEST_EVIDENCE, ArtifactRefKind.VERIFICATION_EVIDENCE}:
+        return "unit_test"
+    if kind in {ArtifactRefKind.DELIVERY_REPORT, ArtifactRefKind.DELIVERY_CHECK_REPORT}:
+        return "maker_checker_verdict"
+    if kind == ArtifactRefKind.GIT_EVIDENCE:
+        return "git_closeout"
+    if kind == ArtifactRefKind.CLOSEOUT_PACKAGE:
+        return "risk_disposition"
+    return "source_inventory"
+
+
+def _compile_closeout_contract_inputs(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    final_artifact_refs: list[str],
+    known_final_refs: set[str],
+    placeholder_final_refs: set[str],
+    source_delivery_ticket_ids: set[str],
+    delivery_check_ticket_ids: set[str],
+    closeout_ticket_id: str,
+) -> tuple[DeliverableContract, Any, DeliverableEvaluation, Any]:
+    acceptance_ref = "AC-closeout-final-evidence"
+    required_evidence = []
+    if source_delivery_ticket_ids:
+        required_evidence.append(
+            {
+                "evidence_id": "ev_closeout_source_inventory",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": [acceptance_ref],
+                "source_surface_refs": ["surface.closeout.final_evidence"],
+            }
+        )
+    if delivery_check_ticket_ids:
+        required_evidence.append(
+            {
+                "evidence_id": "ev_closeout_checker_verdict",
+                "evidence_kind": "maker_checker_verdict",
+                "acceptance_criteria_refs": [acceptance_ref],
+                "source_surface_refs": ["surface.closeout.final_evidence"],
+            }
+        )
+    if not required_evidence:
+        required_evidence.append(
+            {
+                "evidence_id": "ev_closeout_final_evidence",
+                "evidence_kind": "source_inventory",
+                "acceptance_criteria_refs": [acceptance_ref],
+                "source_surface_refs": ["surface.closeout.final_evidence"],
+            }
+        )
+    contract = compile_deliverable_contract(
+        workflow_id=workflow_id or "workflow-unknown",
+        graph_version=graph_version or "legacy-closeout-gate",
+        source_ticket_refs=sorted(source_delivery_ticket_ids | delivery_check_ticket_ids | {closeout_ticket_id}),
+        acceptance_criteria=[
+            {
+                "criterion_id": acceptance_ref,
+                "description": "Closeout final evidence must prove current legal delivery evidence.",
+            }
+        ],
+        required_evidence=required_evidence,
+        metadata={
+            "round9e_input_compiler": True,
+            "source": "workflow_completion.closeout_final_evidence",
+        },
+    )
+    evidence_items: list[dict[str, Any]] = []
+    for artifact_ref in sorted(set(final_artifact_refs) | set(known_final_refs)):
+        contract_ref = resolve_artifact_ref_contract(artifact_ref)
+        final_ref_check = classify_closeout_final_artifact_ref(
+            artifact_ref,
+            current_artifact_refs=set(known_final_refs),
+            superseded_artifact_refs=set(),
+            placeholder_artifact_refs=set(placeholder_final_refs),
+        )
+        is_current_final_ref = artifact_ref in set(final_artifact_refs)
+        evidence_items.append(
+            {
+                "evidence_ref": artifact_ref,
+                "evidence_kind": _evidence_kind_for_artifact_kind(contract_ref.kind),
+                "producer_ticket_id": contract_ref.ticket_id or closeout_ticket_id,
+                "producer_node_ref": f"ticket:{contract_ref.ticket_id or closeout_ticket_id}",
+                "source_surface_refs": ["surface.closeout.final_evidence"],
+                "artifact_kind": contract_ref.kind.value,
+                "legality_status": final_ref_check.status.value,
+                "current_pointer_status": (
+                    "CURRENT"
+                    if final_ref_check.status == CloseoutFinalRefStatus.ACCEPTED
+                    else final_ref_check.status.value
+                ),
+                "acceptance_criteria_refs": [acceptance_ref],
+                "placeholder": final_ref_check.status == CloseoutFinalRefStatus.PLACEHOLDER,
+                "archive": contract_ref.kind == ArtifactRefKind.ARCHIVE,
+                "metadata": {
+                    "is_closeout_final_ref": is_current_final_ref,
+                    "logical_path": contract_ref.logical_path,
+                    "final_ref_reason": final_ref_check.reason,
+                },
+            }
+        )
+    evidence_pack = compile_closeout_evidence_pack(
+        workflow_id=workflow_id or "workflow-unknown",
+        graph_version=graph_version or "legacy-closeout-gate",
+        final_evidence_refs=final_artifact_refs,
+        evidence=evidence_items,
+        closeout_summary={
+            "source": "workflow_completion.closeout_final_evidence",
+            "closeout_ticket_id": closeout_ticket_id,
+        },
+    )
+    evaluation = evaluate_deliverable_contract(
+        contract,
+        evidence_pack,
+        DeliverableEvaluationPolicy(policy_ref="policy:round9e.closeout_final_evidence"),
+    )
+    final_table = compile_final_evidence_table(
+        contract=contract,
+        evidence_pack=evidence_pack,
+        evaluation=evaluation,
+    )
+    return contract, evidence_pack, evaluation, final_table
+
+
+def build_closeout_contract_payload_fields(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    final_artifact_refs: list[str],
+    known_final_refs: set[str] | None = None,
+    placeholder_final_refs: set[str] | None = None,
+    source_delivery_ticket_ids: set[str] | None = None,
+    delivery_check_ticket_ids: set[str] | None = None,
+    closeout_ticket_id: str,
+) -> dict[str, Any]:
+    contract, _, evaluation, final_table = _compile_closeout_contract_inputs(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        final_artifact_refs=_ordered_unique_strings_local(final_artifact_refs),
+        known_final_refs=set(known_final_refs or set(final_artifact_refs)),
+        placeholder_final_refs=set(placeholder_final_refs or set()),
+        source_delivery_ticket_ids=set(source_delivery_ticket_ids or set()),
+        delivery_check_ticket_ids=set(delivery_check_ticket_ids or set()),
+        closeout_ticket_id=closeout_ticket_id,
+    )
+    return {
+        "deliverable_contract_version": contract.contract_version,
+        "deliverable_contract_id": contract.contract_id,
+        "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+        "final_evidence_table": [row.model_dump(mode="json") for row in final_table.rows],
+        "deliverable_evaluation_status": evaluation.status.value,
+        "deliverable_evaluation_blocking_finding_count": evaluation.blocking_finding_count,
+    }
+
+
+def build_closeout_final_evidence_contract_summary(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    known_final_refs: set[str],
+    placeholder_final_refs: set[str] | None = None,
+    source_delivery_ticket_ids: set[str] | None = None,
+    delivery_check_ticket_ids: set[str] | None = None,
+    closeout_ticket_id: str = "pending-closeout",
+) -> dict[str, Any]:
+    contract, _, evaluation, final_table = _compile_closeout_contract_inputs(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        final_artifact_refs=sorted(known_final_refs),
+        known_final_refs=set(known_final_refs),
+        placeholder_final_refs=set(placeholder_final_refs or set()),
+        source_delivery_ticket_ids=set(source_delivery_ticket_ids or set()),
+        delivery_check_ticket_ids=set(delivery_check_ticket_ids or set()),
+        closeout_ticket_id=closeout_ticket_id,
+    )
+    return {
+        "status": (
+            "ACCEPTED"
+            if evaluation.blocking_finding_count == 0 and final_table.rows
+            else "BLOCKED"
+        ),
+        "illegal_ref_count": 0,
+        "contract_id": contract.contract_id,
+        "contract_version": contract.contract_version,
+        "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+        "blocking_finding_count": evaluation.blocking_finding_count,
+        "final_evidence_table_row_count": len(final_table.rows),
+    }
+
+
+def build_closeout_final_evidence_contract_summary_from_events(
+    *,
+    workflow_id: str,
+    graph_version: str,
+    created_specs_by_ticket: dict[str, dict[str, Any]],
+    ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+    effective_ticket_ids: set[str] | None = None,
+    closeout_ticket_id: str = "pending-closeout",
+) -> dict[str, Any]:
+    known_final_refs = _collect_schema_artifact_refs(
+        output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
+        created_specs_by_ticket=created_specs_by_ticket,
+        ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        effective_ticket_ids=effective_ticket_ids,
+    )
+    known_final_refs.update(
+        _collect_schema_artifact_refs(
+            output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
+            created_specs_by_ticket=created_specs_by_ticket,
+            ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+            effective_ticket_ids=effective_ticket_ids,
+        )
+    )
+    placeholder_final_refs = {
+        ref for ref in known_final_refs if _is_placeholder_final_artifact_ref(ref)
+    }
+    source_delivery_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if effective_ticket_ids is None or ticket_id in effective_ticket_ids
+        if str(created_spec.get("output_schema_ref") or "").strip() == SOURCE_CODE_DELIVERY_SCHEMA_REF
+    }
+    delivery_check_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if effective_ticket_ids is None or ticket_id in effective_ticket_ids
+        if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CHECK_REPORT_SCHEMA_REF
+    }
+    return build_closeout_final_evidence_contract_summary(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        known_final_refs=known_final_refs,
+        placeholder_final_refs=placeholder_final_refs,
+        source_delivery_ticket_ids=source_delivery_ticket_ids,
+        delivery_check_ticket_ids=delivery_check_ticket_ids,
+        closeout_ticket_id=closeout_ticket_id,
+    )
+
+
+def _ordered_unique_strings_local(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[str]:
+    results: list[str] = []
+    seen: set[str] = set()
+    for value in list(values or []):
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(normalized)
+    return results
+
+
+def _closeout_contract_payload_issue(
+    *,
+    closeout_ticket_id: str,
+    closeout_payloads: list[dict[str, Any]],
+    contract: DeliverableContract,
+    evaluation: DeliverableEvaluation,
+    final_table: Any,
+) -> dict[str, Any] | None:
+    package_payload = closeout_payloads[-1] if closeout_payloads else {}
+    final_table_rows = [row.model_dump(mode="json") for row in final_table.rows]
+    submitted_table = package_payload.get("final_evidence_table")
+    if not isinstance(submitted_table, list) or not submitted_table:
+        return _closeout_gate_issue(
+            reason_code="closeout_missing_final_evidence_table",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if not final_table_rows:
+        return _closeout_gate_issue(
+            reason_code="closeout_missing_final_evidence_table",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if str(package_payload.get("deliverable_contract_version") or "").strip() != contract.contract_version:
+        return _closeout_gate_issue(
+            reason_code="closeout_contract_version_mismatch",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "expected": contract.contract_version,
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if str(package_payload.get("deliverable_contract_id") or "").strip() != contract.contract_id:
+        return _closeout_gate_issue(
+            reason_code="closeout_contract_id_mismatch",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "expected": contract.contract_id,
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if str(package_payload.get("evaluation_fingerprint") or "").strip() != evaluation.evaluation_fingerprint:
+        return _closeout_gate_issue(
+            reason_code="closeout_evaluation_fingerprint_mismatch",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "expected": evaluation.evaluation_fingerprint,
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if submitted_table != final_table_rows:
+        return _closeout_gate_issue(
+            reason_code="closeout_final_evidence_table_mismatch",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "expected_row_count": len(final_table_rows),
+                "submitted_row_count": len(submitted_table),
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+            },
+        )
+    if evaluation.blocking_finding_count:
+        return _closeout_gate_issue(
+            reason_code="closeout_deliverable_contract_blocked",
+            ticket_id=closeout_ticket_id,
+            output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details={
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+                "blocking_finding_count": evaluation.blocking_finding_count,
+                "final_evidence_table_row_count": len(final_table_rows),
+                "blocking_findings": [
+                    finding.model_dump(mode="json") for finding in evaluation.findings if finding.blocking
+                ],
+            },
+        )
+    return None
+
+
 def evaluate_closeout_deliverable_contract_preview(
     *,
     contract: DeliverableContract,
@@ -647,6 +1023,9 @@ def _closeout_payload_issue(
     closeout_terminal_payload: dict[str, Any],
     created_specs_by_ticket: dict[str, dict[str, Any]],
     ticket_terminal_events_by_ticket: dict[str, dict[str, Any] | None],
+    effective_ticket_ids: set[str] | None = None,
+    workflow_id: str = "",
+    graph_version: str = "legacy-closeout-gate",
 ) -> dict[str, Any] | None:
     closeout_payloads = _payload_dicts_from_terminal_payload(closeout_terminal_payload)
     if any(_payload_contains_fail_closed_marker(payload) for payload in closeout_payloads):
@@ -661,17 +1040,47 @@ def _closeout_payload_issue(
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         created_specs_by_ticket=created_specs_by_ticket,
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        effective_ticket_ids=effective_ticket_ids,
     )
     known_final_refs.update(
         _collect_schema_artifact_refs(
             output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
             created_specs_by_ticket=created_specs_by_ticket,
             ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+            effective_ticket_ids=effective_ticket_ids,
         )
     )
-    known_final_refs.update(final_artifact_refs)
     placeholder_final_refs = {
-        ref for ref in known_final_refs if _is_placeholder_final_artifact_ref(ref)
+        ref for ref in set(known_final_refs).union(final_artifact_refs) if _is_placeholder_final_artifact_ref(ref)
+    }
+    source_delivery_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if effective_ticket_ids is None or ticket_id in effective_ticket_ids
+        if str(created_spec.get("output_schema_ref") or "").strip() == SOURCE_CODE_DELIVERY_SCHEMA_REF
+    }
+    delivery_check_ticket_ids = {
+        ticket_id
+        for ticket_id, created_spec in created_specs_by_ticket.items()
+        if effective_ticket_ids is None or ticket_id in effective_ticket_ids
+        if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CHECK_REPORT_SCHEMA_REF
+    }
+    contract, evidence_pack, evaluation, final_table = _compile_closeout_contract_inputs(
+        workflow_id=workflow_id,
+        graph_version=graph_version,
+        final_artifact_refs=sorted(final_artifact_refs),
+        known_final_refs=known_final_refs,
+        placeholder_final_refs=placeholder_final_refs,
+        source_delivery_ticket_ids=source_delivery_ticket_ids,
+        delivery_check_ticket_ids=delivery_check_ticket_ids,
+        closeout_ticket_id=closeout_ticket_id,
+    )
+    contract_details = {
+        "contract_id": contract.contract_id,
+        "contract_version": contract.contract_version,
+        "evaluation_fingerprint": evaluation.evaluation_fingerprint,
+        "blocking_finding_count": evaluation.blocking_finding_count,
+        "final_evidence_table_row_count": len(final_table.rows),
     }
     for artifact_ref in final_artifact_refs:
         final_ref_check = classify_closeout_final_artifact_ref(
@@ -686,46 +1095,45 @@ def _closeout_payload_issue(
                 ticket_id=closeout_ticket_id,
                 output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
                 details={
+                    **contract_details,
                     "artifact_ref": artifact_ref,
                     "status": final_ref_check.status.value,
                     "kind": final_ref_check.kind.value,
                 },
             )
 
-    source_delivery_ticket_ids = {
-        ticket_id
-        for ticket_id, created_spec in created_specs_by_ticket.items()
-        if str(created_spec.get("output_schema_ref") or "").strip() == SOURCE_CODE_DELIVERY_SCHEMA_REF
-    }
     source_delivery_refs = _collect_schema_artifact_refs(
         output_schema_ref=SOURCE_CODE_DELIVERY_SCHEMA_REF,
         created_specs_by_ticket=created_specs_by_ticket,
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        effective_ticket_ids=effective_ticket_ids,
     )
     if source_delivery_ticket_ids and (not source_delivery_refs or not final_artifact_refs.intersection(source_delivery_refs)):
         return _closeout_gate_issue(
             reason_code="closeout_missing_source_delivery_evidence",
             ticket_id=closeout_ticket_id,
             output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-            details={"source_delivery_ticket_ids": sorted(source_delivery_ticket_ids)},
+            details={
+                **contract_details,
+                "source_delivery_ticket_ids": sorted(source_delivery_ticket_ids),
+            },
         )
 
-    delivery_check_ticket_ids = {
-        ticket_id
-        for ticket_id, created_spec in created_specs_by_ticket.items()
-        if str(created_spec.get("output_schema_ref") or "").strip() == DELIVERY_CHECK_REPORT_SCHEMA_REF
-    }
     delivery_check_refs = _collect_schema_artifact_refs(
         output_schema_ref=DELIVERY_CHECK_REPORT_SCHEMA_REF,
         created_specs_by_ticket=created_specs_by_ticket,
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        effective_ticket_ids=effective_ticket_ids,
     )
     if delivery_check_ticket_ids and (not delivery_check_refs or not final_artifact_refs.intersection(delivery_check_refs)):
         return _closeout_gate_issue(
             reason_code="closeout_missing_qa_evidence",
             ticket_id=closeout_ticket_id,
             output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
-            details={"delivery_check_ticket_ids": sorted(delivery_check_ticket_ids)},
+            details={
+                **contract_details,
+                "delivery_check_ticket_ids": sorted(delivery_check_ticket_ids),
+            },
         )
 
     if not _has_documentation_evidence(closeout_payloads):
@@ -733,7 +1141,17 @@ def _closeout_payload_issue(
             reason_code="closeout_missing_documentation_evidence",
             ticket_id=closeout_ticket_id,
             output_schema_ref=DELIVERY_CLOSEOUT_PACKAGE_SCHEMA_REF,
+            details=contract_details,
         )
+    contract_issue = _closeout_contract_payload_issue(
+        closeout_ticket_id=closeout_ticket_id,
+        closeout_payloads=closeout_payloads,
+        contract=contract,
+        evaluation=evaluation,
+        final_table=final_table,
+    )
+    if contract_issue is not None:
+        return contract_issue
     return None
 
 
@@ -810,6 +1228,9 @@ def evaluate_workflow_closeout_gate_issue(
         closeout_terminal_payload=_terminal_payload(closeout_terminal_event),
         created_specs_by_ticket=created_specs_by_ticket,
         ticket_terminal_events_by_ticket=ticket_terminal_events_by_ticket,
+        effective_ticket_ids=latest_ticket_ids,
+        workflow_id=workflow_id,
+        graph_version=graph_version,
     )
 
 

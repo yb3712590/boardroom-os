@@ -105,6 +105,8 @@ from app.core.ticket_handlers import (
     handle_ticket_start,
 )
 from app.core.time import now_local
+from app.core.workflow_completion import build_closeout_contract_payload_fields
+from app.core.workspace_path_contracts import ArtifactRefKind, resolve_artifact_ref_contract
 from app.db.repository import ControlPlaneRepository
 
 
@@ -1237,6 +1239,28 @@ def _normalize_delivery_closeout_package_payload(
     )
     filtered_refs = [artifact_ref for artifact_ref in submitted_refs if artifact_ref in known_ref_set]
     normalized["final_artifact_refs"] = filtered_refs or known_final_artifact_refs
+    source_delivery_ticket_ids = {
+        str(contract.ticket_id)
+        for contract in (resolve_artifact_ref_contract(ref) for ref in known_final_artifact_refs)
+        if contract.kind == ArtifactRefKind.WORKSPACE_SOURCE and contract.ticket_id
+    }
+    delivery_check_ticket_ids = {
+        str(contract.ticket_id)
+        for contract in (resolve_artifact_ref_contract(ref) for ref in known_final_artifact_refs)
+        if contract.kind in {ArtifactRefKind.DELIVERY_CHECK_REPORT, ArtifactRefKind.DELIVERY_REPORT}
+        and contract.ticket_id
+    }
+    normalized.update(
+        build_closeout_contract_payload_fields(
+            workflow_id=execution_package.meta.workflow_id,
+            graph_version=execution_package.meta.graph_version,
+            final_artifact_refs=list(normalized["final_artifact_refs"]),
+            known_final_refs=set(known_final_artifact_refs),
+            source_delivery_ticket_ids=source_delivery_ticket_ids,
+            delivery_check_ticket_ids=delivery_check_ticket_ids,
+            closeout_ticket_id=execution_package.meta.ticket_id,
+        )
+    )
     return normalized
 
 

@@ -18464,6 +18464,74 @@ def test_closeout_internal_checker_approved_returns_completion_summary(client):
             "summary": "No public capability or runtime flow changed in this round.",
         },
     ]
+    assert closeout_payload["deliverable_contract_version"] == "v1"
+    assert closeout_payload["deliverable_contract_id"].startswith(f"dc_{workflow_id}_v1_")
+    assert closeout_payload["evaluation_fingerprint"].startswith(
+        f"de_{closeout_payload['deliverable_contract_id']}_"
+    )
+    assert closeout_payload["final_evidence_table"]
+    assert {
+        "acceptance_criterion_ref",
+        "evidence_ref",
+        "producer_ticket_id",
+        "producer_node_ref",
+        "source_surface_ref",
+        "artifact_kind",
+        "legality_status",
+        "current_status",
+        "supersede_status",
+        "finding_disposition",
+    }.issubset(closeout_payload["final_evidence_table"][0])
+
+
+def test_manual_closeout_recovery_cannot_bypass_contract_table(client):
+    workflow_id, scope_approval = _project_init_to_scope_approval(client)
+    workflow_id, approval, _ = _complete_scope_delivery_chain_to_visual_milestone(
+        client,
+        scope_approval,
+        idempotency_suffix="manual-closeout-contract-scope",
+    )
+    repository = client.app.state.repository
+
+    with _suppress_ceo_shadow_side_effects():
+        client.post(
+            "/api/v1/commands/board-approve",
+            json={
+                "review_pack_id": approval["review_pack_id"],
+                "review_pack_version": approval["review_pack_version"],
+                "command_target_version": approval["command_target_version"],
+                "approval_id": approval["approval_id"],
+                "selected_option_id": "option_a",
+                "board_comment": "Proceed with manual closeout recovery.",
+                "idempotency_key": f"board-approve:{approval['approval_id']}:manual-closeout-contract",
+            },
+        )
+
+    _, closeout_ticket_id, _ = _complete_closeout_chain_after_final_review_approval(client, approval)
+    with repository.connection() as connection:
+        closeout_terminal_event = repository.get_latest_ticket_terminal_event(connection, closeout_ticket_id)
+        payload = dict(closeout_terminal_event["payload"])
+        nested_payload = dict(payload.get("payload") or {})
+        nested_payload["final_evidence_table"] = []
+        payload["payload"] = nested_payload
+        payload["final_evidence_table"] = []
+        for written_artifact in list(payload.get("written_artifacts") or []):
+            if isinstance(written_artifact, dict) and isinstance(written_artifact.get("content_json"), dict):
+                written_artifact["content_json"] = dict(written_artifact["content_json"])
+                written_artifact["content_json"]["final_evidence_table"] = []
+        connection.execute(
+            "UPDATE events SET payload_json = ? WHERE event_id = ?",
+            (json.dumps(payload, sort_keys=True), closeout_terminal_event["event_id"]),
+        )
+        repository.refresh_projections(connection)
+
+    dashboard_response = client.get("/api/v1/projections/dashboard")
+
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["data"]["completion_summary"] is None
+    workflow = repository.get_workflow_projection(workflow_id)
+    assert workflow is not None
+    assert workflow["status"] != "COMPLETED"
 
 
 def test_final_review_approval_rejects_when_review_gate_merge_conflicts(client):

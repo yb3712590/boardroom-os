@@ -449,13 +449,6 @@ def classify_closeout_final_artifact_ref(
 ) -> CloseoutFinalRefCheck:
     contract = resolve_artifact_ref_contract(artifact_ref)
     normalized_ref = str(artifact_ref or "").strip()
-    if normalized_ref not in current_artifact_refs:
-        return CloseoutFinalRefCheck(
-            normalized_ref,
-            CloseoutFinalRefStatus.UNKNOWN_REF,
-            contract.kind,
-            "not current",
-        )
     if normalized_ref in superseded_artifact_refs:
         return CloseoutFinalRefCheck(
             normalized_ref,
@@ -476,6 +469,13 @@ def classify_closeout_final_artifact_ref(
             CloseoutFinalRefStatus.ILLEGAL_KIND,
             contract.kind,
             "illegal final evidence kind",
+        )
+    if normalized_ref not in current_artifact_refs:
+        return CloseoutFinalRefCheck(
+            normalized_ref,
+            CloseoutFinalRefStatus.UNKNOWN_REF,
+            contract.kind,
+            "not current",
         )
     return CloseoutFinalRefCheck(
         normalized_ref,

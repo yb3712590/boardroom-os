@@ -81,10 +81,31 @@ Round 8E 证据：
 - [x] Evidence pack 能映射到 acceptance criteria（Round 9B：同上）。
 - [x] `APPROVED_WITH_NOTES` 不放行 blocking contract gap（Round 9C：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q`）。
 - [x] blocking contract gap 产生 upstream rework target（Round 9D：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_progression.py -q`；覆盖 source surface / producer node、missing test evidence、checker-only defect、missing current producer incident、controller recovery input、BR-040/BR-041 placeholder 等价）。
-- [ ] closeout package 包含 contract version 和 final evidence table。
-- [x] superseded/placeholder evidence 不满足 required evidence（Round 9B evaluator 层：同上；closeout final evidence table 主路径留给 9E）。
+- [x] closeout package 包含 contract version/id、evaluation fingerprint 和 final evidence table（Round 9E：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_output_schemas.py backend/tests/test_api.py::test_closeout_internal_checker_approved_returns_completion_summary -q`；完整批量命令见下方 9E 证据）。
+- [x] superseded/placeholder/archive/unknown/stale/governance/backlog evidence 不满足 required evidence，也不会进入 closeout final evidence table（Round 9E：`pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workflow_autopilot.py -q` 覆盖 evaluator/table/gate）。
 
-Round 9A 证据：contract/evaluator skeleton 已覆盖 missing acceptance、missing required evidence、unknown evidence kind、empty final evidence 和重复 evaluation 稳定输出。Round 9B 证据：source surface path/capability/evidence mapping、evidence -> acceptance mapping、关键 acceptance 缺 evidence、placeholder source/test fallback、superseded/archive/unknown/stale evidence 拒绝均有单测。Round 9C 证据：checker gate 先消费 `DeliverableEvaluation`，failed delivery report 无结构化 `ConvergencePolicy` 不放行，结构化 policy 只放行声明 gap/scope/expiry；目标测试 `backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report` -> `3 passed`。Round 9D 证据：contract finding 编译为 upstream recovery action；missing current producer 输出 incident；closeout gate issue 编译进 recovery input；failed delivery checker rework fix ticket 指向 producer ticket/node。closeout final evidence table 留给 9E。
+Round 9A 证据：contract/evaluator skeleton 已覆盖 missing acceptance、missing required evidence、unknown evidence kind、empty final evidence 和重复 evaluation 稳定输出。
+
+Round 9B 证据：source surface path/capability/evidence mapping、evidence -> acceptance mapping、关键 acceptance 缺 evidence、placeholder source/test fallback、superseded/archive/unknown/stale evidence 拒绝均有单测。
+
+Round 9C 证据：checker gate 先消费 `DeliverableEvaluation`，failed delivery report 无结构化 `ConvergencePolicy` 不放行，结构化 policy 只放行声明 gap/scope/expiry；目标测试 `backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report` -> `3 passed`。
+
+Round 9D 证据：contract finding 编译为 upstream recovery action；missing current producer 输出 incident；closeout gate issue 编译进 recovery input；failed delivery checker rework fix ticket 指向 producer ticket/node。
+
+Round 9E 证据：
+
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_deliverable_contract.py backend/tests/test_workspace_path_contracts.py backend/tests/test_output_schemas.py -q`：覆盖 PRD acceptance compiler、source surface mapping、evidence pack mapping、closeout schema contract fields、final evidence table 行字段、superseded/placeholder/archive/unknown/stale/governance/backlog refs 排除。
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_workflow_autopilot.py backend/tests/test_workflow_progression.py -q`：覆盖 closeout contract/table gate、stale old attempt 排除、governance/backlog final refs 拒绝、graph terminal 不替代 contract satisfaction、rework upstream target 和 closeout proposal contract readiness。
+- `pytest --basetemp="D:/Projects/boardroom-os/.pytest-tmp" backend/tests/test_api.py::test_closeout_internal_checker_approved_returns_completion_summary backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table backend/tests/test_api.py::test_check_internal_checker_approval_on_failed_report_creates_fix_ticket backend/tests/test_api.py::test_autopilot_converged_check_report_without_policy_is_forced_back_to_rework backend/tests/test_api.py::test_structured_convergence_policy_allows_failed_check_report -q`：覆盖 closeout package contract fields、manual closeout recovery 阻断、failed delivery checker rework、无结构化 convergence policy 不放行、结构化 convergence policy 放行。
+- `rg -n "graph terminal|checker notes|freeform|final_artifact_refs.*satisf" backend/app/core`：确认旧 graph terminal、checker notes/freeform、final refs satisfaction 文本路径不作为 runtime 放行依据。
+- `rg -n "_delivery_closeout_final_artifact_refs|classify_closeout_final_artifact_ref|evaluate_deliverable_contract|final_evidence_table" backend/app/core`：确认保留 helper 边界和主路径 evaluator/table 调用点。
+
+015 结构化覆盖：
+
+- BR-040、BR-041 placeholder delivery：Round 9D/9E 单测覆盖 placeholder source/evidence 和 closeout placeholder final ref 阻断；完整 015 replay 保持在 Phase 7。
+- BR-100 final checker loop：Round 8D/8E policy 单测覆盖结构化 threshold 等价；完整 015 replay 保持在 Phase 7。
+- closeout final refs 混入治理文档 / backlog recommendation：Round 9E 单测覆盖治理文档和 backlog final ref 拒绝，以及 final table exclusion。
+- manual closeout recovery：Round 9E API 测试覆盖篡改 final table 后 checker approval 不能完成 workflow；真实 015 replay 保持在 Phase 7。
 
 ## Phase 6：Replay / resume / checkpoint
 

@@ -204,6 +204,30 @@ class DeliverableEvaluation(StrictModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class FinalEvidenceTableRow(StrictModel):
+    acceptance_criterion_ref: str = Field(min_length=1)
+    evidence_ref: str = Field(min_length=1)
+    producer_ticket_id: str | None = None
+    producer_node_ref: str | None = None
+    source_surface_ref: str | None = None
+    artifact_kind: str | None = None
+    legality_status: str = Field(min_length=1)
+    current_status: str = Field(min_length=1)
+    supersede_status: str = Field(min_length=1)
+    finding_disposition: str = Field(min_length=1)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class FinalEvidenceTable(StrictModel):
+    contract_id: str = Field(min_length=1)
+    contract_version: str = Field(min_length=1)
+    workflow_id: str = Field(min_length=1)
+    graph_version: str = Field(min_length=1)
+    evaluation_fingerprint: str = Field(min_length=1)
+    rows: list[FinalEvidenceTableRow] = Field(default_factory=list)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class ConvergenceAllowedGap(StrictModel):
     finding_id: str | None = None
     reason_code: str | None = None
@@ -275,6 +299,18 @@ def _stable_unique_strings(values: list[Any] | tuple[Any, ...] | set[Any] | None
             if value is not None and str(value).strip()
         }
     )
+
+
+def _ordered_unique_strings(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[str]:
+    results: list[str] = []
+    seen: set[str] = set()
+    for value in list(values or []):
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        results.append(normalized)
+    return results
 
 
 def _stable_dicts(values: list[Any] | None) -> list[dict[str, JsonValue]]:
@@ -1039,6 +1075,93 @@ def _contract_satisfying_evidence(evidence_pack: EvidencePack) -> list[EvidenceI
         for evidence in evidence_pack.evidence
         if _evidence_can_satisfy_contract(evidence)
     ]
+
+
+def _evidence_supersede_status(evidence: EvidenceItem) -> str:
+    if evidence.superseded_by_refs:
+        return EVIDENCE_LEGALITY_SUPERSEDED
+    if evidence.supersedes_refs:
+        return "SUPERSEDES"
+    return "CURRENT"
+
+
+def _finding_disposition_for_evidence(
+    evaluation: DeliverableEvaluation,
+    *,
+    acceptance_ref: str,
+    source_surface_ref: str,
+    evidence_ref: str,
+) -> str:
+    for finding in evaluation.findings:
+        if evidence_ref in finding.evidence_refs:
+            return finding.reason_code
+        if (
+            acceptance_ref
+            and acceptance_ref in finding.acceptance_criteria_refs
+            and (
+                not source_surface_ref
+                or not finding.source_surface_refs
+                or source_surface_ref in finding.source_surface_refs
+            )
+        ):
+            return finding.reason_code
+    return "SATISFIED"
+
+
+def compile_final_evidence_table(
+    *,
+    contract: DeliverableContract,
+    evidence_pack: EvidencePack,
+    evaluation: DeliverableEvaluation,
+) -> FinalEvidenceTable:
+    ordered_final_refs = _ordered_unique_strings(evidence_pack.final_evidence_refs)
+    final_refs = set(ordered_final_refs)
+    evidence_by_ref = {
+        evidence.evidence_ref: evidence
+        for evidence in _contract_satisfying_evidence(evidence_pack)
+        if evidence.evidence_ref in final_refs
+    }
+    rows: list[FinalEvidenceTableRow] = []
+    for evidence_ref in ordered_final_refs:
+        evidence = evidence_by_ref.get(evidence_ref)
+        if evidence is None:
+            continue
+        acceptance_refs = _stable_unique_strings(evidence.acceptance_criteria_refs)
+        surface_refs = _stable_unique_strings(evidence.source_surface_refs)
+        for acceptance_ref in acceptance_refs:
+            row_surface_refs = surface_refs or [None]
+            for source_surface_ref in row_surface_refs:
+                rows.append(
+                    FinalEvidenceTableRow(
+                        acceptance_criterion_ref=acceptance_ref,
+                        evidence_ref=evidence.evidence_ref,
+                        producer_ticket_id=evidence.producer_ticket_id,
+                        producer_node_ref=evidence.producer_node_ref,
+                        source_surface_ref=source_surface_ref,
+                        artifact_kind=evidence.artifact_kind,
+                        legality_status=_normalized_evidence_legality_status(evidence),
+                        current_status=_normalized_current_pointer_status(evidence),
+                        supersede_status=_evidence_supersede_status(evidence),
+                        finding_disposition=_finding_disposition_for_evidence(
+                            evaluation,
+                            acceptance_ref=acceptance_ref,
+                            source_surface_ref=source_surface_ref or "",
+                            evidence_ref=evidence.evidence_ref,
+                        ),
+                    )
+                )
+    return FinalEvidenceTable(
+        contract_id=contract.contract_id,
+        contract_version=contract.contract_version,
+        workflow_id=contract.workflow_id,
+        graph_version=contract.graph_version,
+        evaluation_fingerprint=evaluation.evaluation_fingerprint,
+        rows=rows,
+        metadata={
+            "final_evidence_ref_count": len(evidence_pack.final_evidence_refs),
+            "row_count": len(rows),
+        },
+    )
 
 
 def _surface_by_id(contract: DeliverableContract) -> dict[str, RequiredSourceSurface]:

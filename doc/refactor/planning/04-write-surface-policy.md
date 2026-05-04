@@ -186,9 +186,18 @@ Round 9B 将这些阻断规则接入 deliverable evaluator 的结构化证据层
 - placeholder route/view；
 - raw provider transcript。
 
+Round 9E 后，closeout 写入和 artifact legality 的 runtime 边界进一步收紧：
+
+- `payload.final_artifact_refs` 是 API/display 兼容字段，只能作为 final evidence table 的输入来源之一，不能独立放行 closeout。
+- final evidence table 由 `DeliverableEvaluation` 编译，只包含 current graph pointer 下 `ACCEPTED` + `CURRENT` + 非 placeholder/archive/superseded/stale/unknown/illegal-kind 的 final evidence。
+- governance-only docs、architecture brief、backlog recommendation-only refs、archive refs 和 raw provider transcript 必须被编译为 `ILLEGAL_KIND` 或 `UNKNOWN_REF`，不得进入 final evidence table。
+- checker、closeout 和 rework 共享 `workspace_path_contracts.py` 的 artifact legality vocabulary；旧 helper 只保留为 input compiler、evaluation helper、execution shell 或 API display。
+- closeout package 必须携带 contract version、contract id、evaluation fingerprint 和 final evidence table。runtime completion 重新计算这些字段并检查一致性。
+
 ## 验收标准
 
 - runtime 中不再出现以 role name 直接决定 write root 的新代码。
 - 所有 execution package 的 allowed write set 可由 capability policy 解释。
 - checker 和 closeout 对 artifact refs 的判定使用同一 write-surface policy。
 - 015 中出现过的 placeholder delivery 不能通过该策略。
+- final evidence table 与 write surface / artifact legality 边界一致，不能包含 governance/backlog/archive/placeholder/superseded/stale/unknown refs。
