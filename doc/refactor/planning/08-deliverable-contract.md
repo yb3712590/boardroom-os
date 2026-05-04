@@ -332,4 +332,10 @@ Remaining Phase 6/7 dependencies:
 
 - Round 10A-10F have implemented replay resume, graph version resume, ticket/incident resume, checkpoints, artifact hash manifest, replay bundle report and document materialized view hash verification. Phase 5 deliverable contract semantics are unchanged; replay records cursor/version/hash/document diagnostics.
 - Phase 6 document views are materialized from event/process asset/artifact metadata/content. They do not depend on manually rewritten markdown files.
-- Phase 7 still owns 015 full replay import and replay-case validation for BR-040, BR-041, BR-100 and closeout/manual recovery on real 015 data.
+- Round 11A has imported the 015 replay bundle as a stable `ReplayImportManifest`; Round 11B has replayed the key provider failure and preserved the boundary that provider raw transcript / late output body cannot satisfy deliverable contracts.
+- Round 11C has replayed real 015 contract gaps with `ReplayCaseResult` outputs:
+  - `contract-gap-015-br032-auth-mismatch` (`5855..6299`) keeps `BR032-F06` blocking, blocks `APPROVED_WITH_NOTES`, and routes rework to `tkt_c247833b2c60` / `node_backlog_followup_br_031_m3_frontend_auth_nav`.
+  - `contract-gap-015-br040-placeholder-delivery` (`11400..11464`) rejects `art://workspace/tkt_2252a7a1f92e/source.py`, `art://workspace/tkt_2252a7a1f92e/test-report.json`, `pa://source-code-delivery/tkt_2252a7a1f92e@1`, and `pa://evidence-pack/tkt_2252a7a1f92e@1`; rework targets `tkt_2252a7a1f92e`.
+  - `contract-gap-015-br041-placeholder-delivery` (`9933..10016`) rejects `art://workspace/tkt_5707c310bc6d/source.py`, `art://workspace/tkt_5707c310bc6d/test-report.json`, `pa://source-code-delivery/tkt_5707c310bc6d@1`, and `pa://evidence-pack/tkt_5707c310bc6d@1`; rework targets `tkt_5707c310bc6d`.
+- Round 11C evidence legality: `source.py`, fallback stdout, `pytest tests -q`, one generic passed test, no business assertions, checker `APPROVED_WITH_NOTES`, failed delivery report, and graph terminal state do not satisfy blocking contract gaps.
+- Phase 7 still owns graph/progression replay, closeout/manual recovery replay, BR-100 loop replay and final audit report on real 015 data.

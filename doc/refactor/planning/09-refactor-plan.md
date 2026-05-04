@@ -221,6 +221,7 @@ Round 9E 证据：
 
 - [x] Round 11A：导入 015 replay 包。已新增 `ReplayImportManifest`、read-only source DB import harness 和 CLI；source DB 用 SQLite `mode=ro` 打开，目标 DB 从 events reducer 重建 projection，只复制 `artifact_index` metadata，不复制 source projection rows。
 - [x] Round 11B：定位并重放 015 provider failure。已新增 `ReplayCaseResult`、只读 provider replay harness 和 CLI；case `provider-failure-015-malformed-sse` 继承 11A manifest，读取导入 DB，不修改 replay source DB、projection、event 或 artifact。
+- [x] Round 11C：重放 BR-032 auth contract mismatch 和 BR-040/BR-041 placeholder delivery。已新增只读 contract gap replay harness 和 CLI；三条 case 均继承 11A manifest 与 11B provider 边界，只消费 `events`、`artifact_index`、`process_asset_index`，不读取 raw transcript / late output / artifact 正文，不修改 replay DB/projection/event。
 - 重放关键 incident/rework/closeout 路径。
 - 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
 
@@ -247,6 +248,14 @@ Round 11B provider replay 证据边界：
 - Retry/recovery：只用结构化 failure detail、ticket terminal、retry 和 incident recovery 事件得出 `retried_and_completed`；`10007 TICKET_RETRY_SCHEDULED` -> `tkt_2b58304dccb9`，`10009 INCIDENT_RECOVERY_STARTED` 使用 `RESTORE_AND_RETRY_LATEST_FAILURE`，`10016 TICKET_COMPLETED` 完成恢复票。
 - Late guard：旧票 `tkt_30c7a10979ae` 在 `9967 TICKET_FAILED` 后的 late provider events 只保留 lineage；case range 内 current pointer source 为 `case_range_terminal_events`，current ticket 为 `tkt_2b58304dccb9`。Harness 明确记录 `raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`。
 - Phase 7 provider checkbox 仍保持未勾：11B 证明关键 provider failure 可定位和重放，也证明真实 015 旧数据不能提供 raw archive contract 成功证据。11C 从 Contract gap replay 开始，不得用 provider raw transcript 或 late output 正文弥补 BR contract gap。
+
+Round 11C contract gap replay 证据边界：
+
+- Case result paths：`D:/Projects/boardroom-os/.pytest-tmp/replay-contract-gap-015/br032.json`、`br040.json`、`br041.json`。
+- BR-032：`contract-gap-015-br032-auth-mismatch`，event range `5855..6299`，checker report `art://runtime/tkt_bc0404503ec8/delivery-check-report.json` 保留 blocking `BR032-F06`；`APPROVED_WITH_NOTES` 不能覆盖 blocker，policy proposal 为 `progression.rework.deliverable_contract_gap`，target 为 `tkt_c247833b2c60` / `node_backlog_followup_br_031_m3_frontend_auth_nav`。
+- BR-040：`contract-gap-015-br040-placeholder-delivery`，event range `11400..11464`，placeholder refs 为 `art://workspace/tkt_2252a7a1f92e/source.py`、`art://workspace/tkt_2252a7a1f92e/test-report.json`、`pa://source-code-delivery/tkt_2252a7a1f92e@1`、`pa://evidence-pack/tkt_2252a7a1f92e@1`；被 `invalid_evidence_for_contract` / `acceptance_missing_required_evidence` 阻断，target 为 `tkt_2252a7a1f92e`。
+- BR-041：`contract-gap-015-br041-placeholder-delivery`，event range `9933..10016`，placeholder refs 为 `art://workspace/tkt_5707c310bc6d/source.py`、`art://workspace/tkt_5707c310bc6d/test-report.json`、`pa://source-code-delivery/tkt_5707c310bc6d@1`、`pa://evidence-pack/tkt_5707c310bc6d@1`；被 `invalid_evidence_for_contract` / `acceptance_missing_required_evidence` 阻断，target 为 `tkt_5707c310bc6d`。
+- 三条 case 均记录 `graph_terminal_override_used=false`、`raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`。下一入口为 Round 11D Graph / progression replay，不开始 closeout 或 audit 收口。
 
 ## Phase 8：新 live scenario clean run
 

@@ -96,6 +96,27 @@ Round 11B 继承 11A import manifest 和 `D:/Projects/boardroom-os/.pytest-tmp/r
 
 Round 11C 必须继承 11B 的边界：provider raw transcript、malformed raw archive、late output 正文和 artifact/markdown 正文不得驱动 contract gap、rework、restore 或 closeout。BR-032、BR-040、BR-041 的 contract gap replay 只能消费结构化 event、ticket context、artifact/evidence legality 和 deliverable contract facts。
 
+## Round 11C contract gap replay 记录（2026-05-05）
+
+Round 11C 继承 11A import manifest 和 11B provider 边界，新增只读 contract gap replay harness。Harness 只读取 imported DB 的 `events`、`artifact_index` 和 `process_asset_index`，不读取 provider raw transcript、late output body、artifact markdown/source body、source projection，也不修改 replay DB/projection/event。
+
+### ReplayCaseResult
+
+- BR-032：case id `contract-gap-015-br032-auth-mismatch`，event range `5855..6299`，source manifest hash `8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-contract-gap-015/br032.json`。
+- BR-032 contract finding：checker report `art://runtime/tkt_bc0404503ec8/delivery-check-report.json` 记录 `BR032-F06`，replay 编译为 blocking `acceptance_missing_required_evidence`，缺 `api_contract_test`，surface 为 `surface.br032.frontend_auth_contract`。
+- BR-032 outcome：`APPROVED_WITH_NOTES` 触发 `convergence_policy_required`，不能放行 blocker；policy proposal 为 `progression.rework.deliverable_contract_gap`，rework target 指向 `tkt_c247833b2c60` / `node_backlog_followup_br_031_m3_frontend_auth_nav`，不是 checker、graph terminal 或 closeout。
+- BR-040：case id `contract-gap-015-br040-placeholder-delivery`，event range `11400..11464`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-contract-gap-015/br040.json`。
+- BR-040 evidence refs：`art://workspace/tkt_2252a7a1f92e/source.py`、`art://workspace/tkt_2252a7a1f92e/test-report.json`、`pa://source-code-delivery/tkt_2252a7a1f92e@1`、`pa://evidence-pack/tkt_2252a7a1f92e@1`；generic command 为 `pytest tests -q`，一条 `1 passed` 不能作为业务断言。
+- BR-040 outcome：placeholder source/test 被 `invalid_evidence_for_contract` 和 `acceptance_missing_required_evidence` 阻断；`APPROVED_WITH_NOTES` 不能覆盖 blocker；rework target 指向 `tkt_2252a7a1f92e` / `node_backlog_followup_br_040_m4_catalog_search_availability`。
+- BR-041：case id `contract-gap-015-br041-placeholder-delivery`，event range `9933..10016`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-contract-gap-015/br041.json`。
+- BR-041 evidence refs：`art://workspace/tkt_5707c310bc6d/source.py`、`art://workspace/tkt_5707c310bc6d/test-report.json`、`pa://source-code-delivery/tkt_5707c310bc6d@1`、`pa://evidence-pack/tkt_5707c310bc6d@1`；generic command 为 `pytest tests -q`，一条 `1 passed` 不能作为业务断言。
+- BR-041 outcome：placeholder source/test 被 `invalid_evidence_for_contract` 和 `acceptance_missing_required_evidence` 阻断；`APPROVED_WITH_NOTES` 不能覆盖 blocker；rework target 指向 `tkt_5707c310bc6d` / `node_backlog_followup_br_041_m4_isbn_remove_inventory`。
+- 共同边界：三条 case 都记录 `raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`、`graph_terminal_override_used=false`，issue classification 为 `contract gap replay evidence`。
+
+### 11D 依赖
+
+Round 11D 必须继承 11A manifest、11B provider 边界和 11C contract gap case results。下一步只进入 Graph / progression replay，验证 orphan pending、stale pointer 和 effective edge；不得开始 closeout final evidence 或 audit report 收口。
+
 ## 当前目录结构问题
 
 ### 文档入口过多

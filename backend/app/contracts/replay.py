@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
+from pydantic import Field
+
 from app.contracts.common import JsonValue, StrictModel
 
 
@@ -112,6 +114,13 @@ class ReplayCaseResult(StrictModel):
     late_event_guard: dict[str, JsonValue]
     diagnostics: list[dict[str, JsonValue]]
     issue_classification: str
+    br_id: str | None = None
+    contract_findings: list[dict[str, JsonValue]] = Field(default_factory=list)
+    rework_incident_outcome: dict[str, JsonValue] = Field(default_factory=dict)
+    evidence_refs: dict[str, JsonValue] = Field(default_factory=dict)
+    contract_gate: dict[str, JsonValue] = Field(default_factory=dict)
+    rework_target: dict[str, JsonValue] = Field(default_factory=dict)
+    graph_terminal_override_used: bool = False
 
 
 class ReplayResumeResult(StrictModel):
