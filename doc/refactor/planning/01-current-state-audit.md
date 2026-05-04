@@ -137,6 +137,44 @@ Round 11D 继承 11A import manifest、11B provider replay 边界和 11C contrac
 
 Round 11E 必须继承 11A–11D case results，再进入 closeout replay 与 audit report。11E 需要验证 closeout package 必须经过 deliverable contract evaluation 和 final evidence table，并汇总 provider/runtime/product/contract/replay issue；不得重新设计 11A–11D 已验证的 import、provider、contract gap 或 graph/progression 语义。
 
+## Round 11E closeout replay 与 audit report 记录（2026-05-05）
+
+Round 11E 继承 11A import manifest、11B provider failure result、11C contract gap results 和 11D graph/progression results，新增只读 closeout replay harness 与 replay audit report。Harness 只读取 imported DB 的 `events`，用现有 closeout contract compiler 验证最终 closeout payload；不修改 replay DB/projection/event，也不做 manual closeout recovery 或 projection repair。
+
+### Closeout ReplayCaseResult
+
+- Case id：`closeout-015-manual-m103-contract-gate`，event range `15778..15801`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-closeout-015/closeout.json`。
+- `tkt_4624a870959f` 在 `TICKET_FAILED` 中拒绝 `art://project-workspace/wf_7f2902f3c8c6/10-project/ARCHITECTURE.md`，证明 governance-only doc 不能作为 final closeout evidence 单独放行。
+- `tkt_737cd07e76e5` 在 `TICKET_FAILED` 中拒绝 `art://runtime/tkt_f58cc1d4ab7b/backlog_recommendation.json`，证明 backlog recommendation-only ref 不能作为 final closeout evidence 单独放行。
+- `tkt_7a888035b4ff` 是最终 manual M103 closeout，`TICKET_COMPLETED` 但 payload 缺 `deliverable_contract_version`、`deliverable_contract_id`、`evaluation_fingerprint` 和 `final_evidence_table`。
+- Closeout contract summary：`status=BLOCKED`，reason `closeout_missing_final_evidence_table`，compiled final evidence table row count `2`，submitted row count `0`。
+- Bypass guard：`manual_closeout_recovery_bypassed_contract=false`、`graph_terminal_override_used=false`、`checker_verdict_only_allowed=false`、`failed_delivery_report_only_allowed=false`、`governance_docs_only_allowed=false`。
+- Final evidence table summary：`illegal_statuses_present=[]`、`forbidden_ref_kinds_present=[]`；superseded、placeholder、archive、unknown、stale old attempt、governance-only docs 和 backlog recommendation-only refs 没有进入最终表。
+- Disposition：`legacy_manual_closeout_rejected`，status `FAILED`，classification `replay/import issue`。这证明旧 015 closeout 不能满足 Phase 5 contract closeout，不是 contract closeout 通过证据。
+
+### Replay Audit Report
+
+- Report path：`D:/Projects/boardroom-os/.pytest-tmp/replay-audit-015/replay-audit-report.json`
+- Report version：`replay-audit-report.v1`
+- Report hash：`42765a88f830a1c3b03a489b10816089a9cdb69f3e1b1dfc07b8a227a7ebe8ec`
+- Source manifest hash：`8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`
+- Checkpoint hashes：DB `4094836432b17030d21f0d0b1fbf7c19c935940f9912e288fc9079a748610fcf`，event log `56a621cc7f57e5879cc76d89eb5e74eff44d9522306a57292d7ac83804fe7320`，artifact index `d220f1d58db2623c268a1116fee63c08b1414b044c462ba4617b807f6fc8908f`。
+- Issue taxonomy 固定为 `provider failure`、`runtime bug`、`product defect`、`contract gap`、`replay/import issue`。
+- Provider case disposition：`provider-failure-015-malformed-sse` 属于 provider failure domain，但 `issue_type=replay/import issue`，因为旧数据缺 raw archive ref 且 taxonomy 为 `PROVIDER_BAD_RESPONSE`。
+- Contract gap dispositions：BR-032、BR-040、BR-041 均为 `issue_type=contract gap`，status `READY`。
+- Runtime graph dispositions：orphan pending、CANCELLED/SUPERSEDED、late provider pointer、missing explicit pointer 均为 `issue_type=runtime bug` domain replay evidence，status `READY`。
+- Closeout disposition：`closeout-015-manual-m103-contract-gate` 属于 contract closeout domain，但 `issue_type=replay/import issue`，status `FAILED`，disposition `legacy_manual_closeout_rejected`。
+
+### Phase 7 状态
+
+- `015 import`：`READY`。
+- `provider failure`：`FAILED`，旧 replay 缺 raw archive，checkbox 不勾。
+- `BR-032`：`READY`。
+- `BR-040/BR-041`：`READY`。
+- `orphan pending`：`READY`。
+- `contract closeout`：`FAILED`，旧 manual M103 closeout 缺 contract fields/final table，checkbox 不勾。
+- `audit report`：`READY`，可勾选。
+
 ## 当前目录结构问题
 
 ### 文档入口过多

@@ -223,14 +223,14 @@ Round 9E 证据：
 - [x] Round 11B：定位并重放 015 provider failure。已新增 `ReplayCaseResult`、只读 provider replay harness 和 CLI；case `provider-failure-015-malformed-sse` 继承 11A manifest，读取导入 DB，不修改 replay source DB、projection、event 或 artifact。
 - [x] Round 11C：重放 BR-032 auth contract mismatch 和 BR-040/BR-041 placeholder delivery。已新增只读 contract gap replay harness 和 CLI；三条 case 均继承 11A manifest 与 11B provider 边界，只消费 `events`、`artifact_index`、`process_asset_index`，不读取 raw transcript / late output / artifact 正文，不修改 replay DB/projection/event。
 - [x] Round 11D：重放 graph/progression orphan pending、CANCELLED/SUPERSEDED effective edge、late provider current pointer 和 missing explicit pointer。已新增只读 graph/progression replay harness 和 CLI；四条 case 继承 11A manifest、11B provider late guard 和 11C contract gap boundary，只消费 `events`，不读取 source projection，不修改 replay DB/projection/event。
-- 重放关键 incident/rework/closeout 路径。
-- 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
+- [x] Round 11E：重放 closeout 路径并输出 replay audit report。已新增只读 closeout replay harness、audit report builder 和 CLI；closeout case 继承 11A–11D evidence，证明旧 manual M103 closeout 缺 contract fields/final evidence table，必须 fail-closed 为 `replay/import issue`。
+- [x] 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。Provider 和 closeout 的旧 015 证据不足时保持 `FAILED` / `replay/import issue`，不伪装成 provider/runtime/product/contract issue。
 
 验收：
 
 - [x] Round 11A import harness 无人工 DB/projection/event 注入。证据：`python -m app.replay_import_cli ... --manifest-out D:/Projects/boardroom-os/.pytest-tmp/replay-import-015/replay-import-manifest.json` 输出 `READY`；重复导入使用 `--expected-manifest` 仍输出同一 `manifest_hash=8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53` 和 `idempotency_key=replay-import:3a209b15acc022ff85a35f27efa4f5857f3151d51aaaf391dd7408cf866332b8`。
-- closeout 不能绕过 deliverable contract。
-- 输出 replay audit report。
+- [x] closeout 不能绕过 deliverable contract。证据：`python -m app.replay_closeout_cli ... --case-id closeout-015-manual-m103-contract-gate` 生成 `D:/Projects/boardroom-os/.pytest-tmp/replay-closeout-015/closeout.json`，预期 exit 2；`manual_closeout_recovery_bypassed_contract=false`，contract issue 为 `closeout_missing_final_evidence_table`。
+- [x] 输出 replay audit report。证据：`D:/Projects/boardroom-os/.pytest-tmp/replay-audit-015/replay-audit-report.json`，report hash `42765a88f830a1c3b03a489b10816089a9cdb69f3e1b1dfc07b8a227a7ebe8ec`。
 
 Round 11A 证据边界：
 
@@ -266,6 +266,18 @@ Round 11D graph/progression replay 证据边界：
 - Late provider pointer：`graph-progression-015-late-provider-current-pointer-br041`，event range `9969..10016`；late provider output 不改 current pointer，current 为 `tkt_2b58304dccb9`，`timestamp_pointer_guess_used=false`。
 - Missing explicit pointer：`graph-progression-015-missing-explicit-pointer`，event range `11791..11903`；缺 explicit runtime pointer 时生成 `graph.current_pointer.missing_explicit` 和 `progression.incident.graph_reduction_issue`，不按 ticket `updated_at` 猜 current。
 - 四条 case 均为 `READY`，issue classification 为 `graph progression replay evidence`。下一入口为 Round 11E Closeout replay 与 audit report。
+
+Round 11E closeout/audit 证据边界：
+
+- Case result path：`D:/Projects/boardroom-os/.pytest-tmp/replay-closeout-015/closeout.json`。
+- Closeout case：`closeout-015-manual-m103-contract-gate`，event range `15778..15801`；`tkt_4624a870959f` 拒绝 `ARCHITECTURE.md`，`tkt_737cd07e76e5` 拒绝 `backlog_recommendation.json`，最终 `tkt_7a888035b4ff` 是 manual M103 closeout。
+- 最终 manual closeout payload 缺 `deliverable_contract_version`、`deliverable_contract_id`、`evaluation_fingerprint` 和 `final_evidence_table`；contract summary 为 `BLOCKED`，reason `closeout_missing_final_evidence_table`，compiled final evidence rows `2`，submitted rows `0`。
+- Manual bypass guard 为 `false`：graph terminal、checker verdict、failed delivery report、governance docs 或 backlog-only refs 都不能绕过 deliverable contract；final evidence table summary 中 `illegal_statuses_present=[]`、`forbidden_ref_kinds_present=[]`。
+- Audit report path：`D:/Projects/boardroom-os/.pytest-tmp/replay-audit-015/replay-audit-report.json`；report hash `42765a88f830a1c3b03a489b10816089a9cdb69f3e1b1dfc07b8a227a7ebe8ec`；issue taxonomy 固定为 `provider failure`、`runtime bug`、`product defect`、`contract gap`、`replay/import issue`。
+- Audit report 区分 issue type 与 issue domain：provider 旧 raw archive 缺失仍为 `issue_type=replay/import issue`、`issue_domain=provider failure`；closeout 旧 manual M103 缺 contract payload 仍为 `issue_type=replay/import issue`、`issue_domain=contract gap`。
+- Phase 7 收口状态：015 import、BR-032、BR-040/BR-041、orphan pending、audit report 有 replay 证据；provider failure 和 contract closeout 因旧 replay 数据不足保持未完成。
+
+下一入口：Round 12 backend-only live scenario clean run。Round 11A–11E 已完成 Phase 7 015 replay 包验证收口；下一轮不再修补旧 015 replay DB/projection/event，而是用新 backend-only live run 提供 provider raw archive 与合法 contract closeout 证据。
 
 ## Phase 8：新 live scenario clean run
 

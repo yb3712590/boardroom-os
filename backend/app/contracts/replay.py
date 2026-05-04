@@ -125,6 +125,25 @@ class ReplayCaseResult(StrictModel):
     policy_proposal: dict[str, JsonValue] = Field(default_factory=dict)
     graph_diagnostics: list[dict[str, JsonValue]] = Field(default_factory=list)
     effective_edge_summary: dict[str, JsonValue] = Field(default_factory=dict)
+    closeout_tickets: list[dict[str, JsonValue]] = Field(default_factory=list)
+    closeout_contract_summary: dict[str, JsonValue] = Field(default_factory=dict)
+    final_evidence_table_summary: dict[str, JsonValue] = Field(default_factory=dict)
+    bypass_guard: dict[str, JsonValue] = Field(default_factory=dict)
+    audit_disposition: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ReplayAuditReport(StrictModel):
+    status: ReplayStatus
+    report_version: str
+    source_manifest_hash: str
+    source_event_range: dict[str, int] | None
+    checkpoint_hashes: dict[str, JsonValue]
+    issue_taxonomy: list[str]
+    issues: list[dict[str, JsonValue]]
+    case_results: list[dict[str, JsonValue]]
+    phase7_acceptance: dict[str, dict[str, JsonValue]]
+    diagnostics: list[dict[str, JsonValue]]
+    report_hash: str
 
 
 class ReplayResumeResult(StrictModel):
