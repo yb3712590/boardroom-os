@@ -220,6 +220,7 @@ Round 9E 证据：
 任务：
 
 - [x] Round 11A：导入 015 replay 包。已新增 `ReplayImportManifest`、read-only source DB import harness 和 CLI；source DB 用 SQLite `mode=ro` 打开，目标 DB 从 events reducer 重建 projection，只复制 `artifact_index` metadata，不复制 source projection rows。
+- [x] Round 11B：定位并重放 015 provider failure。已新增 `ReplayCaseResult`、只读 provider replay harness 和 CLI；case `provider-failure-015-malformed-sse` 继承 11A manifest，读取导入 DB，不修改 replay source DB、projection、event 或 artifact。
 - 重放关键 incident/rework/closeout 路径。
 - 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
 
@@ -235,6 +236,17 @@ Round 11A 证据边界：
 - 输入 hash：DB `4094836432b17030d21f0d0b1fbf7c19c935940f9912e288fc9079a748610fcf`，artifact tree `336d1ab44e01e1ae77a516b577bb3072a30660bb41441d7607d8b0aca7358061`，registered artifact tree `ea5cbd11ab7aa49e4bf6f155ba882d2f5edddf59b42a217844a4ed7a8296410f`，event log `56a621cc7f57e5879cc76d89eb5e74eff44d9522306a57292d7ac83804fe7320`，artifact index `d220f1d58db2623c268a1116fee63c08b1414b044c462ba4617b807f6fc8908f`。
 - Import diagnostics 只归类为 `replay/import issue`：AppleDouble / `PaxHeader` archive metadata、未登记 artifact root 文件、mutable workspace storage path、`INLINE_DB` artifact、source projection mismatch。
 - Round 11A 没有验证 provider failure、BR-032、BR-040/BR-041、orphan pending、graph/progression 或 closeout；这些从 Round 11B 开始依赖 11A manifest 的 event range、hash、artifact refs 和 diagnostics。
+
+Round 11B provider replay 证据边界：
+
+- Case result path：`D:/Projects/boardroom-os/.pytest-tmp/replay-provider-015/replay-case-result.json`。
+- Case id：`provider-failure-015-malformed-sse`；event range `9969..10016`；失败票 `tkt_0c616378c9ac`；核心事件 `9995 PROVIDER_ATTEMPT_FINISHED` / `9996 TICKET_FAILED`。
+- Attempt ref：`attempt:wf_7f2902f3c8c6:tkt_0c616378c9ac:prov_openai_compat_truerealbill:1`，事件 `9973` / `9995`，provider policy ref `provider-policy:prov_openai_compat_truerealbill:gpt-5.5:xhigh:openai_compat`。
+- Observed failure kind：`PROVIDER_BAD_RESPONSE`；expected malformed taxonomy：`MALFORMED_STREAM_EVENT`。真实旧数据缺 `raw_archive_ref`，`raw_archive_refs=[]`，diagnostics 为 `provider_raw_archive_ref_missing` 和 `provider_failure_taxonomy_legacy_bad_response`，classification 为 `replay/import issue`。
+- Provider provenance：preferred/actual provider 均为 `prov_openai_compat_truerealbill`，preferred/actual model 均为 `gpt-5.5`。
+- Retry/recovery：只用结构化 failure detail、ticket terminal、retry 和 incident recovery 事件得出 `retried_and_completed`；`10007 TICKET_RETRY_SCHEDULED` -> `tkt_2b58304dccb9`，`10009 INCIDENT_RECOVERY_STARTED` 使用 `RESTORE_AND_RETRY_LATEST_FAILURE`，`10016 TICKET_COMPLETED` 完成恢复票。
+- Late guard：旧票 `tkt_30c7a10979ae` 在 `9967 TICKET_FAILED` 后的 late provider events 只保留 lineage；case range 内 current pointer source 为 `case_range_terminal_events`，current ticket 为 `tkt_2b58304dccb9`。Harness 明确记录 `raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`。
+- Phase 7 provider checkbox 仍保持未勾：11B 证明关键 provider failure 可定位和重放，也证明真实 015 旧数据不能提供 raw archive contract 成功证据。11C 从 Contract gap replay 开始，不得用 provider raw transcript 或 late output 正文弥补 BR contract gap。
 
 ## Phase 8：新 live scenario clean run
 

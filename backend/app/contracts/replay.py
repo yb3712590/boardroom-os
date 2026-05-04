@@ -98,6 +98,22 @@ class ReplayImportManifest(StrictModel):
     manifest_hash: str
 
 
+class ReplayCaseResult(StrictModel):
+    case_id: str
+    status: ReplayStatus
+    source_manifest_hash: str
+    event_range: dict[str, int] | None
+    provider_failure_kind: str | None
+    attempt_refs: list[dict[str, JsonValue]]
+    raw_archive_refs: list[str]
+    source_ticket_context: dict[str, JsonValue]
+    provider_provenance: dict[str, JsonValue]
+    retry_recovery_outcome: dict[str, JsonValue]
+    late_event_guard: dict[str, JsonValue]
+    diagnostics: list[dict[str, JsonValue]]
+    issue_classification: str
+
+
 class ReplayResumeResult(StrictModel):
     status: ReplayStatus
     resume_request: ReplayResumeRequest

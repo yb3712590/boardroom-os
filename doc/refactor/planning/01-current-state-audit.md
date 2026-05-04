@@ -74,6 +74,28 @@ Round 11A 只验证 015 replay DB/artifacts/logs 可以无人工 DB/projection/e
 
 Round 11B Provider failure replay 必须从 11A manifest 继承 event range、DB/artifact/log hash、artifact refs、`INLINE_DB` closeout artifact 诊断、projection mismatch 诊断和 mutable storage relpath 诊断。11B 不得把这些 import diagnostics 归类为 provider/runtime/product/contract issue。
 
+## Round 11B provider failure replay 记录（2026-05-04）
+
+Round 11B 继承 11A import manifest 和 `D:/Projects/boardroom-os/.pytest-tmp/replay-import-015/replay-import.db`，新增只读 provider replay harness。真实 015 case 可定位并可重放，但不能证明 malformed SSE raw archive contract 通过；旧 replay 数据缺少 `raw_archive_ref`，因此 case result 必须 fail-closed 并归类为 `replay/import issue`。
+
+### ReplayCaseResult
+
+- Case id：`provider-failure-015-malformed-sse`
+- Source manifest hash：`8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`
+- Event range：`9969..10016`
+- Source ticket context：旧票 `tkt_30c7a10979ae` 在 `9967 TICKET_FAILED` 后出现 late provider events；失败票 `tkt_0c616378c9ac` 在 `9996 TICKET_FAILED` 终止；恢复票 `tkt_2b58304dccb9` 在 `10016 TICKET_COMPLETED` 完成。
+- Attempt refs：`attempt:wf_7f2902f3c8c6:tkt_0c616378c9ac:prov_openai_compat_truerealbill:1`，事件 `9973 PROVIDER_ATTEMPT_STARTED` / `9995 PROVIDER_ATTEMPT_FINISHED`，terminal state `FAILED_TERMINAL`。
+- Provider failure kind：`PROVIDER_BAD_RESPONSE`。失败正文显示 malformed SSE，但旧 taxonomy 没有记录为 `MALFORMED_STREAM_EVENT`。
+- Raw archive refs：空。diagnostic 为 `provider_raw_archive_ref_missing`，缺失 ref 为 `raw_archive_ref`。
+- Provider provenance：`preferred_provider_id=prov_openai_compat_truerealbill`、`actual_provider_id=prov_openai_compat_truerealbill`、`preferred_model=gpt-5.5`、`actual_model=gpt-5.5`，来自 ticket failure detail 和 provider attempt event。
+- Retry/recovery outcome：`retried_and_completed`，`10007 TICKET_RETRY_SCHEDULED` 指向 `tkt_2b58304dccb9`，`10009 INCIDENT_RECOVERY_STARTED` 使用 `RESTORE_AND_RETRY_LATEST_FAILURE`，`10016 TICKET_COMPLETED` 完成恢复票。
+- Policy boundary：replay harness 只记录结构化 `failure_kind`、`failure_detail`、ticket terminal event、incident/followup event；`raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`。
+- Late guard：case range 内 old ticket late provider events 保留在旧 attempt lineage，current pointer source 为 `case_range_terminal_events`，current ticket 为 `tkt_2b58304dccb9`；没有用最终 source projection 或时间戳猜 pointer。
+
+### 11C 依赖
+
+Round 11C 必须继承 11B 的边界：provider raw transcript、malformed raw archive、late output 正文和 artifact/markdown 正文不得驱动 contract gap、rework、restore 或 closeout。BR-032、BR-040、BR-041 的 contract gap replay 只能消费结构化 event、ticket context、artifact/evidence legality 和 deliverable contract facts。
+
 ## 当前目录结构问题
 
 ### 文档入口过多
