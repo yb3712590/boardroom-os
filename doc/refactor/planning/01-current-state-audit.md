@@ -117,6 +117,26 @@ Round 11C 继承 11A import manifest 和 11B provider 边界，新增只读 cont
 
 Round 11D 必须继承 11A manifest、11B provider 边界和 11C contract gap case results。下一步只进入 Graph / progression replay，验证 orphan pending、stale pointer 和 effective edge；不得开始 closeout final evidence 或 audit report 收口。
 
+## Round 11D graph/progression replay 记录（2026-05-05）
+
+Round 11D 继承 11A import manifest、11B provider replay 边界和 11C contract gap case results，新增只读 graph/progression replay harness。Harness 只读取 imported DB 的 `events`，用结构化 `ProgressionSnapshot` 重放 graph pointer、effective edges、readiness、graph complete 和 policy proposal；不读取 source projection，不修改 replay DB/projection/event，也不开始 closeout final evidence 或 audit report 收口。
+
+### ReplayCaseResult
+
+- Orphan pending：case id `graph-progression-015-orphan-pending-br060`，event range `11791..11903`，source manifest hash `8438fb6aed8e2daa32e90fd19ed171cb1691f06ebe5f0194e20f9e33ccda9d53`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/orphan-pending.json`。
+- Orphan pending outcome：`tkt_262f159fc931` 被记录为 stale/orphan pending，不进入 ready/current/effective graph complete；current pointer 保持 `tkt_5d8e536a14c2` 和 review `tkt_665d647e556a`；`graph_complete=true`；policy proposal 为 `NO_ACTION`，reason code `progression.stale_orphan_pending_ignored`，source graph version `gv_11903`，affected refs `["tkt_262f159fc931"]`。
+- CANCELLED/SUPERSEDED：case id `graph-progression-015-superseded-cancelled-br032`，event range `5960..6299`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/cancelled-superseded.json`。
+- CANCELLED/SUPERSEDED outcome：`tkt_ade5951f10ec`、`tkt_2262491ff9ae`、`tkt_e2b36aef19e9` 保留为 inactive lineage，不进入 effective edges、readiness、completed/current refs 或 graph complete 判断；current pointer 保持 `tkt_c247833b2c60`、`tkt_f00a95436db3`、`tkt_2e4ac9dd357e`、`tkt_1b2b27220047`；policy proposal reason code 为 `progression.graph_complete_no_closeout_in_8b`，source graph version `gv_6299`。
+- Late provider pointer：case id `graph-progression-015-late-provider-current-pointer-br041`，event range `9969..10016`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/late-provider-pointer.json`。
+- Late provider pointer outcome：old ticket `tkt_30c7a10979ae` 的 late provider events 只保留 lineage；current pointer 保持恢复票 `tkt_2b58304dccb9`；`raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`；policy source graph version `gv_10016`。
+- Missing explicit pointer：case id `graph-progression-015-missing-explicit-pointer`，event range `11791..11903`，case result path `D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/missing-explicit-pointer.json`。
+- Missing explicit pointer outcome：删除 explicit runtime pointer 后不会按 `updated_at` 猜 current；graph diagnostics 记录 `graph.current_pointer.missing_explicit`；policy proposal 为 `INCIDENT`，reason code `progression.incident.graph_reduction_issue`，source graph version `gv_11903`，affected refs `["node_backlog_followup_br_060_m6_circulation_transactions"]`。
+- 共同边界：四条 case 均为 `READY`，issue classification 为 `graph progression replay evidence`，policy metadata 都带 reason code、idempotency key、source graph version 和 affected node refs；timestamp pointer guess 均为 `false`。
+
+### 11E 依赖
+
+Round 11E 必须继承 11A–11D case results，再进入 closeout replay 与 audit report。11E 需要验证 closeout package 必须经过 deliverable contract evaluation 和 final evidence table，并汇总 provider/runtime/product/contract/replay issue；不得重新设计 11A–11D 已验证的 import、provider、contract gap 或 graph/progression 语义。
+
 ## 当前目录结构问题
 
 ### 文档入口过多

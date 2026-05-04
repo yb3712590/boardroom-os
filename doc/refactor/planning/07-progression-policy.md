@@ -240,6 +240,7 @@ Round 9D 已把 deliverable contract gap 编译为 Phase 4 recovery input：
 - Round 8B：ticket graph facade 测试覆盖 runtime pointer 优先于 newer stale `updated_at`，以及缺 explicit pointer 时产生 graph reduction issue。
 - Round 8C：policy 单测覆盖无结构化 requirement 时 legacy hint text 不触发 architect/meeting gate，结构化 architect gate 产生稳定 `CREATE_TICKET` metadata，meeting requirement 缺 evidence 时 `WAIT`，backlog handoff / graph patch 产生 fanout ticket，只有 completed `milestone_plan` 时不 fanout。
 - 015 中出现的 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 都能由 policy 测试覆盖。
+- Round 11D 已用真实 015 imported replay events 重放 orphan pending、CANCELLED/SUPERSEDED effective edge、late provider current pointer 和 missing explicit pointer 场景；Phase 4 progression policy 的 graph pointer/effective edge/reason metadata 不再只归 Phase 7 未来覆盖。
 - Scheduler 不再承担业务推进判断。
 
 8D 验收补充：
@@ -256,4 +257,15 @@ Round 9D 已把 deliverable contract gap 编译为 Phase 4 recovery input：
 - Round 8E：已收口 controller/runtime/scheduler/proposer 旧业务判断和兼容展示壳，并补齐 Phase 4 全部验收证据。
 - Phase 5 仍负责 Deliverable contract + checker/rework，不在 Phase 4 用 graph terminal 代替 PRD acceptance。
 - Phase 6 仍负责 replay/resume/checkpoint，不在 Phase 4 处理 replay DB 导入或 checkpoint。
-- Phase 7 仍负责 015 full replay；Phase 4 仅提供 stale gate、orphan pending、restore-needed missing ticket id、BR-100 loop 的 policy 等价测试。
+- Phase 7 仍负责 015 full replay；Round 11D 已补齐 graph/progression replay 证据，但 closeout replay、final evidence table 和 audit report 仍归 Round 11E。
+
+## Round 11D 015 replay evidence
+
+Round 11D 新增只读 graph/progression replay harness，继承 11A `ReplayImportManifest`、11B provider late guard 和 11C contract gap boundary。Harness 只读取 imported DB 的 `events`，不读取 source projection，不修改 replay DB/projection/event。
+
+- `graph-progression-015-orphan-pending-br060` (`11791..11903`)：`tkt_262f159fc931` 被归为 stale/orphan pending，不进入 ready/current/effective complete；current pointer 为 `tkt_5d8e536a14c2` 和 review `tkt_665d647e556a`；policy reason code 为 `progression.stale_orphan_pending_ignored`，source graph version `gv_11903`，affected refs `["tkt_262f159fc931"]`。
+- `graph-progression-015-superseded-cancelled-br032` (`5960..6299`)：`tkt_ade5951f10ec`、`tkt_2262491ff9ae`、`tkt_e2b36aef19e9` 不进入 effective edges、readiness、current refs、completed refs 或 graph complete 判断；policy reason code 为 `progression.graph_complete_no_closeout_in_8b`，source graph version `gv_6299`。
+- `graph-progression-015-late-provider-current-pointer-br041` (`9969..10016`)：late provider events 不改 current pointer，current 保持 `tkt_2b58304dccb9`；`raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`；source graph version `gv_10016`。
+- `graph-progression-015-missing-explicit-pointer` (`11791..11903`)：缺 explicit runtime pointer 时记录 `graph.current_pointer.missing_explicit`，policy proposal 为 `INCIDENT`，reason code `progression.incident.graph_reduction_issue`，不按 `updated_at` 猜 current。
+
+Case JSON 输出在 `D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/`。四条 case 均为 `READY`，issue classification 为 `graph progression replay evidence`。Round 11E 才能继续验证 closeout package、final evidence table 和 audit report。

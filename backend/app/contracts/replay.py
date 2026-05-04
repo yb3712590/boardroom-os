@@ -121,6 +121,10 @@ class ReplayCaseResult(StrictModel):
     contract_gate: dict[str, JsonValue] = Field(default_factory=dict)
     rework_target: dict[str, JsonValue] = Field(default_factory=dict)
     graph_terminal_override_used: bool = False
+    graph_pointer_summary: dict[str, JsonValue] = Field(default_factory=dict)
+    policy_proposal: dict[str, JsonValue] = Field(default_factory=dict)
+    graph_diagnostics: list[dict[str, JsonValue]] = Field(default_factory=list)
+    effective_edge_summary: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class ReplayResumeResult(StrictModel):

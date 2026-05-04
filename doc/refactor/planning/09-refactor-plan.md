@@ -222,6 +222,7 @@ Round 9E 证据：
 - [x] Round 11A：导入 015 replay 包。已新增 `ReplayImportManifest`、read-only source DB import harness 和 CLI；source DB 用 SQLite `mode=ro` 打开，目标 DB 从 events reducer 重建 projection，只复制 `artifact_index` metadata，不复制 source projection rows。
 - [x] Round 11B：定位并重放 015 provider failure。已新增 `ReplayCaseResult`、只读 provider replay harness 和 CLI；case `provider-failure-015-malformed-sse` 继承 11A manifest，读取导入 DB，不修改 replay source DB、projection、event 或 artifact。
 - [x] Round 11C：重放 BR-032 auth contract mismatch 和 BR-040/BR-041 placeholder delivery。已新增只读 contract gap replay harness 和 CLI；三条 case 均继承 11A manifest 与 11B provider 边界，只消费 `events`、`artifact_index`、`process_asset_index`，不读取 raw transcript / late output / artifact 正文，不修改 replay DB/projection/event。
+- [x] Round 11D：重放 graph/progression orphan pending、CANCELLED/SUPERSEDED effective edge、late provider current pointer 和 missing explicit pointer。已新增只读 graph/progression replay harness 和 CLI；四条 case 继承 11A manifest、11B provider late guard 和 11C contract gap boundary，只消费 `events`，不读取 source projection，不修改 replay DB/projection/event。
 - 重放关键 incident/rework/closeout 路径。
 - 验证 placeholder、orphan pending、provider late event、manual closeout recovery 都被新规则处理。
 
@@ -256,6 +257,15 @@ Round 11C contract gap replay 证据边界：
 - BR-040：`contract-gap-015-br040-placeholder-delivery`，event range `11400..11464`，placeholder refs 为 `art://workspace/tkt_2252a7a1f92e/source.py`、`art://workspace/tkt_2252a7a1f92e/test-report.json`、`pa://source-code-delivery/tkt_2252a7a1f92e@1`、`pa://evidence-pack/tkt_2252a7a1f92e@1`；被 `invalid_evidence_for_contract` / `acceptance_missing_required_evidence` 阻断，target 为 `tkt_2252a7a1f92e`。
 - BR-041：`contract-gap-015-br041-placeholder-delivery`，event range `9933..10016`，placeholder refs 为 `art://workspace/tkt_5707c310bc6d/source.py`、`art://workspace/tkt_5707c310bc6d/test-report.json`、`pa://source-code-delivery/tkt_5707c310bc6d@1`、`pa://evidence-pack/tkt_5707c310bc6d@1`；被 `invalid_evidence_for_contract` / `acceptance_missing_required_evidence` 阻断，target 为 `tkt_5707c310bc6d`。
 - 三条 case 均记录 `graph_terminal_override_used=false`、`raw_transcript_used=false`、`late_output_body_used=false`、`timestamp_pointer_guess_used=false`。下一入口为 Round 11D Graph / progression replay，不开始 closeout 或 audit 收口。
+
+Round 11D graph/progression replay 证据边界：
+
+- Case result paths：`D:/Projects/boardroom-os/.pytest-tmp/replay-graph-progression-015/orphan-pending.json`、`cancelled-superseded.json`、`late-provider-pointer.json`、`missing-explicit-pointer.json`。
+- Orphan pending：`graph-progression-015-orphan-pending-br060`，event range `11791..11903`；`tkt_262f159fc931` 不进入 ready/current/effective complete，current pointer 为 `tkt_5d8e536a14c2` 和 review `tkt_665d647e556a`；policy reason code `progression.stale_orphan_pending_ignored`，source graph version `gv_11903`，affected refs `["tkt_262f159fc931"]`。
+- CANCELLED/SUPERSEDED：`graph-progression-015-superseded-cancelled-br032`，event range `5960..6299`；`tkt_ade5951f10ec`、`tkt_2262491ff9ae`、`tkt_e2b36aef19e9` 不进入 effective edges/readiness/current/completed refs；current pointer 保持 `tkt_c247833b2c60`、`tkt_f00a95436db3`、`tkt_2e4ac9dd357e`、`tkt_1b2b27220047`。
+- Late provider pointer：`graph-progression-015-late-provider-current-pointer-br041`，event range `9969..10016`；late provider output 不改 current pointer，current 为 `tkt_2b58304dccb9`，`timestamp_pointer_guess_used=false`。
+- Missing explicit pointer：`graph-progression-015-missing-explicit-pointer`，event range `11791..11903`；缺 explicit runtime pointer 时生成 `graph.current_pointer.missing_explicit` 和 `progression.incident.graph_reduction_issue`，不按 ticket `updated_at` 猜 current。
+- 四条 case 均为 `READY`，issue classification 为 `graph progression replay evidence`。下一入口为 Round 11E Closeout replay 与 audit report。
 
 ## Phase 8：新 live scenario clean run
 
