@@ -178,7 +178,7 @@ Round 9E 证据：
 - closeout final refs 混入治理文档 / backlog recommendation：Round 9E 覆盖 `test_closeout_gate_rejects_illegal_final_artifact_ref_kind`、`test_closeout_gate_rejects_backlog_recommendation_final_artifact_ref_kind` 和 deliverable final table governance/backlog exclusion。
 - manual closeout recovery：Round 9E 覆盖 `backend/tests/test_api.py::test_manual_closeout_recovery_cannot_bypass_contract_table`；真实 015 replay 仍归 Phase 7。
 
-下一入口：Round 10B Graph version resume。Round 10A 已建立 Replay resume contract 与 event cursor；不得把 graph/ticket/incident/checkpoint 或 Phase 7 015 full replay 塞回 event cursor 批次。
+下一入口：Round 10C Ticket / incident resume。Round 10A 已建立 Replay resume contract 与 event cursor；Round 10B 已实现 graph version resume，并证明 graph version resume 与同一事件集 full replay 的 effective graph pointer / projection summary 等价。不得把 ticket/incident/checkpoint 或 Phase 7 015 full replay 塞回 graph version 批次。
 
 ## Phase 6：Replay / resume / checkpoint 重建
 
@@ -187,16 +187,17 @@ Round 9E 证据：
 任务：
 
 - Round 10A：已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult`、event id cursor 恢复入口、稳定 watermark hash 和 fail-closed diagnostic。
+- Round 10B：已在同一 contract 上增加 `graph_version` resume kind；`gv_<event sequence_no>` 映射到明确 event range / projection version / replay watermark，并从 event log 重放后重算 effective graph pointer、ready/blocked/complete index。
 - 增量 projection checkpoint。
 - event replay 性能预算。
-- resume from graph version/ticket/incident。
+- resume from ticket/incident。
 - replay bundle materializer。
 - 禁止人工投影补写作为正常路径。
 
 验收：
 
 - resume from event id 已由 `backend/tests/test_replay_resume.py` 覆盖；正常路径不调用 projection repair。
-- 从中间 graph version 恢复不需要人工 DB/projection 注入。
+- 从中间 graph version 恢复不需要人工 DB/projection 注入；`backend/tests/test_replay_resume.py` 覆盖 graph version watermark、full replay equivalence、orphan pending/effective edge、late old attempt / late old cancellation 不改 current pointer 语义，以及缺失/断层/event range mismatch/hash missing/hash mismatch/projection rebuild failed fail-closed。
 - 1GB 级 DB 不需要每次全量 JSON replay。
 - replay 后 artifact/doc view hash 一致。
 

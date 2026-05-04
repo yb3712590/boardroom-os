@@ -11,6 +11,8 @@ ReplayStatus = Literal["READY", "FAILED"]
 class ReplayResumeRequest(StrictModel):
     resume_kind: str
     event_cursor: str | None
+    graph_version: str | None = None
+    expected_graph_patch_hash: str | None = None
     projection_version: int | None
     event_range: dict[str, int] | None
     schema_version: str
@@ -40,4 +42,5 @@ class ReplayResumeResult(StrictModel):
     event_range: dict[str, int] | None
     schema_version: str
     contract_version: str
+    projection_summary: dict[str, JsonValue] | None = None
     diagnostic: dict[str, JsonValue]

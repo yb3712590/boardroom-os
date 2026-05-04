@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from app.contracts.ticket_graph import (
@@ -12,6 +13,21 @@ from app.contracts.ticket_graph import (
 )
 from app.core.constants import (
     BLOCKING_REASON_ADVISORY_PATCH_FROZEN,
+    EVENT_BOARD_REVIEW_APPROVED,
+    EVENT_BOARD_REVIEW_REJECTED,
+    EVENT_BOARD_REVIEW_REQUIRED,
+    EVENT_TICKET_CREATED,
+    EVENT_TICKET_CANCELLED,
+    EVENT_TICKET_CANCEL_REQUESTED,
+    EVENT_TICKET_COMPLETED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED,
+    EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED,
+    EVENT_TICKET_FAILED,
+    EVENT_TICKET_HEARTBEAT_RECORDED,
+    EVENT_TICKET_LEASE_GRANTED,
+    EVENT_TICKET_LEASED,
+    EVENT_TICKET_STARTED,
+    EVENT_TICKET_TIMED_OUT,
     NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
     NODE_STATUS_CANCELLED,
     NODE_STATUS_CANCEL_REQUESTED,
@@ -20,6 +36,16 @@ from app.core.constants import (
     NODE_STATUS_PENDING,
     NODE_STATUS_REWORK_REQUIRED,
     NODE_STATUS_SUPERSEDED,
+    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+    TICKET_STATUS_CANCELLED,
+    TICKET_STATUS_CANCEL_REQUESTED,
+    TICKET_STATUS_COMPLETED,
+    TICKET_STATUS_EXECUTING,
+    TICKET_STATUS_FAILED,
+    TICKET_STATUS_LEASED,
+    TICKET_STATUS_PENDING,
+    TICKET_STATUS_REWORK_REQUIRED,
+    TICKET_STATUS_TIMED_OUT,
 )
 from app.core.graph_identity import (
     GRAPH_LANE_EXECUTION,
@@ -28,6 +54,7 @@ from app.core.graph_identity import (
     resolve_ticket_graph_identity,
 )
 from app.core.graph_patch_reducer import (
+    GraphPatchEventRecord,
     load_graph_patch_event_records,
     reduce_graph_patch_overlay,
 )
@@ -270,6 +297,103 @@ def _choose_current_ticket_id_for_graph_node(
         ),
         "related_ticket_id": ",".join(sorted(candidate_ticket_ids)) or None,
     }
+
+
+def _projection_status_by_graph_node_id_at_sequence(
+    *,
+    repository: "ControlPlaneRepository",
+    connection: "sqlite3.Connection",
+    workflow_id: str,
+    patch_records: list[GraphPatchEventRecord],
+) -> tuple[dict[int, dict[str, str | None]], dict[int, dict[str, str | None]]]:
+    if not patch_records:
+        return {}, {}
+    events = repository.list_all_events(connection)
+    patch_sequences = {int(patch_record.sequence_no) for patch_record in patch_records}
+    ticket_status_by_patch_sequence: dict[int, dict[str, str | None]] = {}
+    node_status_by_patch_sequence: dict[int, dict[str, str | None]] = {}
+    created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
+    graph_node_id_by_ticket_id: dict[str, str] = {}
+    latest_ticket_id_by_graph_node_id: dict[str, str] = {}
+    ticket_status_by_ticket_id: dict[str, str] = {}
+    node_status_by_graph_node_id: dict[str, str] = {}
+    ticket_status_by_graph_node_id: dict[str, str | None] = {}
+
+    def set_status(ticket_id: str, ticket_status: str, node_status: str | None = None) -> None:
+        graph_node_id = graph_node_id_by_ticket_id.get(ticket_id)
+        if not graph_node_id:
+            return
+        ticket_status_by_ticket_id[ticket_id] = ticket_status
+        if latest_ticket_id_by_graph_node_id.get(graph_node_id) == ticket_id:
+            ticket_status_by_graph_node_id[graph_node_id] = ticket_status
+            if node_status is not None:
+                node_status_by_graph_node_id[graph_node_id] = node_status
+
+    for event in sorted(events, key=lambda item: int(item["sequence_no"])):
+        event_workflow_id = str(event.get("workflow_id") or "").strip()
+        if event_workflow_id != workflow_id:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload_json = event.get("payload_json")
+            payload = json.loads(payload_json) if isinstance(payload_json, str) else {}
+        event_type = str(event.get("event_type") or "").strip()
+        ticket_id = str(payload.get("ticket_id") or "").strip()
+
+        if event_type == EVENT_TICKET_CREATED and ticket_id:
+            created_spec = dict(payload)
+            created_specs_by_ticket_id[ticket_id] = created_spec
+            try:
+                identity = resolve_ticket_graph_identity(
+                    ticket_id=ticket_id,
+                    created_spec=created_spec,
+                    runtime_node_id=str(created_spec.get("node_id") or "").strip(),
+                )
+            except GraphIdentityResolutionError:
+                continue
+            graph_node_id_by_ticket_id[ticket_id] = identity.graph_node_id
+            latest_ticket_id_by_graph_node_id[identity.graph_node_id] = ticket_id
+            ticket_status_by_ticket_id[ticket_id] = TICKET_STATUS_PENDING
+            ticket_status_by_graph_node_id[identity.graph_node_id] = TICKET_STATUS_PENDING
+            node_status_by_graph_node_id[identity.graph_node_id] = NODE_STATUS_PENDING
+        elif ticket_id:
+            if event_type == EVENT_TICKET_LEASE_GRANTED:
+                set_status(ticket_id, TICKET_STATUS_LEASED)
+            elif event_type == EVENT_TICKET_LEASED:
+                set_status(ticket_id, TICKET_STATUS_LEASED, NODE_STATUS_PENDING)
+            elif event_type in {EVENT_TICKET_STARTED, EVENT_TICKET_HEARTBEAT_RECORDED}:
+                set_status(ticket_id, TICKET_STATUS_EXECUTING, NODE_STATUS_EXECUTING)
+            elif event_type == EVENT_TICKET_EXECUTION_PRECONDITION_BLOCKED:
+                set_status(ticket_id, TICKET_STATUS_PENDING, NODE_STATUS_PENDING)
+            elif event_type == EVENT_TICKET_EXECUTION_PRECONDITION_CLEARED:
+                set_status(ticket_id, TICKET_STATUS_PENDING, NODE_STATUS_PENDING)
+            elif event_type == EVENT_TICKET_CANCEL_REQUESTED:
+                set_status(ticket_id, TICKET_STATUS_CANCEL_REQUESTED, NODE_STATUS_CANCEL_REQUESTED)
+            elif event_type == EVENT_TICKET_CANCELLED:
+                set_status(ticket_id, TICKET_STATUS_CANCELLED, NODE_STATUS_CANCELLED)
+            elif event_type == EVENT_TICKET_COMPLETED:
+                if not payload.get("board_review_requested"):
+                    set_status(ticket_id, TICKET_STATUS_COMPLETED, NODE_STATUS_COMPLETED)
+            elif event_type == EVENT_TICKET_FAILED:
+                set_status(ticket_id, TICKET_STATUS_FAILED, NODE_STATUS_REWORK_REQUIRED)
+            elif event_type == EVENT_TICKET_TIMED_OUT:
+                set_status(ticket_id, TICKET_STATUS_TIMED_OUT, NODE_STATUS_REWORK_REQUIRED)
+            elif event_type == EVENT_BOARD_REVIEW_REQUIRED:
+                set_status(
+                    ticket_id,
+                    TICKET_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                    NODE_STATUS_BLOCKED_FOR_BOARD_REVIEW,
+                )
+            elif event_type == EVENT_BOARD_REVIEW_APPROVED:
+                set_status(ticket_id, TICKET_STATUS_COMPLETED, NODE_STATUS_COMPLETED)
+            elif event_type == EVENT_BOARD_REVIEW_REJECTED:
+                set_status(ticket_id, TICKET_STATUS_REWORK_REQUIRED, NODE_STATUS_REWORK_REQUIRED)
+
+        sequence_no = int(event["sequence_no"])
+        if sequence_no in patch_sequences:
+            ticket_status_by_patch_sequence[sequence_no] = dict(ticket_status_by_graph_node_id)
+            node_status_by_patch_sequence[sequence_no] = dict(node_status_by_graph_node_id)
+    return ticket_status_by_patch_sequence, node_status_by_patch_sequence
 
 
 def build_ticket_graph_snapshot(
@@ -623,17 +747,26 @@ def build_ticket_graph_snapshot(
         node.graph_node_id: str(node.node_status or "").strip() or None
         for node in nodes
     }
+    graph_patch_records = load_graph_patch_event_records(
+        repository,
+        workflow_id,
+        connection=connection,
+    )
+    ticket_status_by_patch_sequence, node_status_by_patch_sequence = _projection_status_by_graph_node_id_at_sequence(
+        repository=repository,
+        connection=connection,
+        workflow_id=workflow_id,
+        patch_records=graph_patch_records,
+    )
     graph_patch_overlay = reduce_graph_patch_overlay(
-        patch_records=load_graph_patch_event_records(
-            repository,
-            workflow_id,
-            connection=connection,
-        ),
+        patch_records=graph_patch_records,
         known_node_ids=all_graph_node_ids,
         known_patch_target_node_ids=execution_graph_node_ids,
         base_edge_keys=base_edge_keys,
         ticket_status_by_node_id=ticket_status_by_graph_node_id,
         node_status_by_node_id=node_status_by_graph_node_id,
+        ticket_status_by_node_id_at_sequence=ticket_status_by_patch_sequence,
+        node_status_by_node_id_at_sequence=node_status_by_patch_sequence,
     )
     node_status_overrides = dict(graph_patch_overlay.node_status_overrides)
     for node in nodes:

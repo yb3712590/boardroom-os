@@ -332,6 +332,8 @@ def reduce_graph_patch_overlay(
     base_edge_keys: set[tuple[str, str, str]],
     ticket_status_by_node_id: dict[str, str | None],
     node_status_by_node_id: dict[str, str | None],
+    ticket_status_by_node_id_at_sequence: dict[int, dict[str, str | None]] | None = None,
+    node_status_by_node_id_at_sequence: dict[int, dict[str, str | None]] | None = None,
 ) -> GraphPatchOverlay:
     current_edge_keys = {
         edge_key
@@ -344,20 +346,27 @@ def reduce_graph_patch_overlay(
             allowed_root_node_ids.discard(target_node_id)
 
     overlay = GraphPatchOverlay(effective_edge_keys=set(current_edge_keys))
-    inactive_node_ids: set[str] = {
-        node_id
-        for node_id, node_status in node_status_by_node_id.items()
-        if str(node_status or "").strip().upper() in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}
-    }
+    inactive_node_ids: set[str] = set()
     replacement_edge_keys: set[tuple[str, str, str]] = set()
 
     for record in patch_records:
         patch = record.patch
         event_id = record.event_id
+        ticket_status_by_node_id_for_record = (
+            ticket_status_by_node_id_at_sequence or {}
+        ).get(record.sequence_no, ticket_status_by_node_id)
+        node_status_by_node_id_for_record = (
+            node_status_by_node_id_at_sequence or {}
+        ).get(record.sequence_no, node_status_by_node_id)
+        status_inactive_node_ids = {
+            node_id
+            for node_id, node_status in node_status_by_node_id_for_record.items()
+            if str(node_status or "").strip().upper() in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}
+        }
         placeholder_node_ids = set(overlay.placeholder_nodes)
         active_patch_target_node_ids = (
             set(known_patch_target_node_ids or known_node_ids) | placeholder_node_ids
-        ) - set(inactive_node_ids)
+        ) - set(inactive_node_ids) - status_inactive_node_ids
         added_node_ids = {
             str(item.node_id).strip()
             for item in list(patch.add_nodes or [])
@@ -384,7 +393,11 @@ def reduce_graph_patch_overlay(
             ],
             known_node_ids=set(known_node_ids) | placeholder_node_ids,
         )
-        active_node_ids = (set(known_node_ids) | placeholder_node_ids) - set(inactive_node_ids)
+        active_node_ids = (
+            (set(known_node_ids) | placeholder_node_ids)
+            - set(inactive_node_ids)
+            - status_inactive_node_ids
+        )
         for node_id in patch.remove_node_ids:
             if node_id not in active_node_ids:
                 _raise_graph_patch_unavailable(
@@ -394,8 +407,8 @@ def reduce_graph_patch_overlay(
                 event_id=event_id,
                 node_id=node_id,
                 operation="remove",
-                ticket_status_by_node_id=ticket_status_by_node_id,
-                node_status_by_node_id=node_status_by_node_id,
+                ticket_status_by_node_id=ticket_status_by_node_id_for_record,
+                node_status_by_node_id=node_status_by_node_id_for_record,
             )
         for replacement in patch.replacements:
             if replacement.old_node_id not in active_node_ids:
@@ -410,8 +423,8 @@ def reduce_graph_patch_overlay(
                 event_id=event_id,
                 node_id=replacement.old_node_id,
                 operation="replace",
-                ticket_status_by_node_id=ticket_status_by_node_id,
-                node_status_by_node_id=node_status_by_node_id,
+                ticket_status_by_node_id=ticket_status_by_node_id_for_record,
+                node_status_by_node_id=node_status_by_node_id_for_record,
             )
 
         inactive_this_patch = {
@@ -527,7 +540,12 @@ def reduce_graph_patch_overlay(
             node_id for node_id in patch.focus_node_ids if node_id in active_after_patch
         )
 
-    overlay.frozen_node_ids.difference_update(inactive_node_ids)
-    overlay.focus_node_ids.difference_update(inactive_node_ids)
+    final_status_inactive_node_ids = {
+        node_id
+        for node_id, node_status in node_status_by_node_id.items()
+        if str(node_status or "").strip().upper() in {NODE_STATUS_CANCELLED, NODE_STATUS_SUPERSEDED}
+    }
+    overlay.frozen_node_ids.difference_update(inactive_node_ids | final_status_inactive_node_ids)
+    overlay.focus_node_ids.difference_update(inactive_node_ids | final_status_inactive_node_ids)
     overlay.effective_edge_keys = set(current_edge_keys | replacement_edge_keys)
     return overlay

@@ -40,6 +40,7 @@
 - Round 9D：Rework target upstream routing。
 - Round 9E：Closeout contract 与 final evidence table 收口。
 - Round 10A：Replay resume contract 与 event cursor。
+- Round 10B：Graph version resume。
 
 当前分支：`refactor/autonomous-runtime-docs`。
 
@@ -50,7 +51,7 @@
 - [09-refactor-plan.md](09-refactor-plan.md)
 - [10-refactor-acceptance-criteria.md](10-refactor-acceptance-criteria.md)
 
-下一轮新会话应从 **Round 10B：Graph version resume** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行；Round 9D 已把 blocking contract gap 编译为 Phase 4 recovery input，并将 rework target 指向 upstream source surface / producer ticket / producer node，缺 current producer ticket 时输出 incident/action；Round 9E 已把 closeout package 放行收口到 contract version/id、evaluation fingerprint 和 final evidence table。Round 10A 已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult` 最小 contract、event id cursor 恢复入口、稳定 watermark hash 和缺 cursor / 越界 / projection version 不匹配 / event range 不连续的 fail-closed 诊断。后续不得重新设计 9A/9B/9C/9D/9E 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary、convergence policy、rework target 或 final evidence table 语义，也不得把 checker verdict、graph terminal、checker notes freeform 文本、manual closeout recovery、closeout final refs 或人工 projection repair 主路径当成 contract satisfaction。
+下一轮新会话应从 **Round 10C：Ticket / incident resume** 开始。Round 9A 已完成版本化 DeliverableContract、DeliverableEvaluation、ContractFinding、最小 compiler 和纯 evaluator skeleton；Round 9B 已完成 required source surfaces path/capability/evidence 映射、EvidencePack 到 acceptance criteria 映射，以及 superseded/placeholder/archive/unknown/stale pointer evidence 的 fail-closed evaluator；Round 9C 已把 checker verdict gate 改为先消费 DeliverableEvaluation，并要求 failed delivery report 只能由结构化 ConvergencePolicy 明确放行；Round 9D 已把 blocking contract gap 编译为 Phase 4 recovery input，并将 rework target 指向 upstream source surface / producer ticket / producer node，缺 current producer ticket 时输出 incident/action；Round 9E 已把 closeout package 放行收口到 contract version/id、evaluation fingerprint 和 final evidence table。Round 10A 已建立 `ReplayResumeRequest` / `ReplayWatermark` / `ReplayResumeResult` 最小 contract、event id cursor 恢复入口、稳定 watermark hash 和缺 cursor / 越界 / projection version 不匹配 / event range 不连续的 fail-closed 诊断。Round 10B 已在同一 contract 上增加 graph version resume，`gv_<event sequence_no>` 映射到明确 event range / projection version / replay watermark，并重放事件重算 effective graph pointer、ready/blocked/complete index；graph version 缺失、断层、graph patch hash 不匹配都会 fail-closed。后续不得重新设计 9A/9B/9C/9D/9E 的 contract id/finding id/evaluation fingerprint、source surface、evidence vocabulary、convergence policy、rework target 或 final evidence table 语义，也不得把 checker verdict、graph terminal、checker notes freeform 文本、manual closeout recovery、closeout final refs 或人工 projection repair 主路径当成 contract satisfaction。
 
 ---
 
@@ -1252,6 +1253,16 @@ Round 10A implementation status:
 - orphan pending / CANCELLED / SUPERSEDED 语义在 resume 后保持一致。
 - graph version 缺失/断层/hash 不匹配 fail-closed 测试通过。
 ```
+
+Round 10B implementation status:
+
+- `ReplayResumeRequest` 增加 `graph_version` 和 `expected_graph_patch_hash`；`ReplayResumeResult` 增加 `projection_summary`，继续复用 `ReplayWatermark` 的 event cursor / projection version / event range / hash 语义。
+- `backend/app/core/replay_resume.py` 提供 `resume_replay_from_graph_version()`。`gv_<N>` 映射到 `sequence_no=N` 的 graph mutation event，`projection_version` 必须等于 N，event range 仍是包含式 `1..N`。
+- Graph version resume 会从 event log 重放目标 range，重建 projection，再通过 `build_ticket_graph_snapshot()` 和 `evaluate_progression_graph()` 输出 current pointer、effective nodes/edges、ready/blocked/in-flight/complete 和 graph reduction diagnostics。
+- Graph patch 校验按 patch event sequence 边界读取当时状态；late old attempt / late old completion / late old cancellation 只保留 lineage，不会反向污染 current pointer 或 graph patch legality。
+- 缺 graph version、graph version 不存在、指向非 graph mutation event、projection version mismatch、event range 不连续、event range mismatch、graph patch hash missing/mismatch、projection rebuild failed 都 fail-closed。
+- `rebuild_runtime_node_projections()` 的 `graph_version` 已改为事件序号语义，和 `resolve_workflow_graph_version()` 一致。
+- 10C 必须复用 10A/10B 的 request/watermark/result/diagnostic 语义，把 ticket/incident resume 映射到同一 projection version 与 event boundary；不得另建 ticket/incident 专用恢复点。
 
 ---
 

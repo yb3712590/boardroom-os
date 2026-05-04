@@ -1761,7 +1761,7 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
     created_specs_by_ticket_id: dict[str, dict[str, Any]] = {}
     event_types_by_ticket_id: dict[str, set[str]] = {}
     projections: dict[tuple[str, str], dict[str, Any]] = {}
-    graph_version_int_by_workflow: dict[str, int] = {}
+    graph_version_sequence_by_workflow: dict[str, int] = {}
     graph_mutation_events = {
         EVENT_WORKFLOW_CREATED,
         EVENT_TICKET_CREATED,
@@ -1797,8 +1797,8 @@ def rebuild_runtime_node_projections(events: Iterable[dict]) -> list[dict]:
         if workflow_id is None:
             continue
         if event_type in graph_mutation_events:
-            graph_version_int_by_workflow[workflow_id] = graph_version_int_by_workflow.get(workflow_id, 0) + 1
-        graph_version = build_graph_version(max(graph_version_int_by_workflow.get(workflow_id, 0), 1))
+            graph_version_sequence_by_workflow[workflow_id] = int(event["sequence_no"])
+        graph_version = build_graph_version(max(graph_version_sequence_by_workflow.get(workflow_id, 1), 1))
 
         ticket_id = str(payload.get("ticket_id") or "").strip()
         created_spec = created_specs_by_ticket_id.get(ticket_id)

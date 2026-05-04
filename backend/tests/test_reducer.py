@@ -68,6 +68,7 @@ from app.core.reducer import (
     rebuild_incident_projections,
     rebuild_lease_projections,
     rebuild_node_projections,
+    rebuild_runtime_node_projections,
     rebuild_ticket_projections,
     rebuild_workflow_projections,
 )
@@ -1759,3 +1760,61 @@ def test_reducer_rebuilds_blocked_then_approved_then_rework_states():
     assert modified_ticket["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
     assert modified_node["status"] == NODE_STATUS_REWORK_REQUIRED
     assert modified_node["blocking_reason_code"] == BLOCKING_REASON_MODIFY_CONSTRAINTS
+
+
+def test_runtime_node_projection_graph_version_uses_graph_event_sequence_number():
+    events = [
+        {
+            "sequence_no": 1,
+            "event_type": EVENT_SYSTEM_INITIALIZED,
+            "workflow_id": None,
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:00:00+08:00"),
+            "payload_json": json.dumps({"status": "initialized"}),
+        },
+        {
+            "sequence_no": 2,
+            "event_type": EVENT_WORKFLOW_CREATED,
+            "workflow_id": "wf_runtime_graph_version",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:01:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "north_star_goal": "Runtime graph version uses sequence number.",
+                    "budget_cap": 500000,
+                    "deadline_at": None,
+                    "title": "Runtime graph version",
+                }
+            ),
+        },
+        {
+            "sequence_no": 3,
+            "event_type": EVENT_TICKET_HEARTBEAT_RECORDED,
+            "workflow_id": "wf_runtime_graph_version",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:02:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "ticket_id": "tkt_missing_heartbeat",
+                    "node_id": "node_missing_heartbeat",
+                }
+            ),
+        },
+        {
+            "sequence_no": 4,
+            "event_type": EVENT_TICKET_CREATED,
+            "workflow_id": "wf_runtime_graph_version",
+            "occurred_at": datetime.fromisoformat("2026-03-28T10:03:00+08:00"),
+            "payload_json": json.dumps(
+                {
+                    "ticket_id": "tkt_runtime_graph_version",
+                    "node_id": "node_runtime_graph_version",
+                    "retry_budget": 1,
+                    "timeout_sla_sec": 1800,
+                    "priority": "high",
+                    "graph_contract": {"lane_kind": "execution"},
+                }
+            ),
+        },
+    ]
+
+    projections = rebuild_runtime_node_projections(events)
+
+    assert projections[0]["graph_version"] == "gv_4"

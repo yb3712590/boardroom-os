@@ -110,7 +110,7 @@ Round 9E 证据：
 ## Phase 6：Replay / resume / checkpoint
 
 - [x] 支持 resume from event id。证据：`backend/tests/test_replay_resume.py::test_resume_from_event_id_returns_explicit_watermark_boundary`。
-- [ ] 支持 resume from graph version。
+- [x] 支持 resume from graph version。证据：`backend/tests/test_replay_resume.py::test_resume_from_graph_version_returns_watermark_and_projection_summary`、`backend/tests/test_replay_resume.py::test_graph_version_resume_matches_full_replay_projection_summary`、`backend/tests/test_replay_resume.py::test_graph_version_resume_preserves_orphan_pending_and_effective_edge_semantics`、`backend/tests/test_replay_resume.py::test_graph_version_resume_keeps_late_old_attempt_out_of_current_pointer`、`backend/tests/test_replay_resume.py::test_graph_version_resume_keeps_late_old_cancelled_out_of_patch_legality`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_graph_version_missing`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_graph_version_is_gap`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_request_event_range_mismatches`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_graph_patch_hash_is_missing`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_graph_patch_hash_mismatches`、`backend/tests/test_replay_resume.py::test_graph_version_resume_fails_closed_when_projection_rebuild_rejects_patch`。
 - [ ] 支持 resume from ticket id。
 - [ ] 支持 resume from incident id。
 - [ ] projection checkpoint 避免每次全量 JSON replay。
