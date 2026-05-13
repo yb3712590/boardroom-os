@@ -1,0 +1,33 @@
+# Python and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node / generated projects
+node_modules/
+dist/
+build/
+
+# Runtime workspaces and evidence outputs
+.workspaces/
+.generated/
+.evidence/
+.audit/
+
+# Local files
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+# Archives
+*.zip
+*.tar.gz
+
