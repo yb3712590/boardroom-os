@@ -15,6 +15,7 @@ dist/
 build/
 
 # Runtime workspaces and evidence outputs
+.worktree/
 .workspaces/
 .generated/
 .evidence/
@@ -26,6 +27,7 @@ build/
 !.env.example
 .DS_Store
 *.log
+.claude/
 
 # Archives
 *.zip
