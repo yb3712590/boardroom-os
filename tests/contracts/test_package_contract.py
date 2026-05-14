@@ -1,8 +1,17 @@
+from boardroom_os.contracts.methodology import (
+    DocumentationDensity,
+    MethodologyProfile,
+    MethodologyProfileRegistry,
+    MethodologyTemplateKind,
+    default_documentation_obligations_for,
+    docs_template_key_for,
+)
 from boardroom_os.contracts.package import (
     IntegrationBoundary,
     PackageCommand,
     PackageContract,
     PackageProjectType,
+    create_package_contract,
 )
 from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef, SourceSurface
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, SourceSurfaceRef
@@ -35,8 +44,27 @@ def _command(command_id: str, label: str, command: tuple[str, ...]) -> PackageCo
     )
 
 
+def _profile() -> MethodologyProfile:
+    template_kind = MethodologyTemplateKind.HYBRID
+    return MethodologyProfile(
+        methodology_profile_id=ContractId(value="methodology-profile-hybrid"),
+        project_charter_ref=ContractId(value="charter-001"),
+        template_kind=template_kind,
+        documentation_density=DocumentationDensity.STANDARD,
+        docs_template_key=docs_template_key_for(template_kind),
+        documentation_obligations=default_documentation_obligations_for(template_kind),
+    )
+
+
+def _registry(profile: MethodologyProfile | None = None) -> MethodologyProfileRegistry:
+    resolved_profile = profile or _profile()
+    return MethodologyProfileRegistry.from_profiles(resolved_profile)
+
+
 def test_tiny_fullstack_package_contract_declares_required_surfaces_and_commands() -> None:
-    contract = PackageContract(
+    profile = _profile()
+    contract = create_package_contract(
+        methodology_registry=_registry(profile),
         package_contract_id=ContractId(value="package-contract-001"),
         project_charter_ref=ContractId(value="charter-001"),
         package_root="10-project",
@@ -90,6 +118,9 @@ def test_tiny_fullstack_package_contract_declares_required_surfaces_and_commands
         ),
         docs_required=True,
         closeout_required=True,
+        methodology_profile_ref=profile.methodology_profile_id,
+        docs_template_key=profile.docs_template_key,
+        documentation_obligations=profile.documentation_obligations,
     )
 
     assert contract.package_root == "10-project"
@@ -114,7 +145,6 @@ def test_tiny_fullstack_package_contract_declares_required_surfaces_and_commands
     ]
 
 
-
 def test_documentation_package_contract_allows_empty_run_and_test_commands() -> None:
     contract = PackageContract(
         package_contract_id=ContractId(value="package-contract-docs-001"),
@@ -132,13 +162,12 @@ def test_documentation_package_contract_allows_empty_run_and_test_commands() -> 
         run_commands=(),
         test_commands=(),
         integration_boundaries=(),
-        docs_required=True,
+        docs_required=False,
         closeout_required=True,
     )
 
     assert contract.run_commands == ()
     assert contract.test_commands == ()
-
 
 
 def test_contract_package_exports_package_contract_types() -> None:

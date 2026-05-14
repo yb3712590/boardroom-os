@@ -1,8 +1,20 @@
 from enum import StrEnum
-from typing import Self
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
+from boardroom_os.contracts.methodology import (
+    DocumentationObligation,
+    MethodologyProfileRegistry,
+)
 from boardroom_os.contracts.source_surface import SourceSurface
 from boardroom_os.contracts.types import ContractId
 
@@ -71,6 +83,9 @@ class PackageContract(BaseModel):
     integration_boundaries: tuple[IntegrationBoundary, ...]
     docs_required: StrictBool
     closeout_required: StrictBool
+    methodology_profile_ref: ContractId | None = None
+    docs_template_key: str | None = None
+    documentation_obligations: tuple[DocumentationObligation, ...] = ()
 
     @field_validator("package_root")
     @classmethod
@@ -78,6 +93,16 @@ class PackageContract(BaseModel):
         normalized = value.strip()
         if not normalized:
             raise ValueError("package root must not be empty")
+        return normalized
+
+    @field_validator("docs_template_key")
+    @classmethod
+    def _reject_empty_docs_template_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("docs_template_key must not be empty")
         return normalized
 
     @field_validator("source_surfaces")
@@ -111,11 +136,68 @@ class PackageContract(BaseModel):
     ) -> list[dict[str, str]]:
         return [value.model_dump() for value in values]
 
+    @field_serializer("documentation_obligations")
+    def _serialize_documentation_obligations(
+        self,
+        values: tuple[DocumentationObligation, ...],
+    ) -> list[dict[str, object]]:
+        return [value.model_dump() for value in values]
+
     @model_validator(mode="after")
-    def _require_commands_for_runnable_packages(self) -> Self:
-        if self.project_type in {PackageProjectType.SOFTWARE, PackageProjectType.MIXED}:
-            if not self.run_commands:
-                raise ValueError("software and mixed packages require run commands")
-            if not self.test_commands:
-                raise ValueError("software and mixed packages require test commands")
+    def _validate_package_contract(self, info: ValidationInfo) -> Self:
+        self._validate_runnable_commands()
+        self._validate_documentation_binding()
+        self._validate_methodology_registry_binding(info)
         return self
+
+    def _validate_runnable_commands(self) -> None:
+        if self.project_type not in {PackageProjectType.SOFTWARE, PackageProjectType.MIXED}:
+            return
+        if not self.run_commands:
+            raise ValueError("software and mixed packages require run commands")
+        if not self.test_commands:
+            raise ValueError("software and mixed packages require test commands")
+
+    def _validate_documentation_binding(self) -> None:
+        if self.docs_required:
+            if self.methodology_profile_ref is None:
+                raise ValueError("methodology_profile_ref is required when docs_required is true")
+            if self.docs_template_key is None:
+                raise ValueError("docs_template_key is required when docs_required is true")
+            if not self.documentation_obligations:
+                raise ValueError("documentation_obligations are required when docs_required is true")
+
+        if not self.docs_required and any(
+            obligation.required for obligation in self.documentation_obligations
+        ):
+            raise ValueError(
+                "documentation_obligations cannot include required items when docs_required is false"
+            )
+
+    def _validate_methodology_registry_binding(self, info: ValidationInfo) -> None:
+        registry = info.context.get("methodology_registry") if info.context else None
+        if registry is None:
+            if self.docs_required:
+                raise ValueError("methodology registry is required when docs_required is true")
+            return
+        if not isinstance(registry, MethodologyProfileRegistry):
+            raise ValueError("methodology registry is invalid")
+        if self.methodology_profile_ref is None:
+            raise ValueError("methodology_profile_ref is required when methodology registry is provided")
+
+        profile = registry.get(self.methodology_profile_ref)
+        if profile is None:
+            raise ValueError("methodology_profile_ref must exist in methodology registry")
+        if self.project_charter_ref != profile.project_charter_ref:
+            raise ValueError("project_charter_ref must match the methodology profile")
+        if self.docs_template_key != profile.docs_template_key:
+            raise ValueError("docs_template_key must match the methodology profile")
+        if self.documentation_obligations != profile.documentation_obligations:
+            raise ValueError("documentation_obligations must match the methodology profile")
+
+
+def create_package_contract(*, methodology_registry: MethodologyProfileRegistry, **contract_fields: Any) -> PackageContract:
+    return PackageContract.model_validate(
+        contract_fields,
+        context={"methodology_registry": methodology_registry},
+    )

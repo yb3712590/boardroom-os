@@ -20,11 +20,21 @@ from boardroom_os.contracts.gates import (
     compile_evidence_obligations,
     validate_contract_gate,
 )
+from boardroom_os.contracts.methodology import (
+    DocumentationDensity,
+    DocumentationObligation,
+    MethodologyProfile,
+    MethodologyProfileRegistry,
+    MethodologyTemplateKind,
+    default_documentation_obligations_for,
+    docs_template_key_for,
+)
 from boardroom_os.contracts.package import (
     IntegrationBoundary,
     PackageCommand,
     PackageContract,
     PackageProjectType,
+    create_package_contract,
 )
 from boardroom_os.contracts.project import (
     DeliveryType,
@@ -58,10 +68,15 @@ __all__ = [
     "ContractStatus",
     "DeliveryType",
     "DirectiveRegistry",
+    "DocumentationDensity",
+    "DocumentationObligation",
     "EvidenceObligation",
     "EvidenceObligationRef",
     "EvidenceRequirement",
     "IntegrationBoundary",
+    "MethodologyProfile",
+    "MethodologyProfileRegistry",
+    "MethodologyTemplateKind",
     "OwnerSeatRef",
     "PackageCommand",
     "PackageContract",
@@ -76,6 +91,9 @@ __all__ = [
     "VerificationStrategy",
     "compile_evidence_obligations",
     "create_acceptance_contract",
+    "create_package_contract",
     "create_project_charter",
+    "default_documentation_obligations_for",
+    "docs_template_key_for",
     "validate_contract_gate",
 ]

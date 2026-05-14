@@ -13,11 +13,20 @@ from boardroom_os.contracts.evidence_obligation import (
     RequiredVerifier,
 )
 from boardroom_os.contracts.gates import validate_contract_gate
+from boardroom_os.contracts.methodology import (
+    DocumentationDensity,
+    MethodologyProfile,
+    MethodologyProfileRegistry,
+    MethodologyTemplateKind,
+    default_documentation_obligations_for,
+    docs_template_key_for,
+)
 from boardroom_os.contracts.package import (
     IntegrationBoundary,
     PackageCommand,
     PackageContract,
     PackageProjectType,
+    create_package_contract,
 )
 from boardroom_os.contracts.project import ProjectCharterRegistry, create_project_charter
 from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef, SourceSurface
@@ -108,11 +117,32 @@ def _command(command_id: str) -> PackageCommand:
     )
 
 
+def _methodology_profile() -> MethodologyProfile:
+    template_kind = MethodologyTemplateKind.HYBRID
+    return MethodologyProfile(
+        methodology_profile_id=ContractId(value="methodology-profile-contract-gate"),
+        project_charter_ref=ContractId(value="charter-001"),
+        template_kind=template_kind,
+        documentation_density=DocumentationDensity.STANDARD,
+        docs_template_key=docs_template_key_for(template_kind),
+        documentation_obligations=default_documentation_obligations_for(template_kind),
+    )
+
+
+def _methodology_registry(
+    profile: MethodologyProfile | None = None,
+) -> MethodologyProfileRegistry:
+    resolved_profile = profile or _methodology_profile()
+    return MethodologyProfileRegistry.from_profiles(resolved_profile)
+
+
 def _package_contract(
     *,
     source_surfaces: tuple[SourceSurface, ...] | None = None,
 ) -> PackageContract:
-    return PackageContract(
+    profile = _methodology_profile()
+    return create_package_contract(
+        methodology_registry=_methodology_registry(profile),
         package_contract_id=ContractId(value="package-contract-001"),
         project_charter_ref=ContractId(value="charter-001"),
         package_root="10-project",
@@ -123,6 +153,9 @@ def _package_contract(
         integration_boundaries=(IntegrationBoundary(value="http-api"),),
         docs_required=True,
         closeout_required=True,
+        methodology_profile_ref=profile.methodology_profile_id,
+        docs_template_key=profile.docs_template_key,
+        documentation_obligations=profile.documentation_obligations,
     )
 
 

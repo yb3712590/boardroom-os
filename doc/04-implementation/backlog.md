@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010F`
+**当前未完成工作包**：`V2-010G`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010E 已实现 EvidenceObligation（证据义务）与 contract gate（合同门禁）；继续 V2-010F MethodologyProfile（方法论配置）与 workspace template（工作区模板）绑定。
+**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010F 已实现 MethodologyProfile（方法论配置）与 workspace template（工作区模板）绑定；继续 V2-010G 合同 fixture（夹具）与 schema 文档化。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 5 / 7 | 进行中 |
+| Phase 1：Contract Kernel | V2-010 | 6 / 7 | 进行中 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **9 / 51** | **Phase 1 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **10 / 51** | **Phase 1 进行中** |
 
 ## 当前约束摘要
 
@@ -295,7 +295,7 @@ RoleProfile（角色模板）
 
 ### V2-010F: 实现 MethodologyProfile 与 workspace template 绑定
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 CEO 选择的方法论（Minimal / Agile / Compliance / Hybrid）落地为 typed MethodologyProfile，并与 PackageContract、生成项目 docs template 绑定。
 - 输入文档：`agent-team-model.md`、`generated-project-workspace.md`、`02-solution/construction-plan.md`。
 - 依赖：V2-010E。
@@ -303,6 +303,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：profile 缺 `template_kind` / `documentation_density`、未知 `template_kind`、与 PackageContract `docs_required` 冲突必须失败；PackageContract 缺 `methodology_profile_ref` 必须失败。
 - 必须证明的 happy path：四种 `template_kind`（Minimal / Agile / Compliance / Hybrid）都可绑定 PackageContract 并影响 workspace docs template 选择。
 - 验收口径：方法论决策可被合同表达；无 MethodologyProfile 的项目不能进入 BUILD。
+- 完成证据：2026-05-15 新增 MethodologyProfile（方法论配置）、MethodologyProfileRegistry（方法论配置注册表）、DocumentationObligation（文档义务）、DocumentationDensity（文档密度）和 docs template binding（文档模板绑定）；PackageContract（包合同）在 `docs_required=True` 时必须通过 MethodologyProfileRegistry 携带并校验 `methodology_profile_ref`、`docs_template_key` 与 `documentation_obligations`，并拒绝无 registry context、跨 ProjectCharter（项目章程）绑定、template/obligation 不一致、重复或非法 profile；`PYTHONPATH=src pytest tests/contracts/test_methodology_profile.py tests/negative/test_methodology_profile_fail_closed.py -q` 通过（26 passed）；`PYTHONPATH=src pytest tests/contracts tests/negative -q` 通过（82 passed）。
 
 ### V2-010G: 合同 fixture 与 schema 文档化
 
@@ -617,6 +618,7 @@ RoleProfile（角色模板）
 - 输入文档：`generated-project-workspace.md`、`contract-and-evidence-model.md`。
 - 输出目录：`src/boardroom_os/workspace/`、`tests/proving/`、`tests/negative/`。
 - 顶层验收口径：source inventory 来自 package root + git/hash，不来自 payload 猜测；最终产物是 generated project package。
+- V2-060 Workspace（工作区）必须消费 V2-010F 产出的 `docs_template_key`（文档模板键）与 `documentation_obligations`（文档义务），不得在 assembler（装配器）中重新解释 methodology（方法论）。
 
 ### V2-060A: 实现 workspace manifest
 
