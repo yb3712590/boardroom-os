@@ -168,7 +168,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [x] AC-V2-CONTRACT-001（动态 acceptance）— 由 V2-010C `test_acceptance_contract_fail_closed.py` 证明：空 criteria / 非 blocking 全覆盖 / charter 缺 board_directive_ref 必须失败
 - [x] AC-V2-CONTRACT-002（package contract 必需）— 由 V2-010D `test_package_contract_fail_closed.py` 证明：缺 package_root / run·test commands / source_surfaces 必须失败
-- [ ] AC-V2-CONTRACT-003（无 static universal AC）— 由 V2-010E `test_contract_gate.py` 证明：acceptance_ref 不属于 active contract 必须失败
+- [x] AC-V2-CONTRACT-003（无 static universal AC）— 由 V2-010E `test_contract_gate.py` 证明：acceptance_ref 不属于 active contract 必须失败
 - [x] BoardDirective intake 闭合 — 由 V2-010B negative test 证明：不存在 directive 不得创建 ProjectCharter
 - [ ] MethodologyProfile 闭合 — 由 V2-010F negative test 证明：PackageContract 缺 methodology_profile_ref 必须失败；四种 template_kind 影响 workspace docs template 选择
 - [ ] V2-010A ~ V2-010G 七个工作包全部 DONE

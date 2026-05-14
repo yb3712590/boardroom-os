@@ -10,6 +10,16 @@ from boardroom_os.contracts.directive import (
     BoardDirectiveSourceType,
     DirectiveRegistry,
 )
+from boardroom_os.contracts.evidence_obligation import (
+    EvidenceObligation,
+    RequiredArtifactType,
+    RequiredVerifier,
+)
+from boardroom_os.contracts.gates import (
+    ContractGateResult,
+    compile_evidence_obligations,
+    validate_contract_gate,
+)
 from boardroom_os.contracts.package import (
     IntegrationBoundary,
     PackageCommand,
@@ -43,10 +53,12 @@ __all__ = [
     "AcceptanceRefSet",
     "BoardDirective",
     "BoardDirectiveSourceType",
+    "ContractGateResult",
     "ContractId",
     "ContractStatus",
     "DeliveryType",
     "DirectiveRegistry",
+    "EvidenceObligation",
     "EvidenceObligationRef",
     "EvidenceRequirement",
     "IntegrationBoundary",
@@ -56,10 +68,14 @@ __all__ = [
     "PackageProjectType",
     "ProjectCharter",
     "ProjectCharterRegistry",
+    "RequiredArtifactType",
     "RequiredTestRef",
+    "RequiredVerifier",
     "SourceSurface",
     "SourceSurfaceRef",
     "VerificationStrategy",
+    "compile_evidence_obligations",
     "create_acceptance_contract",
     "create_project_charter",
+    "validate_contract_gate",
 ]

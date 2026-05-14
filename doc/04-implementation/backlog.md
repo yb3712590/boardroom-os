@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010E`
+**当前未完成工作包**：`V2-010F`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010D 已定义 PackageContract（包合同）与 SourceSurface（源码实现面）；继续 V2-010E EvidenceObligation（证据义务）与 contract gate（合同门禁）。
+**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010E 已实现 EvidenceObligation（证据义务）与 contract gate（合同门禁）；继续 V2-010F MethodologyProfile（方法论配置）与 workspace template（工作区模板）绑定。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 4 / 7 | 进行中 |
+| Phase 1：Contract Kernel | V2-010 | 5 / 7 | 进行中 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **8 / 51** | **Phase 1 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **9 / 51** | **Phase 1 进行中** |
 
 ## 当前约束摘要
 
@@ -283,7 +283,7 @@ RoleProfile（角色模板）
 
 ### V2-010E: 实现 EvidenceObligation 与 contract gate
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 acceptance criteria 转换成 ticket/execution 必须满足的 evidence obligations（证据义务）。
 - 输入文档：`contract-and-evidence-model.md`、`acceptance-criteria.md`。
 - 依赖：V2-010D。
@@ -291,6 +291,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 active acceptance contract、缺 package contract、acceptance_ref 不属于 active contract、obligation 不 blocking 但对应 blocking criterion 必须失败。
 - 必须证明的 happy path：从 active contracts 生成完整 obligation set。
 - 验收口径：后续 ticket graph 创建 implementation ticket 前可调用 contract gate。
+- 完成证据：2026-05-14 新增 EvidenceObligation（证据义务）、ContractGateResult（合同门禁结果）、compile_evidence_obligations（证据义务编译函数）和 validate_contract_gate（合同门禁校验函数）；按 blocking criterion × evidence_required 展开 obligation，并 fail closed 拒绝 inactive acceptance contract、缺 package contract、acceptance_ref 不属于 active contract、blocking criterion 无 blocking obligation、显式传入的 obligation set 与 active contract 不一致、criterion 引用不存在 source surface；`PYTHONPATH=src pytest tests/contracts/test_evidence_obligation.py tests/negative/test_contract_gate.py -q` 通过（10 passed）；`PYTHONPATH=src pytest tests/contracts tests/negative -q` 通过（56 passed）。
 
 ### V2-010F: 实现 MethodologyProfile 与 workspace template 绑定
 
