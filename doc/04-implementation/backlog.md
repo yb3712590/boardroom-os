@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-001A`
+**当前未完成工作包**：`V2-010A`
 
-**当前重点**：先完成 V2-001 的 Phase 0 文档基座确认，再进入 V2-010 Contract Kernel（合同内核）。
+**当前重点**：Phase 0 已冻结（2026-05-14）。进入 V2-010 Contract Kernel（合同内核），从 V2-010A 建立 contracts 包基础值对象起步。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -148,7 +148,7 @@ RoleProfile（角色模板）
 
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
-| Phase 0：Foundation | V2-000, V2-001 | 1 / 4 | 进行中 |
+| Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 0 / 7 | 待开始 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **1 / 51** | **foundation-only** |
+| **合计** | **V2-000 ~ V2-080** | **4 / 51** | **Phase 0 完成 / Phase 1 待启动** |
 
 ## 当前约束摘要
 
@@ -180,37 +180,39 @@ RoleProfile（角色模板）
 
 ## V2-001: 确认 Phase 0 文档基座
 
-- 状态：TODO
+- 状态：DONE
 - 目标：人工审阅本基座，确认是否作为新 clean foundation 的实施起点。
 - 输入文档：全部 Phase 0 文档。
-- 输出文件：必要修订。
-- 验收口径：用户确认目录、文档职责、legacy boundary、工作包拆解和后续路线。
+- 输出文件：必要修订（已完成：见 DEC-0008、backlog 扩展、分批验收）。
+- 验收口径：用户确认目录、文档职责、legacy boundary、工作包拆解和后续路线（2026-05-14 用户确认）。
 
 ### V2-001A: Phase 0 完整性审计
 
-- 状态：TODO
+- 状态：DONE
 - 目标：逐项确认 Phase 0 完成标准是否被当前文件覆盖。
 - 输入文档：`doc/04-implementation/phase-0-plan.md`、`doc/04-implementation/acceptance-criteria.md`、`doc/05-project-log/decisions.md`。
 - 依赖：V2-000。
 - 输出文件：`doc/04-implementation/backlog.md`、必要时更新 `doc/05-project-log/2026-05.md`。
-- 必须先写的 negative tests：无代码；文档审计必须列出任何缺失项，不能把“文档存在”自动等同于“职责完整”。
+- 必须先写的 negative tests：无代码；文档审计必须列出任何缺失项，不能把"文档存在"自动等同于"职责完整"。
 - 必须证明的 happy path：Phase 0 完成标准 10 项均可映射到现有文档或明确后续任务。
 - 验收口径：V2-001 是否可以进入用户确认状态有明确依据。
+- 完成证据：2026-05-14 独立架构审计完成，识别 4 项阻塞缺口 + 1 项幂等性缺口，全部映射到具体修复任务（DEC-0008 / V2-010B / V2-010F / V2-070C 拆分 / acceptance-criteria 分批验收 / 幂等更新协议）。
 
 ### V2-001B: 工作包计划审计
 
-- 状态：TODO
+- 状态：DONE
 - 目标：确认每个后续里程碑都拆成可实施工作包，且每包有输入、输出、负例、正例和验收。
 - 输入文档：本文件、`doc/03-architecture/technical-architecture.md`、`doc/03-architecture/agent-team-model.md`。
 - 依赖：V2-001A。
 - 输出文件：`doc/04-implementation/backlog.md`。
-- 必须先写的 negative tests：无代码；审计必须标记任何“只有阶段名、没有可落地文件和测试”的任务。
+- 必须先写的 negative tests：无代码；审计必须标记任何"只有阶段名、没有可落地文件和测试"的任务。
 - 必须证明的 happy path：后续 worker 可以从任意 `TODO` 工作包知道要读什么、写什么、测什么。
 - 验收口径：backlog 不再只是 8 步阶段索引，而是可执行 work package plan（工作包计划）。
+- 完成证据：51 个工作包均具备 ID / 状态 / 目标 / 输入 / 依赖 / 输出 / negative tests / happy path / 验收口径 九项要素；幂等更新协议接入；V2-070C 已拆为 10 项 30-audit 产物逐项负例。
 
 ### V2-001C: Phase 0 用户确认与冻结
 
-- 状态：TODO
+- 状态：DONE
 - 目标：拿到用户对 Phase 0 和 backlog 工作包拆解的确认。
 - 输入文档：本文件、`doc/04-implementation/acceptance-criteria.md`。
 - 依赖：V2-001B。
@@ -218,6 +220,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：无代码；不得在用户确认前宣称 Phase 0 已可进入实现阶段。
 - 必须证明的 happy path：用户确认后，V2-010 可以作为第一个代码实施子项目启动。
 - 验收口径：V2-001 状态可改为 DONE，下一包为 V2-010A。
+- 完成证据：2026-05-14 用户在审阅独立审计、修复改动和提交 `578c7a8` 后，明确指示推进工作包状态；Phase 0 冻结，V2-010A 开放。
 
 ---
 

@@ -142,13 +142,13 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [x] AC-V2-FOUNDATION-001（clean branch foundation）— 由 V2-000 产物证明：根 README / AGENTS / doc 全目录 / src·tests·scripts·examples 占位存在
 - [x] AC-V2-FOUNDATION-002（legacy boundary）— 由 V2-000 产物证明：`AGENTS.md`、`doc/06-reference/legacy-boundary.md` 和 `decisions.md` DEC-0001/DEC-0002 均声明 abandoned by default
-- [ ] V2-001A 完成（Phase 0 完整性审计）—— 本独立审计已完成，结论为 4 项阻塞修复，详见 V2-001B
-- [ ] V2-001B 完成（工作包计划审计）—— 修复 BoardDirective / MethodologyProfile 缺位、V2-070C 拆 10 项产物、新增分批验收、新增幂等更新协议
-- [ ] V2-001C 完成（Phase 0 用户确认与冻结）—— 用户确认 backlog 与本文件分批验收
+- [x] V2-001A 完成（Phase 0 完整性审计）—— 独立审计已完成，识别 4 项阻塞缺口 + 1 项幂等性缺口
+- [x] V2-001B 完成（工作包计划审计）—— 51 个工作包均具备九项要素；BoardDirective / MethodologyProfile 已补；V2-070C 已拆 10 项；分批验收 + 幂等更新协议已上线
+- [x] V2-001C 完成（Phase 0 用户确认与冻结）—— 2026-05-14 用户在 commit `578c7a8` 后确认推进，Phase 0 冻结
 
 #### 本批产出
 
-- 根 `README.md`、`AGENTS.md`、`.gitignore`
+- 根 `README.md`、`AGENTS.md`、`SESSION_PROMPT.md`、`.gitignore`
 - `doc/` 全目录（01-product ~ 06-reference + 通用 conventions）
 - `src/`、`tests/`、`scripts/`、`examples/` 占位
 - `doc/05-project-log/decisions.md` 含 DEC-0001 ~ DEC-0008
@@ -157,10 +157,10 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 1 前置
 
-- [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-001A / V2-001B / V2-001C 状态翻 DONE
-- [ ] `doc/05-project-log/2026-05.md` 记录 Phase 0 完成
-- [ ] 用户显式确认（V2-001C 验收口径）
+- [x] 上述 AC checkbox 全部勾选
+- [x] V2-001A / V2-001B / V2-001C 状态翻 DONE
+- [x] `doc/05-project-log/2026-05.md` 记录 Phase 0 完成
+- [x] 用户显式确认（V2-001C 验收口径）
 
 ### Phase 1 验收 — V2-010 Contract Kernel
 
