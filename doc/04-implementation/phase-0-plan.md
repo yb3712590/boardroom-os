@@ -14,6 +14,7 @@
 
 - `README.md`
 - `AGENTS.md`
+- `SESSION_PROMPT.md`
 - `.gitignore`
 
 通用规范：

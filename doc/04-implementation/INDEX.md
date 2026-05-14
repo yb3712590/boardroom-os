@@ -14,11 +14,15 @@
 | `phase-0-plan.md` | 当前文档基座阶段计划 |
 | `proving-scenario-tiny-fullstack.md` | 第一个端到端证明场景 |
 
+## AI 启动入口
+
+后续任务优先从 `backlog.md` 开始。`backlog.md` 顶部维护 TL;DR、当前任务入口、当前验收入口、工作包规则、子项目依赖图、进度总览和当前重点。顶层 `V2-xxx` 是里程碑，实际实施必须落到 `V2-xxxA` / `V2-xxxB` 这类工作包。
+
 ## 推荐阅读顺序
 
-1. `acceptance-criteria.md`
-2. `roadmap.md`
-3. `backlog.md`
+1. `backlog.md`
+2. `acceptance-criteria.md`
+3. `roadmap.md`
 4. `phase-0-plan.md`
 5. `proving-scenario-tiny-fullstack.md`
 

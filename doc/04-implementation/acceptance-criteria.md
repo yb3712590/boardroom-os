@@ -4,6 +4,17 @@
 
 本文件定义 Boardroom OS V2 自身的验收标准。它不是某个 generated project 的 acceptance contract。
 
+本文件由两层组成：
+
+1. **抽象原则层（AC-V2-XXX）**：principle-level 验收标准，对应架构主线。`backlog.md` 的工作包必须显式映射到这里的某条 AC。
+2. **分批验收层（Phase 0 ~ Phase 8）**：每个 phase 完成时人类用以验收的 checkbox 清单、产出清单和"进入下一 Phase 前置"。这层是人类视角的 quality gate。
+
+使用方式：
+
+- 实施工作包时，先读相应 phase 的"分批验收"段，确认要勾选哪些 checkbox、要产出哪些文件。
+- 工作包完成后按 `backlog.md` 的"工作包完成更新协议"勾选 checkbox 并更新日志。
+- Phase 全部 checkbox 勾选 + 前置全部满足后，才可进入下一 Phase。
+
 ## AC-V2-FOUNDATION
 
 ### AC-V2-FOUNDATION-001: clean branch foundation
@@ -114,4 +125,245 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - final package 不可运行却 closeout passed；
 - replay bundle 缺失；
 - closeout 阶段才首次发现 implementation 缺口。
+
+---
+
+## 分批验收
+
+下面 9 段对应 `backlog.md` 的 Phase 0 ~ Phase 8。每段固定结构：
+
+- **AC 检查清单**：本 phase 需要勾选的项；每项标注由哪个工作包的 negative / happy test 提供证据，并显式绑定到 AC-V2-XXX。
+- **本批产出**：本 phase 完成时仓库内应存在的文件、模块或文档同步项。
+- **进入下一 Phase 前置**：在所有 AC checkbox 已勾选基础上，还需满足的额外门槛（用户确认、状态字段、日志条目等）。
+
+### Phase 0 验收 — V2-000 + V2-001
+
+#### AC 检查清单
+
+- [x] AC-V2-FOUNDATION-001（clean branch foundation）— 由 V2-000 产物证明：根 README / AGENTS / doc 全目录 / src·tests·scripts·examples 占位存在
+- [x] AC-V2-FOUNDATION-002（legacy boundary）— 由 V2-000 产物证明：`AGENTS.md`、`doc/06-reference/legacy-boundary.md` 和 `decisions.md` DEC-0001/DEC-0002 均声明 abandoned by default
+- [ ] V2-001A 完成（Phase 0 完整性审计）—— 本独立审计已完成，结论为 4 项阻塞修复，详见 V2-001B
+- [ ] V2-001B 完成（工作包计划审计）—— 修复 BoardDirective / MethodologyProfile 缺位、V2-070C 拆 10 项产物、新增分批验收、新增幂等更新协议
+- [ ] V2-001C 完成（Phase 0 用户确认与冻结）—— 用户确认 backlog 与本文件分批验收
+
+#### 本批产出
+
+- 根 `README.md`、`AGENTS.md`、`.gitignore`
+- `doc/` 全目录（01-product ~ 06-reference + 通用 conventions）
+- `src/`、`tests/`、`scripts/`、`examples/` 占位
+- `doc/05-project-log/decisions.md` 含 DEC-0001 ~ DEC-0008
+- 本文件含分批验收段
+- `doc/04-implementation/backlog.md` 含幂等更新协议 + 51 个工作包
+
+#### 进入 Phase 1 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-001A / V2-001B / V2-001C 状态翻 DONE
+- [ ] `doc/05-project-log/2026-05.md` 记录 Phase 0 完成
+- [ ] 用户显式确认（V2-001C 验收口径）
+
+### Phase 1 验收 — V2-010 Contract Kernel
+
+#### AC 检查清单
+
+- [ ] AC-V2-CONTRACT-001（动态 acceptance）— 由 V2-010C `test_acceptance_contract_fail_closed.py` 证明：空 criteria / 非 blocking 全覆盖 / charter 缺 board_directive_ref 必须失败
+- [ ] AC-V2-CONTRACT-002（package contract 必需）— 由 V2-010D `test_package_contract_fail_closed.py` 证明：缺 package_root / run·test commands / source_surfaces 必须失败
+- [ ] AC-V2-CONTRACT-003（无 static universal AC）— 由 V2-010E `test_contract_gate.py` 证明：acceptance_ref 不属于 active contract 必须失败
+- [ ] BoardDirective intake 闭合 — 由 V2-010B negative test 证明：不存在 directive 不得创建 ProjectCharter
+- [ ] MethodologyProfile 闭合 — 由 V2-010F negative test 证明：PackageContract 缺 methodology_profile_ref 必须失败；四种 template_kind 影响 workspace docs template 选择
+- [ ] V2-010A ~ V2-010G 七个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 1 显示 7/7
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/contracts/{types,directive,project,acceptance,package,source_surface,evidence_obligation,gates,methodology}.py`
+- 正例测试：`tests/contracts/` 至少 7 个测试文件
+- 负例测试：`tests/negative/` 至少 5 个 fail-closed 测试
+- Fixture：`tests/fixtures/contracts/tiny_fullstack_contract.py`
+- 文档同步：本文件 Phase 1 checkbox 全勾选；`backlog.md` 工作包状态翻 DONE
+
+#### 进入 Phase 2 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-010A ~ V2-010G 状态全部 DONE
+- [ ] `doc/05-project-log/2026-MM.md` 记录每个工作包完成日期
+- [ ] fixture 与本文件 AC-V2 抽象 AC 形成显式绑定（V2-010G 验收口径）
+
+### Phase 2 验收 — V2-020 Event + Reducer Kernel
+
+#### AC 检查清单
+
+- [ ] AC-V2-GRAPH-001（ticket graph 是状态源）— 由 V2-020C `test_ticket_graph_projection.py` 证明：ticket 缺 acceptance_refs / source_surface_refs / evidence_obligations / allowed_write_set 必须无效
+- [ ] AC-V2-GRAPH-002（reducer-protected transitions）— 由 V2-020D `test_ticket_reducer_transitions.py` + `test_executor_cannot_complete_ticket.py` 证明：executor 提交 `TICKET_COMPLETED` 必须失败
+- [ ] event log append 完整性 — 由 V2-020B 证明：graph_version 回退 / 重复 event_id / 未知 event_type 必须失败
+- [ ] seat assignment 投影 — 由 V2-020E 证明：ticket 无 owner_seat_ref / seat 缺 model_execution_profile_ref 必须 blocked
+- [ ] projection replay 可重建 — 由 V2-020F 证明：相同事件序列产生相同 graph projection
+- [ ] V2-020A ~ V2-020F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 2 显示 6/6
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/events/`、`src/boardroom_os/reducers/`、`src/boardroom_os/graph/`
+- 测试：`tests/reducers/` 至少 6 个测试文件 + `tests/negative/test_executor_cannot_complete_ticket.py`
+- 文档同步：本文件 Phase 2 checkbox 全勾选；`backlog.md` 工作包状态翻 DONE
+
+#### 进入 Phase 3 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-020A ~ V2-020F 状态全部 DONE
+- [ ] 项目日志记录完成
+- [ ] reducer 公开接口稳定（后续 V2-050F 完成度门禁会复用）
+
+### Phase 3 验收 — V2-030 Agent Seat + Execution Package Compiler
+
+#### AC 检查清单
+
+- [ ] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_id / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy 必须失败
+- [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— 由 V2-030E `test_fallback_cannot_satisfy_implementation.py` 证明
+- [ ] Role / Seat / Provider 接入链闭合 — 由 V2-030A、V2-030B、V2-030D 证明：RoleProfile → SkillBinding → ModelExecutionProfile → AgentSeat → ExecutionPackage 全链可测
+- [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
+- [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 3 显示 6/6
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/agents/`、`src/boardroom_os/execution/{package,compiler,fallback,context_index}.py`
+- 测试：`tests/execution/` 至少 6 个测试文件 + `tests/negative/` fail-closed 测试
+- 文档同步：本文件 Phase 3 checkbox 全勾选；`backlog.md` 工作包状态翻 DONE
+
+#### 进入 Phase 4 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-030A ~ V2-030F 状态全部 DONE
+- [ ] ExecutionPackage schema 稳定（V2-040 / V2-080 都会消费）
+- [ ] 项目日志记录完成
+
+### Phase 4 验收 — V2-040 Runtime Executor + Provider + Command Runner
+
+#### AC 检查清单
+
+- [ ] AC-V2-EXECUTION-002（provider attempt required）— 由 V2-040A `test_provider_attempt.py` 证明：attempt 缺 provider / model / input_package_ref / seat_ref / status 必须失败
+- [ ] Provider executor boundary — 由 V2-040B `test_provider_executor_requires_execution_package.py` 证明：缺 execution package 不得调用 provider
+- [ ] AC-V2-EVIDENCE-001（command evidence from runner）— 由 V2-040D `test_command_runner.py` 证明：合成 verification success / 命令不在 package contract 中必须失败
+- [ ] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / `PROJECT_COMPLETED` / `CLOSEOUT_COMMITTED` 必须失败
+- [ ] V2-040A ~ V2-040E 五个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 4 显示 5/5
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/providers/`、`src/boardroom_os/adapters/process_runner.py`、`src/boardroom_os/execution/{provider_executor,work_product,verification_run,runtime_executor}.py`
+- 测试：`tests/execution/` 至少 5 个测试文件 + `tests/negative/test_runtime_cannot_govern.py`
+- 文档同步：本文件 Phase 4 checkbox 全勾选
+
+#### 进入 Phase 5 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-040A ~ V2-040E 状态全部 DONE
+- [ ] Fake provider transport 与 ProviderAttempt schema 稳定（V2-080 会复用）
+
+### Phase 5 验收 — V2-050 Evidence Verifier + Checker + Rework
+
+#### AC 检查清单
+
+- [ ] AC-V2-EVIDENCE-002（source inventory proves lineage）— 由 V2-060C 提供，V2-050B 中 verifier 端的占位测试 `test_synthetic_evidence_rejected.py` 同步验证
+- [ ] AC-V2-EVIDENCE-003（evidence map complete）— 由 V2-050C `test_missing_acceptance_map_blocks_closeout.py` 证明
+- [ ] AC-V2-CHECKER-001（checker blocks gaps）— 由 V2-050D `test_checker_verdict.py` 证明
+- [ ] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D 证明
+- [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
+- [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明
+- [ ] V2-050A ~ V2-050F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 5 显示 6/6
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/evidence/{claim,verifier,table}.py`、`src/boardroom_os/checker/{verdict,checker,rework}.py`、`src/boardroom_os/reducers/completion_gate.py`
+- 测试：`tests/evidence/`、`tests/reducers/test_completion_gate_with_evidence.py`、相应 negative 测试
+- 文档同步：本文件 Phase 5 checkbox 全勾选
+
+#### 进入 Phase 6 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-050A ~ V2-050F 状态全部 DONE
+- [ ] FinalEvidenceTable schema 稳定（V2-060 / V2-070 会消费）
+
+### Phase 6 验收 — V2-060 Workspace + Package Assembler
+
+#### AC 检查清单
+
+- [ ] AC-V2-PACKAGE-001（package 是最终输出）— 由 V2-060B `test_package_assembler.py` 证明：缺 package-contract / run-manifest / source 写到 package root 外必须失败
+- [ ] AC-V2-PACKAGE-002（package 必须可运行）— 由 V2-060D `test_run_manifest.py` 证明
+- [ ] AC-V2-EVIDENCE-002（source inventory lineage）— 由 V2-060C `test_source_inventory_ref_only_rejected.py` 证明：ref-only / 缺 producer_attempt_ref / 缺 evidence_refs 必须失败
+- [ ] Workspace / package / evidence 三者同步 — 由 V2-060E `test_workspace_evidence_export.py` 证明
+- [ ] V2-060A ~ V2-060E 五个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 6 显示 5/5
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/workspace/{manifest,assembler,source_inventory,run_manifest,evidence_export}.py`
+- 测试：`tests/proving/` 至少 5 个测试文件 + `tests/negative/test_source_inventory_ref_only_rejected.py`
+- 文档同步：本文件 Phase 6 checkbox 全勾选
+
+#### 进入 Phase 7 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-060A ~ V2-060E 状态全部 DONE
+- [ ] SourceInventory 与 RunManifest 与 FinalEvidenceTable 协同稳定
+
+### Phase 7 验收 — V2-070 Closeout + Replay + Process Audit
+
+#### AC 检查清单
+
+- [ ] AC-V2-CLOSEOUT-001（closeout 只能在 verified evidence 之后）— 由 V2-070A `test_closeout_fail_closed.py` 证明
+- [ ] AC-V2-CLOSEOUT-002（replay bundle required）— 由 V2-070A + V2-070B 证明
+- [ ] AC-V2-CLOSEOUT-003（人类可读 process audit）— 由 V2-070C `test_process_audit_artifacts.py` 证明：10 项 30-audit 产物缺一不可（process-audit.md / timeline.json / decision-log.md / agent-context-index.json / ticket-graph.md / artifact-lineage.json / evidence-map.json / git-version-audit.md / closeout-summary.md / replay-bundle-report.json）
+- [ ] Git version audit 完整 — 由 V2-070D `test_git_version_audit.py` 证明
+- [ ] CloseoutPackage 绑定一致 — 由 V2-070E `test_closeout_package.py` 证明
+- [ ] Closeout reducer 接入 — 由 V2-070F `test_closeout_reducer.py` 证明
+- [ ] V2-070A ~ V2-070F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 7 显示 6/6
+
+#### 本批产出
+
+- 代码：`src/boardroom_os/closeout/{gate,package}.py`、`src/boardroom_os/audit/{replay_bundle,process_audit,git_version_audit}.py`、`src/boardroom_os/adapters/git_audit.py`、`src/boardroom_os/reducers/closeout_reducer.py`
+- 测试：`tests/closeout/` 至少 7 个测试文件 + `tests/negative/test_closeout_fail_closed.py`
+- 文档同步：本文件 Phase 7 checkbox 全勾选
+
+#### 进入 Phase 8 前置
+
+- [ ] 上述 AC checkbox 全部勾选
+- [ ] V2-070A ~ V2-070F 状态全部 DONE
+- [ ] 10 项 30-audit 产物的 schema 稳定
+
+### Phase 8 验收 — V2-080 Tiny Full-stack Proving Scenario
+
+#### AC 检查清单
+
+- [ ] tiny scenario active contracts 完整 — 由 V2-080A `test_tiny_contracts.py` 证明：覆盖 API / UI / persistence / run / test acceptance refs
+- [ ] tiny ticket graph + seat assignment — 由 V2-080B 证明
+- [ ] tiny provider attempts — 由 V2-080C `test_tiny_provider_attempts.py` 证明：每个 implementation ticket ≥ 1 ProviderAttempt
+- [ ] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：final evidence table complete
+- [ ] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
+- [ ] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建
+- [ ] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足
+- [ ] V2-080A ~ V2-080F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 8 显示 6/6
+
+#### 本批产出
+
+- Generated project package：完整 tiny book availability tracker（backend + frontend + tests + docs + run manifest + package contract）
+- Evidence bundle：`20-evidence/` 完整目录（tests / integration / git / source-inventory / closeout）
+- Audit bundle：`30-audit/` 10 项产物
+- 测试：`tests/proving/` 至少 6 个测试文件
+- 文档同步：本文件 Phase 8 checkbox 全勾选
+
+#### V2 端到端能力成立的判定
+
+- [ ] 所有 AC checkbox 全部勾选
+- [ ] V2-080A ~ V2-080F 状态全部 DONE
+- [ ] tiny package 可以本地运行 declared run commands
+- [ ] tiny closeout 产生 CloseoutPackage（verdict: passed）
+- [ ] process audit 可被人类读懂并完成审计
+
+> 仅当上述全部满足时，V2 第一阶段（foundation + minimal end-to-end）才算成立。**workflow completed ≠ V2 完成**。
+
 

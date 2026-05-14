@@ -91,3 +91,30 @@ Provider-required implementation ticket 必须有 provider attempt。attempt cou
 
 用户期望的是一个一致、可运行、可审计的目标项目包。
 
+## DEC-0008: Backlog 工作包化 + 分批验收 + 幂等更新协议
+
+- 状态：Accepted
+- 日期：2026-05-14
+
+### 决策
+
+1. `doc/04-implementation/backlog.md` 从 8 个阶段索引扩展为 51 个可执行工作包（V2-000 ~ V2-080F）。每个工作包必须具备 ID / 状态 / 目标 / 输入 / 依赖 / 输出 / negative tests / happy path / 验收口径。
+2. 在 backlog.md 顶部新增"实施幂等性 / 工作包完成更新协议"段，强制规定工作包完成后必须按序更新的文档清单（backlog 状态、acceptance-criteria checkbox、月度日志、必要时 decisions.md、必要时 INDEX.md），并定义 Pre-flight 一致性检查和幂等保证。
+3. 在 `doc/04-implementation/acceptance-criteria.md` 新增"分批验收"层：每个 phase 列出 AC checkbox（绑定到 AC-V2-XXX 抽象 AC 和具体 negative / happy test）、产出清单和进入下一 Phase 前置。原有 AC-V2-XXX 抽象原则段保留为 source of truth。
+4. 显式补齐 `BoardDirective`（V2-010B）和 `MethodologyProfile`（V2-010F）两个工作包，闭合合同链入口和方法论选择。
+5. 显式扩展 V2-070C，把 `30-audit/` 的 10 项产物拆为逐项 negative test。
+
+### 理由
+
+- **幂等性**：每次会话的启动提示词都接近，模型必须能从文档自身推导出"完成后改哪些文件"。原 backlog 仅在启动顺序中模糊提到"完成后更新本文件、相关 INDEX、必要验收文件和项目日志"，不具备可重复执行的协议性。补齐协议后，跨会话项目状态可保持全局一致。
+- **可验收性**：原 acceptance-criteria.md 全是抽象原则，人类无法用它做批次验收。分批验收 + checkbox + 产出清单让人能逐 phase 审查。
+- **架构完整性**：BoardDirective 是 domain-model.md 合同链的第一环，MethodologyProfile 是 agent-team-model.md / generated-project-workspace.md 显式声明的核心对象，原 backlog 漏掉这两项会在 V2-080 fixture 阶段补丁式补回，破坏 contract-first 的纯度。
+- **process audit 可验证性**：30-audit 10 项产物分别承担不同审计能力，单一测试无法覆盖。逐项负例让缺失不可被静默吞掉。
+
+### 影响
+
+- 工作包总数 49 → 51；Phase 1 工作包数 5 → 7。
+- 后续所有工作包完成时必须遵循 Pre-flight + 完成更新协议；不遵循即视为 drift。
+- 后续 phase gate 由 acceptance-criteria.md 中的 checkbox 决定，不由 backlog 状态字段独立决定。
+
+
