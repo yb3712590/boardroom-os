@@ -16,10 +16,13 @@ build/
 
 # Runtime workspaces and evidence outputs
 .worktree/
+.worktrees/
 .workspaces/
 .generated/
 .evidence/
 .audit/
+.docs/
+docs/
 
 # Local files
 .env
