@@ -19,6 +19,13 @@ def test_acceptance_ref_set_rejects_empty_refs() -> None:
         AcceptanceRefSet(refs=[])
 
 
+def test_contract_value_objects_reject_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        AcceptanceRef.model_validate(
+            {"value": "AC-V2-CONTRACT-001", "unknown": "must-fail"}
+        )
+
+
 def test_contract_status_rejects_unknown_status() -> None:
     with pytest.raises(ValidationError):
         ContractStatus(value="unknown")

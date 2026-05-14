@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010D`
+**当前未完成工作包**：`V2-010E`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010C 已闭合 ProjectCharter（项目章程）到 AcceptanceContract（验收合同）的动态验收链；继续 V2-010D PackageContract（包合同）与 SourceSurface（源码实现面）。
+**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010D 已定义 PackageContract（包合同）与 SourceSurface（源码实现面）；继续 V2-010E EvidenceObligation（证据义务）与 contract gate（合同门禁）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 3 / 7 | 进行中 |
+| Phase 1：Contract Kernel | V2-010 | 4 / 7 | 进行中 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **7 / 51** | **Phase 1 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **8 / 51** | **Phase 1 进行中** |
 
 ## 当前约束摘要
 
@@ -271,7 +271,7 @@ RoleProfile（角色模板）
 
 ### V2-010D: 实现 PackageContract 与 SourceSurface
 
-- 状态：TODO
+- 状态：DONE
 - 目标：定义最终 generated project package（生成项目包）的目录、运行命令、测试命令、source surfaces（源码实现面）和 integration boundaries（集成边界）。
 - 输入文档：`contract-and-evidence-model.md`、`generated-project-workspace.md`。
 - 依赖：V2-010C。
@@ -279,6 +279,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 package_root、缺 source_surfaces、软件项目缺 run/test commands、surface 无 acceptance_refs 必须失败。
 - 必须证明的 happy path：一个 tiny full-stack package contract 能声明 backend、frontend、tests、docs、run manifest surfaces。
 - 验收口径：最终交付被约束为 package，不是散落 source artifacts。
+- 完成证据：2026-05-14 新增 PackageContract（包合同）、PackageProjectType（包项目类型）、PackageCommand（包命令）、IntegrationBoundary（集成边界）和 SourceSurface（源码实现面）；`software` / `mixed` 包缺 run/test commands 必须失败，SourceSurface 缺 paths 或 acceptance_refs 必须失败，并补充 unknown fields（未知字段）与 strict bool（严格布尔）fail-closed 校验；`PYTHONPATH=src pytest tests/contracts/test_package_contract.py tests/negative/test_package_contract_fail_closed.py -v` 通过（15 passed）；`PYTHONPATH=src pytest tests/contracts tests/negative -v` 通过（46 passed）。
 
 ### V2-010E: 实现 EvidenceObligation 与 contract gate
 

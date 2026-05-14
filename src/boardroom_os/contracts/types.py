@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 
 class _NonEmptyValue(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     value: str
 
