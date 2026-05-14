@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010B`
+**当前未完成工作包**：`V2-010C`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010A 已建立 contracts 包基础值对象；继续 V2-010B BoardDirective intake（董事会指令入口）。
+**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010B 已闭合 BoardDirective intake（董事会指令入口）到 ProjectCharter（项目章程）的入口链；继续 V2-010C AcceptanceContract（验收合同）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 1 / 7 | 进行中 |
+| Phase 1：Contract Kernel | V2-010 | 2 / 7 | 进行中 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **5 / 51** | **Phase 1 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **6 / 51** | **Phase 1 进行中** |
 
 ## 当前约束摘要
 
@@ -246,14 +246,15 @@ RoleProfile（角色模板）
 
 ### V2-010B: 实现 BoardDirective intake
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把用户原始需求（自然语言、PRD 文件、人审反馈）落地为 typed BoardDirective，作为合同链入口。
 - 输入文档：`domain-model.md`、`process-audit-and-replay.md`。
 - 依赖：V2-010A。
-- 输出文件：`src/boardroom_os/contracts/directive.py`、`tests/contracts/test_board_directive.py`、`tests/negative/test_board_directive_fail_closed.py`。
+- 输出文件：`src/boardroom_os/contracts/directive.py`、`src/boardroom_os/contracts/project.py`、`tests/contracts/test_board_directive.py`、`tests/negative/test_board_directive_fail_closed.py`。
 - 必须先写的 negative tests：directive 缺 `source_type` / `content_ref` / `received_at` / `requester_ref` 必须失败；未知 `source_type` 必须失败；ProjectCharter 引用不存在的 directive 必须失败。
 - 必须证明的 happy path：三种 `source_type`（`natural_language` / `prd_file` / `human_review_update`）的 directive 都可构造、序列化并被 ProjectCharter 引用。
 - 验收口径：合同链入口闭合 —— 不存在 BoardDirective 不得创建 ProjectCharter。
+- 完成证据：2026-05-14 新增 BoardDirective（董事会指令）、DirectiveRegistry（指令注册表）和 ProjectCharter（项目章程）入口校验；补充 fail-closed 校验，要求 ProjectCharter 公开构造也必须携带 directive registry 上下文，并拒绝无时区 received_at 与未知字段；`PYTHONPATH=src pytest tests/contracts/test_board_directive.py tests/negative/test_board_directive_fail_closed.py` 通过（15 passed）；`PYTHONPATH=src pytest tests/contracts tests/negative` 通过（19 passed）。
 
 ### V2-010C: 实现 ProjectCharter 与 AcceptanceContract
 
@@ -261,7 +262,8 @@ RoleProfile（角色模板）
 - 目标：表达项目章程和动态验收合同。
 - 输入文档：`domain-model.md`、`contract-and-evidence-model.md`。
 - 依赖：V2-010B。
-- 输出文件：`src/boardroom_os/contracts/project.py`、`src/boardroom_os/contracts/acceptance.py`、`tests/contracts/test_acceptance_contract.py`、`tests/negative/test_acceptance_contract_fail_closed.py`。
+- 输出文件：`src/boardroom_os/contracts/acceptance.py`、`tests/contracts/test_acceptance_contract.py`、`tests/negative/test_acceptance_contract_fail_closed.py`。
+- 修改文件：`src/boardroom_os/contracts/project.py`（V2-010B 已建立，V2-010C 仅扩展 charter 校验如需）。
 - 必须先写的 negative tests：空 criteria、非 blocking criteria 全覆盖、criterion 缺 evidence_required、criterion 缺 source_surface_refs、charter 缺 board_directive_ref 必须失败。
 - 必须证明的 happy path：动态 criteria 可绑定 ProjectCharter，并能查询 blocking criteria。
 - 验收口径：implementation ticket 不能用固定静态 AC 列表绕过 active AcceptanceContract。
