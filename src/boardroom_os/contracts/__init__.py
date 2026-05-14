@@ -1,3 +1,10 @@
+from boardroom_os.contracts.acceptance import (
+    AcceptanceContract,
+    AcceptanceCriterion,
+    EvidenceRequirement,
+    VerificationStrategy,
+    create_acceptance_contract,
+)
 from boardroom_os.contracts.directive import (
     BoardDirective,
     BoardDirectiveSourceType,
@@ -6,6 +13,7 @@ from boardroom_os.contracts.directive import (
 from boardroom_os.contracts.project import (
     DeliveryType,
     ProjectCharter,
+    ProjectCharterRegistry,
     create_project_charter,
 )
 from boardroom_os.contracts.types import (
@@ -18,6 +26,8 @@ from boardroom_os.contracts.types import (
 )
 
 __all__ = [
+    "AcceptanceContract",
+    "AcceptanceCriterion",
     "AcceptanceRef",
     "AcceptanceRefSet",
     "BoardDirective",
@@ -27,7 +37,11 @@ __all__ = [
     "DeliveryType",
     "DirectiveRegistry",
     "EvidenceObligationRef",
+    "EvidenceRequirement",
     "ProjectCharter",
+    "ProjectCharterRegistry",
     "SourceSurfaceRef",
+    "VerificationStrategy",
+    "create_acceptance_contract",
     "create_project_charter",
 ]

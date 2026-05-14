@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, SkipValidation, ValidationInfo, field_validator, model_validator
 
 from boardroom_os.contracts.directive import DirectiveRegistry
 from boardroom_os.contracts.types import ContractId
@@ -12,7 +12,7 @@ class DeliveryType(StrEnum):
 
 
 class ProjectCharter(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", revalidate_instances="never")
 
     project_charter_id: ContractId
     board_directive_ref: ContractId
@@ -47,6 +47,22 @@ class ProjectCharter(BaseModel):
         if not registry.contains(self.board_directive_ref):
             raise ValueError("board directive ref must exist")
         return self
+
+
+class ProjectCharterRegistry(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    charters: tuple[SkipValidation[ProjectCharter], ...]
+
+    @classmethod
+    def from_charters(cls, *charters: ProjectCharter) -> Self:
+        return cls(charters=charters)
+
+    def contains(self, project_charter_ref: ContractId) -> bool:
+        return any(
+            charter.project_charter_id == project_charter_ref
+            for charter in self.charters
+        )
 
 
 def create_project_charter(*, registry: DirectiveRegistry, **charter_fields: Any) -> ProjectCharter:

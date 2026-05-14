@@ -61,7 +61,7 @@ class _StatusValue(StrEnum):
 
 
 class ContractStatus(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, use_enum_values=True)
 
     value: _StatusValue
 
