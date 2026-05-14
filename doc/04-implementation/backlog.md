@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010A`
+**当前未完成工作包**：`V2-010B`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。进入 V2-010 Contract Kernel（合同内核），从 V2-010A 建立 contracts 包基础值对象起步。
+**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010A 已建立 contracts 包基础值对象；继续 V2-010B BoardDirective intake（董事会指令入口）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 0 / 7 | 待开始 |
+| Phase 1：Contract Kernel | V2-010 | 1 / 7 | 进行中 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **4 / 51** | **Phase 0 完成 / Phase 1 待启动** |
+| **合计** | **V2-000 ~ V2-080** | **5 / 51** | **Phase 1 进行中** |
 
 ## 当前约束摘要
 
@@ -234,7 +234,7 @@ RoleProfile（角色模板）
 
 ### V2-010A: 建立 contracts 包和基础值对象
 
-- 状态：TODO
+- 状态：DONE
 - 目标：创建合同模块的包结构、基础枚举、ID 类型和值对象。
 - 输入文档：`domain-model.md`。
 - 依赖：V2-001C。
@@ -242,6 +242,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：空 ID、空 acceptance refs、未知状态必须校验失败。
 - 必须证明的 happy path：合法 ID、状态、引用集合可构造并序列化。
 - 验收口径：后续 schema 不直接使用裸 dict 表达核心字段。
+- 完成证据：2026-05-14 采用 Pydantic model（Pydantic 模型）实现冻结值对象；`PYTHONPATH=src pytest tests/contracts/test_contract_types.py` 通过（4 passed）。
 
 ### V2-010B: 实现 BoardDirective intake
 

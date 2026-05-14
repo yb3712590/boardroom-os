@@ -117,4 +117,22 @@ Provider-required implementation ticket 必须有 provider attempt。attempt cou
 - 后续所有工作包完成时必须遵循 Pre-flight + 完成更新协议；不遵循即视为 drift。
 - 后续 phase gate 由 acceptance-criteria.md 中的 checkbox 决定，不由 backlog 状态字段独立决定。
 
+## DEC-0009: Contract value objects 采用 Pydantic-first
+
+- 状态：Accepted
+- 日期：2026-05-14
+
+### 决策
+
+V2 的合同、schema、领域边界值对象从 V2-010A 开始直接采用 Pydantic model（Pydantic 模型）和 fail-closed 校验，不先引入 dataclass / 裸 dict 过渡版本，也不保留兼容 shim 或 fallback 路径。
+
+### 理由
+
+项目已经经历多次重构，继续保留临时兼容层会积累新的坑。如果最终目标是 Pydantic model，就应从合同内核起步阶段按最终标准实现。
+
+### 影响
+
+- 后续 V2-010B ~ V2-010G 的合同对象应复用 V2-010A 的 Pydantic 值对象。
+- 后续 schema 不应为了兼容旧表达而接受裸 dict 作为核心字段语义来源。
+- 需要新增依赖配置时，应显式声明 Pydantic 作为项目标准依赖，而不是测试环境偶然依赖。
 
