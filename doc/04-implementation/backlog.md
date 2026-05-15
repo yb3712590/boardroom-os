@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020C`
+**当前未完成工作包**：`V2-020D`
 
-**当前重点**：V2-020B in-memory event log（内存事件日志）已完成；继续 V2-020C TicketNode 与 TicketGraph projection（任务节点与任务图投影）。
+**当前重点**：V2-020C TicketGraph projection（任务图投影）已完成；继续 V2-020D reducer（状态归约器）状态转换。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 2 / 6 | 进行中 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 3 / 6 | 进行中 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **13 / 51** | **Phase 2 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **14 / 51** | **Phase 2 进行中** |
 
 ## 当前约束摘要
 
@@ -353,7 +353,7 @@ RoleProfile（角色模板）
 
 ### V2-020C: 实现 TicketNode 与 TicketGraph projection
 
-- 状态：TODO
+- 状态：DONE
 - 目标：从事件构建 ticket graph（任务图）的当前状态。
 - 输入文档：`domain-model.md`。
 - 依赖：V2-020B。
@@ -361,6 +361,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：ticket 缺 acceptance_refs、source_surface_refs、evidence_obligations、allowed_write_set 必须无效。
 - 必须证明的 happy path：合法 ticket 可进入 ready_queue，blocked ticket 不可执行。
 - 验收口径：ticket graph 是流程状态源。
+- 完成证据：2026-05-15 新增 TicketNode（任务节点）、TicketGraph（任务图）、TicketCreatedPayload（任务创建载荷）、TicketBlockedPayload（任务阻塞载荷）、TicketPayloadResolver（任务载荷解析器）和 TicketGraphProjector（任务图投影器）；`EventRecord.payload_refs`（事件载荷引用）保持为审计指针，projection（投影）通过 resolver 解析 typed payload，未来 V2-070 可替换为 replay resolver（重放解析器）而不改变投影语义；缺 acceptance_refs / source_surface_refs / evidence_obligations / allowed_write_set、无法解析 payload_ref、重复 ticket、未知 dependency、unsupported ticket event、blocked ticket 进入 ready_queue 均 fail closed；`TICKET_CREATED` 不能表达 completed 状态，合法 ticket 可进入 ready_queue，blocked ticket 不可执行，non-ticket event 不改变 graph；`PYTHONPATH=src pytest tests/reducers/test_event_record.py tests/reducers/test_event_log.py tests/reducers/test_ticket_graph_projection.py -q` 通过（77 passed）。
 
 ### V2-020D: 实现 reducer 状态转换
 

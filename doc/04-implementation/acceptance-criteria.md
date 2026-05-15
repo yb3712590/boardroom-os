@@ -194,7 +194,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### AC 检查清单
 
-- [ ] AC-V2-GRAPH-001（ticket graph 是状态源）— 由 V2-020C `test_ticket_graph_projection.py` 证明：ticket 缺 acceptance_refs / source_surface_refs / evidence_obligations / allowed_write_set 必须无效
+- [x] AC-V2-GRAPH-001（ticket graph 是状态源）— 由 V2-020C `test_ticket_graph_projection.py` 证明：ticket 缺 acceptance_refs / source_surface_refs / evidence_obligations / allowed_write_set 必须无效
 - [ ] AC-V2-GRAPH-002（reducer-protected transitions）— 由 V2-020D `test_ticket_reducer_transitions.py` + `test_executor_cannot_complete_ticket.py` 证明：executor 提交 `TICKET_COMPLETED` 必须失败
 - [x] typed event record 完整性 — 由 V2-020A `test_event_record.py` 证明：事件缺 actor / timestamp / graph_version / payload refs、无时区 timestamp、未知 event_type 必须失败；stable dump 可回放为 EventRecord
 - [x] event log append 完整性 — 由 V2-020B `test_event_log.py` 证明：graph_version 回退 / 重复 event_id / 未知 event_type 必须失败；按 project_ref 隔离 graph_version 序列并可按版本范围读取事件
