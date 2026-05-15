@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020A`
+**当前未完成工作包**：`V2-020B`
 
-**当前重点**：Phase 1 Contract Kernel（合同内核）已完成；继续 V2-020A typed event record（类型化事件记录）。
+**当前重点**：V2-020A typed event record（类型化事件记录）已完成；继续 V2-020B in-memory event log（内存事件日志）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 1 / 6 | 进行中 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **11 / 51** | **Phase 2 待开始** |
+| **合计** | **V2-000 ~ V2-080** | **12 / 51** | **Phase 2 进行中** |
 
 ## 当前约束摘要
 
@@ -321,7 +321,7 @@ RoleProfile（角色模板）
 
 ## V2-020: Event + Reducer Kernel（事件与状态归约内核）
 
-- 状态：TODO
+- 状态：IN_PROGRESS
 - 目标：实现 event record（事件记录）、event log abstraction（事件日志抽象）、ticket graph projection（任务图投影）和 reducer（状态归约器）。
 - 输入文档：`technical-architecture.md`、`domain-model.md`、`execution-and-runtime-boundary.md`。
 - 输出目录：`src/boardroom_os/events/`、`src/boardroom_os/reducers/`、`src/boardroom_os/graph/`、`tests/reducers/`。
@@ -329,7 +329,7 @@ RoleProfile（角色模板）
 
 ### V2-020A: 定义 typed event record
 
-- 状态：TODO
+- 状态：DONE
 - 目标：定义所有可进入 event log 的最小事件类型和公共字段。
 - 输入文档：`domain-model.md`、`process-audit-and-replay.md`。
 - 依赖：V2-010E。
@@ -337,6 +337,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：事件缺 actor、timestamp、graph_version、payload refs 必须失败。
 - 必须证明的 happy path：事件可稳定序列化并保留 causation/correlation refs。
 - 验收口径：audit/replay 不依赖未结构化日志。
+- 完成证据：2026-05-15 新增 EventRecord（事件记录）、EventType（事件类型）、EventId（事件 ID）、EventRef（事件引用）、ProjectRef（项目引用）、ActorRef（参与者引用）和 EventPayloadRef（事件载荷引用）；按 V2-020A 更窄范围仅覆盖 Phase 2 / runtime boundary 已明确需要的 ticket 与 execution 事实事件，后续阶段在实际消费时扩展自己的 EventType（见 DEC-0010）；缺 actor、timestamp、graph_version、payload refs、空 actor、graph_version 非正数、空 payload refs、无时区 timestamp、未知 event_type 均 fail closed；EventType 保持枚举类型供 reducer 分支使用，stable dump 保持 Pydantic value object 形态并可直接回放为 EventRecord；`PYTHONPATH=src pytest tests/reducers/test_event_record.py -q` 通过（12 passed）。
 
 ### V2-020B: 实现 in-memory event log 与 append 校验
 

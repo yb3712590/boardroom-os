@@ -136,3 +136,22 @@ V2 的合同、schema、领域边界值对象从 V2-010A 开始直接采用 Pyda
 - 后续 schema 不应为了兼容旧表达而接受裸 dict 作为核心字段语义来源。
 - 需要新增依赖配置时，应显式声明 Pydantic 作为项目标准依赖，而不是测试环境偶然依赖。
 
+## DEC-0010: EventType 采用阶段性收窄定义
+
+- 状态：Accepted
+- 日期：2026-05-15
+
+### 决策
+
+V2-020A 只定义 Phase 2 和 runtime boundary（运行时边界）已经明确需要的 ticket / execution 事实事件类型，不一次性枚举 Phase 3 ~ Phase 8 的完整 event taxonomy（事件分类）。后续工作包在实际引入 provider、evidence、workspace、closeout、replay 等事实时，必须同步扩展 `EventType`（事件类型）枚举和对应 fail-closed 测试。
+
+### 理由
+
+EventRecord（事件记录）的职责是先稳定 event log（事件日志）可审计、可回放的 envelope（外壳字段）和序列化语义；提前替后续阶段定义所有事件会把尚未实现的业务边界固化为猜测，增加后续调整成本。
+
+### 影响
+
+- V2-020B 的 event log append（事件追加）仍必须拒绝 unknown event_type（未知事件类型）。
+- 后续阶段扩展 EventType 时必须同时补测试和项目日志，不能依赖任意字符串绕过 fail closed。
+- stable dump（稳定转储）保持 Pydantic value object（Pydantic 值对象）形态，确保可直接回放为 EventRecord。
+
