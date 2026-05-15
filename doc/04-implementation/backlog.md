@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020F`
+**当前未完成工作包**：`V2-030A`
 
-**当前重点**：V2-020E seat assignment（席位分配）事件入口已完成；继续 V2-020F projection replay（投影重放）。
+**当前重点**：Phase 2 Event + Reducer Kernel（事件与状态归约内核）已完成；继续 V2-030A RoleProfile / SkillBinding / ModelExecutionProfile（角色模板 / 技能绑定 / 模型执行配置）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 5 / 6 | 进行中 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **16 / 51** | **Phase 2 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **17 / 51** | **Phase 3 待开始** |
 
 ## 当前约束摘要
 
@@ -321,7 +321,7 @@ RoleProfile（角色模板）
 
 ## V2-020: Event + Reducer Kernel（事件与状态归约内核）
 
-- 状态：IN_PROGRESS
+- 状态：DONE
 - 目标：实现 event record（事件记录）、event log abstraction（事件日志抽象）、ticket graph projection（任务图投影）和 reducer（状态归约器）。
 - 输入文档：`technical-architecture.md`、`domain-model.md`、`execution-and-runtime-boundary.md`。
 - 输出目录：`src/boardroom_os/events/`、`src/boardroom_os/reducers/`、`src/boardroom_os/graph/`、`tests/reducers/`。
@@ -389,7 +389,7 @@ RoleProfile（角色模板）
 
 ### V2-020F: 实现 projection replay
 
-- 状态：TODO
+- 状态：DONE
 - 目标：证明 graph projection 可由 event log 重放生成。
 - 输入文档：`process-audit-and-replay.md`。
 - 依赖：V2-020E。
@@ -397,6 +397,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：事件缺失、事件乱序、projection version 不匹配必须失败。
 - 必须证明的 happy path：同一事件序列重放得到同一 graph hash 或等价 projection summary。
 - 验收口径：后续 closeout/replay 不依赖 runtime 内存状态。
+- 完成证据：2026-05-16 新增 ProjectionReplay（投影重放器）、ProjectionReplaySummary（投影重放摘要）和 ProjectionReplayEventRange（投影重放事件范围），当前边界只覆盖 audit replay（审计重放），不提前实现 V2-070 branchable governance replay（可分叉治理重放）。负例证明空事件范围、graph_version 缺口、输入乱序、project mismatch（项目不匹配）、non-positive expected_graph_version（非正预期图版本）、from_graph_version 中段重放缺 snapshot/base projection contract（快照/基准投影合同）、projection version mismatch（投影版本不匹配）和 unresolved payload ref（未解析载荷引用）均 fail closed；正例证明 seat_assignment_graph（席位分配图）projection summary 可确定性重建，并对 happy path 产出 stable `summary_hash`。验证命令：`PYTHONPATH=src pytest tests/reducers/test_projection_replay.py -q` 通过（11 passed）；`PYTHONPATH=src pytest tests/reducers/test_event_record.py tests/reducers/test_event_log.py tests/reducers/test_ticket_graph_projection.py tests/reducers/test_ticket_reducer_transitions.py tests/reducers/test_seat_assignment_projection.py tests/reducers/test_projection_replay.py tests/negative/test_executor_cannot_complete_ticket.py -q` 通过（111 passed）。
 
 ---
 

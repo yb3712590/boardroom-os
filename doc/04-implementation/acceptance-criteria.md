@@ -199,9 +199,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] typed event record 完整性 — 由 V2-020A `test_event_record.py` 证明：事件缺 actor / timestamp / graph_version / payload refs、无时区 timestamp、未知 event_type 必须失败；stable dump 可回放为 EventRecord
 - [x] event log append 完整性 — 由 V2-020B `test_event_log.py` 证明：graph_version 回退 / 重复 event_id / 未知 event_type 必须失败；按 project_ref 隔离 graph_version 序列并可按版本范围读取事件
 - [x] seat assignment 投影 — 由 V2-020E `test_seat_assignment_projection.py` 证明：ticket 无 owner_seat_ref / 缺 SEAT_ASSIGNED 事件 / SEAT_ASSIGNED 早于 TICKET_CREATED / 多 payload_refs / assignment 引用未知 ticket / seat 缺 model_execution_profile_ref / 未知 seat / inactive seat / seat 声明 capability 与 assignment required_capability_tags 不一致必须 fail closed 或 blocked
-- [ ] projection replay 可重建 — 由 V2-020F 证明：相同事件序列产生相同 graph projection
-- [ ] V2-020A ~ V2-020F 六个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 2 显示 6/6
+- [x] projection replay 可重建 — 由 V2-020F `test_projection_replay.py` 证明：audit replay（审计重放）仅重放 `seat_assignment_graph` projection summary（席位分配图投影摘要）；事件缺失 / 乱序 / project mismatch（项目不匹配）/ non-positive expected_graph_version（非正预期图版本）/ from_graph_version 中段重放缺 snapshot/base projection contract（快照/基准投影合同）/ projection version mismatch（投影版本不匹配）必须 fail closed；相同事件序列产生 deterministic `summary_hash`
+- [x] V2-020A ~ V2-020F 六个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 2 显示 6/6
 
 #### 本批产出
 
@@ -211,10 +211,10 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 3 前置
 
-- [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-020A ~ V2-020F 状态全部 DONE
-- [ ] 项目日志记录完成
-- [ ] reducer 公开接口稳定（后续 V2-050F 完成度门禁会复用）
+- [x] 上述 AC checkbox 全部勾选
+- [x] V2-020A ~ V2-020F 状态全部 DONE
+- [x] 项目日志记录完成
+- [x] reducer 公开接口稳定（后续 V2-050F 完成度门禁会复用）
 
 ### Phase 3 验收 — V2-030 Agent Seat + Execution Package Compiler
 

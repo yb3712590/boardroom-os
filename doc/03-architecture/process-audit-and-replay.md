@@ -108,14 +108,24 @@ Closeout 必须记录：
 
 ## Replay
 
-Replay 的目标是证明 typed summaries 可由 event log + artifact manifest 重建。
+Replay 分为两层：
 
-Replay bundle 至少包含：
+1. **Audit replay（审计重放）**：从有序 `EventLog`（事件日志）和必要 payload/artifact manifest（载荷/产物清单）重建 typed summaries（类型化摘要），证明 runtime（运行时）内存状态不是事实源。
+2. **Branchable governance replay（可分叉治理重放）**：从历史图上的某个 graph version（图版本）或 event cursor（事件游标）重新 materialize（物化）状态，由 CEO（首席治理者）记录 replay decision（重放决策），再对 graph（图）或 work packages（工作包）施加新影响，形成新的后继历史。
+
+V2-020F 只实现 audit replay（审计重放）：它必须证明 projection summary（投影摘要）可由从 graph version（图版本）1 开始的事件历史确定性重建，并在事件缺失、乱序、中段 replay 缺 snapshot/base projection contract（快照/基准投影合同）或 projection version（投影版本）不匹配时 fail closed（失败关闭）。
+
+V2-070 应从 audit replay（审计重放）继续扩展，逐步走向 branchable governance replay（可分叉治理重放）能力；当 closeout（收尾）产出不合格时，尤其应支持从选定历史点开展大规模返工，而不是把不合格 closeout 当作 terminal success（终态成功）。
+
+本文件只声明 replay（重放）的边界和演进方向，不在当前阶段锁定最终 materialization flow（物化流程）、rework strategy（返工策略）或 replay bundle contract（重放包合同）。
+
+如果未来引入 replay bundle（重放包），可参考的非绑定示例字段包括：
 
 ```yaml
 replay_bundle_id:
 event_range:
 projection_versions:
+payload_manifest_ref:
 artifact_manifest_ref:
 hash_manifest_ref:
 expected_summary_refs:
