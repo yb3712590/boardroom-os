@@ -1,3 +1,5 @@
+import pytest
+
 from boardroom_os.contracts.acceptance import (
     AcceptanceContract,
     AcceptanceCriterion,
@@ -162,6 +164,32 @@ def test_draft_acceptance_contract_returns_no_blocking_criteria_for_gate_consume
     )
 
     assert contract.blocking_criteria() == ()
+
+
+def test_acceptance_contract_rejects_duplicate_acceptance_refs() -> None:
+    with pytest.raises(ValueError, match="acceptance_ref must be unique"):
+        create_acceptance_contract(
+            registry=_charter_registry(),
+            acceptance_contract_id=ContractId(value="acceptance-contract-001"),
+            project_charter_ref=ContractId(value="charter-001"),
+            status=ContractStatus.active(),
+            criteria=(
+                _criterion(
+                    "AC-BOOK-API-001",
+                    statement="Books can be checked out through the backend API.",
+                    blocking=True,
+                    evidence_required=("api_test_run",),
+                    source_surface_refs=("backend-api",),
+                ),
+                _criterion(
+                    "AC-BOOK-API-001",
+                    statement="Books can be checked out through the backend API with audit evidence.",
+                    blocking=True,
+                    evidence_required=("api_test_run",),
+                    source_surface_refs=("backend-api",),
+                ),
+            ),
+        )
 
 
 def test_contract_package_exports_acceptance_contract_types() -> None:

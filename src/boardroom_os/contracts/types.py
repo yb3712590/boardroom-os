@@ -34,6 +34,10 @@ class EvidenceObligationRef(_NonEmptyValue):
     pass
 
 
+class NonEmptyTextValue(_NonEmptyValue):
+    pass
+
+
 class AcceptanceRefSet(BaseModel):
     model_config = ConfigDict(frozen=True)
 

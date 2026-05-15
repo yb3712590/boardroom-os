@@ -167,6 +167,14 @@ def test_contract_gate_requires_active_acceptance_contract() -> None:
         )
 
 
+def test_contract_gate_requires_acceptance_contract() -> None:
+    with pytest.raises(ValueError, match="active acceptance contract is required"):
+        validate_contract_gate(
+            acceptance_contract=None,
+            package_contract=_package_contract(),
+        )
+
+
 def test_contract_gate_requires_package_contract() -> None:
     with pytest.raises(ValueError, match="package contract is required"):
         validate_contract_gate(

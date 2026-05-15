@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-010G`
+**当前未完成工作包**：`V2-020A`
 
-**当前重点**：Phase 0 已冻结（2026-05-14）。V2-010F 已实现 MethodologyProfile（方法论配置）与 workspace template（工作区模板）绑定；继续 V2-010G 合同 fixture（夹具）与 schema 文档化。
+**当前重点**：Phase 1 Contract Kernel（合同内核）已完成；继续 V2-020A typed event record（类型化事件记录）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -149,7 +149,7 @@ RoleProfile（角色模板）
 | 阶段 | 顶层任务 | 工作包完成/总数 | 状态 |
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
-| Phase 1：Contract Kernel | V2-010 | 6 / 7 | 进行中 |
+| Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 0 / 6 | 待开始 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
@@ -157,7 +157,7 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **10 / 51** | **Phase 1 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **11 / 51** | **Phase 2 待开始** |
 
 ## 当前约束摘要
 
@@ -226,7 +226,7 @@ RoleProfile（角色模板）
 
 ## V2-010: Contract Kernel（合同内核）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 ProjectCharter、AcceptanceContract、PackageContract、SourceSurface、EvidenceObligation 的最小 typed schema（类型化结构）和 fail-closed 校验。
 - 输入文档：`doc/03-architecture/domain-model.md`、`doc/03-architecture/contract-and-evidence-model.md`、`doc/04-implementation/acceptance-criteria.md`。
 - 输出目录：`src/boardroom_os/contracts/`、`tests/contracts/`、`tests/negative/`。
@@ -307,14 +307,15 @@ RoleProfile（角色模板）
 
 ### V2-010G: 合同 fixture 与 schema 文档化
 
-- 状态：TODO
+- 状态：DONE
 - 目标：提供 tiny proving scenario 所需的最小合同 fixture 和 schema 使用示例。
-- 输入文档：`proving-scenario-tiny-fullstack.md`。
+- 输入文档：`doc/04-implementation/proving-scenario-tiny-fullstack.md`。
 - 依赖：V2-010F。
-- 输出文件：`tests/fixtures/contracts/tiny_fullstack_contract.py` 或等价测试 fixture；必要时更新 `doc/04-implementation/acceptance-criteria.md`。
+- 输出文件：`tests/fixtures/contracts/tiny_fullstack_contract.py`、`tests/contracts/test_tiny_fullstack_contract_fixture.py`、`tests/negative/test_tiny_fullstack_contract_fixture_fail_closed.py`。
 - 必须先写的 negative tests：fixture 不能省略 blocking evidence；不能把 fallback 标为 implementation evidence；fixture 的 acceptance_ref 与 `acceptance-criteria.md` 中任何 AC-V2 抽象 AC **未显式绑定** 时必须失败。
 - 必须证明的 happy path：fixture 可被 V2-020 ticket graph 测试复用；fixture 中每个 acceptance_ref 都映射到 active AcceptanceContract 中的具体 criterion。
 - 验收口径：V2-010 完成后，V2-020 可直接消费合同对象，不再重新解释散文需求；fixture 与 `acceptance-criteria.md` 形成强绑定，避免 fixture 静悄悄背离 AC。
+- 完成证据：2026-05-15 新增 TinyFullstackContractFixture（微型全栈合同夹具），覆盖 BoardDirective（董事会指令）、ProjectCharter（项目章程）、MethodologyProfile（方法论配置）、AcceptanceContract（验收合同）、PackageContract（包合同）和 ContractGateResult（合同门禁结果）；通过 `TINY_FULLSTACK_AC_V2_BINDINGS` 显式绑定每个 blocking acceptance_ref（阻塞验收引用）到 AC-V2 抽象原则，并用 fail-closed 测试拒绝缺绑定、未知 AC-V2 绑定和 fallback implementation evidence（降级实施证据）；`PYTHONPATH=src:. pytest tests/contracts/test_tiny_fullstack_contract_fixture.py tests/negative/test_tiny_fullstack_contract_fixture_fail_closed.py -q` 通过（6 passed）。
 
 ---
 

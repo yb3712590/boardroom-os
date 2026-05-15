@@ -171,8 +171,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] AC-V2-CONTRACT-003（无 static universal AC）— 由 V2-010E `test_contract_gate.py` 证明：acceptance_ref 不属于 active contract 必须失败
 - [x] BoardDirective intake 闭合 — 由 V2-010B negative test 证明：不存在 directive 不得创建 ProjectCharter
 - [x] MethodologyProfile 闭合 — 由 V2-010F negative test 证明：PackageContract 缺 methodology_profile_ref 必须失败；四种 template_kind 影响 workspace docs template 选择
-- [ ] V2-010A ~ V2-010G 七个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 1 显示 7/7
+- [x] V2-010G fixture 与 AC-V2 绑定闭合 — 由 V2-010G `test_tiny_fullstack_contract_fixture_fail_closed.py` 证明：fixture 缺 AC-V2 显式绑定、未知 AC-V2 绑定或 fallback implementation evidence 必须失败
+- [x] V2-010A ~ V2-010G 七个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 1 显示 7/7
 
 #### 本批产出
 
@@ -184,10 +185,10 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 2 前置
 
-- [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-010A ~ V2-010G 状态全部 DONE
-- [ ] `doc/05-project-log/2026-MM.md` 记录每个工作包完成日期
-- [ ] fixture 与本文件 AC-V2 抽象 AC 形成显式绑定（V2-010G 验收口径）
+- [x] 上述 AC checkbox 全部勾选
+- [x] V2-010A ~ V2-010G 状态全部 DONE
+- [x] `doc/05-project-log/2026-05.md` 记录每个工作包完成日期
+- [x] fixture 与本文件 AC-V2 抽象 AC 形成显式绑定（V2-010G 验收口径）
 
 ### Phase 2 验收 — V2-020 Event + Reducer Kernel
 

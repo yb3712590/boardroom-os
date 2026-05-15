@@ -3,28 +3,20 @@ from typing import Any, Self
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_serializer, field_validator, model_validator
 
 from boardroom_os.contracts.project import ProjectCharterRegistry
-from boardroom_os.contracts.types import AcceptanceRef, ContractId, ContractStatus, SourceSurfaceRef
+from boardroom_os.contracts.types import (
+    AcceptanceRef,
+    ContractId,
+    ContractStatus,
+    NonEmptyTextValue,
+    SourceSurfaceRef,
+)
 
 
-class _NonEmptyTextValue(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    value: str
-
-    @field_validator("value")
-    @classmethod
-    def _reject_empty_value(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value must not be empty")
-        return normalized
-
-
-class EvidenceRequirement(_NonEmptyTextValue):
+class EvidenceRequirement(NonEmptyTextValue):
     pass
 
 
-class VerificationStrategy(_NonEmptyTextValue):
+class VerificationStrategy(NonEmptyTextValue):
     pass
 
 
@@ -97,6 +89,9 @@ class AcceptanceContract(BaseModel):
     ) -> tuple[AcceptanceCriterion, ...]:
         if not values:
             raise ValueError("criteria must not be empty")
+        acceptance_refs = [criterion.acceptance_ref.value for criterion in values]
+        if len(set(acceptance_refs)) != len(acceptance_refs):
+            raise ValueError("acceptance_ref must be unique")
         if not any(criterion.blocking for criterion in values):
             raise ValueError("at least one blocking criterion is required")
         return values

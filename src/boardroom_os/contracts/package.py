@@ -16,7 +16,7 @@ from boardroom_os.contracts.methodology import (
     MethodologyProfileRegistry,
 )
 from boardroom_os.contracts.source_surface import SourceSurface
-from boardroom_os.contracts.types import ContractId
+from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
 
 
 class PackageProjectType(StrEnum):
@@ -25,21 +25,7 @@ class PackageProjectType(StrEnum):
     MIXED = "mixed"
 
 
-class _NonEmptyTextValue(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    value: str
-
-    @field_validator("value")
-    @classmethod
-    def _reject_empty_value(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value must not be empty")
-        return normalized
-
-
-class IntegrationBoundary(_NonEmptyTextValue):
+class IntegrationBoundary(NonEmptyTextValue):
     pass
 
 

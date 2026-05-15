@@ -1,27 +1,18 @@
 from pydantic import BaseModel, ConfigDict, StrictBool, field_serializer, field_validator
 
-from boardroom_os.contracts.types import AcceptanceRef, EvidenceObligationRef, SourceSurfaceRef
+from boardroom_os.contracts.types import (
+    AcceptanceRef,
+    EvidenceObligationRef,
+    NonEmptyTextValue,
+    SourceSurfaceRef,
+)
 
 
-class _NonEmptyTextValue(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    value: str
-
-    @field_validator("value")
-    @classmethod
-    def _reject_empty_value(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value must not be empty")
-        return normalized
-
-
-class RequiredArtifactType(_NonEmptyTextValue):
+class RequiredArtifactType(NonEmptyTextValue):
     pass
 
 
-class RequiredVerifier(_NonEmptyTextValue):
+class RequiredVerifier(NonEmptyTextValue):
     pass
 
 
