@@ -41,6 +41,8 @@ class EventType(StrEnum):
     TICKET_CREATED = "ticket_created"
     TICKET_LEASED = "ticket_leased"
     TICKET_BLOCKED = "ticket_blocked"
+    TICKET_CHECKED = "ticket_checked"
+    TICKET_COMPLETED = "ticket_completed"
     TICKET_REWORKED = "ticket_reworked"
     EXECUTION_STARTED = "execution_started"
     PROVIDER_ATTEMPT_RECORDED = "provider_attempt_recorded"

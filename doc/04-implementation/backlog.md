@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020D`
+**当前未完成工作包**：`V2-020E`
 
-**当前重点**：V2-020C TicketGraph projection（任务图投影）已完成；继续 V2-020D reducer（状态归约器）状态转换。
+**当前重点**：V2-020D reducer（状态归约器）状态转换已完成；继续 V2-020E seat assignment（席位分配）事件入口。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 3 / 6 | 进行中 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 4 / 6 | 进行中 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **14 / 51** | **Phase 2 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **15 / 51** | **Phase 2 进行中** |
 
 ## 当前约束摘要
 
@@ -365,7 +365,7 @@ RoleProfile（角色模板）
 
 ### V2-020D: 实现 reducer 状态转换
 
-- 状态：TODO
+- 状态：DONE
 - 目标：保护 ticket created、leased、work submitted、checked、completed、rework 等转换。
 - 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`。
 - 依赖：V2-020C。
@@ -373,6 +373,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：executor 提交 `TICKET_COMPLETED`、provider attempt count 为 0、checker blocker 未清除时完成 ticket 必须失败。
 - 必须证明的 happy path：verified evidence complete + checker approved 时 reducer 产生 completed projection。
 - 验收口径：executor/runtime 永远不能直接决定 ticket completed。
+- 完成证据：2026-05-16 新增 TicketReducer（任务状态归约器）、TicketCompletionSnapshot（任务完成快照）、TicketCheckSnapshot（检查快照）和 TicketRefPayload（任务引用载荷）；V2-020D 固化 reducer completion boundary（完成边界）作为后续 V2-050F 接入点，而不提前实现 FinalEvidenceTable（最终证据表）或 CheckerVerdict（检查结论）模型。负例证明 executor/runtime actor 提交 `TICKET_COMPLETED`、provider_attempt_count 为 0、completion snapshot 自带 blocker、历史 checker blocker 未清除、无 checker blocker 发起 rework 均 fail closed；正例证明 lease/work submitted 不会完成 ticket，checker blocker 可触发 rework blocked projection，reworked ticket 经后续 checker approved 可恢复 READY 并完成，evidence complete + checker approved + provider attempt recorded 时 ticket completed。`PYTHONPATH=src pytest tests/reducers/test_ticket_reducer_transitions.py tests/negative/test_executor_cannot_complete_ticket.py -q` 通过（12 passed）；`PYTHONPATH=src pytest tests/reducers/test_event_record.py tests/reducers/test_event_log.py tests/reducers/test_ticket_graph_projection.py tests/reducers/test_ticket_reducer_transitions.py tests/negative/test_executor_cannot_complete_ticket.py -q` 通过（89 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/negative -q` 通过（179 passed）。
 
 ### V2-020E: 实现 seat assignment 事件入口
 

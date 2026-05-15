@@ -132,3 +132,7 @@ CLOSEOUT_COMMITTED
 
 这些必须由 reducer 在验证 contract/evidence/checker 条件后产生。
 
+## Ticket Completion Boundary
+
+V2-020D 固化 reducer-level completion boundary（状态归约层完成边界）：`TICKET_COMPLETED` 只能由治理/检查链路提交，executor/runtime actor 不得提交；完成请求必须携带 provider_attempt_count > 0、evidence_complete、checker_approved 且无 blocking_issue_refs。该边界是稳定接入点，不提前定义 V2-050 的 `FinalEvidenceTable`（最终证据表）或 `CheckerVerdict`（检查结论）内部结构。V2-040E 必须继续证明 runtime 不能 emit governance completion events（治理完成事件）；V2-050F 必须把正式 evidence/checker 模型适配到该边界；V2-070F 的 closeout reducer（收尾归约器）应复用同类 gate-passed 才能 terminal success（终态成功）的模式；V2-080 proving scenario（证明场景）必须覆盖完整链路。
+

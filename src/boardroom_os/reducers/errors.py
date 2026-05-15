@@ -1,0 +1,2 @@
+class TicketReducerError(ValueError):
+    pass
