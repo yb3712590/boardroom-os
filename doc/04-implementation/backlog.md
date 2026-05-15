@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020E`
+**当前未完成工作包**：`V2-020F`
 
-**当前重点**：V2-020D reducer（状态归约器）状态转换已完成；继续 V2-020E seat assignment（席位分配）事件入口。
+**当前重点**：V2-020E seat assignment（席位分配）事件入口已完成；继续 V2-020F projection replay（投影重放）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 4 / 6 | 进行中 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 5 / 6 | 进行中 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **15 / 51** | **Phase 2 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **16 / 51** | **Phase 2 进行中** |
 
 ## 当前约束摘要
 
@@ -377,14 +377,15 @@ RoleProfile（角色模板）
 
 ### V2-020E: 实现 seat assignment 事件入口
 
-- 状态：TODO
+- 状态：DONE
 - 目标：在图中表达 AgentSeatAssignment（席位分配），但不在此阶段调用 provider。
 - 输入文档：`agent-team-model.md`。
 - 依赖：V2-020D。
 - 输出文件：`src/boardroom_os/graph/seat_assignment.py`、`tests/reducers/test_seat_assignment_projection.py`。
-- 必须先写的 negative tests：ticket 无 owner_seat_ref、seat capability 与 ticket type 不匹配、seat 缺 model_execution_profile_ref 必须失败或保持 blocked。
+- 必须先写的 negative tests：ticket 无 owner_seat_ref、缺 SEAT_ASSIGNED 事件、SEAT_ASSIGNED 早于 TICKET_CREATED、SEAT_ASSIGNED 多 payload_refs、assignment 引用未知 ticket、seat 声明 capability 与 assignment required_capability_tags 不匹配、seat 缺 model_execution_profile_ref 必须失败或保持 blocked。
 - 必须证明的 happy path：CEO/architect/worker/checker seat 可被分配到不同 ticket。
 - 验收口径：V2-030 能基于 seat assignment 编译 ExecutionPackage。
+- 完成证据：2026-05-16 新增 SeatDefinition（席位定义快照）、SeatAssignmentPayload（席位分配载荷）、SeatAssignmentGraph（席位分配图投影）和 SeatAssignmentProjector（席位分配投影器）；V2-020E 只在 graph 层表达 seat assignment 事实，不提前创建 V2-030 agents 包且不调用 provider。负例证明 ticket 缺 owner_seat_ref、缺 SEAT_ASSIGNED 事件、SEAT_ASSIGNED 早于 TICKET_CREATED、多 payload_refs、assignment 引用未知 ticket、seat 缺 model_execution_profile_ref、未知 seat、inactive seat、seat 声明 capability 与 assignment required_capability_tags 不一致、ticket owner 与 assignment seat 不一致均 fail closed 或保持 blocked；正例证明 CEO/architect/worker/checker seat 可分配到不同 ticket 并进入 ready_queue，且测试事件可被 InMemoryEventLog 接受为唯一 event_id 序列。先运行 `PYTHONPATH=src pytest tests/reducers/test_seat_assignment_projection.py -q` 得到预期 RED（`ModuleNotFoundError: No module named 'boardroom_os.graph.seat_assignment'`）；审计修复前补充 early assignment / unknown ticket / multi payload_refs 得到预期 RED；实现后同命令通过（11 passed）。
 
 ### V2-020F: 实现 projection replay
 

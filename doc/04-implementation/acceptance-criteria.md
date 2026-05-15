@@ -198,7 +198,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] AC-V2-GRAPH-002（reducer-protected transitions）— 由 V2-020D `test_ticket_reducer_transitions.py` + `test_executor_cannot_complete_ticket.py` 证明：executor 提交 `TICKET_COMPLETED`、provider_attempt_count 为 0、checker blocker 未清除时完成 ticket 必须失败；completion boundary（完成边界）由 V2-050F 适配正式 evidence/checker 模型
 - [x] typed event record 完整性 — 由 V2-020A `test_event_record.py` 证明：事件缺 actor / timestamp / graph_version / payload refs、无时区 timestamp、未知 event_type 必须失败；stable dump 可回放为 EventRecord
 - [x] event log append 完整性 — 由 V2-020B `test_event_log.py` 证明：graph_version 回退 / 重复 event_id / 未知 event_type 必须失败；按 project_ref 隔离 graph_version 序列并可按版本范围读取事件
-- [ ] seat assignment 投影 — 由 V2-020E 证明：ticket 无 owner_seat_ref / seat 缺 model_execution_profile_ref 必须 blocked
+- [x] seat assignment 投影 — 由 V2-020E `test_seat_assignment_projection.py` 证明：ticket 无 owner_seat_ref / 缺 SEAT_ASSIGNED 事件 / SEAT_ASSIGNED 早于 TICKET_CREATED / 多 payload_refs / assignment 引用未知 ticket / seat 缺 model_execution_profile_ref / 未知 seat / inactive seat / seat 声明 capability 与 assignment required_capability_tags 不一致必须 fail closed 或 blocked
 - [ ] projection replay 可重建 — 由 V2-020F 证明：相同事件序列产生相同 graph projection
 - [ ] V2-020A ~ V2-020F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 2 显示 6/6
