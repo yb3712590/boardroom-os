@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-020B`
+**当前未完成工作包**：`V2-020C`
 
-**当前重点**：V2-020A typed event record（类型化事件记录）已完成；继续 V2-020B in-memory event log（内存事件日志）。
+**当前重点**：V2-020B in-memory event log（内存事件日志）已完成；继续 V2-020C TicketNode 与 TicketGraph projection（任务节点与任务图投影）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -150,14 +150,14 @@ RoleProfile（角色模板）
 |---|---|---:|---|
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
-| Phase 2：Event + Reducer Kernel | V2-020 | 1 / 6 | 进行中 |
+| Phase 2：Event + Reducer Kernel | V2-020 | 2 / 6 | 进行中 |
 | Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **12 / 51** | **Phase 2 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **13 / 51** | **Phase 2 进行中** |
 
 ## 当前约束摘要
 
@@ -341,7 +341,7 @@ RoleProfile（角色模板）
 
 ### V2-020B: 实现 in-memory event log 与 append 校验
 
-- 状态：TODO
+- 状态：DONE
 - 目标：提供最小 event log 接口，用于测试 reducer 和 replay。
 - 输入文档：`technical-architecture.md`。
 - 依赖：V2-020A。
@@ -349,6 +349,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：graph_version 回退、重复 event_id、未知 event_type 必须失败。
 - 必须证明的 happy path：append 后可按 project_ref 和版本范围读取事件。
 - 验收口径：后续 runtime 只能 append 事实事件，不能直接改 projection。
+- 完成证据：2026-05-15 新增 InMemoryEventLog（内存事件日志）与 EventLogAppendError（事件日志追加错误）；append-only（只追加）接口按 project_ref（项目引用）隔离 graph_version（图版本）严格递增，拒绝重复 event_id（事件 ID）与通过不安全构造绕过的未知 event_type（事件类型）；read（读取）接口可按 project_ref、from_graph_version 和 to_graph_version 返回稳定版本序列；`PYTHONPATH=src pytest tests/reducers/test_event_record.py tests/reducers/test_event_log.py -q` 通过（17 passed）。
 
 ### V2-020C: 实现 TicketNode 与 TicketGraph projection
 
