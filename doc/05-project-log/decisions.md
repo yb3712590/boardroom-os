@@ -175,3 +175,22 @@ Phase 2 审计中发现的非 P2 修补项不在 V2-020 继续扩张实现，而
 - V2-050F 必须把正式 FinalEvidenceTable / CheckerVerdict 接入现有 completion boundary，不绕过 `WORK_PRODUCT_SUBMITTED` 和 provider attempt 门禁。
 - V2-070B/F 若引入增量 reducer 或 replay bundle，必须把 work product 历史事实纳入显式 projection/replay 输入，不能依赖 `TicketReducer.reduce()` 调用内局部集合。
 
+## DEC-0012: Agent asset 导入放在 workspace/package 阶段
+
+- 状态：Accepted
+- 日期：2026-05-16
+
+### 决策
+
+外部提供的 role config（角色配置）、skill file（技能文件）、prompt file（提示词文件）和 MCP interface manifest（MCP 接口清单）不作为 ExecutionPackage compiler（执行包编译器）的运行时外部输入。V2-030D 必须保持 0 外部文件输入能力，只消费已编译 registry / contract / graph / seat assignment。外部 agent assets（智能体资产）导入追加为 V2-060F，在 generated project workspace（生成项目工作区）阶段物化为 `00-boardroom/agents/` 快照，并写入 `asset-import-manifest.yaml` 来源链。
+
+### 理由
+
+执行包编译器是 runtime 前的治理编译边界，若在此阶段同步外部文件，会让执行包可重复性依赖项目外状态。把导入放到 workspace/package 阶段，可以让最终 generated project package 自包含、可审计、可 hash，并避免外部资产静默变化影响已编译执行包。
+
+### 影响
+
+- V2-030D 不读取外部 skill/prompt/MCP 文件；缺外部资产时仍应可用内存 registry fixture 编译 ExecutionPackage。
+- V2-060F 负责将外部 agent asset bundle 导入 `00-boardroom/agents/`，并记录 source_ref/source_kind/imported_at/source_path/target_path/sha256。
+- 既有项目更新 agent assets 必须产生新 ref 或显式 import manifest 记录，不能静默覆盖。
+

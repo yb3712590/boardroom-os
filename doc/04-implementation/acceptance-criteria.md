@@ -222,7 +222,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [ ] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_id / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy 必须失败
 - [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— 由 V2-030E `test_fallback_cannot_satisfy_implementation.py` 证明
-- [ ] Role / Seat / Provider 接入链闭合 — 由 V2-030A、V2-030B、V2-030D 证明：RoleProfile → SkillBinding → ModelExecutionProfile → AgentSeat → ExecutionPackage 全链可测；active seats 必须可审计，capability tags 必须受 registry 约束（见 DEC-0011）
+- [ ] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界：role 不含 provider credential，provider 通过 ModelExecutionProfile 接入，capability tags 受 CapabilityRegistry 约束；V2-030B / V2-030D 继续证明 AgentSeat → ExecutionPackage 链路与 active seats 可审计（见 DEC-0011）
 - [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
 - [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 3 显示 6/6
@@ -296,19 +296,20 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [ ] AC-V2-PACKAGE-002（package 必须可运行）— 由 V2-060D `test_run_manifest.py` 证明
 - [ ] AC-V2-EVIDENCE-002（source inventory lineage）— 由 V2-060C `test_source_inventory_ref_only_rejected.py` 证明：ref-only / 缺 producer_attempt_ref / 缺 evidence_refs 必须失败
 - [ ] Workspace / package / evidence 三者同步 — 由 V2-060E `test_workspace_evidence_export.py` 证明
-- [ ] V2-060A ~ V2-060E 五个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 6 显示 5/5
+- [ ] Agent asset bundle 导入可审计 — 由 V2-060F `test_agent_asset_import.py` 证明：外部 role/skill/prompt/MCP 资产必须物化为 `00-boardroom/agents/` 快照并记录 `asset-import-manifest.yaml` 来源链；ExecutionPackage compiler 保持 0 外部文件输入
+- [ ] V2-060A ~ V2-060F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 6 显示 6/6
 
 #### 本批产出
 
-- 代码：`src/boardroom_os/workspace/{manifest,assembler,source_inventory,run_manifest,evidence_export}.py`
-- 测试：`tests/proving/` 至少 5 个测试文件 + `tests/negative/test_source_inventory_ref_only_rejected.py`
+- 代码：`src/boardroom_os/workspace/{manifest,assembler,source_inventory,run_manifest,evidence_export,agent_asset_import}.py`
+- 测试：`tests/proving/` 至少 6 个测试文件 + `tests/negative/test_source_inventory_ref_only_rejected.py`
 - 文档同步：本文件 Phase 6 checkbox 全勾选
 
 #### 进入 Phase 7 前置
 
 - [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-060A ~ V2-060E 状态全部 DONE
+- [ ] V2-060A ~ V2-060F 状态全部 DONE
 - [ ] SourceInventory 与 RunManifest 与 FinalEvidenceTable 协同稳定
 
 ### Phase 7 验收 — V2-070 Closeout + Replay + Process Audit

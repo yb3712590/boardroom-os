@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030A`
+**当前未完成工作包**：`V2-030B`
 
-**当前重点**：Phase 2 Event + Reducer Kernel（事件与状态归约内核）已完成；继续 V2-030A RoleProfile / SkillBinding / ModelExecutionProfile（角色模板 / 技能绑定 / 模型执行配置）。
+**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）已启动；继续 V2-030B AgentSeat / seat policy（智能体席位 / 席位策略）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +151,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 0 / 6 | 待开始 |
+| Phase 3：Agent + Execution Package | V2-030 | 1 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
-| Phase 6：Workspace + Package | V2-060 | 0 / 5 | 待开始 |
+| Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **17 / 51** | **Phase 3 待开始** |
+| **合计** | **V2-000 ~ V2-080** | **18 / 52** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -411,7 +411,7 @@ RoleProfile（角色模板）
 
 ### V2-030A: 定义 RoleProfile、SkillBinding、ModelExecutionProfile
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把角色职责、技能能力和 provider/model/effort 配置拆开表达。
 - 输入文档：`agent-team-model.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-020E。
@@ -419,6 +419,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：role 直接包含 provider credential、skill 绑定未知 role、model profile 缺 provider/model、capability tag 不在 registry（能力标签注册表）中必须失败。
 - 必须证明的 happy path：同一 RoleProfile 可绑定不同 ModelExecutionProfile 形成不同 seat；RoleProfile capability_tags（角色能力标签）能被后续 AgentSeat policy 消费。
 - 验收口径：role 不直接调用 provider；provider 通过 ModelExecutionProfile 接入；capability_tags 不再是无注册表约束的散字符串。
+- 完成证据：2026-05-16 新增 RoleProfile（角色模板）、SkillBinding（技能绑定）、ModelExecutionProfile（模型执行配置）、CapabilityRegistry（能力标签注册表）、PromptSourceRegistry（提示词来源注册表）、SkillFileSourceRegistry（技能文件来源注册表）和 McpInterfaceRegistry（MCP 接口注册表）；SkillBinding 首版纳入 `skill_file_ref`、`prompt_refs`、`mcp_interface_refs`，并支持 `version: 1` YAML-shaped（YAML 形状）人工配置解析。负例证明 role 泄漏 provider 字段、未知 capability tag、skill 绑定未知 role、未知 skill/prompt/MCP ref、MCP 所需能力缺失、model profile 缺 provider/model 或携带 credential/api_key 均 fail closed；正例证明分层命名 capability tags 可经 registry 校验，人工配置模板可编译成 role/skill/model registries，且同一 RoleProfile 可对应多个 ModelExecutionProfile。验证命令：先运行 `PYTHONPATH=src pytest tests/execution/test_agent_profiles.py -q` 得到预期 RED（`ModuleNotFoundError: No module named 'boardroom_os.agents.profiles'`）；补充 YAML-shaped 配置测试后得到预期 RED（拒绝 `version` 与裸字符串 refs）；实现后 `PYTHONPATH=src pytest tests/execution/test_agent_profiles.py -q` 通过（10 passed）；`PYTHONPATH="src;." pytest tests/execution/test_agent_profiles.py tests/reducers/test_seat_assignment_projection.py tests/contracts tests/negative -q` 通过（112 passed）。
 
 ### V2-030B: 定义 AgentSeat 与 seat policy
 
@@ -621,11 +622,12 @@ RoleProfile（角色模板）
 ## V2-060: Workspace + Package Assembler（工作区与项目包装配器）
 
 - 状态：TODO
-- 目标：生成目标项目 workspace、run manifest、package contract 文件、source inventory 和最终 package assembly。
+- 目标：生成目标项目 workspace、run manifest、package contract 文件、source inventory、agent asset import manifest 和最终 package assembly。
 - 输入文档：`generated-project-workspace.md`、`contract-and-evidence-model.md`。
 - 输出目录：`src/boardroom_os/workspace/`、`tests/proving/`、`tests/negative/`。
-- 顶层验收口径：source inventory 来自 package root + git/hash，不来自 payload 猜测；最终产物是 generated project package。
+- 顶层验收口径：source inventory 来自 package root + git/hash，不来自 payload 猜测；最终产物是 generated project package；外部 agent assets（智能体资产）只能在 package workspace 阶段导入为 `00-boardroom/agents/` 快照。
 - V2-060 Workspace（工作区）必须消费 V2-010F 产出的 `docs_template_key`（文档模板键）与 `documentation_obligations`（文档义务），不得在 assembler（装配器）中重新解释 methodology（方法论）。
+- ExecutionPackage compiler（执行包编译器）必须保持可在 0 外部文件输入下运行：它只消费已编译 registry / contract / graph / seat assignment，不负责同步外部 skill、prompt 或 MCP 资产。
 
 ### V2-060A: 实现 workspace manifest
 
@@ -681,6 +683,17 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：final evidence table 缺 blocking criterion、source inventory 缺 lineage、verification runs 缺 stdout/stderr refs 时不得导出 closeout-ready evidence。
 - 必须证明的 happy path：`20-evidence` 形成可供 closeout 消费的 evidence bundle。
 - 验收口径：package assembly 与 evidence assembly 同步，不允许先交付再补证据。
+
+### V2-060F: 导入 agent asset bundle
+
+- 状态：TODO
+- 目标：把外部预置的 role config、skill file、prompt file 和 MCP interface manifest 导入为 generated project workspace 内的 `00-boardroom/agents/` 快照，并记录来源链。
+- 输入文档：`generated-project-workspace.md`、`agent-team-model.md`、`process-audit-and-replay.md`。
+- 依赖：V2-060A、V2-030A。
+- 输出文件：`src/boardroom_os/workspace/agent_asset_import.py`、`tests/proving/test_agent_asset_import.py`。
+- 必须先写的 negative tests：导入目标写到 `00-boardroom/agents/` 外、缺 `asset-import-manifest.yaml`、manifest 缺 source_ref/source_kind/imported_at、导入项缺 source_path/target_path/sha256、静默覆盖已有不同 hash 资产必须失败。
+- 必须证明的 happy path：本地 agent asset bundle 可被复制/物化为 `00-boardroom/agents/` 快照，生成 `asset-import-manifest.yaml`，并保留 role/skill/prompt/MCP 文件的 source lineage（来源链）。
+- 验收口径：外部 skill/prompt/MCP 资产是 workspace/package 阶段的可审计输入，不是 ExecutionPackage compiler 的运行时外部依赖；既有项目更新资产必须产生新 ref 或显式导入记录，不能静默改写。
 
 ---
 
