@@ -194,3 +194,24 @@ Phase 2 审计中发现的非 P2 修补项不在 V2-020 继续扩张实现，而
 - V2-060F 负责将外部 agent asset bundle 导入 `00-boardroom/agents/`，并记录 source_ref/source_kind/imported_at/source_path/target_path/sha256。
 - 既有项目更新 agent assets 必须产生新 ref 或显式 import manifest 记录，不能静默覆盖。
 
+## DEC-0013: Agent team governance projection must be orchestrated before compilation
+
+- 状态：Accepted
+- 日期：2026-05-17
+
+### 决策
+
+V2-030D 在实现 ExecutionPackage compiler（执行包编译器）前，必须引入 AgentTeamProjector（智能体团队投影器）或等价单一编排入口。该入口按 graph_version（图版本）交织消费 RoleProfile change facts（角色模板变更事实）与 Seat lifecycle facts（席位生命周期事实），产出当前 RoleProfileProjection（角色模板投影）、SeatLifecycleProjection（席位生命周期投影）和 active seats（活跃席位）供 assignment（派工）与 compiler 消费。
+
+ExecutionPackage compiler 不得直接分别调用 `RoleProfileProjection.apply_changes` 与 `SeatLifecycleProjector.project` 后自行拼接治理状态。
+
+### 理由
+
+V2-030B 已证明 RoleProfile（角色模板）与 AgentSeat（智能体席位）彼此校验：seat lifecycle 需要 role profile，非 bootstrap role registration 又需要 active governance seat。若调用者自行组合两个 projector，会在 CEO 替换、席位停用、后续 role 注册等交织事件中使用错误时间点的 active seat 快照。
+
+### 影响
+
+- V2-030D 的输入应是编排后的 agent team projection（智能体团队投影），不是多个半成品 projector 的松散组合。
+- V2-070 branchable governance replay（可分叉治理重放）可以复用同一编排入口，避免 replay 与 compiler 形成两套治理解释。
+- `SeatPolicy.match`（席位策略匹配）保留为 demand-first seat discovery（需求优先席位发现）API，但新增逻辑应等到 V2-030D 有真实消费者后再扩展。
+

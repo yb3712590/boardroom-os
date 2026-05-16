@@ -14,7 +14,11 @@ BoardDirective
   -> PackageContract
   -> TicketGraph
   -> TicketNode
-  -> AgentSeatAssignment
+      -> SeatDemand
+      -> AgentSeatAssignment
+          -> AgentSeat
+              -> RoleProfile
+              -> ModelExecutionProfile
   -> ExecutionPackage
   -> WorkProduct
   -> EvidenceClaim
@@ -24,6 +28,8 @@ BoardDirective
   -> ReplayBundle
   -> ProcessAuditReport
 ```
+
+`SeatDemand`（席位需求）属于 ticket 创建事实，用于声明任务需要的 `RoleCategory`（角色类别）和 capability tags（能力标签）。因此 graph 层会引用 agents 层的 seat demand value object（席位需求值对象）；这是 demand-first assignment（需求优先派工）的显式依赖方向，不表示 runtime 可以绕过治理投影直接选 seat。
 
 ## BoardDirective
 
@@ -105,7 +111,7 @@ completed_nodes:
 ```yaml
 ticket_id:
 purpose:
-owner_seat_ref:
+seat_demand:
 depends_on:
 acceptance_refs:
 source_surface_refs:
@@ -121,12 +127,16 @@ attempt_count:
 本项目中实际启用的 agent seat。
 
 ```yaml
-seat_id:
+seat_ref:
+actor_ref:
+project_ref:
 role_profile_ref:
+role_category:
 capability_tags:
-responsibility_boundary:
 model_execution_profile_ref:
 skill_refs:
+context_budget_tokens:
+lifecycle_status:
 ```
 
 ## ExecutionPackage

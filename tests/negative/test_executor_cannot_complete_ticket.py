@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from boardroom_os.agents.seat import RoleCategory, SeatDemand
+from boardroom_os.agents.skills import CapabilityTag
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import (
     ActorRef,
@@ -26,7 +28,13 @@ class InMemoryTicketReducerPayloadResolver(TicketReducerPayloadResolver):
         return TicketCreatedPayload(
             ticket_id=TicketId(value="ticket-backend-api"),
             purpose="Implement backend API surface",
-            owner_seat_ref="seat-worker-backend",
+            seat_demand=SeatDemand(
+                required_role_category=RoleCategory.IMPLEMENTATION,
+                required_capability_tags=(
+                    CapabilityTag(value="task.implementation"),
+                    CapabilityTag(value="surface.backend"),
+                ),
+            ),
             acceptance_refs=("AC-BOOK-API-STATE-001",),
             source_surface_refs=("surface-backend-api",),
             evidence_obligations=("obligation-api-test-run",),

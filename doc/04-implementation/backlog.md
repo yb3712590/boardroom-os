@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030B`
+**当前未完成工作包**：`V2-030C`
 
-**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）已启动；继续 V2-030B AgentSeat / seat policy（智能体席位 / 席位策略）。
+**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030C ExecutionPackage schema（执行包结构）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +151,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 1 / 6 | 进行中 |
+| Phase 3：Agent + Execution Package | V2-030 | 2 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **18 / 52** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **19 / 52** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -423,14 +423,15 @@ RoleProfile（角色模板）
 
 ### V2-030B: 定义 AgentSeat 与 seat policy
 
-- 状态：TODO
+- 状态：DONE
 - 目标：表达项目中被 CEO 激活的具体 seat，并校验 seat 能力边界。
 - 输入文档：`agent-team-model.md`、`domain-model.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-030A。
-- 输出文件：`src/boardroom_os/agents/seat.py`、`src/boardroom_os/agents/policy.py`、`tests/execution/test_agent_seat_policy.py`。
+- 输出文件：`src/boardroom_os/agents/categories.py`、`src/boardroom_os/agents/seat.py`、`src/boardroom_os/agents/policy.py`、`tests/execution/test_agent_seat_policy.py`；并更新 `src/boardroom_os/graph/ticket.py`、`src/boardroom_os/graph/seat_assignment.py`、`src/boardroom_os/events/types.py`、相关 reducers / negative tests。
 - 必须先写的 negative tests：worker seat 缺 allowed capability、checker seat 与 worker seat 相同且无独立验证边界、seat 缺 model_execution_profile_ref、未激活 seat 被分配或编译 execution package 必须失败。
 - 必须证明的 happy path：CEO、Architect、Worker、Checker seats 可被创建并映射到 ticket 类型；seat activated/deactivated（席位启用/停用）事实可投影出 active seats（活跃席位）并供 seat assignment / execution package 消费。
 - 验收口径：seat 是 role/provider/context 的接合点；席位生命周期必须可审计，不能长期依赖构造器注入的 SeatDefinition 快照。
+- 完成证据：2026-05-17 新增封闭 `RoleCategory`（角色类别）、`AgentSeat`（智能体席位）、`SeatDemand`（席位需求）、SeatLifecycleProjection（席位生命周期投影）、BootstrapGovernanceAuthority（治理创世授权）、RoleProfileProjection（角色模板投影）和 SeatPolicy（席位策略）；`BOOTSTRAP_GOVERNANCE_AUTHORITY` 作为可重放事实由 GovernanceAuthorityProjector（治理授权投影器）唯一校验，bootstrap actor（创世参与者）仅可在有限序列内注册首个 governance RoleProfile（治理角色模板）并激活首个 CEO AgentSeat。`TicketCreatedPayload` 与 `TicketNode` 一次性退役 `owner_seat_ref` 并改为 `seat_demand`；SeatAssignmentProjector（席位分配投影器）消费 active AgentSeat projection（活跃席位投影），不再依赖 graph-local SeatDefinition 快照，也不自动 follow replacement chain（替换链）。负例覆盖 bootstrap fact 缺失/重复/解析失败、非 bootstrap actor 注册首个 governance role、bootstrap actor 长期超级用户、seat 静态字段被 lifecycle event 改写、role capability subset 越界、未激活 / unknown seat assignment、default worker fallback、checker/worker 同 seat 或同 role category 等 fail closed；正例证明 CEO/Architect/Worker/Checker seats 可投影并用于 demand-first assignment（需求优先分配）。最终审查后新增 DEC-0013，要求 V2-030D 在编译执行包前先引入 AgentTeamProjector（智能体团队投影器）或等价编排入口，避免 RoleProfile 与 Seat lifecycle 交织事件由 compiler 临时拼接。验证证据：`PYTHONPATH=src pytest tests/execution/test_agent_profiles.py tests/execution/test_agent_seat_policy.py tests/reducers/test_ticket_graph_projection.py tests/reducers/test_seat_assignment_projection.py tests/reducers/test_projection_replay.py -q` 通过（128 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/execution tests/negative -q` 通过（248 passed）。
 
 ### V2-030C: 定义 ExecutionPackage schema
 
@@ -452,6 +453,7 @@ RoleProfile（角色模板）
 - 输出文件：`src/boardroom_os/execution/compiler.py`、`tests/execution/test_execution_package_compiler.py`。
 - 必须先写的 negative tests：ticket not ready、acceptance_ref 不属于 active contract、write set 超出 source surface、seat capability 不匹配必须失败。
 - 必须证明的 happy path：tiny backend worker ticket 能编译出含 commands、context_refs、allowed_write_set、evidence_obligations 的 package。
+- 前置架构约束：V2-030D 必须先引入 AgentTeamProjector（智能体团队投影器）或等价单一编排入口，按 graph_version 交织消费 RoleProfile change facts（角色模板变更事实）与 Seat lifecycle facts（席位生命周期事实），再把稳定 projection（投影）交给 ExecutionPackage compiler；compiler 不得分别调用 RoleProfileProjection.apply_changes 与 SeatLifecycleProjector.project 后自行拼接治理状态。
 - 验收口径：V2-040 runtime 只消费执行包，不重新解释治理状态。
 
 ### V2-030E: 实现 fallback policy 分类

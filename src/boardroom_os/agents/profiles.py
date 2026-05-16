@@ -2,6 +2,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, field_validator, model_validator
 
+from boardroom_os.agents.categories import RoleCategory
 from boardroom_os.agents.skills import (
     CapabilityRegistry,
     CapabilityTag,
@@ -21,6 +22,7 @@ class RoleProfile(BaseModel):
 
     version: Literal[1] = 1
     role_profile_id: RoleProfileId
+    role_category: RoleCategory
     role_name: str
     responsibilities: tuple[str, ...]
     capability_tags: tuple[CapabilityTag, ...]

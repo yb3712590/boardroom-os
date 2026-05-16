@@ -2,6 +2,16 @@ from datetime import UTC, datetime
 
 import pytest
 
+from boardroom_os.agents.profiles import ModelExecutionProfileId
+from boardroom_os.agents.seat import (
+    AgentSeat,
+    AgentSeatRef,
+    RoleCategory,
+    SeatDemand,
+    SeatLifecycleProjection,
+    SeatLifecycleStatus,
+)
+from boardroom_os.agents.skills import CapabilityTag, RoleProfileId, SkillRef
 from boardroom_os.events.log import InMemoryEventLog
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import (
@@ -16,9 +26,6 @@ from boardroom_os.graph.replay import ProjectionReplay, ProjectionReplayError
 from boardroom_os.graph.seat_assignment import (
     SeatAssignmentPayload,
     SeatAssignmentProjector,
-    SeatDefinition,
-    SeatRef,
-    SeatStatus,
 )
 from boardroom_os.graph.ticket import TicketCreatedPayload, TicketId
 
@@ -48,11 +55,18 @@ class InMemoryReplayPayloadResolver:
         return self._assignment_payloads[payload_ref.value]
 
 
+
 def _ticket_payload(**overrides: object) -> TicketCreatedPayload:
     values = {
         "ticket_id": TicketId(value="ticket-backend-api"),
         "purpose": "Implement backend API surface",
-        "owner_seat_ref": "seat-worker-backend",
+        "seat_demand": SeatDemand(
+            required_role_category=RoleCategory.IMPLEMENTATION,
+            required_capability_tags=(
+                CapabilityTag(value="task.implementation"),
+                CapabilityTag(value="surface.backend"),
+            ),
+        ),
         "depends_on": (),
         "acceptance_refs": ("AC-BOOK-API-STATE-001",),
         "source_surface_refs": ("surface-backend-api",),
@@ -65,26 +79,51 @@ def _ticket_payload(**overrides: object) -> TicketCreatedPayload:
     return TicketCreatedPayload(**values)
 
 
+
 def _seat_assignment_payload(**overrides: object) -> SeatAssignmentPayload:
     values = {
         "ticket_id": TicketId(value="ticket-backend-api"),
-        "seat_ref": SeatRef(value="seat-worker-backend"),
-        "required_capability_tags": ("implementation", "backend"),
+        "seat_ref": AgentSeatRef(value="seat-worker-backend"),
     }
     values.update(overrides)
     return SeatAssignmentPayload(**values)
 
 
-def _seat_definition(**overrides: object) -> SeatDefinition:
+
+def _agent_seat(**overrides: object) -> AgentSeat:
     values = {
-        "seat_ref": SeatRef(value="seat-worker-backend"),
-        "role_ref": "role-worker",
-        "capability_tags": ("implementation", "backend"),
-        "model_execution_profile_ref": "model-profile-worker-opus",
-        "status": SeatStatus.ACTIVE,
+        "seat_ref": AgentSeatRef(value="seat-worker-backend"),
+        "actor_ref": ActorRef(value="actor.worker.backend"),
+        "project_ref": PROJECT_REF,
+        "role_profile_ref": RoleProfileId(value="role.implementation.backend"),
+        "role_category": RoleCategory.IMPLEMENTATION,
+        "capability_tags": (
+            CapabilityTag(value="task.implementation"),
+            CapabilityTag(value="surface.backend"),
+        ),
+        "model_execution_profile_ref": ModelExecutionProfileId(
+            value="model.implementation.backend"
+        ),
+        "skill_refs": (SkillRef(value="skill.implementation.backend"),),
+        "context_budget_tokens": 8192,
+        "lifecycle_status": SeatLifecycleStatus.ACTIVE,
     }
     values.update(overrides)
-    return SeatDefinition(**values)
+    return AgentSeat(**values)
+
+
+
+def _seat_projection(
+    *, active_seats: tuple[AgentSeat, ...] | None = None
+) -> SeatLifecycleProjection:
+    active = active_seats if active_seats is not None else (_agent_seat(),)
+    return SeatLifecycleProjection(
+        graph_version=1,
+        seats={seat.seat_ref: seat for seat in active},
+        active_seats={seat.seat_ref: seat for seat in active},
+        replacement_refs={},
+    )
+
 
 
 def _event(
@@ -106,6 +145,7 @@ def _event(
     )
 
 
+
 def _ticket_created_event(
     *,
     graph_version: int = 1,
@@ -119,6 +159,7 @@ def _ticket_created_event(
     )
 
 
+
 def _seat_assigned_event(*, graph_version: int = 2) -> EventRecord:
     return _event(
         event_id=f"evt-seat-assigned-{graph_version}",
@@ -129,10 +170,12 @@ def _seat_assigned_event(*, graph_version: int = 2) -> EventRecord:
     )
 
 
+
 def _projector(
     *,
     created_payloads: dict[str, TicketCreatedPayload] | None = None,
     assignment_payloads: dict[str, SeatAssignmentPayload] | None = None,
+    seat_projection: SeatLifecycleProjection | None = None,
 ) -> SeatAssignmentProjector:
     if created_payloads is None:
         created_payloads = {"payload:ticket-backend-api-created": _ticket_payload()}
@@ -147,12 +190,14 @@ def _projector(
     return SeatAssignmentProjector(
         ticket_projector=TicketGraphProjector(resolver),
         payload_resolver=resolver,
-        seats=(_seat_definition(),),
+        seat_projection=seat_projection or _seat_projection(),
     )
+
 
 
 def _replay() -> ProjectionReplay:
     return ProjectionReplay(projection_kind="seat_assignment_graph")
+
 
 
 def _event_log(events: tuple[EventRecord, ...]) -> InMemoryEventLog:
@@ -160,6 +205,7 @@ def _event_log(events: tuple[EventRecord, ...]) -> InMemoryEventLog:
     for event in events:
         log.append(event)
     return log
+
 
 
 @pytest.mark.parametrize("value", [0, -1])
@@ -176,6 +222,7 @@ def test_replay_rejects_non_positive_expected_graph_version(value: int) -> None:
         )
 
 
+
 def test_replay_rejects_empty_event_history() -> None:
     with pytest.raises(ProjectionReplayError, match="event range must not be empty"):
         _replay().replay(
@@ -184,6 +231,7 @@ def test_replay_rejects_empty_event_history() -> None:
             expected_graph_version=1,
             projector=_projector(),
         )
+
 
 
 def test_replay_rejects_project_ref_mismatch() -> None:
@@ -198,6 +246,7 @@ def test_replay_rejects_project_ref_mismatch() -> None:
         )
 
 
+
 def test_replay_rejects_missing_graph_version() -> None:
     log = _event_log((_ticket_created_event(graph_version=1), _seat_assigned_event(graph_version=3)))
 
@@ -208,6 +257,7 @@ def test_replay_rejects_missing_graph_version() -> None:
             expected_graph_version=3,
             projector=_projector(),
         )
+
 
 
 def test_replay_rejects_unordered_event_input() -> None:
@@ -222,6 +272,7 @@ def test_replay_rejects_unordered_event_input() -> None:
         )
 
 
+
 def test_replay_rejects_projection_version_mismatch() -> None:
     log = _event_log((_ticket_created_event(), _seat_assigned_event()))
 
@@ -234,6 +285,7 @@ def test_replay_rejects_projection_version_mismatch() -> None:
         )
 
 
+
 def test_replay_rejects_unresolved_payload_ref() -> None:
     log = _event_log((_ticket_created_event(), _seat_assigned_event()))
 
@@ -244,6 +296,7 @@ def test_replay_rejects_unresolved_payload_ref() -> None:
             expected_graph_version=2,
             projector=_projector(created_payloads={}),
         )
+
 
 
 def test_replay_rejects_mid_range_without_snapshot_contract() -> None:
@@ -262,7 +315,13 @@ def test_replay_rejects_mid_range_without_snapshot_contract() -> None:
             "payload:ticket-frontend-created": _ticket_payload(
                 ticket_id=TicketId(value="ticket-frontend-ui"),
                 purpose="Implement frontend UI surface",
-                owner_seat_ref="seat-worker-frontend",
+                seat_demand=SeatDemand(
+                    required_role_category=RoleCategory.IMPLEMENTATION,
+                    required_capability_tags=(
+                        CapabilityTag(value="task.implementation"),
+                        CapabilityTag(value="surface.frontend"),
+                    ),
+                ),
                 source_surface_refs=("surface-frontend-ui",),
                 allowed_write_set=("10-project/frontend/**",),
             ),
@@ -280,6 +339,7 @@ def test_replay_rejects_mid_range_without_snapshot_contract() -> None:
             projector=projector,
             from_graph_version=2,
         )
+
 
 
 def test_replay_returns_stable_seat_assignment_summary() -> None:
@@ -304,7 +364,13 @@ def test_replay_returns_stable_seat_assignment_summary() -> None:
     assert summary.nodes["ticket-backend-api"] == {
         "ticket_id": {"value": "ticket-backend-api"},
         "purpose": "Implement backend API surface",
-        "owner_seat_ref": "seat-worker-backend",
+        "seat_demand": {
+            "required_role_category": "implementation",
+            "required_capability_tags": [
+                {"value": "task.implementation"},
+                {"value": "surface.backend"},
+            ],
+        },
         "depends_on": [],
         "acceptance_refs": ["AC-BOOK-API-STATE-001"],
         "source_surface_refs": ["surface-backend-api"],
@@ -322,6 +388,7 @@ def test_replay_returns_stable_seat_assignment_summary() -> None:
     }
     assert summary.seat_blockers == {}
     assert len(summary.summary_hash) == 64
+
 
 
 def test_replay_hash_is_identical_for_equivalent_summary_payloads() -> None:

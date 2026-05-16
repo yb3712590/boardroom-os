@@ -3,6 +3,16 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from boardroom_os.agents.profiles import ModelExecutionProfileId
+from boardroom_os.agents.seat import (
+    AgentSeat,
+    AgentSeatRef,
+    RoleCategory,
+    SeatDemand,
+    SeatLifecycleProjection,
+    SeatLifecycleStatus,
+)
+from boardroom_os.agents.skills import CapabilityTag, RoleProfileId, SkillRef
 from boardroom_os.events.log import InMemoryEventLog
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import (
@@ -17,14 +27,12 @@ from boardroom_os.graph.seat_assignment import (
     SeatAssignmentPayload,
     SeatAssignmentProjectionError,
     SeatAssignmentProjector,
-    SeatDefinition,
-    SeatRef,
-    SeatStatus,
 )
 from boardroom_os.graph.ticket import TicketCreatedPayload, TicketId
 
 
 BASE_TIMESTAMP = datetime(2026, 5, 16, 12, 0, tzinfo=UTC)
+PROJECT_REF = ProjectRef(value="project-tiny-fullstack")
 
 
 class InMemorySeatAssignmentPayloadResolver:
@@ -50,23 +58,58 @@ class InMemorySeatAssignmentPayloadResolver:
         return self._assignment_payloads[payload_ref.value]
 
 
-def _seat_definition(**overrides: object) -> SeatDefinition:
+
+def _agent_seat(**overrides: object) -> AgentSeat:
     values = {
-        "seat_ref": SeatRef(value="seat-worker-backend"),
-        "role_ref": "role-worker",
-        "capability_tags": ("implementation", "backend"),
-        "model_execution_profile_ref": "model-profile-worker-opus",
-        "status": SeatStatus.ACTIVE,
+        "seat_ref": AgentSeatRef(value="seat-worker-backend"),
+        "actor_ref": ActorRef(value="actor.worker.backend"),
+        "project_ref": PROJECT_REF,
+        "role_profile_ref": RoleProfileId(value="role.implementation.backend"),
+        "role_category": RoleCategory.IMPLEMENTATION,
+        "capability_tags": (
+            CapabilityTag(value="task.implementation"),
+            CapabilityTag(value="surface.backend"),
+        ),
+        "model_execution_profile_ref": ModelExecutionProfileId(
+            value="model.implementation.backend"
+        ),
+        "skill_refs": (SkillRef(value="skill.implementation.backend"),),
+        "context_budget_tokens": 8192,
+        "lifecycle_status": SeatLifecycleStatus.ACTIVE,
     }
     values.update(overrides)
-    return SeatDefinition(**values)
+    return AgentSeat(**values)
+
+
+
+def _seat_projection(
+    *,
+    active_seats: tuple[AgentSeat, ...] | None = None,
+    seats: tuple[AgentSeat, ...] | None = None,
+    replacement_refs: dict[AgentSeatRef, AgentSeatRef] | None = None,
+) -> SeatLifecycleProjection:
+    active = active_seats if active_seats is not None else (_agent_seat(),)
+    all_seats = seats if seats is not None else active
+    return SeatLifecycleProjection(
+        graph_version=1,
+        seats={seat.seat_ref: seat for seat in all_seats},
+        active_seats={seat.seat_ref: seat for seat in active},
+        replacement_refs=replacement_refs or {},
+    )
+
 
 
 def _ticket_payload(**overrides: object) -> TicketCreatedPayload:
     values = {
         "ticket_id": TicketId(value="ticket-backend-api"),
         "purpose": "Implement backend API surface",
-        "owner_seat_ref": "seat-worker-backend",
+        "seat_demand": SeatDemand(
+            required_role_category=RoleCategory.IMPLEMENTATION,
+            required_capability_tags=(
+                CapabilityTag(value="task.implementation"),
+                CapabilityTag(value="surface.backend"),
+            ),
+        ),
         "depends_on": (),
         "acceptance_refs": ("AC-BOOK-API-STATE-001",),
         "source_surface_refs": ("surface-backend-api",),
@@ -79,14 +122,15 @@ def _ticket_payload(**overrides: object) -> TicketCreatedPayload:
     return TicketCreatedPayload(**values)
 
 
+
 def _seat_assignment_payload(**overrides: object) -> SeatAssignmentPayload:
     values = {
         "ticket_id": TicketId(value="ticket-backend-api"),
-        "seat_ref": SeatRef(value="seat-worker-backend"),
-        "required_capability_tags": ("implementation", "backend"),
+        "seat_ref": AgentSeatRef(value="seat-worker-backend"),
     }
     values.update(overrides)
     return SeatAssignmentPayload(**values)
+
 
 
 def _event(
@@ -102,12 +146,13 @@ def _event(
     return EventRecord(
         event_id=EventId(value=event_id),
         event_type=event_type,
-        project_ref=ProjectRef(value="project-tiny-fullstack"),
+        project_ref=PROJECT_REF,
         actor_ref=ActorRef(value=actor_ref),
         timestamp=BASE_TIMESTAMP,
         graph_version=graph_version,
         payload_refs=tuple(EventPayloadRef(value=ref) for ref in refs),
     )
+
 
 
 def _ticket_created_event(
@@ -121,6 +166,7 @@ def _ticket_created_event(
         payload_ref=payload_ref,
         graph_version=graph_version,
     )
+
 
 
 def _seat_assigned_event(
@@ -139,9 +185,10 @@ def _seat_assigned_event(
     )
 
 
+
 def _projector(
     *,
-    seats: tuple[SeatDefinition, ...] = (_seat_definition(),),
+    seat_projection: SeatLifecycleProjection | None = None,
     created_payloads: dict[str, TicketCreatedPayload] | None = None,
     assignment_payloads: dict[str, SeatAssignmentPayload] | None = None,
 ) -> SeatAssignmentProjector:
@@ -154,18 +201,33 @@ def _projector(
     return SeatAssignmentProjector(
         ticket_projector=TicketGraphProjector(resolver),
         payload_resolver=resolver,
-        seats=seats,
+        seat_projection=seat_projection or _seat_projection(),
     )
 
 
-def test_ticket_without_owner_seat_is_not_assignable() -> None:
+
+def test_ticket_without_seat_demand_is_not_assignable() -> None:
     with pytest.raises(ValidationError):
-        _ticket_payload(owner_seat_ref=" ")
+        _ticket_payload(seat_demand=None)
 
 
-def test_seat_definition_requires_model_execution_profile_ref() -> None:
-    with pytest.raises(ValidationError):
-        _seat_definition(model_execution_profile_ref=" ")
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "required_capability_tags",
+            (CapabilityTag(value="surface.backend"),),
+        ),
+        ("required_role_category", RoleCategory.IMPLEMENTATION),
+    ],
+)
+def test_assignment_payload_rejects_demand_override(field: str, value: object) -> None:
+    payload = _seat_assignment_payload().model_dump()
+    payload[field] = value
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        SeatAssignmentPayload(**payload)
+
 
 
 def test_ticket_without_seat_assignment_is_blocked_from_assignment_ready_queue() -> None:
@@ -227,7 +289,7 @@ def test_seat_assignment_rejects_multiple_payload_refs() -> None:
 
 
 def test_seat_assignment_blocks_unknown_seat() -> None:
-    projector = _projector(seats=())
+    projector = _projector(seat_projection=_seat_projection(active_seats=(), seats=()))
 
     graph = projector.project((_ticket_created_event(), _seat_assigned_event()))
 
@@ -235,15 +297,24 @@ def test_seat_assignment_blocks_unknown_seat() -> None:
     assert graph.ready_queue == ()
     assert graph.nodes[ticket_id].status.value == "blocked"
     assert graph.seat_assignments == {}
-    assert graph.seat_blockers[ticket_id] == ("unknown seat: seat-worker-backend",)
+    assert graph.seat_blockers[ticket_id] == (
+        "team composition gap: inactive or unknown seat: seat-worker-backend",
+    )
 
 
-def test_seat_assignment_blocks_capability_mismatch() -> None:
+
+def test_assignment_blocks_when_active_seat_does_not_match_ticket_demand() -> None:
     projector = _projector(
-        seats=(
-            _seat_definition(
-                capability_tags=("implementation", "frontend"),
-            ),
+        seat_projection=_seat_projection(
+            active_seats=(
+                _agent_seat(
+                    role_category=RoleCategory.VERIFICATION,
+                    capability_tags=(
+                        CapabilityTag(value="task.implementation"),
+                        CapabilityTag(value="surface.backend"),
+                    ),
+                ),
+            )
         )
     )
 
@@ -253,28 +324,21 @@ def test_seat_assignment_blocks_capability_mismatch() -> None:
     assert graph.ready_queue == ()
     assert graph.nodes[ticket_id].status.value == "blocked"
     assert graph.seat_assignments == {}
-    assert graph.seat_blockers[ticket_id] == ("seat missing capability tags: backend",)
+    assert graph.seat_blockers[ticket_id] == (
+        "team composition gap: role category mismatch: verification != implementation",
+    )
 
 
-def test_seat_assignment_blocks_inactive_seat() -> None:
-    projector = _projector(seats=(_seat_definition(status=SeatStatus.INACTIVE),))
 
-    graph = projector.project((_ticket_created_event(), _seat_assigned_event()))
-
-    ticket_id = TicketId(value="ticket-backend-api")
-    assert graph.ready_queue == ()
-    assert graph.nodes[ticket_id].status.value == "blocked"
-    assert graph.seat_assignments == {}
-    assert graph.seat_blockers[ticket_id] == ("seat is not active: seat-worker-backend",)
-
-
-def test_seat_assignment_requires_ticket_owner_to_match_assignment() -> None:
+def test_seat_assignment_blocks_missing_capability_tags() -> None:
     projector = _projector(
-        created_payloads={
-            "payload:ticket-backend-api-created": _ticket_payload(
-                owner_seat_ref="seat-worker-other"
+        seat_projection=_seat_projection(
+            active_seats=(
+                _agent_seat(
+                    capability_tags=(CapabilityTag(value="task.implementation"),),
+                ),
             )
-        }
+        )
     )
 
     graph = projector.project((_ticket_created_event(), _seat_assigned_event()))
@@ -284,71 +348,144 @@ def test_seat_assignment_requires_ticket_owner_to_match_assignment() -> None:
     assert graph.nodes[ticket_id].status.value == "blocked"
     assert graph.seat_assignments == {}
     assert graph.seat_blockers[ticket_id] == (
-        "ticket owner seat mismatch: seat-worker-other != seat-worker-backend",
+        "team composition gap: missing capability tags: surface.backend",
     )
+
+
+
+def test_seat_assignment_blocks_inactive_seat() -> None:
+    inactive_seat = _agent_seat(
+        lifecycle_status=SeatLifecycleStatus.DEACTIVATED,
+    )
+    projector = _projector(
+        seat_projection=_seat_projection(active_seats=(), seats=(inactive_seat,))
+    )
+
+    graph = projector.project((_ticket_created_event(), _seat_assigned_event()))
+
+    ticket_id = TicketId(value="ticket-backend-api")
+    assert graph.ready_queue == ()
+    assert graph.nodes[ticket_id].status.value == "blocked"
+    assert graph.seat_assignments == {}
+    assert graph.seat_blockers[ticket_id] == (
+        "team composition gap: inactive or unknown seat: seat-worker-backend",
+    )
+
+
+
+def test_assignment_does_not_follow_replacement_chain() -> None:
+    replaced_seat_ref = AgentSeatRef(value="seat-worker-backend")
+    replacement_seat_ref = AgentSeatRef(value="seat-worker-backend-v2")
+    replaced_seat = _agent_seat(
+        seat_ref=replaced_seat_ref,
+        lifecycle_status=SeatLifecycleStatus.REPLACED,
+    )
+    replacement_seat = _agent_seat(
+        seat_ref=replacement_seat_ref,
+        actor_ref=ActorRef(value="actor.worker.backend.v2"),
+        role_profile_ref=RoleProfileId(value="role.implementation.backend.v2"),
+        model_execution_profile_ref=ModelExecutionProfileId(
+            value="model.implementation.backend.v2"
+        ),
+        skill_refs=(SkillRef(value="skill.implementation.backend.v2"),),
+    )
+    projector = _projector(
+        seat_projection=_seat_projection(
+            active_seats=(replacement_seat,),
+            seats=(replaced_seat, replacement_seat),
+            replacement_refs={replaced_seat_ref: replacement_seat_ref},
+        )
+    )
+
+    graph = projector.project((_ticket_created_event(), _seat_assigned_event()))
+
+    ticket_id = TicketId(value="ticket-backend-api")
+    assert graph.ready_queue == ()
+    assert graph.nodes[ticket_id].status.value == "blocked"
+    assert graph.seat_assignments == {}
+    assert graph.seat_blockers[ticket_id] == (
+        "team composition gap: inactive or unknown seat: seat-worker-backend",
+    )
+
 
 
 def test_seat_assignment_allows_role_specific_seats_for_different_tickets() -> None:
     seats = (
-        _seat_definition(
-            seat_ref=SeatRef(value="seat-ceo"),
-            role_ref="role-ceo",
-            capability_tags=("governance",),
-            model_execution_profile_ref="model-profile-ceo-opus",
+        _agent_seat(
+            seat_ref=AgentSeatRef(value="seat-ceo"),
+            actor_ref=ActorRef(value="actor.ceo"),
+            role_profile_ref=RoleProfileId(value="role.governance.ceo"),
+            role_category=RoleCategory.GOVERNANCE,
+            capability_tags=(CapabilityTag(value="team.composition"),),
+            model_execution_profile_ref=ModelExecutionProfileId(
+                value="model.governance.ceo"
+            ),
+            skill_refs=(SkillRef(value="skill.governance.ceo"),),
         ),
-        _seat_definition(
-            seat_ref=SeatRef(value="seat-architect"),
-            role_ref="role-architect",
-            capability_tags=("architecture",),
-            model_execution_profile_ref="model-profile-architect-opus",
+        _agent_seat(
+            seat_ref=AgentSeatRef(value="seat-architect"),
+            actor_ref=ActorRef(value="actor.architect"),
+            role_profile_ref=RoleProfileId(value="role.architecture.lead"),
+            role_category=RoleCategory.ARCHITECTURE,
+            capability_tags=(CapabilityTag(value="surface.backend"),),
+            model_execution_profile_ref=ModelExecutionProfileId(
+                value="model.architecture.lead"
+            ),
+            skill_refs=(SkillRef(value="skill.architecture.lead"),),
         ),
-        _seat_definition(
-            seat_ref=SeatRef(value="seat-worker-backend"),
-            role_ref="role-worker",
-            capability_tags=("implementation", "backend"),
-            model_execution_profile_ref="model-profile-worker-opus",
-        ),
-        _seat_definition(
-            seat_ref=SeatRef(value="seat-checker"),
-            role_ref="role-checker",
-            capability_tags=("verification",),
-            model_execution_profile_ref="model-profile-checker-opus",
+        _agent_seat(),
+        _agent_seat(
+            seat_ref=AgentSeatRef(value="seat-checker"),
+            actor_ref=ActorRef(value="actor.checker"),
+            role_profile_ref=RoleProfileId(value="role.verification.qa"),
+            role_category=RoleCategory.VERIFICATION,
+            capability_tags=(CapabilityTag(value="quality.verification"),),
+            model_execution_profile_ref=ModelExecutionProfileId(
+                value="model.verification.qa"
+            ),
+            skill_refs=(SkillRef(value="skill.verification.qa"),),
         ),
     )
     created_payloads = {
         "payload:ticket-scope-created": _ticket_payload(
             ticket_id=TicketId(value="ticket-scope"),
             purpose="Clarify scope",
-            owner_seat_ref="seat-ceo",
+            seat_demand=SeatDemand(
+                required_role_category=RoleCategory.GOVERNANCE,
+                required_capability_tags=(CapabilityTag(value="team.composition"),),
+            ),
         ),
         "payload:ticket-architecture-created": _ticket_payload(
             ticket_id=TicketId(value="ticket-architecture"),
             purpose="Design architecture",
-            owner_seat_ref="seat-architect",
+            seat_demand=SeatDemand(
+                required_role_category=RoleCategory.ARCHITECTURE,
+                required_capability_tags=(CapabilityTag(value="surface.backend"),),
+            ),
         ),
         "payload:ticket-backend-api-created": _ticket_payload(),
         "payload:ticket-check-created": _ticket_payload(
             ticket_id=TicketId(value="ticket-check"),
             purpose="Check implementation evidence",
-            owner_seat_ref="seat-checker",
+            seat_demand=SeatDemand(
+                required_role_category=RoleCategory.VERIFICATION,
+                required_capability_tags=(CapabilityTag(value="quality.verification"),),
+            ),
         ),
     }
     assignment_payloads = {
         "payload:ticket-scope-seat-assigned": _seat_assignment_payload(
             ticket_id=TicketId(value="ticket-scope"),
-            seat_ref=SeatRef(value="seat-ceo"),
-            required_capability_tags=("governance",),
+            seat_ref=AgentSeatRef(value="seat-ceo"),
         ),
         "payload:ticket-architecture-seat-assigned": _seat_assignment_payload(
             ticket_id=TicketId(value="ticket-architecture"),
-            seat_ref=SeatRef(value="seat-architect"),
-            required_capability_tags=("architecture",),
+            seat_ref=AgentSeatRef(value="seat-architect"),
         ),
         "payload:ticket-backend-api-seat-assigned": _seat_assignment_payload(),
         "payload:ticket-check-seat-assigned": _seat_assignment_payload(
             ticket_id=TicketId(value="ticket-check"),
-            seat_ref=SeatRef(value="seat-checker"),
-            required_capability_tags=("verification",),
+            seat_ref=AgentSeatRef(value="seat-checker"),
         ),
     }
     resolver = InMemorySeatAssignmentPayloadResolver(
@@ -358,7 +495,7 @@ def test_seat_assignment_allows_role_specific_seats_for_different_tickets() -> N
     projector = SeatAssignmentProjector(
         ticket_projector=TicketGraphProjector(resolver),
         payload_resolver=resolver,
-        seats=seats,
+        seat_projection=_seat_projection(active_seats=seats, seats=seats),
     )
 
     graph = projector.project(
@@ -399,10 +536,10 @@ def test_seat_assignment_allows_role_specific_seats_for_different_tickets() -> N
         TicketId(value="ticket-check"),
     )
     assert graph.seat_assignments == {
-        TicketId(value="ticket-scope"): SeatRef(value="seat-ceo"),
-        TicketId(value="ticket-architecture"): SeatRef(value="seat-architect"),
-        TicketId(value="ticket-backend-api"): SeatRef(value="seat-worker-backend"),
-        TicketId(value="ticket-check"): SeatRef(value="seat-checker"),
+        TicketId(value="ticket-scope"): AgentSeatRef(value="seat-ceo"),
+        TicketId(value="ticket-architecture"): AgentSeatRef(value="seat-architect"),
+        TicketId(value="ticket-backend-api"): AgentSeatRef(value="seat-worker-backend"),
+        TicketId(value="ticket-check"): AgentSeatRef(value="seat-checker"),
     }
     assert graph.seat_blockers == {}
 
@@ -437,4 +574,4 @@ def test_seat_assignment_allows_role_specific_seats_for_different_tickets() -> N
     ):
         event_log.append(event)
 
-    assert len(event_log.read(ProjectRef(value="project-tiny-fullstack"))) == 8
+    assert len(event_log.read(PROJECT_REF)) == 8

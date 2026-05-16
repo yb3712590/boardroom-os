@@ -1,8 +1,8 @@
-from enum import StrEnum
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from boardroom_os.agents.seat import AgentSeat, AgentSeatRef, SeatLifecycleProjection
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import EventPayloadRef, EventType
 from boardroom_os.graph.projection import TicketGraphProjector
@@ -19,75 +19,11 @@ class SeatAssignmentProjectionError(ValueError):
     pass
 
 
-class NonEmptySeatValue(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    value: str
-
-    @field_validator("value")
-    @classmethod
-    def _reject_empty_value(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value must not be empty")
-        return normalized
-
-
-class SeatRef(NonEmptySeatValue):
-    pass
-
-
-class SeatStatus(StrEnum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-
-
-class SeatDefinition(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    seat_ref: SeatRef
-    role_ref: str
-    capability_tags: tuple[str, ...]
-    model_execution_profile_ref: str
-    status: SeatStatus = SeatStatus.ACTIVE
-
-    @field_validator("role_ref", "model_execution_profile_ref")
-    @classmethod
-    def _reject_empty_text(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("value must not be empty")
-        return normalized
-
-    @field_validator("capability_tags")
-    @classmethod
-    def _reject_empty_capabilities(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if not values:
-            raise ValueError("capability_tags must not be empty")
-        normalized_values = tuple(value.strip() for value in values)
-        if any(not value for value in normalized_values):
-            raise ValueError("capability_tags values must not be empty")
-        return normalized_values
-
-
 class SeatAssignmentPayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     ticket_id: TicketId
-    seat_ref: SeatRef
-    required_capability_tags: tuple[str, ...]
-
-    @field_validator("required_capability_tags")
-    @classmethod
-    def _reject_empty_required_capabilities(
-        cls, values: tuple[str, ...]
-    ) -> tuple[str, ...]:
-        if not values:
-            raise ValueError("required_capability_tags must not be empty")
-        normalized_values = tuple(value.strip() for value in values)
-        if any(not value for value in normalized_values):
-            raise ValueError("required_capability_tags values must not be empty")
-        return normalized_values
+    seat_ref: AgentSeatRef
 
 
 class SeatAssignmentGraph(BaseModel):
@@ -98,7 +34,7 @@ class SeatAssignmentGraph(BaseModel):
     blocked_by: dict[TicketId, tuple[TicketId, ...]]
     ready_queue: tuple[TicketId, ...]
     completed_nodes: tuple[TicketId, ...]
-    seat_assignments: dict[TicketId, SeatRef]
+    seat_assignments: dict[TicketId, AgentSeatRef]
     seat_blockers: dict[TicketId, tuple[str, ...]]
 
     @classmethod
@@ -106,7 +42,7 @@ class SeatAssignmentGraph(BaseModel):
         cls,
         ticket_graph: TicketGraph,
         *,
-        seat_assignments: dict[TicketId, SeatRef],
+        seat_assignments: dict[TicketId, AgentSeatRef],
         seat_blockers: dict[TicketId, tuple[str, ...]],
     ) -> "SeatAssignmentGraph":
         nodes = dict(ticket_graph.nodes)
@@ -149,15 +85,15 @@ class SeatAssignmentProjector:
         *,
         ticket_projector: TicketGraphProjector,
         payload_resolver: SeatAssignmentPayloadResolver,
-        seats: tuple[SeatDefinition, ...],
+        seat_projection: SeatLifecycleProjection,
     ) -> None:
         self._ticket_projector = ticket_projector
         self._payload_resolver = payload_resolver
-        self._seats_by_ref = {seat.seat_ref: seat for seat in seats}
+        self._seat_projection = seat_projection
 
     def project(self, events: tuple[EventRecord, ...]) -> SeatAssignmentGraph:
         ticket_graph = self._ticket_projector.project(events)
-        seat_assignments: dict[TicketId, SeatRef] = {}
+        seat_assignments: dict[TicketId, AgentSeatRef] = {}
         seat_blockers: dict[TicketId, tuple[str, ...]] = {}
         created_versions_by_ticket_id: dict[TicketId, int] = {}
 
@@ -250,27 +186,28 @@ class SeatAssignmentProjector:
         ticket: TicketNode,
         payload: SeatAssignmentPayload,
     ) -> tuple[str, ...]:
-        if ticket.owner_seat_ref != payload.seat_ref.value:
+        seat: AgentSeat | None = self._seat_projection.active_seats.get(payload.seat_ref)
+        if seat is None:
             return (
-                "ticket owner seat mismatch: "
-                f"{ticket.owner_seat_ref} != {payload.seat_ref.value}",
+                f"team composition gap: inactive or unknown seat: {payload.seat_ref.value}",
             )
 
-        seat = self._seats_by_ref.get(payload.seat_ref)
-        if seat is None:
-            return (f"unknown seat: {payload.seat_ref.value}",)
-
-        if seat.status is not SeatStatus.ACTIVE:
-            return (f"seat is not active: {payload.seat_ref.value}",)
-
-        missing_capabilities = tuple(
-            capability
-            for capability in payload.required_capability_tags
-            if capability not in seat.capability_tags
-        )
-        if missing_capabilities:
+        demand = ticket.seat_demand
+        if seat.role_category is not demand.required_role_category:
             return (
-                "seat missing capability tags: " + ", ".join(missing_capabilities),
+                "team composition gap: role category mismatch: "
+                f"{seat.role_category.value} != {demand.required_role_category.value}",
+            )
+
+        missing_capability_tags = tuple(
+            capability_tag.value
+            for capability_tag in demand.required_capability_tags
+            if capability_tag not in seat.capability_tags
+        )
+        if missing_capability_tags:
+            return (
+                "team composition gap: missing capability tags: "
+                + ", ".join(missing_capability_tags),
             )
 
         return ()

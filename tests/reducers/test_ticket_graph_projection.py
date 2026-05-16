@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from boardroom_os.agents.seat import RoleCategory, SeatDemand
+from boardroom_os.agents.skills import CapabilityTag
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import (
     ActorRef,
@@ -61,7 +63,13 @@ def _valid_ticket_payload(**overrides: object) -> TicketCreatedPayload:
     values = {
         "ticket_id": TicketId(value="ticket-backend-api"),
         "purpose": "Implement backend API surface",
-        "owner_seat_ref": "seat-worker-backend",
+        "seat_demand": SeatDemand(
+            required_role_category=RoleCategory.IMPLEMENTATION,
+            required_capability_tags=(
+                CapabilityTag(value="task.implementation"),
+                CapabilityTag(value="surface.backend"),
+            ),
+        ),
         "depends_on": (),
         "acceptance_refs": ("AC-BOOK-API-STATE-001",),
         "source_surface_refs": ("surface-backend-api",),
@@ -119,12 +127,34 @@ def test_ticket_payload_requires_execution_contract_fields(missing_field: str) -
         TicketCreatedPayload(**values)
 
 
+def test_ticket_created_payload_rejects_owner_seat_ref() -> None:
+    values = _valid_ticket_payload().model_dump()
+    values["owner_seat_ref"] = "seat-worker-backend"
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        TicketCreatedPayload(**values)
+
+
+
+def test_ticket_created_payload_requires_seat_demand() -> None:
+    values = _valid_ticket_payload().model_dump()
+    values.pop("seat_demand", None)
+
+    with pytest.raises(ValidationError):
+        TicketCreatedPayload(**values)
+
+
+
+def test_ticket_node_rejects_owner_seat_ref() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        _valid_ticket_node(owner_seat_ref="seat-worker-backend")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("ticket_id", {"value": " "}),
         ("purpose", " "),
-        ("owner_seat_ref", " "),
         ("acceptance_refs", ()),
         ("source_surface_refs", ()),
         ("evidence_obligations", ()),
@@ -180,7 +210,6 @@ def test_ticket_created_payload_rejects_completed_status() -> None:
     ("field", "value"),
     [
         ("purpose", " "),
-        ("owner_seat_ref", " "),
         ("acceptance_refs", ()),
         ("source_surface_refs", ()),
         ("evidence_obligations", ()),

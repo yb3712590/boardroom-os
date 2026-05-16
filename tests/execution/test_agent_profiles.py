@@ -9,6 +9,7 @@ from boardroom_os.agents.profiles import (
     RoleProfileId,
     RoleProfileRegistry,
 )
+from boardroom_os.agents.seat import RoleCategory
 from boardroom_os.agents.skills import (
     CapabilityDefinition,
     CapabilityRegistry,
@@ -54,6 +55,7 @@ def _capability_registry() -> CapabilityRegistry:
 def _worker_role(**overrides: object) -> RoleProfile:
     values = {
         "role_profile_id": RoleProfileId(value="role.worker.backend"),
+        "role_category": RoleCategory.IMPLEMENTATION,
         "role_name": "Backend Worker",
         "responsibilities": (
             "Implement backend source changes inside allowed_write_set.",
@@ -197,6 +199,7 @@ def test_role_profile_rejects_provider_fields() -> None:
         RoleProfile.model_validate(
             {
                 "role_profile_id": {"value": "role.worker.backend"},
+                "role_category": "implementation",
                 "role_name": "Backend Worker",
                 "responsibilities": ["Implement backend source changes."],
                 "capability_tags": [{"value": "role.worker"}],
@@ -331,6 +334,7 @@ def test_yaml_shaped_agent_configs_compile_to_registries() -> None:
         {
             "version": 1,
             "role_profile_id": "role.worker.backend",
+            "role_category": "implementation",
             "role_name": "Backend Worker",
             "responsibilities": [
                 "Implement backend source changes inside allowed_write_set.",
@@ -491,6 +495,7 @@ def test_agent_config_rejects_unknown_schema_version() -> None:
             {
                 "version": 2,
                 "role_profile_id": "role.worker.backend",
+                "role_category": "implementation",
                 "role_name": "Backend Worker",
                 "responsibilities": ["Implement backend source changes."],
                 "capability_tags": ["role.worker"],

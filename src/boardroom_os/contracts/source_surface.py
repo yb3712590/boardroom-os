@@ -4,7 +4,7 @@ from boardroom_os.contracts.types import AcceptanceRef, NonEmptyTextValue, Sourc
 
 
 class OwnerSeatRef(NonEmptyTextValue):
-    pass
+    """源码实现面归属标签，不是 TicketNode 席位派工。"""
 
 
 class RequiredTestRef(NonEmptyTextValue):

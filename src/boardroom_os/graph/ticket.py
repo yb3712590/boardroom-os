@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from boardroom_os.agents.seat import SeatDemand
+
 
 class NonEmptyGraphValue(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -32,7 +34,7 @@ class _TicketFields(BaseModel):
 
     ticket_id: TicketId
     purpose: str
-    owner_seat_ref: str
+    seat_demand: SeatDemand
     depends_on: tuple[TicketId, ...] = ()
     acceptance_refs: tuple[str, ...]
     source_surface_refs: tuple[str, ...]
@@ -41,7 +43,7 @@ class _TicketFields(BaseModel):
     allowed_write_set: tuple[str, ...]
     attempt_count: int = Field(ge=0)
 
-    @field_validator("purpose", "owner_seat_ref")
+    @field_validator("purpose")
     @classmethod
     def _reject_empty_text(cls, value: str) -> str:
         normalized = value.strip()
