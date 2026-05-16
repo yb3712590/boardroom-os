@@ -413,23 +413,23 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：把角色职责、技能能力和 provider/model/effort 配置拆开表达。
-- 输入文档：`agent-team-model.md`。
+- 输入文档：`agent-team-model.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-020E。
 - 输出文件：`src/boardroom_os/agents/profiles.py`、`src/boardroom_os/agents/skills.py`、`tests/execution/test_agent_profiles.py`。
-- 必须先写的 negative tests：role 直接包含 provider credential、skill 绑定未知 role、model profile 缺 provider/model 必须失败。
-- 必须证明的 happy path：同一 RoleProfile 可绑定不同 ModelExecutionProfile 形成不同 seat。
-- 验收口径：role 不直接调用 provider；provider 通过 ModelExecutionProfile 接入。
+- 必须先写的 negative tests：role 直接包含 provider credential、skill 绑定未知 role、model profile 缺 provider/model、capability tag 不在 registry（能力标签注册表）中必须失败。
+- 必须证明的 happy path：同一 RoleProfile 可绑定不同 ModelExecutionProfile 形成不同 seat；RoleProfile capability_tags（角色能力标签）能被后续 AgentSeat policy 消费。
+- 验收口径：role 不直接调用 provider；provider 通过 ModelExecutionProfile 接入；capability_tags 不再是无注册表约束的散字符串。
 
 ### V2-030B: 定义 AgentSeat 与 seat policy
 
 - 状态：TODO
 - 目标：表达项目中被 CEO 激活的具体 seat，并校验 seat 能力边界。
-- 输入文档：`agent-team-model.md`、`domain-model.md`。
+- 输入文档：`agent-team-model.md`、`domain-model.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-030A。
 - 输出文件：`src/boardroom_os/agents/seat.py`、`src/boardroom_os/agents/policy.py`、`tests/execution/test_agent_seat_policy.py`。
-- 必须先写的 negative tests：worker seat 缺 allowed capability、checker seat 与 worker seat 相同且无独立验证边界、seat 缺 model_execution_profile_ref 必须失败。
-- 必须证明的 happy path：CEO、Architect、Worker、Checker seats 可被创建并映射到 ticket 类型。
-- 验收口径：seat 是 role/provider/context 的接合点。
+- 必须先写的 negative tests：worker seat 缺 allowed capability、checker seat 与 worker seat 相同且无独立验证边界、seat 缺 model_execution_profile_ref、未激活 seat 被分配或编译 execution package 必须失败。
+- 必须证明的 happy path：CEO、Architect、Worker、Checker seats 可被创建并映射到 ticket 类型；seat activated/deactivated（席位启用/停用）事实可投影出 active seats（活跃席位）并供 seat assignment / execution package 消费。
+- 验收口径：seat 是 role/provider/context 的接合点；席位生命周期必须可审计，不能长期依赖构造器注入的 SeatDefinition 快照。
 
 ### V2-030C: 定义 ExecutionPackage schema
 
@@ -533,12 +533,12 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：限制 runtime 只能 emit execution/provider/tool/command/work product 事实事件。
-- 输入文档：`execution-and-runtime-boundary.md`。
+- 输入文档：`execution-and-runtime-boundary.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-040C、V2-040D。
 - 输出文件：`src/boardroom_os/execution/runtime_executor.py`、`tests/execution/test_runtime_executor_boundary.py`、`tests/negative/test_runtime_cannot_govern.py`。
-- 必须先写的 negative tests：runtime emit `TICKET_COMPLETED`、`PROJECT_COMPLETED`、`CLOSEOUT_COMMITTED` 必须失败。
+- 必须先写的 negative tests：runtime emit `TICKET_COMPLETED`、`PROJECT_COMPLETED`、`CLOSEOUT_COMMITTED` 必须失败；runtime/executor 使用普通 seat actor_ref 伪装治理 actor 时也必须失败。
 - 必须证明的 happy path：runtime 对 ready execution package 可记录 provider attempt、work product 和 command run。
-- 验收口径：runtime bounded 约束可由测试证明。
+- 验收口径：runtime bounded 约束可由测试证明；越权判断必须基于 RoleProfile / AgentSeat 的角色边界，而不是仅依赖 `actor_ref` 字符串前缀。
 
 ---
 
@@ -609,12 +609,12 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：把 verified evidence + checker verdict 接入 reducer 的 ticket completion gate。
-- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`。
+- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-050E、V2-020D。
 - 输出文件：`src/boardroom_os/reducers/completion_gate.py`、`tests/reducers/test_completion_gate_with_evidence.py`。
-- 必须先写的 negative tests：checker approved 但 evidence table missing、evidence complete 但 checker blocker、attempt count 为 0 必须阻断 completion。
-- 必须证明的 happy path：evidence complete + checker approved + provider attempts recorded 时 reducer 可完成 ticket。
-- 验收口径：ticket completion 不由 runtime 或 checker 单独决定。
+- 必须先写的 negative tests：checker approved 但 evidence table missing、evidence complete 但 checker blocker、attempt count 为 0、缺 `WORK_PRODUCT_SUBMITTED` 历史事实必须阻断 completion。
+- 必须证明的 happy path：evidence complete + checker approved + provider attempts recorded + work product submitted 时 reducer 可完成 ticket。
+- 验收口径：ticket completion 不由 runtime 或 checker 单独决定；V2-050F 只能适配正式 evidence/checker 模型到既有 completion boundary，不能绕过 work product 或 provider attempt 门禁。
 
 ---
 
@@ -707,12 +707,12 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：产出 event range、projection versions、artifact manifest、hash manifest 和 replay report。
-- 输入文档：`process-audit-and-replay.md`。
+- 输入文档：`process-audit-and-replay.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-020F、V2-060E。
 - 输出文件：`src/boardroom_os/audit/replay_bundle.py`、`tests/closeout/test_replay_bundle.py`。
-- 必须先写的 negative tests：event range 缺失、projection version 不匹配、artifact hash 缺失、replay report 缺失必须失败。
-- 必须证明的 happy path：事件 + artifact manifest 可重建 typed summary。
-- 验收口径：缺 replay bundle 不允许 terminal success。
+- 必须先写的 negative tests：event range 缺失、projection version 不匹配、artifact hash 缺失、event log hash chain / hash manifest 缺失、replay report 缺失必须失败。
+- 必须证明的 happy path：事件 + artifact manifest + hash manifest 可重建 typed summary，并证明 replay 输入未被静默篡改。
+- 验收口径：缺 replay bundle 不允许 terminal success；hash chain / hash manifest 在 replay bundle 层处理，不回填到 Phase 2 的 InMemoryEventLog 最小接口。
 
 ### V2-070C: 实现 process audit builder
 
@@ -769,12 +769,12 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：让 reducer 在 closeout gate passed 后产生 terminal success projection。
-- 输入文档：`execution-and-runtime-boundary.md`、`process-audit-and-replay.md`。
+- 输入文档：`execution-and-runtime-boundary.md`、`process-audit-and-replay.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-070E、V2-020D。
 - 输出文件：`src/boardroom_os/reducers/closeout_reducer.py`、`tests/closeout/test_closeout_reducer.py`。
-- 必须先写的 negative tests：runtime 直接 closeout、workflow completed 但 closeout gate missing、缺 replay bundle 必须失败。
-- 必须证明的 happy path：CloseoutPackage passed 事件可投影为 project terminal success。
-- 验收口径：不把 workflow completed 当作项目完成。
+- 必须先写的 negative tests：runtime 直接 closeout、workflow completed 但 closeout gate missing、缺 replay bundle、增量 reducer/replay 输入缺历史 `WORK_PRODUCT_SUBMITTED` 事实必须失败。
+- 必须证明的 happy path：CloseoutPackage passed 事件可投影为 project terminal success；若采用 base projection + new events（基准投影 + 新事件）增量模式，work product 历史必须作为显式 projection/replay 输入保留。
+- 验收口径：不把 workflow completed 当作项目完成；closeout reducer 不能依赖 `TicketReducer.reduce()` 调用内局部集合来推断历史 work product。
 
 ---
 

@@ -222,7 +222,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [ ] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_id / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy 必须失败
 - [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— 由 V2-030E `test_fallback_cannot_satisfy_implementation.py` 证明
-- [ ] Role / Seat / Provider 接入链闭合 — 由 V2-030A、V2-030B、V2-030D 证明：RoleProfile → SkillBinding → ModelExecutionProfile → AgentSeat → ExecutionPackage 全链可测
+- [ ] Role / Seat / Provider 接入链闭合 — 由 V2-030A、V2-030B、V2-030D 证明：RoleProfile → SkillBinding → ModelExecutionProfile → AgentSeat → ExecutionPackage 全链可测；active seats 必须可审计，capability tags 必须受 registry 约束（见 DEC-0011）
 - [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
 - [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 3 显示 6/6
@@ -247,7 +247,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [ ] AC-V2-EXECUTION-002（provider attempt required）— 由 V2-040A `test_provider_attempt.py` 证明：attempt 缺 provider / model / input_package_ref / seat_ref / status 必须失败
 - [ ] Provider executor boundary — 由 V2-040B `test_provider_executor_requires_execution_package.py` 证明：缺 execution package 不得调用 provider
 - [ ] AC-V2-EVIDENCE-001（command evidence from runner）— 由 V2-040D `test_command_runner.py` 证明：合成 verification success / 命令不在 package contract 中必须失败
-- [ ] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / `PROJECT_COMPLETED` / `CLOSEOUT_COMMITTED` 必须失败
+- [ ] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / `PROJECT_COMPLETED` / `CLOSEOUT_COMMITTED` 必须失败；runtime/executor 不能靠普通 seat actor_ref 绕过 role-aware 边界（见 DEC-0011）
 - [ ] V2-040A ~ V2-040E 五个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 4 显示 5/5
 
@@ -272,7 +272,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [ ] AC-V2-CHECKER-001（checker blocks gaps）— 由 V2-050D `test_checker_verdict.py` 证明
 - [ ] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D 证明
 - [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
-- [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明
+- [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明：正式 evidence/checker 模型不得绕过 `WORK_PRODUCT_SUBMITTED` 与 provider attempt 门禁
 - [ ] V2-050A ~ V2-050F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 5 显示 6/6
 
@@ -316,11 +316,11 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### AC 检查清单
 
 - [ ] AC-V2-CLOSEOUT-001（closeout 只能在 verified evidence 之后）— 由 V2-070A `test_closeout_fail_closed.py` 证明
-- [ ] AC-V2-CLOSEOUT-002（replay bundle required）— 由 V2-070A + V2-070B 证明
+- [ ] AC-V2-CLOSEOUT-002（replay bundle required）— 由 V2-070A + V2-070B 证明：event log hash chain / hash manifest 缺失必须失败
 - [ ] AC-V2-CLOSEOUT-003（人类可读 process audit）— 由 V2-070C `test_process_audit_artifacts.py` 证明：10 项 30-audit 产物缺一不可（process-audit.md / timeline.json / decision-log.md / agent-context-index.json / ticket-graph.md / artifact-lineage.json / evidence-map.json / git-version-audit.md / closeout-summary.md / replay-bundle-report.json）
 - [ ] Git version audit 完整 — 由 V2-070D `test_git_version_audit.py` 证明
 - [ ] CloseoutPackage 绑定一致 — 由 V2-070E `test_closeout_package.py` 证明
-- [ ] Closeout reducer 接入 — 由 V2-070F `test_closeout_reducer.py` 证明
+- [ ] Closeout reducer 接入 — 由 V2-070F `test_closeout_reducer.py` 证明：增量 reducer/replay 不得丢失历史 `WORK_PRODUCT_SUBMITTED` 事实
 - [ ] V2-070A ~ V2-070F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 7 显示 6/6
 

@@ -155,3 +155,23 @@ EventRecord（事件记录）的职责是先稳定 event log（事件日志）�
 - 后续阶段扩展 EventType 时必须同时补测试和项目日志，不能依赖任意字符串绕过 fail closed。
 - stable dump（稳定转储）保持 Pydantic value object（Pydantic 值对象）形态，确保可直接回放为 EventRecord。
 
+## DEC-0011: Phase 2 审计延期项绑定到后续工作包
+
+- 状态：Accepted
+- 日期：2026-05-16
+
+### 决策
+
+Phase 2 审计中发现的非 P2 修补项不在 V2-020 继续扩张实现，而是绑定到后续工作包：seat lifecycle（席位生命周期）事件流与 capability registry（能力标签注册表）进入 V2-030A/B；role-aware completion boundary（按角色感知的完成边界）进入 V2-040E；governance/human/evidence/checker/closeout event taxonomy（治理/人审/证据/检查/收尾事件分类）按 V2-030/V2-050/V2-070 实际消费时扩展；TicketStatus（任务状态）中间态细化或 raw event timeline（原始事件时间线）设计选择从 V2-030 起显式化；event log hash chain（事件日志哈希链）与 replay bundle（重放包）进入 V2-070B。
+
+### 理由
+
+这些能力需要 RoleProfile（角色模板）、AgentSeat（智能体席位）、ModelExecutionProfile（模型执行配置）、EvidenceVerifier（证据验证器）、CheckerVerdict（检查结论）或 CloseoutPackage（收尾包）成为可信输入后才能正确建模。若在 Phase 2 提前补齐，会把尚未实现的业务边界固化为猜测，并违反 DEC-0010 的阶段性收窄原则。Phase 2 只立即修补 reducer/kernel 层已可独立证明的 P2 缺口：依赖环 fail closed，以及 completion 前必须存在 `WORK_PRODUCT_SUBMITTED`（工作产物提交）事实。
+
+### 影响
+
+- V2-030A/B 必须让 active seats（活跃席位）可由事件或策略投影审计，不能长期依赖构造器注入的 `SeatDefinition` 快照。
+- V2-040E 必须用 RoleProfile / AgentSeat 信息替代 `actor_ref` 字符串前缀作为 runtime/executor 越权判断依据。
+- V2-050F 必须把正式 FinalEvidenceTable / CheckerVerdict 接入现有 completion boundary，不绕过 `WORK_PRODUCT_SUBMITTED` 和 provider attempt 门禁。
+- V2-070B/F 若引入增量 reducer 或 replay bundle，必须把 work product 历史事实纳入显式 projection/replay 输入，不能依赖 `TicketReducer.reduce()` 调用内局部集合。
+
