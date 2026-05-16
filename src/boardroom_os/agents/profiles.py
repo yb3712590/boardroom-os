@@ -1,18 +1,15 @@
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, field_validator, model_validator
 
 from boardroom_os.agents.skills import (
     CapabilityRegistry,
     CapabilityTag,
+    RoleProfileId,
     _LayeredAgentValue,
     _normalize_ref_fields,
 )
 from boardroom_os.contracts.types import ContractId
-
-
-class RoleProfileId(_LayeredAgentValue):
-    pass
 
 
 class ModelExecutionProfileId(_LayeredAgentValue):
@@ -22,7 +19,7 @@ class ModelExecutionProfileId(_LayeredAgentValue):
 class RoleProfile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     role_profile_id: RoleProfileId
     role_name: str
     responsibilities: tuple[str, ...]
@@ -88,7 +85,7 @@ class RoleProfile(BaseModel):
 class RoleProfileRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     profiles: tuple[RoleProfile, ...]
 
     @classmethod
@@ -122,7 +119,7 @@ class RoleProfileRegistry(BaseModel):
 class ModelExecutionProfile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     model_execution_profile_id: ModelExecutionProfileId
     provider: str
     model: str
@@ -182,7 +179,7 @@ class ModelExecutionProfile(BaseModel):
 class ModelExecutionProfileRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     profiles: tuple[ModelExecutionProfile, ...]
 
     @classmethod

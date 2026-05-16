@@ -464,6 +464,75 @@ def test_yaml_shaped_agent_configs_compile_to_registries() -> None:
     )
 
 
+def test_skill_binding_normalizes_object_shaped_allowed_roles() -> None:
+    skill = SkillBinding.model_validate(
+        {
+            "version": 1,
+            "skill_ref": "skill.backend.implementation",
+            "purpose": "Implement backend source changes for assigned implementation tickets.",
+            "skill_file_ref": "skill_doc.backend_implementation.v1",
+            "allowed_roles": [{"value": "role.worker.backend"}],
+            "required_for_ticket_types": ["ticket.implementation"],
+            "capability_tags": ["task.implementation", "surface.backend"],
+            "prompt_refs": ["prompt.backend_implementation.system.v1"],
+            "mcp_interface_refs": ["mcp.filesystem.edit_project"],
+            "input_requirements": ["execution package"],
+            "output_effects": ["work product"],
+        }
+    )
+
+    assert skill.allowed_roles == (RoleProfileId(value="role.worker.backend"),)
+    _skill_registry(skill)
+
+
+def test_agent_config_rejects_unknown_schema_version() -> None:
+    with pytest.raises(ValidationError):
+        RoleProfile.model_validate(
+            {
+                "version": 2,
+                "role_profile_id": "role.worker.backend",
+                "role_name": "Backend Worker",
+                "responsibilities": ["Implement backend source changes."],
+                "capability_tags": ["role.worker"],
+                "input_contracts": ["contract.execution_package"],
+                "output_contracts": ["contract.work_product"],
+                "forbidden_actions": ["mark ticket completed"],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        SkillBinding.model_validate(
+            {
+                "version": 2,
+                "skill_ref": "skill.backend.implementation",
+                "purpose": "Implement backend source changes.",
+                "skill_file_ref": "skill_doc.backend_implementation.v1",
+                "allowed_roles": ["role.worker.backend"],
+                "required_for_ticket_types": ["ticket.implementation"],
+                "capability_tags": ["task.implementation"],
+                "prompt_refs": ["prompt.backend_implementation.system.v1"],
+                "mcp_interface_refs": ["mcp.filesystem.read_project"],
+                "input_requirements": ["execution package"],
+                "output_effects": ["work product"],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ModelExecutionProfile.model_validate(
+            {
+                "version": 2,
+                "model_execution_profile_id": "model.worker.opus.high",
+                "provider": "anthropic",
+                "model": "claude-opus-4-7",
+                "reasoning_effort": "high",
+                "context_window": 200000,
+                "temperature": 0.2,
+                "tool_permissions": ["filesystem.read"],
+                "fallback_policy_ref": "fallback.provider_unavailable.record_failure",
+            }
+        )
+
+
 def test_layered_agent_config_templates_compile_to_registries() -> None:
     capability_registry = _capability_registry()
     role_registry = RoleProfileRegistry.from_profiles(

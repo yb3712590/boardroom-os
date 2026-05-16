@@ -1,4 +1,4 @@
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -52,6 +52,10 @@ class TicketTypeRef(_LayeredAgentValue):
     pass
 
 
+class RoleProfileId(_LayeredAgentValue):
+    pass
+
+
 class CapabilityDefinition(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -75,7 +79,7 @@ class CapabilityDefinition(BaseModel):
 class CapabilityRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     capabilities: tuple[CapabilityDefinition, ...]
 
     @classmethod
@@ -135,7 +139,7 @@ class PromptSource(BaseModel):
 class PromptSourceRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     prompts: tuple[PromptSource, ...]
 
     @classmethod
@@ -191,7 +195,7 @@ class SkillFileSource(BaseModel):
 class SkillFileSourceRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     skill_files: tuple[SkillFileSource, ...]
 
     @classmethod
@@ -263,7 +267,7 @@ class McpInterfaceDefinition(BaseModel):
 class McpInterfaceRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     interfaces: tuple[McpInterfaceDefinition, ...]
 
     @classmethod
@@ -316,11 +320,11 @@ class McpInterfaceRegistry(BaseModel):
 class SkillBinding(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     skill_ref: SkillRef
     purpose: str
     skill_file_ref: SkillFileRef
-    allowed_roles: tuple[Any, ...]
+    allowed_roles: tuple[RoleProfileId, ...]
     required_for_ticket_types: tuple[TicketTypeRef, ...]
     capability_tags: tuple[CapabilityTag, ...]
     prompt_refs: tuple[PromptRef, ...]
@@ -331,8 +335,6 @@ class SkillBinding(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_yaml_refs(cls, data: Any) -> Any:
-        from boardroom_os.agents.profiles import RoleProfileId
-
         return _normalize_ref_fields(
             data,
             {
@@ -358,7 +360,9 @@ class SkillBinding(BaseModel):
 
     @field_validator("allowed_roles")
     @classmethod
-    def _reject_empty_allowed_roles(cls, value: tuple[Any, ...]) -> tuple[Any, ...]:
+    def _reject_empty_allowed_roles(
+        cls, value: tuple[RoleProfileId, ...]
+    ) -> tuple[RoleProfileId, ...]:
         if not value:
             raise ValueError("allowed_roles must not be empty")
         return value
@@ -409,7 +413,7 @@ class SkillBinding(BaseModel):
 class SkillBindingRegistry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: int = 1
+    version: Literal[1] = 1
     bindings: tuple[SkillBinding, ...]
 
     @classmethod
@@ -475,15 +479,24 @@ def _normalize_ref_fields(
         return data
     normalized = dict(data)
     for field_name, ref_type in scalar_ref_fields.items():
-        if isinstance(normalized.get(field_name), str):
-            normalized[field_name] = ref_type(value=normalized[field_name])
+        if field_name in normalized:
+            normalized[field_name] = _normalize_ref_value(normalized[field_name], ref_type)
     for field_name, ref_type in (tuple_ref_fields or {}).items():
         if field_name in normalized:
             normalized[field_name] = tuple(
-                ref_type(value=item) if isinstance(item, str) else item
-                for item in normalized[field_name]
+                _normalize_ref_value(item, ref_type) for item in normalized[field_name]
             )
     return normalized
+
+
+def _normalize_ref_value(value: Any, ref_type: Any) -> Any:
+    if isinstance(value, ref_type):
+        return value
+    if isinstance(value, str):
+        return ref_type(value=value)
+    if isinstance(value, dict) and set(value) == {"value"}:
+        return ref_type(value=value["value"])
+    return value
 
 
 def _validate_non_empty_text_tuple(values: tuple[str, ...], field_name: str) -> tuple[str, ...]:
