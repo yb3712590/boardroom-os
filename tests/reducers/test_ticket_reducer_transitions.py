@@ -236,6 +236,7 @@ def test_reducer_rejects_rework_without_checker_blocker() -> None:
 def test_reducer_rejects_completion_without_provider_attempt() -> None:
     resolver = InMemoryTicketReducerPayloadResolver(
         created_payloads={"payload:ticket-backend-api-created": _valid_ticket_payload()},
+        ticket_refs={"payload:ticket-backend-api-work-product-submitted": _ticket_ref()},
         completion_snapshots={
             "payload:ticket-backend-api-completed": _completion_snapshot(
                 provider_attempt_count=0
@@ -244,12 +245,19 @@ def test_reducer_rejects_completion_without_provider_attempt() -> None:
     )
 
     with pytest.raises(TicketReducerError, match="provider attempt"):
-        TicketReducer(resolver).reduce((_created_event(), _completed_event()))
+        TicketReducer(resolver).reduce(
+            (
+                _created_event(),
+                _lifecycle_event(EventType.WORK_PRODUCT_SUBMITTED, graph_version=2),
+                _completed_event(graph_version=3),
+            )
+        )
 
 
 def test_reducer_rejects_completion_with_checker_blockers() -> None:
     resolver = InMemoryTicketReducerPayloadResolver(
         created_payloads={"payload:ticket-backend-api-created": _valid_ticket_payload()},
+        ticket_refs={"payload:ticket-backend-api-work-product-submitted": _ticket_ref()},
         completion_snapshots={
             "payload:ticket-backend-api-completed": _completion_snapshot(
                 blocking_issue_refs=("blocker:missing-api-test",)
@@ -258,7 +266,13 @@ def test_reducer_rejects_completion_with_checker_blockers() -> None:
     )
 
     with pytest.raises(TicketReducerError, match="blocking issues"):
-        TicketReducer(resolver).reduce((_created_event(), _completed_event()))
+        TicketReducer(resolver).reduce(
+            (
+                _created_event(),
+                _lifecycle_event(EventType.WORK_PRODUCT_SUBMITTED, graph_version=2),
+                _completed_event(graph_version=3),
+            )
+        )
 
 
 def test_reducer_rejects_completion_while_prior_checker_blocker_is_open() -> None:
@@ -285,6 +299,19 @@ def test_reducer_rejects_completion_while_prior_checker_blocker_is_open() -> Non
                 _completed_event(graph_version=3),
             )
         )
+
+
+def test_reducer_rejects_completion_without_work_product() -> None:
+    resolver = InMemoryTicketReducerPayloadResolver(
+        created_payloads={"payload:ticket-backend-api-created": _valid_ticket_payload()},
+        completion_snapshots={
+            "payload:ticket-backend-api-completed": _completion_snapshot()
+        },
+    )
+
+    with pytest.raises(TicketReducerError, match="work product"):
+        TicketReducer(resolver).reduce((_created_event(), _completed_event()))
+
 
 
 def test_reducer_allows_reworked_ticket_to_complete_after_checker_approval() -> None:
@@ -342,14 +369,21 @@ def test_completion_snapshot_rejects_missing_evidence_or_checker_approval() -> N
 def test_reducer_completes_ticket_when_completion_boundary_is_satisfied() -> None:
     resolver = InMemoryTicketReducerPayloadResolver(
         created_payloads={"payload:ticket-backend-api-created": _valid_ticket_payload()},
+        ticket_refs={"payload:ticket-backend-api-work-product-submitted": _ticket_ref()},
         completion_snapshots={
             "payload:ticket-backend-api-completed": _completion_snapshot()
         },
     )
 
-    graph = TicketReducer(resolver).reduce((_created_event(), _completed_event()))
+    graph = TicketReducer(resolver).reduce(
+        (
+            _created_event(),
+            _lifecycle_event(EventType.WORK_PRODUCT_SUBMITTED, graph_version=2),
+            _completed_event(graph_version=3),
+        )
+    )
 
-    assert graph.graph_version == 2
+    assert graph.graph_version == 3
     assert graph.nodes[TicketId(value="ticket-backend-api")].status is TicketStatus.COMPLETED
     assert graph.completed_nodes == (TicketId(value="ticket-backend-api"),)
     assert graph.ready_queue == ()

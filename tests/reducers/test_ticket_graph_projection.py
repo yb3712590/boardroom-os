@@ -319,6 +319,25 @@ def test_ticket_graph_rejects_unknown_dependency() -> None:
 
 
 
+def test_ticket_graph_rejects_dependency_cycle() -> None:
+    backend = TicketNode.from_created_payload(
+        _valid_ticket_payload(
+            ticket_id=TicketId(value="ticket-backend-api"),
+            depends_on=(TicketId(value="ticket-frontend-ui"),),
+        )
+    )
+    frontend = TicketNode.from_created_payload(
+        _valid_ticket_payload(
+            ticket_id=TicketId(value="ticket-frontend-ui"),
+            depends_on=(TicketId(value="ticket-backend-api"),),
+        )
+    )
+
+    with pytest.raises(ValueError, match="dependency cycle"):
+        TicketGraph.from_nodes(graph_version=1, nodes=(backend, frontend))
+
+
+
 def test_projector_builds_ticket_graph_from_created_event_payload_ref() -> None:
     resolver = InMemoryTicketPayloadResolver(
         {"payload:ticket-backend-api": _valid_ticket_payload()}

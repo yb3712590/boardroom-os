@@ -80,6 +80,7 @@ class TicketReducer:
 
         nodes_by_id: dict[TicketId, TicketNode] = {}
         tickets_with_checker_blockers: set[TicketId] = set()
+        tickets_with_work_product: set[TicketId] = set()
         latest_graph_version = 0
         for event in sorted(events, key=lambda item: item.graph_version):
             latest_graph_version = event.graph_version
@@ -98,6 +99,8 @@ class TicketReducer:
             }:
                 payload = self._resolve_ticket_ref(payload_ref)
                 self._require_existing_ticket(nodes_by_id, payload.ticket_id, event.event_type)
+                if event.event_type is EventType.WORK_PRODUCT_SUBMITTED:
+                    tickets_with_work_product.add(payload.ticket_id)
                 continue
 
             if event.event_type is EventType.TICKET_CHECKED:
@@ -137,6 +140,8 @@ class TicketReducer:
                     raise TicketReducerError(
                         f"blocked ticket cannot be completed: {completion.ticket_id.value}"
                     )
+                if completion.ticket_id not in tickets_with_work_product:
+                    raise TicketReducerError("work product must be submitted before completion")
                 if completion.provider_attempt_count == 0:
                     raise TicketReducerError("provider attempt count must be greater than zero")
                 if completion.blocking_issue_refs:

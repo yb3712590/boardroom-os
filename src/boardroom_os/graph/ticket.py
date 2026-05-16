@@ -123,6 +123,8 @@ class TicketGraph(BaseModel):
                     f"unknown dependency for {node.ticket_id.value}: {dependency_list}"
                 )
 
+        cls._reject_dependency_cycles(node_map)
+
         completed = tuple(
             node.ticket_id for node in nodes if node.status is TicketStatus.COMPLETED
         )
@@ -150,3 +152,22 @@ class TicketGraph(BaseModel):
             ready_queue=ready_queue,
             completed_nodes=completed,
         )
+
+    @classmethod
+    def _reject_dependency_cycles(cls, nodes_by_id: dict[TicketId, TicketNode]) -> None:
+        visited: set[TicketId] = set()
+        visiting: set[TicketId] = set()
+
+        def visit(ticket_id: TicketId) -> None:
+            if ticket_id in visiting:
+                raise ValueError(f"dependency cycle includes: {ticket_id.value}")
+            if ticket_id in visited:
+                return
+            visiting.add(ticket_id)
+            for dependency in nodes_by_id[ticket_id].depends_on:
+                visit(dependency)
+            visiting.remove(ticket_id)
+            visited.add(ticket_id)
+
+        for ticket_id in nodes_by_id:
+            visit(ticket_id)
