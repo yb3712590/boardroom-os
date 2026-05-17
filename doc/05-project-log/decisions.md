@@ -215,3 +215,21 @@ V2-030B 已证明 RoleProfile（角色模板）与 AgentSeat（智能体席位�
 - V2-070 branchable governance replay（可分叉治理重放）可以复用同一编排入口，避免 replay 与 compiler 形成两套治理解释。
 - `SeatPolicy.match`（席位策略匹配）保留为 demand-first seat discovery（需求优先席位发现）API，但新增逻辑应等到 V2-030D 有真实消费者后再扩展。
 
+## DEC-0014: TEST_ONLY_SIMULATION 不能作为 fallback evidence 例外
+
+- 状态：Accepted
+- 日期：2026-05-17
+
+### 决策
+
+V2-030E 不保留 `TEST_ONLY_SIMULATION`（测试环境模拟）可在“测试明确验证失败路径”时满足 evidence（证据）的例外。`TEST_ONLY_SIMULATION` 与 `PROVIDER_UNAVAILABLE`（模型供应商不可用）、`DETERMINISTIC_GOVERNANCE_DRAFT`（确定性治理草案）一样，不能满足 implementation evidence（实施证据）、diagnostic evidence（诊断证据）或 deterministic evidence（确定性证据）。
+
+### 理由
+
+上一版系统失败的核心风险之一是 fallback kind（降级类型）本身隐式承载了成功语义。failure-path validation（失败路径验证）必须通过 contract-declared deterministic transform（合同声明的确定性转换）显式表达，并受 `RequiredArtifactType`（必需产物类型）与 `AcceptanceRef`（验收引用）scope（作用域）约束。
+
+### 影响
+
+- `TEST_ONLY_SIMULATION` 只能作为测试环境中的场景标签，不具备证据资格。
+- V2-050 `EvidenceVerifier`（证据验证器）处理 fallback artifact（降级产物）时，必须先解析 `fallback_policy_ref`（降级策略引用）得到 `FallbackPolicy`（降级策略）并调用 `evaluate_fallback_evidence`（降级证据判定函数）；若 registry（注册表）尚未提供可解析 policy，必须 fail closed（失败关闭）。
+

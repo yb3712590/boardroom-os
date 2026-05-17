@@ -92,8 +92,8 @@ Fallback 必须显式分类。
 | `DETERMINISTIC_GOVERNANCE_DRAFT` | 本地生成治理草案 | 否 |
 | `TOOLING_PREFLIGHT` | 工具预检 | 否 |
 | `PROVIDER_UNAVAILABLE` | provider 不可用时记录失败事实 | 否 |
-| `TEST_ONLY_SIMULATION` | 测试环境模拟 | 否，除非测试明确验证失败路径 |
-| `CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM` | 合同允许的 deterministic transform，例如 hash manifest | 仅限该 transform 的 evidence |
+| `TEST_ONLY_SIMULATION` | 测试环境模拟 | 否；不再保留测试失败路径例外，见 DEC-0014 |
+| `CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM` | 合同允许的 deterministic transform，例如 hash manifest | 仅限该 transform 的 deterministic evidence |
 
 ## Command Runner
 

@@ -6,6 +6,14 @@ from boardroom_os.execution.compiler import (
     ExecutionPackageCompilerInput,
     ExecutionWorkspaceContext,
 )
+from boardroom_os.execution.fallback import (
+    EvidencePurpose,
+    FallbackEvidenceDecision,
+    FallbackEvidenceRequest,
+    FallbackKind,
+    FallbackPolicy,
+    evaluate_fallback_evidence,
+)
 from boardroom_os.execution.package import (
     AllowedReadRef,
     AllowedWritePath,
@@ -23,6 +31,7 @@ __all__ = [
     "AllowedWritePath",
     "AuditRequirement",
     "ContextRef",
+    "EvidencePurpose",
     "ExecutionPackage",
     "ExecutionPackageCompiler",
     "ExecutionPackageCompilerError",
@@ -30,6 +39,11 @@ __all__ = [
     "ExecutionPackageId",
     "ExecutionPackageRef",
     "ExecutionWorkspaceContext",
+    "FallbackEvidenceDecision",
+    "FallbackEvidenceRequest",
+    "FallbackKind",
+    "FallbackPolicy",
     "FallbackPolicyRef",
     "RequiredOutput",
+    "evaluate_fallback_evidence",
 ]

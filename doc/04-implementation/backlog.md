@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030E`
+**当前未完成工作包**：`V2-030F`
 
-**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030E fallback policy 分类（降级策略分类）。
+**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030F agent context index（智能体上下文索引）草稿。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +151,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 4 / 6 | 进行中 |
+| Phase 3：Agent + Execution Package | V2-030 | 5 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **21 / 52** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **22 / 52** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -460,7 +460,7 @@ RoleProfile（角色模板）
 
 ### V2-030E: 实现 fallback policy 分类
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 fallback 明确分类，防止 fallback 被误当 implementation evidence。
 - 输入文档：`execution-and-runtime-boundary.md`。
 - 依赖：V2-030D。
@@ -468,6 +468,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：`PROVIDER_UNAVAILABLE`、`TEST_ONLY_SIMULATION`、`DETERMINISTIC_GOVERNANCE_DRAFT` 满足 implementation evidence 必须失败。
 - 必须证明的 happy path：`CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM` 只能满足合同显式允许的 deterministic evidence。
 - 验收口径：旧系统 fallback success 不可复活。
+- 完成证据：2026-05-17 新增 EvidencePurpose（证据用途）、FallbackPolicy（降级策略）、FallbackKind（降级类型）、FallbackEvidenceRequest（降级证据请求）、FallbackEvidenceDecision（降级证据判定）和 evaluate_fallback_evidence（降级证据判定函数），复用 FallbackPolicyRef（降级策略引用）、RequiredArtifactType（必需产物类型）和 AcceptanceRef（验收引用）；负例证明 PROVIDER_UNAVAILABLE、TEST_ONLY_SIMULATION、DETERMINISTIC_GOVERNANCE_DRAFT、TOOLING_PREFLIGHT 以及越界 CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM 均不能满足 implementation evidence（实施证据）；正例证明合同显式允许的 deterministic transform（确定性转换）只能满足窄范围 deterministic evidence（确定性证据），tooling preflight（工具预检）只能满足 diagnostic evidence（诊断证据）。验证命令：`PYTHONPATH=src pytest tests/negative/test_fallback_cannot_satisfy_implementation.py tests/execution/test_fallback_policy.py -q` 通过（22 passed）；`PYTHONPATH="src;." pytest tests/execution tests/negative -q` 通过（201 passed）。
 
 ### V2-030F: 生成 agent context index 草稿
 
