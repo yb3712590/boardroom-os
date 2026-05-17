@@ -221,7 +221,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### AC 检查清单
 
 - [x] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_ref / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy_ref 必须失败；只传 ticket_id alias 或 model_execution_profile_ref 也必须失败
-- [x] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— 由 V2-030E `test_fallback_cannot_satisfy_implementation.py` 证明：PROVIDER_UNAVAILABLE / TEST_ONLY_SIMULATION / DETERMINISTIC_GOVERNANCE_DRAFT / TOOLING_PREFLIGHT / 越界 deterministic transform 均不能满足 implementation evidence；合同显式允许的 deterministic transform 只能满足窄范围 deterministic evidence；EvidencePurpose.IMPLEMENTATION 覆盖 source / integration / acceptance / closeout 四类 evidence
+- [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— V2-030E `test_fallback_cannot_satisfy_implementation.py` 已提供 typed evaluator（类型化判定器）与真值表负例；待 V2-050A1 / V2-050B 证明 EvidenceVerifier（证据验证器）实际解析 fallback_policy_ref、调用 evaluator、记录 fallback decision，并拒绝 allowed=False 或 registry 缺失的 fallback artifact 后勾选
 - [x] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界；V2-030B 已证明 AgentSeat 生命周期与派工投影；V2-030D 已证明 AgentTeamProjector 单一治理投影入口与 ExecutionPackage compiler 严格消费已派工 ready ticket，闭合 AgentSeat -> ExecutionPackage 链路（见 DEC-0011 / DEC-0013）
 - [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
 - [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
@@ -273,19 +273,19 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [ ] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D 证明
 - [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
 - [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明：正式 evidence/checker 模型不得绕过 `WORK_PRODUCT_SUBMITTED` 与 provider attempt 门禁
-- [ ] V2-050A ~ V2-050F 六个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 5 显示 6/6
+- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1）
+- [ ] `backlog.md` 进度总览 Phase 5 显示 7/7
 
 #### 本批产出
 
-- 代码：`src/boardroom_os/evidence/{claim,verifier,table}.py`、`src/boardroom_os/checker/{verdict,checker,rework}.py`、`src/boardroom_os/reducers/completion_gate.py`
+- 代码：`src/boardroom_os/evidence/{claim,fallback_registry,verifier,table}.py`、`src/boardroom_os/checker/{verdict,checker,rework}.py`、`src/boardroom_os/reducers/completion_gate.py`
 - 测试：`tests/evidence/`、`tests/reducers/test_completion_gate_with_evidence.py`、相应 negative 测试
 - 文档同步：本文件 Phase 5 checkbox 全勾选
 
 #### 进入 Phase 6 前置
 
 - [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-050A ~ V2-050F 状态全部 DONE
+- [ ] V2-050A ~ V2-050F 状态全部 DONE（含 V2-050A1）
 - [ ] FinalEvidenceTable schema 稳定（V2-060 / V2-070 会消费）
 
 ### Phase 6 验收 — V2-060 Workspace + Package Assembler

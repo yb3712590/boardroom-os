@@ -153,11 +153,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 5 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
-| Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
+| Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **22 / 52** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **22 / 53** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -563,20 +563,31 @@ RoleProfile（角色模板）
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-040C、V2-040D。
 - 输出文件：`src/boardroom_os/evidence/claim.py`、`tests/evidence/test_evidence_claim.py`。
-- 必须先写的 negative tests：claim 缺 producer_attempt_ref、acceptance_refs、source_surface_refs、artifact_refs 必须失败。
-- 必须证明的 happy path：WorkProduct 和 VerificationRun 可生成 EvidenceClaim。
-- 验收口径：claim 不是 verified evidence。
+- 必须先写的 negative tests：claim 缺 producer_attempt_ref、acceptance_refs、source_surface_refs、artifact_refs、expected_purpose（证据预期用途）必须失败；fallback claim 缺 typed fallback marker（类型化降级标记）必须失败。
+- 必须证明的 happy path：WorkProduct 和 VerificationRun 可生成 EvidenceClaim；claim 的 expected_purpose 由 EvidenceObligation（证据义务）派生，verifier 不得自由选择 purpose。
+- 验收口径：claim 不是 verified evidence；EvidencePurpose（证据用途）必须在 claim/obligation 链路中被类型化表达，避免把 implementation artifact 错判为 deterministic evidence。
+
+### V2-050A1: 实现 FallbackPolicyRegistry 与 fallback lineage 标记
+
+- 状态：TODO
+- 目标：把 `fallback_policy_ref` 解析为唯一权威 FallbackPolicy（降级策略），并让 fallback lineage（降级来源链）成为 verifier 可见的 typed fact（类型化事实）。
+- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0014）。
+- 依赖：V2-030E、V2-040A、V2-040C、V2-050A。
+- 输出文件：`src/boardroom_os/evidence/fallback_registry.py`、`tests/evidence/test_fallback_policy_registry.py`、`tests/negative/test_fallback_registry_fail_closed.py`。
+- 必须先写的 negative tests：fallback_policy_ref 无法解析、ref 解析出的 FallbackKind 与 provider/work product fallback marker 不一致、registry 缺位、fallback artifact 缺 typed fallback marker、将 TEST_ONLY_SIMULATION / PROVIDER_UNAVAILABLE / DETERMINISTIC_GOVERNANCE_DRAFT 注册为可满足 evidence、按 acceptance_ref 拆分调用 evaluator 均必须失败。
+- 必须证明的 happy path：registry 可把合法 fallback_policy_ref 解析为 FallbackPolicy；每个 fallback work product 以完整 acceptance_refs 一次性调用 evaluate_fallback_evidence 并生成可审计 decision。
+- 验收口径：fallback ref -> policy 的解析只有 registry 一个权威入口；registry 落地前 V2-050 对任何 fallback artifact 必须 fail closed。
 
 ### V2-050B: 实现 artifact/hash/provider/command evidence verifier
 
 - 状态：TODO
-- 目标：验证 artifact 存在性、hash 稳定性、producer attempt、command run 和 active contract refs。
+- 目标：验证 artifact 存在性、hash 稳定性、producer attempt、command run、active contract refs 和 fallback decision（降级判定）。
 - 输入文档：`contract-and-evidence-model.md`。
-- 依赖：V2-050A。
+- 依赖：V2-050A、V2-050A1。
 - 输出文件：`src/boardroom_os/evidence/verifier.py`、`tests/evidence/test_evidence_verifier.py`、`tests/negative/test_synthetic_evidence_rejected.py`。
-- 必须先写的 negative tests：synthetic verification、provider zero-attempt、artifact 缺 hash、acceptance_ref 不属于 active contract 必须失败。
-- 必须证明的 happy path：真实 runner 记录 + provider attempt + artifact hash 可转为 verified evidence。
-- 验收口径：verified evidence table 不能由 claim 直接替代。
+- 必须先写的 negative tests：synthetic verification、provider zero-attempt、artifact 缺 hash、acceptance_ref 不属于 active contract、fallback artifact 未解析 registry、未调用 evaluate_fallback_evidence、缺 FALLBACK_DECISION_RECORDED、decision allowed=False 却进入 verified evidence、EvidencePurpose 与 RequiredArtifactType 不匹配必须失败。
+- 必须证明的 happy path：真实 runner 记录 + provider attempt + artifact hash 可转为 verified evidence；合同显式允许的 deterministic fallback artifact 必须带 allowed=True 的 fallback decision 才可转为 verified evidence。
+- 验收口径：verified evidence table 不能由 claim 直接替代；AC-V2-EXECUTION-003 只能在 verifier 实际执行 fallback gate 并记录 decision 后勾选。
 
 ### V2-050C: 实现 FinalEvidenceTable
 
@@ -615,12 +626,12 @@ RoleProfile（角色模板）
 
 - 状态：TODO
 - 目标：把 verified evidence + checker verdict 接入 reducer 的 ticket completion gate。
-- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0011）。
+- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0011 / DEC-0014）。
 - 依赖：V2-050E、V2-020D。
 - 输出文件：`src/boardroom_os/reducers/completion_gate.py`、`tests/reducers/test_completion_gate_with_evidence.py`。
-- 必须先写的 negative tests：checker approved 但 evidence table missing、evidence complete 但 checker blocker、attempt count 为 0、缺 `WORK_PRODUCT_SUBMITTED` 历史事实必须阻断 completion。
-- 必须证明的 happy path：evidence complete + checker approved + provider attempts recorded + work product submitted 时 reducer 可完成 ticket。
-- 验收口径：ticket completion 不由 runtime 或 checker 单独决定；V2-050F 只能适配正式 evidence/checker 模型到既有 completion boundary，不能绕过 work product 或 provider attempt 门禁。
+- 必须先写的 negative tests：checker approved 但 evidence table missing、evidence complete 但 checker blocker、attempt count 为 0、缺 `WORK_PRODUCT_SUBMITTED` 历史事实、任一 verified evidence 关联的 fallback decision allowed=False、缺 `FALLBACK_DECISION_RECORDED` lineage 必须阻断 completion。
+- 必须证明的 happy path：evidence complete + checker approved + provider attempts recorded + work product submitted + fallback decisions all allowed 时 reducer 可完成 ticket。
+- 验收口径：ticket completion 不由 runtime 或 checker 单独决定；V2-050F 只能适配正式 evidence/checker 模型到既有 completion boundary，不能绕过 work product、provider attempt 或 fallback decision 门禁。
 
 ---
 
@@ -756,6 +767,7 @@ RoleProfile（角色模板）
   - `decision-log.md` 缺 CEO / human board 决策必须失败
   - `agent-context-index.json` 缺 `execution_package_ref` / `model_execution_profile` / `provider_attempt_ref` 必须失败
   - `artifact-lineage.json` 不能完整表达 `producer attempt -> artifact -> consumer ticket -> evidence claim -> verifier -> closeout` 链必须失败
+  - fallback artifact 缺 `fallback decision -> verifier -> evidence map -> closeout` lineage 必须失败
   - `evidence-map.json` 与 final evidence table 不一致必须失败
   - `git-version-audit.md` 缺 final commit / dirty status / source inventory hash 必须失败
 - 必须证明的 happy path：audit 能回答"谁做了什么决策、agent 收到什么上下文、哪些 evidence 满足哪些 acceptance、最终 git 状态是什么、replay 是否可重建"。10 项产物全部存在且互相一致。

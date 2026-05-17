@@ -48,25 +48,35 @@ def _request(purpose: EvidencePurpose) -> FallbackEvidenceRequest:
 
 
 @pytest.mark.parametrize("kind", ALWAYS_BLOCKED_FALLBACK_KINDS)
-def test_always_blocked_fallback_kinds_cannot_satisfy_implementation_evidence(
+@pytest.mark.parametrize(
+    "purpose",
+    (
+        EvidencePurpose.IMPLEMENTATION,
+        EvidencePurpose.DIAGNOSTIC,
+        EvidencePurpose.DETERMINISTIC,
+    ),
+)
+def test_always_blocked_fallback_kinds_cannot_satisfy_any_evidence_purpose(
     kind: FallbackKind,
+    purpose: EvidencePurpose,
 ) -> None:
     policy = _policy(kind)
 
     decision = evaluate_fallback_evidence(
         policy=policy,
-        request=_request(EvidencePurpose.IMPLEMENTATION),
+        request=_request(purpose),
     )
+
+    expected_reasons = [f"fallback kind cannot satisfy evidence: {kind.value}"]
+    if purpose is EvidencePurpose.IMPLEMENTATION:
+        expected_reasons.insert(0, "implementation evidence cannot be satisfied by fallback")
 
     assert decision == FallbackEvidenceDecision(
         fallback_policy_ref=policy.fallback_policy_ref,
         applied_kind=kind,
-        evaluated_purpose=EvidencePurpose.IMPLEMENTATION,
+        evaluated_purpose=purpose,
         allowed=False,
-        blocking_reasons=(
-            "implementation evidence cannot be satisfied by fallback",
-            f"fallback kind cannot satisfy evidence: {kind.value}",
-        ),
+        blocking_reasons=tuple(expected_reasons),
     )
 
 
@@ -88,18 +98,35 @@ def test_tooling_preflight_cannot_satisfy_implementation_evidence() -> None:
     )
 
 
-def test_contract_deterministic_transform_cannot_satisfy_implementation_purpose() -> None:
+@pytest.mark.parametrize(
+    "purpose,expected_reason",
+    (
+        (
+            EvidencePurpose.IMPLEMENTATION,
+            "implementation evidence cannot be satisfied by fallback",
+        ),
+        (
+            EvidencePurpose.DIAGNOSTIC,
+            "deterministic transform can satisfy only deterministic evidence",
+        ),
+    ),
+)
+def test_contract_deterministic_transform_cannot_satisfy_non_deterministic_purpose(
+    purpose: EvidencePurpose,
+    expected_reason: str,
+) -> None:
     decision = evaluate_fallback_evidence(
         policy=_policy(FallbackKind.CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM),
-        request=_request(EvidencePurpose.IMPLEMENTATION),
+        request=_request(purpose),
     )
 
     assert decision.allowed is False
     assert decision.fallback_policy_ref == FallbackPolicyRef(value="fallback.hash-manifest")
     assert decision.applied_kind is FallbackKind.CONTRACT_ALLOWED_DETERMINISTIC_TRANSFORM
-    assert decision.evaluated_purpose is EvidencePurpose.IMPLEMENTATION
-    assert "implementation evidence cannot be satisfied by fallback" in decision.blocking_reasons
-    assert "deterministic transform can satisfy only deterministic evidence" in decision.blocking_reasons
+    assert decision.evaluated_purpose is purpose
+    assert expected_reason in decision.blocking_reasons
+    if purpose is EvidencePurpose.IMPLEMENTATION:
+        assert "deterministic transform can satisfy only deterministic evidence" in decision.blocking_reasons
 
 
 def test_contract_deterministic_transform_requires_allowed_artifact_type_scope() -> None:

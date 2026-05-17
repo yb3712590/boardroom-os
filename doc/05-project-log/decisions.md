@@ -232,4 +232,9 @@ V2-030E 不保留 `TEST_ONLY_SIMULATION`（测试环境模拟）可在“测试�
 
 - `TEST_ONLY_SIMULATION` 只能作为测试环境中的场景标签，不具备证据资格。
 - V2-050 `EvidenceVerifier`（证据验证器）处理 fallback artifact（降级产物）时，必须先解析 `fallback_policy_ref`（降级策略引用）得到 `FallbackPolicy`（降级策略）并调用 `evaluate_fallback_evidence`（降级证据判定函数）；若 registry（注册表）尚未提供可解析 policy，必须 fail closed（失败关闭）。
+- V2-040A ProviderAttempt（模型调用尝试记录）与 V2-040C WorkProduct（工作产物）必须携带 typed fallback marker（类型化降级标记）或等价 outcome（结果）字段；缺 marker 时，V2-050 不得把任何 fallback artifact 转为 verified evidence（已验证证据）。
+- V2-050A EvidenceClaim（证据声明）或 EvidenceObligation（证据义务）必须携带 expected_purpose（预期证据用途），verifier 不得自由选择 EvidencePurpose（证据用途）。
+- 每个 fallback work product 必须以其完整 acceptance_refs（验收引用）一次性调用 `evaluate_fallback_evidence`，禁止按单个 acceptance_ref 拆分调用规避 scope（作用域）校验。
+- `TOOLING_PREFLIGHT`（工具预检）即使满足 diagnostic evidence（诊断证据），也不得计入 FinalEvidenceTable（最终证据表）的 blocking criteria（阻塞验收项）。
+- V2-050F completion gate（完成门禁）必须阻断任何关联 allowed=False fallback decision 的 evidence；V2-070C process audit（流程审计）必须能追踪 fallback decision lineage（降级判定来源链）。
 

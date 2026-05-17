@@ -57,7 +57,7 @@ allowed_write_set:
 required_outputs:
 commands:
 evidence_obligations:
-fallback_policy:
+fallback_policy_ref:
 audit_requirements:
 ```
 
