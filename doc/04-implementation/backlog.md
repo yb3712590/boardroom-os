@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-040B`
+**当前未完成工作包**：`V2-040C`
 
-**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040B provider executor boundary（模型供应商执行器边界），确保 runtime（运行时）只能通过 ExecutionPackage（执行包）调用 provider（模型供应商）。
+**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040C WorkProduct（工作产物）解析和提交事件，把 provider raw output（模型原始输出）转成绑定 producer attempt（生产者尝试）的 work product fact（工作产物事实）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
@@ -154,12 +154,12 @@ RoleProfile（角色模板）
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
-| Phase 4：Runtime + Provider + Runner | V2-040 | 1 / 5 | 进行中 |
+| Phase 4：Runtime + Provider + Runner | V2-040 | 2 / 5 | 进行中 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **24 / 53** | **Phase 4 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **25 / 53** | **Phase 4 进行中** |
 
 ## 当前约束摘要
 
@@ -508,14 +508,15 @@ RoleProfile（角色模板）
 
 ### V2-040B: 实现 provider executor boundary
 
-- 状态：TODO
+- 状态：DONE
 - 目标：runtime 通过 ExecutionPackage 调用 provider，不能直接从 role 或 ticket 调用 provider。
 - 输入文档：`execution-and-runtime-boundary.md`。
 - 依赖：V2-040A。
-- 输出文件：`src/boardroom_os/execution/provider_executor.py`、`tests/execution/test_provider_executor.py`、`tests/negative/test_provider_executor_requires_execution_package.py`。
-- 必须先写的 negative tests：缺 execution package、package 缺 model_execution_profile、seat/provider 不匹配时不得调用 provider。
-- 必须证明的 happy path：合法 execution package 调用 fake provider 并记录 attempt。
+- 输出文件：`src/boardroom_os/execution/provider_executor.py`、`tests/execution/test_provider_executor.py`、`tests/negative/test_provider_executor_fail_closed.py`。
+- 必须先写的 negative tests：缺 execution package、RoleProfile / TicketNode shortcut、provider attempt 错绑 input_package_ref / seat_ref / provider / model / reasoning_effort 时不得调用或不得放行 provider 结果。
+- 必须证明的 happy path：合法 execution package 调用 fake provider 并记录 attempt；failed attempt 作为可审计事实返回。
 - 验收口径：role/provider 接入路径闭合：RoleProfile -> AgentSeat -> ModelExecutionProfile -> ExecutionPackage -> ProviderAttempt。
+- 完成证据：2026-05-18 新增 ProviderExecutor（模型供应商执行器）、ProviderExecutorInput（模型供应商执行器输入）、ProviderExecutorResult（模型供应商执行器结果）、ProviderExecutorError（模型供应商执行器错误）和 render_prompt_from_snapshot（从快照渲染提示词函数）；ProviderExecutor 只能消费 ExecutionPackage（执行包），调用 build_agent_context_snapshot（构建上下文快照函数）生成 AgentContextSnapshot（智能体上下文快照），由 snapshot 纯派生 ProviderRequest.prompt（模型供应商请求提示词），调用 ProviderAdapter（模型供应商适配器）后校验 ProviderAttempt（模型调用尝试记录）与 snapshot 的 execution_package_ref / seat_ref / provider / model / reasoning_effort 一致。TDD 证据：先运行 `PYTHONPATH=src pytest tests/negative/test_provider_executor_fail_closed.py::test_provider_executor_input_requires_execution_package tests/negative/test_provider_executor_fail_closed.py::test_provider_executor_input_rejects_extra_role_or_ticket_fields -q` 得到预期 RED（缺 `boardroom_os.execution.provider_executor` 模块）；prompt / executor 正例也先得到缺 `render_prompt_from_snapshot` / `ProviderExecutor` 的预期 RED。负例证明缺 ExecutionPackage、RoleProfile / TicketNode shortcut（角色模板/任务节点捷径）、错绑 input_package_ref / seat_ref / provider / model / reasoning_effort 均 fail closed；正例证明合法 ExecutionPackage 可通过 FakeProviderTransport（模拟传输）产生 succeeded ProviderAttempt，failed ProviderAttempt 会作为事实返回而不是抛错，prompt 可由 snapshot 确定性重算。验证命令：`PYTHONPATH="src;." pytest tests/execution/test_provider_attempt.py tests/execution/test_agent_context_index.py tests/execution/test_provider_executor.py tests/negative/test_provider_executor_fail_closed.py -q` 通过（82 passed）；`PYTHONPATH="src;." pytest tests/execution tests/negative -q` 通过（290 passed）。
 
 ### V2-040C: 实现 WorkProduct 解析和提交事件
 

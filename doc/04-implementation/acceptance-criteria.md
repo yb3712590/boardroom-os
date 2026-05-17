@@ -248,7 +248,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### AC 检查清单
 
 - [x] AC-V2-EXECUTION-002（provider attempt required）— 由 V2-040A `test_provider_attempt.py` 证明：attempt 缺 provider / model / input_package_ref / seat_ref / status / outcome 必须失败；fallback outcome 缺 typed fallback_kind 或 primary outcome 携带 fallback_kind 必须失败；FakeProviderTransport 可产生绑定 ExecutionPackageRef / AgentSeatRef 的 ProviderAttempt
-- [ ] Provider executor boundary — 由 V2-040B `test_provider_executor_requires_execution_package.py` 证明：缺 execution package 不得调用 provider
+- [x] Provider executor boundary — 由 V2-040B `test_provider_executor_fail_closed.py` + `test_provider_executor.py` 证明：缺 execution package 不得调用 provider；RoleProfile / TicketNode shortcut 不能绕过 ExecutionPackage；adapter 回填错绑 ProviderAttempt 必须 fail closed；合法 ExecutionPackage 可调用 fake provider 并记录 attempt；failed attempt 作为可审计事实返回
 - [ ] AC-V2-EVIDENCE-001（command evidence from runner）— 由 V2-040D `test_command_runner.py` 证明：合成 verification success / 命令不在 package contract 中必须失败
 - [ ] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / `PROJECT_COMPLETED` / `CLOSEOUT_COMMITTED` 必须失败；runtime/executor 不能靠普通 seat actor_ref 绕过 role-aware 边界（见 DEC-0011）
 - [ ] V2-040A ~ V2-040E 五个工作包全部 DONE

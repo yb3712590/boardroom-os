@@ -34,6 +34,13 @@ from boardroom_os.execution.package import (
     FallbackPolicyRef,
     RequiredOutput,
 )
+from boardroom_os.execution.provider_executor import (
+    ProviderExecutor,
+    ProviderExecutorError,
+    ProviderExecutorInput,
+    ProviderExecutorResult,
+    render_prompt_from_snapshot,
+)
 
 __all__ = [
     "AgentContextIndex",
@@ -59,7 +66,12 @@ __all__ = [
     "FallbackPolicy",
     "FallbackPolicyRef",
     "ProviderAttemptRef",
+    "ProviderExecutor",
+    "ProviderExecutorError",
+    "ProviderExecutorInput",
+    "ProviderExecutorResult",
     "RequiredOutput",
     "build_agent_context_snapshot",
     "evaluate_fallback_evidence",
+    "render_prompt_from_snapshot",
 ]
