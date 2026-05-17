@@ -2,7 +2,12 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from boardroom_os.agents.seat import AgentSeat, AgentSeatRef, SeatLifecycleProjection
+from boardroom_os.agents.seat import (
+    AgentSeat,
+    AgentSeatRef,
+    SeatLifecycleProjection,
+    seat_demand_blockers,
+)
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import EventPayloadRef, EventType
 from boardroom_os.graph.projection import TicketGraphProjector
@@ -192,22 +197,4 @@ class SeatAssignmentProjector:
                 f"team composition gap: inactive or unknown seat: {payload.seat_ref.value}",
             )
 
-        demand = ticket.seat_demand
-        if seat.role_category is not demand.required_role_category:
-            return (
-                "team composition gap: role category mismatch: "
-                f"{seat.role_category.value} != {demand.required_role_category.value}",
-            )
-
-        missing_capability_tags = tuple(
-            capability_tag.value
-            for capability_tag in demand.required_capability_tags
-            if capability_tag not in seat.capability_tags
-        )
-        if missing_capability_tags:
-            return (
-                "team composition gap: missing capability tags: "
-                + ", ".join(missing_capability_tags),
-            )
-
-        return ()
+        return seat_demand_blockers(seat=seat, demand=ticket.seat_demand)

@@ -362,6 +362,43 @@ def test_policy_rejects_checker_worker_same_role_category() -> None:
         policy.require_independent_checker(worker_seat.seat_ref, checker_seat.seat_ref)
 
 
+def test_seat_demand_blockers_reports_role_category_mismatch() -> None:
+    seat = _active_backend_worker_seat()
+    demand = seat_module.SeatDemand(
+        required_role_category=RoleCategory.VERIFICATION,
+        required_capability_tags=(CapabilityTag(value="quality.verification"),),
+    )
+
+    assert seat_module.seat_demand_blockers(seat=seat, demand=demand) == (
+        "team composition gap: role category mismatch: implementation != verification",
+    )
+
+
+def test_seat_demand_blockers_reports_missing_capabilities() -> None:
+    seat = _active_backend_worker_seat()
+    demand = seat_module.SeatDemand(
+        required_role_category=RoleCategory.IMPLEMENTATION,
+        required_capability_tags=(
+            CapabilityTag(value="surface.frontend"),
+            CapabilityTag(value="task.implementation"),
+        ),
+    )
+
+    assert seat_module.seat_demand_blockers(seat=seat, demand=demand) == (
+        "team composition gap: missing capability tags: surface.frontend",
+    )
+
+
+def test_seat_demand_blockers_accepts_matching_seat() -> None:
+    seat = _active_backend_worker_seat()
+    demand = seat_module.SeatDemand(
+        required_role_category=RoleCategory.IMPLEMENTATION,
+        required_capability_tags=(CapabilityTag(value="surface.backend"),),
+    )
+
+    assert seat_module.seat_demand_blockers(seat=seat, demand=demand) == ()
+
+
 def test_policy_rejects_same_seat_for_worker_and_checker() -> None:
     worker_seat = _active_backend_worker_seat()
     policy = policy_module.SeatPolicy(active_seats={worker_seat.seat_ref: worker_seat})

@@ -1,5 +1,11 @@
 """Execution package and runtime input snapshot models."""
 
+from boardroom_os.execution.compiler import (
+    ExecutionPackageCompiler,
+    ExecutionPackageCompilerError,
+    ExecutionPackageCompilerInput,
+    ExecutionWorkspaceContext,
+)
 from boardroom_os.execution.package import (
     AllowedReadRef,
     AllowedWritePath,
@@ -18,8 +24,12 @@ __all__ = [
     "AuditRequirement",
     "ContextRef",
     "ExecutionPackage",
+    "ExecutionPackageCompiler",
+    "ExecutionPackageCompilerError",
+    "ExecutionPackageCompilerInput",
     "ExecutionPackageId",
     "ExecutionPackageRef",
+    "ExecutionWorkspaceContext",
     "FallbackPolicyRef",
     "RequiredOutput",
 ]

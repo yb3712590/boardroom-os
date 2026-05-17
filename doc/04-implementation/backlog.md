@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030D`
+**当前未完成工作包**：`V2-030E`
 
-**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030D ExecutionPackage compiler（执行包编译器）。
+**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030E fallback policy 分类（降级策略分类）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +151,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 3 / 6 | 进行中 |
+| Phase 3：Agent + Execution Package | V2-030 | 4 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **20 / 52** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **21 / 52** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -447,15 +447,16 @@ RoleProfile（角色模板）
 
 ### V2-030D: 实现 ExecutionPackage compiler
 
-- 状态：TODO
+- 状态：DONE
 - 目标：从 ready ticket、active contracts、workspace manifest 和 seat assignment 编译执行包。
 - 输入文档：`technical-architecture.md`、`generated-project-workspace.md`。
 - 依赖：V2-030C。
-- 输出文件：`src/boardroom_os/execution/compiler.py`、`tests/execution/test_execution_package_compiler.py`。
+- 输出文件：`src/boardroom_os/agents/team.py`、`src/boardroom_os/execution/compiler.py`、`tests/negative/test_agent_team_projector_fail_closed.py`、`tests/execution/test_agent_team_projector.py`、`tests/negative/test_execution_package_compiler_fail_closed.py`、`tests/execution/test_execution_package_compiler.py`。
 - 必须先写的 negative tests：ticket not ready、acceptance_ref 不属于 active contract、write set 超出 source surface、seat capability 不匹配必须失败。
 - 必须证明的 happy path：tiny backend worker ticket 能编译出含 commands、context_refs、allowed_write_set、evidence_obligations 的 package。
 - 前置架构约束：V2-030D 必须先引入 AgentTeamProjector（智能体团队投影器）或等价单一编排入口，按 graph_version 交织消费 RoleProfile change facts（角色模板变更事实）与 Seat lifecycle facts（席位生命周期事实），再把稳定 projection（投影）交给 ExecutionPackage compiler；compiler 不得分别调用 RoleProfileProjection.apply_changes 与 SeatLifecycleProjector.project 后自行拼接治理状态。
 - 验收口径：V2-040 runtime 只消费执行包，不重新解释治理状态。
+- 完成证据：2026-05-17 新增 AgentTeamProjector（智能体团队投影器）作为 role profile change facts（角色模板变更事实）与 seat lifecycle facts（席位生命周期事实）的单一 graph_version 编排入口，并新增 ExecutionPackageCompiler（执行包编译器）从 ready ticket（就绪任务）、active AcceptanceContract（活跃验收合同）、PackageContract（包合同）、ExecutionWorkspaceContext（执行工作区上下文）、SeatAssignmentGraph（席位分配图）和 AgentTeamProjection（智能体团队投影）编译 ExecutionPackage（执行包）。负例覆盖 graph_version mismatch、缺 bootstrap/重复 bootstrap、role/seat payload 缺口、缺派工、inactive/unknown seat、capability mismatch、inactive contract、acceptance/source/evidence/command/model/role 缺口、unsafe write path 和 evidence_required 不匹配；正例证明 backend worker ticket 可编译出含 commands、context_refs、allowed_write_set、evidence_obligations、fallback_policy_ref 的 ExecutionPackage。验证命令：`PYTHONPATH="src;." pytest tests/negative/test_agent_team_projector_fail_closed.py tests/execution/test_agent_team_projector.py tests/negative/test_execution_package_compiler_fail_closed.py tests/execution/test_execution_package_compiler.py -q` 通过（44 passed）；`PYTHONPATH="src;." pytest tests/execution/test_execution_package_schema.py tests/execution/test_agent_profiles.py tests/execution/test_agent_seat_policy.py tests/reducers/test_seat_assignment_projection.py tests/reducers/test_projection_replay.py -q` 通过（71 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/execution tests/negative -q` 通过（325 passed）。
 
 ### V2-030E: 实现 fallback policy 分类
 

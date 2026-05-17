@@ -30,10 +30,21 @@ from boardroom_os.agents.seat import (
     SeatLifecycleProjector,
     SeatLifecycleStatus,
 )
+from boardroom_os.agents.team import (
+    AgentTeamPayloadResolver,
+    AgentTeamProjection,
+    AgentTeamProjectionError,
+    AgentTeamProjector,
+    RoleProfileChangeProjector,
+)
 
 __all__ = [
     "AgentSeat",
     "AgentSeatRef",
+    "AgentTeamPayloadResolver",
+    "AgentTeamProjection",
+    "AgentTeamProjectionError",
+    "AgentTeamProjector",
     "BootstrapGovernanceAuthority",
     "GovernanceAuthorityProjection",
     "GovernanceAuthorityProjector",
@@ -44,6 +55,7 @@ __all__ = [
     "RoleProfile",
     "RoleProfileChange",
     "RoleProfileChangeAction",
+    "RoleProfileChangeProjector",
     "RoleProfileProjection",
     "RoleProfileRegistry",
     "SeatDemand",

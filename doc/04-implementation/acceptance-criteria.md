@@ -222,7 +222,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [x] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_ref / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy_ref 必须失败；只传 ticket_id alias 或 model_execution_profile_ref 也必须失败
 - [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— 由 V2-030E `test_fallback_cannot_satisfy_implementation.py` 证明
-- [ ] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界：role 不含 provider credential，provider 通过 ModelExecutionProfile 接入，capability tags 受 CapabilityRegistry 约束；V2-030B 已证明 AgentSeat 生命周期可审计、active seats 可由事件投影、TicketCreatedPayload 使用 seat_demand、SeatAssignmentProjector 消费 active AgentSeat projection 且不依赖 SeatDefinition 快照；V2-030D 继续证明 AgentSeat → ExecutionPackage 链路闭合（见 DEC-0011）
+- [x] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界；V2-030B 已证明 AgentSeat 生命周期与派工投影；V2-030D 已证明 AgentTeamProjector 单一治理投影入口与 ExecutionPackage compiler 严格消费已派工 ready ticket，闭合 AgentSeat -> ExecutionPackage 链路（见 DEC-0011 / DEC-0013）
 - [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
 - [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
 - [ ] `backlog.md` 进度总览 Phase 3 显示 6/6

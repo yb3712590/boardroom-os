@@ -77,6 +77,27 @@ class SeatDemand(BaseModel):
         return values
 
 
+def seat_demand_blockers(*, seat: "AgentSeat", demand: SeatDemand) -> tuple[str, ...]:
+    if seat.role_category is not demand.required_role_category:
+        return (
+            "team composition gap: role category mismatch: "
+            f"{seat.role_category.value} != {demand.required_role_category.value}",
+        )
+
+    missing_capability_tags = tuple(
+        capability_tag.value
+        for capability_tag in demand.required_capability_tags
+        if capability_tag not in seat.capability_tags
+    )
+    if missing_capability_tags:
+        return (
+            "team composition gap: missing capability tags: "
+            + ", ".join(missing_capability_tags),
+        )
+
+    return ()
+
+
 class AgentSeat(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
