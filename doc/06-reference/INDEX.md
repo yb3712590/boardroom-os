@@ -10,13 +10,15 @@
 |---|---|
 | `audit-summary.md` | 外部审计短版结论 |
 | `legacy-boundary.md` | 旧实现使用边界 |
+| `v2-030-phase-audit.md` | V2-030 阶段审计：PRD 一致性与延期风险登记 |
 
 ## 推荐阅读顺序
 
 1. `legacy-boundary.md`
 2. `audit-summary.md`
+3. `v2-030-phase-audit.md`
 
 ## 更新触发条件
 
-当旧实现边界、forensic policy 或审计结论摘要变化时，必须更新本目录。
+当旧实现边界、forensic policy、审计结论摘要或阶段性审计结论变化时，必须更新本目录。
 

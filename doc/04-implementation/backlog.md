@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-040A`
+**当前未完成工作包**：`V2-040B`
 
-**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）启动；下一步实现 V2-040A ProviderAdapter（模型供应商适配器）与 ProviderAttempt（模型调用尝试记录）。
+**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040B provider executor boundary（模型供应商执行器边界），确保 runtime（运行时）只能通过 ExecutionPackage（执行包）调用 provider（模型供应商）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
@@ -154,12 +154,12 @@ RoleProfile（角色模板）
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
-| Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
+| Phase 4：Runtime + Provider + Runner | V2-040 | 1 / 5 | 进行中 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **23 / 53** | **Phase 4 待开始** |
+| **合计** | **V2-000 ~ V2-080** | **24 / 53** | **Phase 4 进行中** |
 
 ## 当前约束摘要
 
@@ -496,14 +496,15 @@ RoleProfile（角色模板）
 
 ### V2-040A: 定义 ProviderAdapter 与 ProviderAttempt
 
-- 状态：TODO
+- 状态：DONE
 - 目标：建立 provider 调用接口和 attempt record，不接入真实外部模型也能 fake transport（模拟传输）测试。
 - 输入文档：`execution-and-runtime-boundary.md`、`agent-team-model.md`。
 - 依赖：V2-030C。
 - 输出文件：`src/boardroom_os/providers/adapter.py`、`src/boardroom_os/providers/attempt.py`、`tests/execution/test_provider_attempt.py`。
-- 必须先写的 negative tests：attempt 缺 provider、model、input_package_ref、seat_ref、status 必须失败。
-- 必须证明的 happy path：fake provider transport 产生 attempt record、raw output ref 和 parsed output ref。
+- 必须先写的 negative tests：attempt 缺 provider、model、input_package_ref、seat_ref、status 必须失败；缺 outcome（模型调用结果）、fallback outcome（降级结果）缺 typed fallback_kind（类型化降级类型）、primary outcome（主路径结果）携带 fallback_kind 必须失败。
+- 必须证明的 happy path：fake provider transport 产生 attempt record、raw output ref、parsed output ref，并显式标记为 primary/non-fallback outcome（主路径/非降级结果）。
 - 验收口径：provider attempt 可追踪到 ExecutionPackage 和 AgentSeat。
+- 完成证据：2026-05-18 新增 ProviderAttempt（模型调用尝试记录）、ProviderAttemptStatus（模型调用状态）、ProviderAttemptOutcome（模型调用结果）、ProviderArtifactRef（模型产物引用）、ProviderAdapter（模型供应商适配器）、ProviderRequest（模型供应商请求）、ProviderResponse（模型供应商响应）和 FakeProviderTransport（模拟传输）；负例证明缺 provider / model / reasoning_effort / input_package_ref / seat_ref / status / outcome、无时区时间戳、finished_at 早于 started_at、成功 attempt 缺 raw/parsed output ref、成功 attempt 携带 failure_kind、失败 attempt 缺 failure_kind、unknown extra fields、fallback outcome 缺 typed fallback_kind、primary outcome 携带 fallback_kind 均 fail closed；正例证明 fake provider transport 可由 ProviderRequest 生成 succeeded ProviderAttempt，并绑定 ExecutionPackageRef（执行包引用）、AgentSeatRef（智能体席位引用）、raw output ref、parsed output ref 与 primary/non-fallback outcome。验证命令：先运行 `PYTHONPATH=src pytest tests/execution/test_provider_attempt.py -q` 得到预期 RED（缺 provider 模块 / 缺 ProviderAttemptOutcome）；实现后 `PYTHONPATH=src pytest tests/execution/test_provider_attempt.py -q` 通过（24 passed）；`PYTHONPATH="src;." pytest tests/execution -q` 通过（124 passed）。
 
 ### V2-040B: 实现 provider executor boundary
 
