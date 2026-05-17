@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030C`
+**当前未完成工作包**：`V2-030D`
 
-**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030C ExecutionPackage schema（执行包结构）。
+**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030D ExecutionPackage compiler（执行包编译器）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +151,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 2 / 6 | 进行中 |
+| Phase 3：Agent + Execution Package | V2-030 | 3 / 6 | 进行中 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 6 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **19 / 52** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **20 / 52** | **Phase 3 进行中** |
 
 ## 当前约束摘要
 
@@ -435,14 +435,15 @@ RoleProfile（角色模板）
 
 ### V2-030C: 定义 ExecutionPackage schema
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 worker/checker 执行前必须接收的结构化执行包。
 - 输入文档：`execution-and-runtime-boundary.md`、`domain-model.md`。
 - 依赖：V2-030B。
 - 输出文件：`src/boardroom_os/execution/package.py`、`tests/execution/test_execution_package_schema.py`、`tests/negative/test_execution_package_fail_closed.py`。
-- 必须先写的 negative tests：缺 ticket_id、graph_version、seat_ref、model_execution_profile、acceptance_refs、allowed_write_set、evidence_obligations、fallback_policy 必须失败。
-- 必须证明的 happy path：ready ticket + active contracts + seat assignment 可形成完整 ExecutionPackage。
+- 必须先写的 negative tests：缺 ticket_ref、graph_version、seat_ref、model_execution_profile、acceptance_refs、allowed_write_set、evidence_obligations、fallback_policy_ref 必须失败；只传 ticket_id alias 或 model_execution_profile_ref 也必须失败。
+- 必须证明的 happy path：直接构造完整对象图，不调用 compiler，即可形成包含 ModelExecutionProfile snapshot、PackageCommand、EvidenceObligation 和 fallback_policy_ref 的完整 ExecutionPackage。
 - 验收口径：worker 不接收散文任务；必须接收结构化执行包。
+- 完成证据：2026-05-17 新增 ExecutionPackage（执行包）schema，字段名锁定为 `ticket_ref`（任务引用）并复用 `TicketId`（任务 ID），`seat_ref` 复用 `AgentSeatRef`（智能体席位引用），内嵌完整 `ModelExecutionProfile`（模型执行配置）和 `EvidenceObligation`（证据义务），`commands` 复用 `PackageCommand`（包命令），顶层 `fallback_policy_ref` 表达实际生效降级策略引用；不实现 compiler、fallback classification 或跨 registry 校验。先运行 `PYTHONPATH=src pytest tests/negative/test_execution_package_fail_closed.py -q` 得到预期 RED（`ModuleNotFoundError: No module named 'boardroom_os.execution.package'`）；实现后同命令通过（28 passed）；`PYTHONPATH=src pytest tests/execution/test_execution_package_schema.py tests/negative/test_execution_package_fail_closed.py -q` 通过（30 passed）；`PYTHONPATH="src;." pytest tests/execution tests/reducers tests/negative -q` 通过（247 passed）。
 
 ### V2-030D: 实现 ExecutionPackage compiler
 
@@ -866,3 +867,18 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 replay bundle、缺 process audit、缺 git audit、workflow completed 替代 closeout 必须失败。
 - 必须证明的 happy path：closeout passed，audit 可回答 timeline、agent decisions、context、artifacts、git history、evidence map。
 - 验收口径：V2 的最小端到端能力成立。
+
+---
+
+## 非阶段技术债 / Chore backlog
+
+### CHORE-REF-001: 提取 ref normalization 公共 helper
+
+- 状态：TODO
+- 目标：将 `_normalize_ref_fields` 从 `boardroom_os.agents.skills` 私有 helper 提取为公共引用归一化工具，避免 agents / execution / contracts 之间依赖私有实现。
+- 输入文档：当前代码使用点。
+- 依赖：V2-030C。
+- 输出文件：待定，建议 `src/boardroom_os/common/refs.py` 或 `src/boardroom_os/contracts/types.py`。
+- 必须先写的 negative tests：迁移后现有 YAML-shaped ref strings（YAML 形状引用字符串）归一化行为不得回退。
+- 必须证明的 happy path：`agents.profiles`、`agents.seat`、`execution.package` 均改用公共 helper 且相关测试通过。
+- 验收口径：不再从非 agents 模块引用 `boardroom_os.agents.skills._normalize_ref_fields`。
