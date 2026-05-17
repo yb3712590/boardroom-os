@@ -17,9 +17,11 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-030F`
+**当前未完成工作包**：`V2-040A`
 
-**当前重点**：Phase 3 Agent + Execution Package（智能体与执行包）继续推进；下一步实现 V2-030F agent context index（智能体上下文索引）草稿。
+**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）启动；下一步实现 V2-040A ProviderAdapter（模型供应商适配器）与 ProviderAttempt（模型调用尝试记录）。
+
+**Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -151,13 +153,13 @@ RoleProfile（角色模板）
 | Phase 0：Foundation | V2-000, V2-001 | 4 / 4 | 完成 |
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
-| Phase 3：Agent + Execution Package | V2-030 | 5 / 6 | 进行中 |
+| Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 0 / 5 | 待开始 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **22 / 53** | **Phase 3 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **23 / 53** | **Phase 4 待开始** |
 
 ## 当前约束摘要
 
@@ -472,7 +474,7 @@ RoleProfile（角色模板）
 
 ### V2-030F: 生成 agent context index 草稿
 
-- 状态：TODO
+- 状态：DONE
 - 目标：为 process audit 记录每次 agent attempt 接收的上下文、约束和模型配置。
 - 输入文档：`process-audit-and-replay.md`。
 - 依赖：V2-030D。
@@ -480,6 +482,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 execution_package_ref、model_execution_profile、allowed_write_set 或 provider_attempt_ref 的 context entry 不能进入最终 audit。
 - 必须证明的 happy path：execution package 可生成可审计的 context index entry。
 - 验收口径：后续 process audit 能回答“agent 接收了什么上下文”。
+- 完成证据：2026-05-17 新增 AgentContextSnapshot（智能体上下文快照）、AgentContextIndexEntry（智能体上下文索引条目）、AgentContextIndex（智能体上下文索引）、ProviderAttemptRef（模型调用尝试引用）和 build_agent_context_snapshot（构建上下文快照函数）；负例证明缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_refs、执行包 ID alias 绕过、snapshot fingerprint 篡改、snapshot fingerprint 非 SHA-256 hex digest、重复 provider attempt ref、同一 provider attempt ref 被多个 entry 认领均 fail closed；正例证明 ExecutionPackage（执行包）可幂等生成完整 agent-facing input snapshot（面向智能体的输入快照），provider retry（模型供应商重试）可按顺序绑定多个 ProviderAttemptRef 且不重新打包上下文。验证命令：`PYTHONPATH="src;." pytest tests/execution/test_agent_context_index.py -q` 通过（46 passed）；`PYTHONPATH="src;." pytest tests/execution -q` 通过（100 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/execution tests/negative -q` 通过（400 passed）。
 
 ---
 

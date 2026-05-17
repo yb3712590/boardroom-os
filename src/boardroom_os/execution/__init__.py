@@ -6,6 +6,15 @@ from boardroom_os.execution.compiler import (
     ExecutionPackageCompilerInput,
     ExecutionWorkspaceContext,
 )
+from boardroom_os.execution.context_index import (
+    AgentContextIndex,
+    AgentContextIndexEntry,
+    AgentContextIndexEntryId,
+    AgentContextSnapshot,
+    AgentContextSnapshotId,
+    ProviderAttemptRef,
+    build_agent_context_snapshot,
+)
 from boardroom_os.execution.fallback import (
     EvidencePurpose,
     FallbackEvidenceDecision,
@@ -27,6 +36,11 @@ from boardroom_os.execution.package import (
 )
 
 __all__ = [
+    "AgentContextIndex",
+    "AgentContextIndexEntry",
+    "AgentContextIndexEntryId",
+    "AgentContextSnapshot",
+    "AgentContextSnapshotId",
     "AllowedReadRef",
     "AllowedWritePath",
     "AuditRequirement",
@@ -44,6 +58,8 @@ __all__ = [
     "FallbackKind",
     "FallbackPolicy",
     "FallbackPolicyRef",
+    "ProviderAttemptRef",
     "RequiredOutput",
+    "build_agent_context_snapshot",
     "evaluate_fallback_evidence",
 ]

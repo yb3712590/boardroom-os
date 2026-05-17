@@ -222,10 +222,13 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - [x] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_ref / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy_ref 必须失败；只传 ticket_id alias 或 model_execution_profile_ref 也必须失败
 - [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— V2-030E `test_fallback_cannot_satisfy_implementation.py` 已提供 typed evaluator（类型化判定器）与真值表负例；待 V2-050A1 / V2-050B 证明 EvidenceVerifier（证据验证器）实际解析 fallback_policy_ref、调用 evaluator、记录 fallback decision，并拒绝 allowed=False 或 registry 缺失的 fallback artifact 后勾选
+
+> Phase-gating 说明：`backlog.md` 的 Phase 3 `完成` 只表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003 的最终 verifier wiring（验证器接线）证据仍按 V2-050A1 / V2-050B 延期闭合，因此该 AC 与“上述 AC checkbox 全部勾选”保持未勾选。
+
 - [x] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界；V2-030B 已证明 AgentSeat 生命周期与派工投影；V2-030D 已证明 AgentTeamProjector 单一治理投影入口与 ExecutionPackage compiler 严格消费已派工 ready ticket，闭合 AgentSeat -> ExecutionPackage 链路（见 DEC-0011 / DEC-0013）
-- [ ] Agent context index 可审计 — 由 V2-030F 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_ref 必须失败
-- [ ] V2-030A ~ V2-030F 六个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 3 显示 6/6
+- [x] Agent context index 可审计 — 由 V2-030F `test_agent_context_index.py` 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_refs 必须失败；ExecutionPackage（执行包）可生成确定性 AgentContextSnapshot（智能体上下文快照）；最终 AgentContextIndexEntry（智能体上下文索引条目）必须绑定有序 ProviderAttemptRef（模型调用尝试引用）
+- [x] V2-030A ~ V2-030F 六个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 3 显示 6/6
 
 #### 本批产出
 
@@ -236,9 +239,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### 进入 Phase 4 前置
 
 - [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-030A ~ V2-030F 状态全部 DONE
-- [ ] ExecutionPackage schema 稳定（V2-040 / V2-080 都会消费）
-- [ ] 项目日志记录完成
+- [x] V2-030A ~ V2-030F 状态全部 DONE
+- [x] ExecutionPackage schema 稳定（V2-040 / V2-080 都会消费）
+- [x] 项目日志记录完成
 
 ### Phase 4 验收 — V2-040 Runtime Executor + Provider + Command Runner
 
