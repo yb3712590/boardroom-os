@@ -46,6 +46,12 @@ class InMemoryTicketReducerPayloadResolver(TicketReducerPayloadResolver):
     def resolve_ticket_ref(self, payload_ref: EventPayloadRef) -> TicketRefPayload:
         return self._ticket_refs[payload_ref.value]
 
+    def resolve_work_product_ticket_ref(
+        self,
+        payload_ref: EventPayloadRef,
+    ) -> TicketRefPayload:
+        return self._ticket_refs[payload_ref.value]
+
     def resolve_ticket_check(self, payload_ref: EventPayloadRef) -> TicketCheckSnapshot:
         return self._check_snapshots[payload_ref.value]
 

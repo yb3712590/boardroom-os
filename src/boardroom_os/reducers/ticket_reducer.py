@@ -59,6 +59,11 @@ class TicketReducerPayloadResolver(Protocol):
         payload_ref: EventPayloadRef,
     ) -> TicketRefPayload: ...
 
+    def resolve_work_product_ticket_ref(
+        self,
+        payload_ref: EventPayloadRef,
+    ) -> TicketRefPayload: ...
+
     def resolve_ticket_check(
         self,
         payload_ref: EventPayloadRef,
@@ -93,14 +98,15 @@ class TicketReducer:
                 nodes_by_id[payload.ticket_id] = TicketNode.from_created_payload(payload)
                 continue
 
-            if event.event_type in {
-                EventType.TICKET_LEASED,
-                EventType.WORK_PRODUCT_SUBMITTED,
-            }:
+            if event.event_type is EventType.TICKET_LEASED:
                 payload = self._resolve_ticket_ref(payload_ref)
                 self._require_existing_ticket(nodes_by_id, payload.ticket_id, event.event_type)
-                if event.event_type is EventType.WORK_PRODUCT_SUBMITTED:
-                    tickets_with_work_product.add(payload.ticket_id)
+                continue
+
+            if event.event_type is EventType.WORK_PRODUCT_SUBMITTED:
+                payload = self._resolve_work_product_ticket_ref(payload_ref)
+                self._require_existing_ticket(nodes_by_id, payload.ticket_id, event.event_type)
+                tickets_with_work_product.add(payload.ticket_id)
                 continue
 
             if event.event_type is EventType.TICKET_CHECKED:
@@ -181,6 +187,17 @@ class TicketReducer:
         except Exception as error:
             raise TicketReducerError(
                 f"ticket payload_ref could not be resolved: {payload_ref.value}"
+            ) from error
+
+    def _resolve_work_product_ticket_ref(
+        self,
+        payload_ref: EventPayloadRef,
+    ) -> TicketRefPayload:
+        try:
+            return self._payload_resolver.resolve_work_product_ticket_ref(payload_ref)
+        except Exception as error:
+            raise TicketReducerError(
+                f"work product payload_ref could not be resolved: {payload_ref.value}"
             ) from error
 
     def _resolve_check_snapshot(self, payload_ref: EventPayloadRef) -> TicketCheckSnapshot:

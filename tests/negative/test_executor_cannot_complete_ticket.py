@@ -18,6 +18,7 @@ from boardroom_os.reducers.ticket_reducer import (
     TicketCompletionSnapshot,
     TicketReducer,
     TicketReducerPayloadResolver,
+    TicketRefPayload,
 )
 
 BASE_TIMESTAMP = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
@@ -41,6 +42,18 @@ class InMemoryTicketReducerPayloadResolver(TicketReducerPayloadResolver):
             allowed_write_set=("10-project/backend/**",),
             attempt_count=0,
         )
+
+    def resolve_ticket_ref(self, payload_ref: EventPayloadRef) -> TicketRefPayload:
+        return TicketRefPayload(ticket_id=TicketId(value="ticket-backend-api"))
+
+    def resolve_work_product_ticket_ref(
+        self,
+        payload_ref: EventPayloadRef,
+    ) -> TicketRefPayload:
+        return TicketRefPayload(ticket_id=TicketId(value="ticket-backend-api"))
+
+    def resolve_ticket_check(self, payload_ref: EventPayloadRef) -> object:
+        raise AssertionError("resolve_ticket_check should not be called")
 
     def resolve_ticket_completion(
         self, payload_ref: EventPayloadRef
