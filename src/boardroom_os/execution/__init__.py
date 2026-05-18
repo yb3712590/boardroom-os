@@ -41,6 +41,18 @@ from boardroom_os.execution.provider_executor import (
     ProviderExecutorResult,
     render_prompt_from_snapshot,
 )
+from boardroom_os.execution.verification_run import (
+    CommandOutputRef,
+    EnvironmentProfileRef,
+    RunnerRef,
+    VerificationRun,
+    VerificationRunRef,
+    VerificationRunStatus,
+    WorkspaceSnapshotRef,
+    status_from_exit_code,
+    stderr_ref_for,
+    stdout_ref_for,
+)
 
 __all__ = [
     "AgentContextIndex",
@@ -53,6 +65,8 @@ __all__ = [
     "AuditRequirement",
     "ContextRef",
     "EvidencePurpose",
+    "CommandOutputRef",
+    "EnvironmentProfileRef",
     "ExecutionPackage",
     "ExecutionPackageCompiler",
     "ExecutionPackageCompilerError",
@@ -71,7 +85,15 @@ __all__ = [
     "ProviderExecutorInput",
     "ProviderExecutorResult",
     "RequiredOutput",
+    "RunnerRef",
+    "VerificationRun",
+    "VerificationRunRef",
+    "VerificationRunStatus",
+    "WorkspaceSnapshotRef",
     "build_agent_context_snapshot",
     "evaluate_fallback_evidence",
     "render_prompt_from_snapshot",
+    "status_from_exit_code",
+    "stderr_ref_for",
+    "stdout_ref_for",
 ]

@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-040D`
+**当前未完成工作包**：`V2-040E`
 
-**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040D CommandRunner（命令执行器）和 VerificationRun（验证运行），让 command evidence（命令证据）只能来自真实 runner（运行器）记录。
+**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040E runtime executor 事实事件边界，限制 runtime 只能 emit execution/provider/tool/command/work product 事实事件。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
@@ -154,12 +154,12 @@ RoleProfile（角色模板）
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
-| Phase 4：Runtime + Provider + Runner | V2-040 | 3 / 5 | 进行中 |
+| Phase 4：Runtime + Provider + Runner | V2-040 | 4 / 5 | 进行中 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **26 / 53** | **Phase 4 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **27 / 53** | **Phase 4 进行中** |
 
 ## 当前约束摘要
 
@@ -532,7 +532,7 @@ RoleProfile（角色模板）
 
 ### V2-040D: 实现 CommandRunner
 
-- 状态：TODO
+- 状态：DONE
 - 目标：真实运行 declared commands 并记录 VerificationRun（验证运行）。
 - 输入文档：`execution-and-runtime-boundary.md`、`TEST_CONVENTIONS.md`。
 - 依赖：V2-030D。
@@ -540,6 +540,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：合成 verification success、缺 stdout/stderr refs、缺 exit_code、命令不在 package contract 中必须失败。
 - 必须证明的 happy path：运行一个本地确定性命令并捕获 exit code/stdout/stderr/duration。
 - 验收口径：command evidence 唯一可信来源是 runner。
+- 完成证据：`CommandRunner` 只执行同时存在于 `ExecutionPackage.commands` 与 `PackageContract.run_commands/test_commands` 且完整相等的 `PackageCommand`；`VerificationRun` 要求 exit_code、stdout/stderr refs、时区时间戳、environment profile 和 workspace snapshot；malformed process result、cwd escape、absolute cwd、naive/rollback clock 均 fail closed。验证：`PYTHONPATH="src;." python -m pytest tests/execution/test_command_runner.py -q`（36 passed）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/reducers tests/execution tests/negative -q`（510 passed）。
 
 ### V2-040E: 实现 runtime executor 事实事件边界
 
