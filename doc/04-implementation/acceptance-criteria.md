@@ -250,9 +250,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] AC-V2-EXECUTION-002（provider attempt required）— 由 V2-040A `test_provider_attempt.py` 证明：attempt 缺 provider / model / input_package_ref / seat_ref / status / outcome 必须失败；fallback outcome 缺 typed fallback_kind 或 primary outcome 携带 fallback_kind 必须失败；FakeProviderTransport 可产生绑定 ExecutionPackageRef / AgentSeatRef 的 ProviderAttempt
 - [x] Provider executor boundary — 由 V2-040B `test_provider_executor_fail_closed.py` + `test_provider_executor.py` 证明：缺 execution package 不得调用 provider；RoleProfile / TicketNode shortcut 不能绕过 ExecutionPackage；adapter 回填错绑 ProviderAttempt 必须 fail closed；合法 ExecutionPackage 可调用 fake provider 并记录 attempt；failed attempt 作为可审计事实返回
 - [x] AC-V2-EVIDENCE-001（command evidence from runner）— 由 V2-040D `test_command_runner.py` 证明：合成 verification success / 缺 stdout/stderr refs / 缺 exit_code / 命令不在 package contract 中 / cwd 越界或 absolute cwd / 时钟异常必须失败；合法 runner 记录真实 exit code/stdout/stderr/duration 并生成 VerificationRun
-- [ ] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / `PROJECT_COMPLETED` / `CLOSEOUT_COMMITTED` 必须失败；runtime/executor 不能靠普通 seat actor_ref 绕过 role-aware 边界（见 DEC-0011）
-- [ ] V2-040A ~ V2-040E 五个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 4 显示 5/5
+- [x] Runtime bounded — 由 V2-040E `test_runtime_cannot_govern.py` 证明：runtime emit `TICKET_COMPLETED` / 保留治理事件名 `project_completed` / `closeout_committed` 必须失败；runtime/executor 不能靠普通 seat actor_ref 绕过 role-aware 边界（见 DEC-0011）
+- [x] V2-040A ~ V2-040E 五个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 4 显示 5/5
 
 #### 本批产出
 
@@ -262,9 +262,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 5 前置
 
-- [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-040A ~ V2-040E 状态全部 DONE
-- [ ] Fake provider transport 与 ProviderAttempt schema 稳定（V2-080 会复用）
+- [x] 上述 AC checkbox 全部勾选
+- [x] V2-040A ~ V2-040E 状态全部 DONE
+- [x] Fake provider transport 与 ProviderAttempt schema 稳定（V2-080 会复用）
 
 ### Phase 5 验收 — V2-050 Evidence Verifier + Checker + Rework
 

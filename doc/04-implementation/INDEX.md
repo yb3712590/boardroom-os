@@ -14,6 +14,7 @@
 | `phase-0-plan.md` | 当前文档基座阶段计划 |
 | `proving-scenario-tiny-fullstack.md` | 第一个端到端证明场景 |
 | `v2-040d-command-runner-spec.md` | V2-040D CommandRunner（命令执行器）同行评审 spec |
+| `v2-040e-runtime-executor-spec.md` | V2-040E RuntimeExecutor（运行时执行器）同行评审 spec |
 
 ## AI 启动入口
 

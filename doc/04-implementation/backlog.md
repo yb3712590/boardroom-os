@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-040E`
+**当前未完成工作包**：`V2-050A`
 
-**当前重点**：Phase 4 Runtime + Provider + Runner（运行时、模型调用与命令证据）继续；下一步实现 V2-040E runtime executor 事实事件边界，限制 runtime 只能 emit execution/provider/tool/command/work product 事实事件。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）启动；下一步实现 V2-050A EvidenceClaim，表达 producer 对 source/test/run/integration/closeout evidence 的声明。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
@@ -154,12 +154,12 @@ RoleProfile（角色模板）
 | Phase 1：Contract Kernel | V2-010 | 7 / 7 | 完成 |
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
-| Phase 4：Runtime + Provider + Runner | V2-040 | 4 / 5 | 进行中 |
+| Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **27 / 53** | **Phase 4 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **28 / 53** | **Phase 5 待启动** |
 
 ## 当前约束摘要
 
@@ -488,7 +488,7 @@ RoleProfile（角色模板）
 
 ## V2-040: Runtime Executor + Provider + Command Runner（运行时执行器、模型调用与命令证据）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 provider attempt（模型调用尝试记录）、provider adapter boundary（供应商适配边界）、runtime executor（运行时执行器）和 command runner（命令执行器）。
 - 输入文档：`execution-and-runtime-boundary.md`、`TEST_CONVENTIONS.md`。
 - 输出目录：`src/boardroom_os/providers/`、`src/boardroom_os/adapters/`、`src/boardroom_os/execution/`、`tests/execution/`、`tests/negative/`。
@@ -528,7 +528,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：WorkProduct 缺 producer_attempt_ref、artifact_refs 或 claim_refs 时不得用于 evidence。
 - 必须证明的 happy path：fake provider 输出可生成 WorkProduct，并附带 producer attempt。
 - 验收口径：runtime 只提交 work product 事实，不完成 ticket。
-- 完成证据：2026-05-18 新增 WorkProduct（工作产物）、WorkProductClaimDraft（工作产物证据声明草稿）、WorkProductSubmission（工作产物提交包）、build_work_product_from_provider_attempt（从模型尝试构建工作产物）和 build_work_product_submitted_event（构建工作产物已提交事件）；负例证明 WorkProduct 缺 producer_attempt_ref / artifact_refs / claim_refs、WorkProductClaimDraft 缺 acceptance_refs / source_surface_refs、WorkProductSubmission 缺 claim_drafts 或 claim_refs 与 claim_drafts 不一致、失败 ProviderAttempt（模型调用尝试记录）、错绑 execution_package_ref / seat_ref、缺 raw/parsed output ref、空白 summary 均 fail closed；正例证明 fake provider transport（模拟模型传输）可生成绑定 ExecutionPackageRef（执行包引用）、TicketId（任务 ID）、ProviderAttemptRef（模型调用尝试引用）、raw+parsed artifact refs（原始+解析产物引用）与 claim draft refs（声明草稿引用）的 WorkProduct，并且 event factory（事件工厂）只生成 WORK_PRODUCT_SUBMITTED 事实事件；该事件的 payload_refs 指向 WorkProductRef（工作产物引用），TicketReducer（任务状态归约器）通过 resolve_work_product_ticket_ref（解析工作产物对应任务引用）从 WorkProduct payload（工作产物载荷）恢复 ticket_ref（任务引用）并登记“已提交工作产物”，不会单独完成 ticket（任务）；V2-040E 仍负责 event log append（事件日志追加）与 payload store（载荷仓库）持久化。验证命令：`PYTHONPATH="src;." pytest tests/execution/test_work_product_submission.py -q` 通过（38 passed）；`PYTHONPATH="src;." pytest tests/execution/test_provider_attempt.py tests/execution/test_provider_executor.py tests/execution/test_agent_context_index.py tests/execution/test_work_product_submission.py tests/negative/test_provider_executor_fail_closed.py -q` 通过（120 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/execution tests/negative -q` 通过（474 passed）。
+- 完成证据：2026-05-18 新增 WorkProduct（工作产物）、WorkProductClaimDraft（工作产物证据声明草稿）、WorkProductSubmission（工作产物提交包）、build_work_product_from_provider_attempt（从模型尝试构建工作产物）和 build_work_product_submitted_event（构建工作产物已提交事件）；负例证明 WorkProduct 缺 producer_attempt_ref / artifact_refs / claim_refs、WorkProductClaimDraft 缺 acceptance_refs / source_surface_refs、WorkProductSubmission 缺 claim_drafts 或 claim_refs 与 claim_drafts 不一致、失败 ProviderAttempt（模型调用尝试记录）、错绑 execution_package_ref / seat_ref、缺 raw/parsed output ref、空白 summary 均 fail closed；正例证明 fake provider transport（模拟模型传输）可生成绑定 ExecutionPackageRef（执行包引用）、TicketId（任务 ID）、ProviderAttemptRef（模型调用尝试引用）、raw+parsed artifact refs（原始+解析产物引用）与 claim draft refs（声明草稿引用）的 WorkProduct，并且 event factory（事件工厂）只生成 WORK_PRODUCT_SUBMITTED 事实事件；该事件的 payload_refs 指向 WorkProductRef（工作产物引用），TicketReducer（任务状态归约器）通过 resolve_work_product_ticket_ref（解析工作产物对应任务引用）从 WorkProduct payload（工作产物载荷）恢复 ticket_ref（任务引用）并登记“已提交工作产物”，不会单独完成 ticket（任务）；V2-040E 返回 runtime facts（运行时事实），由后续调用方负责 event log append（事件日志追加）与 payload store（载荷仓库）持久化。验证命令：`PYTHONPATH="src;." pytest tests/execution/test_work_product_submission.py -q` 通过（38 passed）；`PYTHONPATH="src;." pytest tests/execution/test_provider_attempt.py tests/execution/test_provider_executor.py tests/execution/test_agent_context_index.py tests/execution/test_work_product_submission.py tests/negative/test_provider_executor_fail_closed.py -q` 通过（120 passed）；`PYTHONPATH="src;." pytest tests/contracts tests/reducers tests/execution tests/negative -q` 通过（474 passed）。
 
 ### V2-040D: 实现 CommandRunner
 
@@ -544,7 +544,7 @@ RoleProfile（角色模板）
 
 ### V2-040E: 实现 runtime executor 事实事件边界
 
-- 状态：TODO
+- 状态：DONE
 - 目标：限制 runtime 只能 emit execution/provider/tool/command/work product 事实事件。
 - 输入文档：`execution-and-runtime-boundary.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-040C、V2-040D。
@@ -552,6 +552,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：runtime emit `TICKET_COMPLETED`、`PROJECT_COMPLETED`、`CLOSEOUT_COMMITTED` 必须失败；runtime/executor 使用普通 seat actor_ref 伪装治理 actor 时也必须失败。
 - 必须证明的 happy path：runtime 对 ready execution package 可记录 provider attempt、work product 和 command run。
 - 验收口径：runtime bounded 约束可由测试证明；越权判断必须基于 RoleProfile / AgentSeat 的角色边界，而不是仅依赖 `actor_ref` 字符串前缀。
+- 完成证据：2026-05-19 新增 RuntimeExecutor（运行时执行器）、RuntimeEventBoundary（运行时事件边界）、RuntimeEventSequencer（运行时事件序列器）和 runtime fact event factories（运行时事实事件工厂）；负例证明 runtime emit `TICKET_COMPLETED`、保留治理事件名 `project_completed` / `closeout_committed`、未知事件名、runtime_actor_ref 伪装任一 active AgentSeat.actor_ref、缺 active execution seat、GOVERNANCE / ARCHITECTURE / AUDIT seat 执行包、first_fact_graph_version 未大于执行包 graph_version 均 fail closed；正例证明 RuntimeExecutor 对 ready ExecutionPackage 可记录 `EXECUTION_STARTED`、`PROVIDER_ATTEMPT_RECORDED`、`WORK_PRODUCT_SUBMITTED`、`COMMAND_RUN_RECORDED` 事实事件，provider failed 只记录 failed ProviderAttempt，command failed 记录 failed VerificationRun 而不 emit completion。验证命令：`PYTHONPATH=src:. python -m pytest tests/negative/test_runtime_cannot_govern.py -q`（15 passed）；`PYTHONPATH=src:. python -m pytest tests/execution/test_runtime_executor_boundary.py -q`（10 passed）；`PYTHONPATH=src:. python -m pytest tests/execution/test_provider_executor.py tests/execution/test_work_product_submission.py tests/execution/test_command_runner.py tests/execution/test_runtime_executor_boundary.py tests/negative/test_provider_executor_fail_closed.py tests/negative/test_runtime_cannot_govern.py -q`（111 passed）；`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/negative -q`（535 passed）。
 
 ---
 
