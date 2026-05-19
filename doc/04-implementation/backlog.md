@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050A`
+**当前未完成工作包**：`V2-050A1`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）启动；下一步实现 V2-050A EvidenceClaim，表达 producer 对 source/test/run/integration/closeout evidence 的声明。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）已启动；下一步实现 V2-050A1 FallbackPolicyRegistry（降级策略注册表）与 fallback lineage（降级来源链）标记解析。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 0 / 7 | 待开始 |
+| Phase 5：Evidence + Checker | V2-050 | 1 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **28 / 53** | **Phase 5 待启动** |
+| **合计** | **V2-000 ~ V2-080** | **29 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -566,14 +566,15 @@ RoleProfile（角色模板）
 
 ### V2-050A: 实现 EvidenceClaim
 
-- 状态：TODO
+- 状态：DONE
 - 目标：表达 producer 对 source/test/run/integration/closeout evidence 的声明。
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-040C、V2-040D。
-- 输出文件：`src/boardroom_os/evidence/claim.py`、`tests/evidence/test_evidence_claim.py`。
+- 输出文件：`src/boardroom_os/evidence/claim.py`、`src/boardroom_os/evidence/__init__.py`、`tests/evidence/test_evidence_claim.py`。
 - 必须先写的 negative tests：claim 缺 producer_attempt_ref、acceptance_refs、source_surface_refs、artifact_refs、expected_purpose（证据预期用途）必须失败；fallback claim 缺 typed fallback marker（类型化降级标记）必须失败。
 - 必须证明的 happy path：WorkProduct 和 VerificationRun 可生成 EvidenceClaim；claim 的 expected_purpose 由 EvidenceObligation（证据义务）派生，verifier 不得自由选择 purpose。
 - 验收口径：claim 不是 verified evidence；EvidencePurpose（证据用途）必须在 claim/obligation 链路中被类型化表达，避免把 implementation artifact 错判为 deterministic evidence。
+- 完成证据：2026-05-19 新增 EvidenceClaim（证据声明）、FallbackLineageMarker（降级来源链标记）和 builder（构建函数）；WorkProduct builder（工作产物构建器）同时消费 WorkProduct（工作产物）与 WorkProductClaimDraft（工作产物证据声明草稿），校验 producer_attempt_ref、execution_package_ref、ticket_ref、artifact_refs 和 claim_draft_ref 归属一致，并把 claim refs 限制为 EvidenceObligation（证据义务）范围；VerificationRun builder（验证运行构建器）要求调用方显式传入 ProviderAttemptRef（模型调用尝试引用），以 stdout/stderr refs 生成 EvidenceArtifactRef（证据产物引用），不复制 command_id。负例覆盖缺 required fields、空 refs、malformed scalar refs、fallback marker 缺字段/unknown decision、fallback WorkProduct 缺 fallback_policy_ref、primary 携带 fallback_policy_ref、claim draft 对齐失败、acceptance/source coverage 不足、expected_purpose 越权、VerificationRun 缺/错 producer_attempt_ref、source_ref 与当前 verification_run_refs 不一致。正例覆盖 ProviderAttempt → WorkProductSubmission → EvidenceClaim 链路、VerificationRun command evidence claim、fallback lineage marker 只记录 typed lineage 不记录 allowed/decision、explicit claim_id override 和 expected_purpose 固定。验证命令：`PYTHONPATH="src:." python -m pytest tests/evidence/test_evidence_claim.py -q`（60 passed）；`PYTHONPATH="src:." python -m pytest tests/execution/test_work_product_submission.py tests/execution/test_command_runner.py tests/evidence/test_evidence_claim.py -q`（134 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（595 passed）。
 
 ### V2-050A1: 实现 FallbackPolicyRegistry 与 fallback lineage 标记
 
