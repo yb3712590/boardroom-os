@@ -17,11 +17,11 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050A1`
+**当前未完成工作包**：`V2-050B`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）已启动；下一步实现 V2-050A1 FallbackPolicyRegistry（降级策略注册表）与 fallback lineage（降级来源链）标记解析。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）已启动；下一步实现 V2-050B EvidenceVerifier（证据验证器），验证 artifact/hash/provider/command evidence（产物/哈希/模型调用/命令证据），并消费 FallbackDecisionRecord（降级判定记录）拒绝未解析 registry、缺 decision 或 allowed=False 的 fallback artifact。
 
-**Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050A1 / V2-050B 闭合。
+**Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050A1 已补齐 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录），但 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050B 闭合。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 1 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 2 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **29 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **30 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -578,7 +578,7 @@ RoleProfile（角色模板）
 
 ### V2-050A1: 实现 FallbackPolicyRegistry 与 fallback lineage 标记
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 `fallback_policy_ref` 解析为唯一权威 FallbackPolicy（降级策略），并让 fallback lineage（降级来源链）成为 verifier 可见的 typed fact（类型化事实）。
 - 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0014）。
 - 依赖：V2-030E、V2-040A、V2-040C、V2-050A。
@@ -586,6 +586,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：fallback_policy_ref 无法解析、ref 解析出的 FallbackKind 与 provider/work product fallback marker 不一致、registry 缺位、fallback artifact 缺 typed fallback marker、将 TEST_ONLY_SIMULATION / PROVIDER_UNAVAILABLE / DETERMINISTIC_GOVERNANCE_DRAFT 注册为可满足 evidence、按 acceptance_ref 拆分调用 evaluator 均必须失败。
 - 必须证明的 happy path：registry 可把合法 fallback_policy_ref 解析为 FallbackPolicy；每个 fallback work product 以完整 acceptance_refs 一次性调用 evaluate_fallback_evidence 并生成可审计 decision。
 - 验收口径：fallback ref -> policy 的解析只有 registry 一个权威入口；registry 落地前 V2-050 对任何 fallback artifact 必须 fail closed。
+- 完成证据：2026-05-20 新增 `FallbackPolicyRegistry`（降级策略注册表）、`FallbackDecisionRecord`（降级判定记录）与 `evaluate_fallback_claim`（降级声明判定函数），把 fallback claim 的 `fallback_policy_ref` 解析为唯一权威 `FallbackPolicy`（降级策略），并产出 verifier 可消费的 typed decision record（类型化判定记录）；同时补齐正例测试 `tests/evidence/test_fallback_policy_registry.py` 与负例测试 `tests/negative/test_fallback_registry_fail_closed.py`，覆盖 registry 缺位、未知 policy ref、fallback kind 不一致、危险 fallback kind 注册、fallback_marker 缺失、decision 对齐失败，以及完整 acceptance_refs 单次调用 evaluator 的 orchestration contract（编排契约）。验证证据：`PYTHONPATH="src:." python -m pytest tests/negative/test_fallback_registry_fail_closed.py -q`（20 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_fallback_policy_registry.py -q`（7 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_evidence_claim.py tests/evidence/test_fallback_policy_registry.py tests/negative/test_fallback_registry_fail_closed.py tests/negative/test_fallback_cannot_satisfy_implementation.py tests/execution/test_fallback_policy.py -q`（116 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（622 passed）。
 
 ### V2-050B: 实现 artifact/hash/provider/command evidence verifier
 
