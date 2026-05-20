@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050C`
+**当前未完成工作包**：`V2-050D`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；下一步实现 V2-050C FinalEvidenceTable（最终证据表），按 active AcceptanceContract（活跃验收合同）汇总 VerifiedEvidence（已验证证据）覆盖情况，并拒绝 acceptance map（验收映射）为空、blocking criterion（阻塞验收项）缺证据或 failed evidence（失败证据）被 notes 覆盖的情况。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050D CheckerVerdict（检查结论），让 checker（检查者）独立消费 work product（工作产物）、source diff（源码差异）、VerifiedEvidence（已验证证据）和 contracts（合同），并保证 notes（备注）不能覆盖 blocker（阻断项）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 3 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 4 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **31 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **32 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -602,7 +602,7 @@ RoleProfile（角色模板）
 
 ### V2-050C: 实现 FinalEvidenceTable
 
-- 状态：TODO
+- 状态：DONE
 - 目标：按 active AcceptanceContract 汇总 satisfied/failed/missing 状态。
 - 输入文档：`contract-and-evidence-model.md`、`acceptance-criteria.md`。
 - 依赖：V2-050B。
@@ -610,6 +610,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：acceptance map 为空、blocking criterion missing、failed evidence 被 notes 覆盖必须失败。
 - 必须证明的 happy path：所有 blocking criteria 都有 verified_evidence_refs 时 table complete。
 - 验收口径：closeout 只消费 complete final evidence table。
+- 完成证据：2026-05-21 新增 FinalEvidenceTable（最终证据表）、FinalEvidenceRow（最终证据行）、FinalEvidenceBlocker（最终证据阻断项）和 FinalEvidenceTableBuilder（最终证据表构建器）；关键产出文件为 `src/boardroom_os/evidence/table.py`、`tests/evidence/test_final_evidence_table.py`、`tests/negative/test_missing_acceptance_map_blocks_closeout.py`。负例证明 inactive contract、空 acceptance map、missing blocking criterion、未知 acceptance_ref、notes 输入、EvidenceClaim / EvidenceVerificationResult 误入、非确定性 table id、satisfied/failed/complete 不变量破坏均 fail closed；正例证明单个与多个 blocking criteria 可由 VerifiedEvidence 覆盖，单条 VerifiedEvidence 可覆盖多个 acceptance_ref，missing/failed row 使 table incomplete，failed blocker 不能被 VerifiedEvidence 覆盖，table 可审计 JSON 序列化且使用确定性 id。验证命令：`PYTHONPATH="src:." python -m pytest tests/evidence/test_evidence_verifier.py tests/evidence/test_final_evidence_table.py tests/negative/test_synthetic_evidence_rejected.py tests/negative/test_missing_acceptance_map_blocks_closeout.py -q`（70 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（692 passed）。
 
 ### V2-050D: 实现 CheckerVerdict
 

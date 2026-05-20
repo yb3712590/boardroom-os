@@ -34,6 +34,17 @@ from boardroom_os.evidence.verifier import (
     VerifiedEvidence,
     VerifiedEvidenceRef,
 )
+from boardroom_os.evidence.table import (
+    FinalEvidenceBlocker,
+    FinalEvidenceBlockerCode,
+    FinalEvidenceRow,
+    FinalEvidenceStatus,
+    FinalEvidenceTable,
+    FinalEvidenceTableBuilder,
+    FinalEvidenceTableError,
+    FinalEvidenceTableInput,
+    FinalEvidenceTableRef,
+)
 
 __all__ = [
     "ArtifactManifest",
@@ -58,6 +69,15 @@ __all__ = [
     "FallbackDecisionRecordRef",
     "FallbackPolicyRegistry",
     "FallbackRegistryError",
+    "FinalEvidenceBlocker",
+    "FinalEvidenceBlockerCode",
+    "FinalEvidenceRow",
+    "FinalEvidenceStatus",
+    "FinalEvidenceTable",
+    "FinalEvidenceTableBuilder",
+    "FinalEvidenceTableError",
+    "FinalEvidenceTableInput",
+    "FinalEvidenceTableRef",
     "VerifiedArtifact",
     "VerifiedEvidence",
     "VerifiedEvidenceRef",

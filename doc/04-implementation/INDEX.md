@@ -19,6 +19,8 @@
 | `v2-050a1-fallback-policy-registry-spec.md` | V2-050A1 FallbackPolicyRegistry（降级策略注册表）同行评审 spec |
 | `v2-050b-evidence-verifier-spec.md` | V2-050B EvidenceVerifier（证据验证器）同行评审 spec |
 | `v2-050b-evidence-verifier-implementation-plan.md` | V2-050B EvidenceVerifier（证据验证器）实施计划 |
+| `v2-050c-final-evidence-table-spec.md` | V2-050C FinalEvidenceTable（最终证据表）同行评审 spec |
+| `v2-050c-final-evidence-table-implementation-plan.md` | V2-050C FinalEvidenceTable（最终证据表）实施计划 |
 
 ## AI 启动入口
 

@@ -271,12 +271,12 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### AC 检查清单
 
 - [ ] AC-V2-EVIDENCE-002（source inventory proves lineage）— 由 V2-060C 提供，V2-050B 中 verifier 端的占位测试 `test_synthetic_evidence_rejected.py` 同步验证
-- [ ] AC-V2-EVIDENCE-003（evidence map complete）— 由 V2-050C `test_missing_acceptance_map_blocks_closeout.py` 证明
+- [x] AC-V2-EVIDENCE-003（evidence map complete）— 由 V2-050C `test_missing_acceptance_map_blocks_closeout.py` 证明
 - [ ] AC-V2-CHECKER-001（checker blocks gaps）— 由 V2-050D `test_checker_verdict.py` 证明
 - [ ] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D 证明
 - [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
 - [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明：正式 evidence/checker 模型不得绕过 `WORK_PRODUCT_SUBMITTED` 与 provider attempt 门禁
-- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 3/7）
+- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 4/7）
 - [ ] `backlog.md` 进度总览 Phase 5 显示 7/7
 
 #### 本批产出
