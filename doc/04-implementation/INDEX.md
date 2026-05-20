@@ -17,6 +17,8 @@
 | `v2-040e-runtime-executor-spec.md` | V2-040E RuntimeExecutor（运行时执行器）同行评审 spec |
 | `v2-050a-evidence-claim-spec.md` | V2-050A EvidenceClaim（证据声明）同行评审 spec |
 | `v2-050a1-fallback-policy-registry-spec.md` | V2-050A1 FallbackPolicyRegistry（降级策略注册表）同行评审 spec |
+| `v2-050b-evidence-verifier-spec.md` | V2-050B EvidenceVerifier（证据验证器）同行评审 spec |
+| `v2-050b-evidence-verifier-implementation-plan.md` | V2-050B EvidenceVerifier（证据验证器）实施计划 |
 
 ## AI 启动入口
 

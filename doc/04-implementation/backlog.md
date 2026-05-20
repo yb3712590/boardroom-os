@@ -17,11 +17,11 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050B`
+**当前未完成工作包**：`V2-050C`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）已启动；下一步实现 V2-050B EvidenceVerifier（证据验证器），验证 artifact/hash/provider/command evidence（产物/哈希/模型调用/命令证据），并消费 FallbackDecisionRecord（降级判定记录）拒绝未解析 registry、缺 decision 或 allowed=False 的 fallback artifact。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；下一步实现 V2-050C FinalEvidenceTable（最终证据表），按 active AcceptanceContract（活跃验收合同）汇总 VerifiedEvidence（已验证证据）覆盖情况，并拒绝 acceptance map（验收映射）为空、blocking criterion（阻塞验收项）缺证据或 failed evidence（失败证据）被 notes 覆盖的情况。
 
-**Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050A1 已补齐 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录），但 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）仍按 `acceptance-criteria.md` 延期到 V2-050B 闭合。
+**Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
 ## 实施幂等性 / 工作包完成更新协议
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 2 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 3 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **30 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **31 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -590,7 +590,7 @@ RoleProfile（角色模板）
 
 ### V2-050B: 实现 artifact/hash/provider/command evidence verifier
 
-- 状态：TODO
+- 状态：DONE
 - 目标：验证 artifact 存在性、hash 稳定性、producer attempt、command run、active contract refs 和 fallback decision（降级判定）。
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-050A、V2-050A1。
@@ -598,6 +598,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：synthetic verification、provider zero-attempt、artifact 缺 hash、acceptance_ref 不属于 active contract、fallback artifact 未解析 registry、未调用 evaluate_fallback_evidence、缺 FALLBACK_DECISION_RECORDED、decision allowed=False 却进入 verified evidence、EvidencePurpose 与 RequiredArtifactType 不匹配必须失败。
 - 必须证明的 happy path：真实 runner 记录 + provider attempt + artifact hash 可转为 verified evidence；合同显式允许的 deterministic fallback artifact 必须带 allowed=True 的 fallback decision 才可转为 verified evidence。
 - 验收口径：verified evidence table 不能由 claim 直接替代；AC-V2-EXECUTION-003 只能在 verifier 实际执行 fallback gate 并记录 decision 后勾选。
+- 完成证据：2026-05-20 新增 EvidenceVerifier（证据验证器）、ArtifactManifest（产物清单）、EvidencePurposePolicy（证据用途策略）、VerifiedEvidence（已验证证据）和 EvidenceVerificationResult（证据验证结果）；负例覆盖 missing artifact/hash/provider、inactive/unknown acceptance refs、EvidenceObligation（证据义务）不对齐、purpose/artifact mismatch、VerificationRun（验证运行）缺失/失败/stdout·stderr 不一致、primary/fallback attempt mismatch、fallback registry/decision/recorded ref 缺失、unresolved policy、decision scope mismatch、allowed=False，以及 `evaluate_fallback_claim`（降级声明判定函数）必须用完整 claim scope（声明作用域）和 verified_at（验证时间）调用一次。正例覆盖 primary WorkProduct（主路径工作产物）、command VerificationRun（命令验证运行）、allowed deterministic fallback（允许的确定性降级）、deterministic verified evidence id（确定性已验证证据 ID）、audit-friendly JSON（审计友好 JSON）和 success-or-blockers XOR（成功或阻断互斥）。验证证据：`PYTHONPATH="src:." python -m pytest tests/negative/test_synthetic_evidence_rejected.py -q`（33 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_evidence_verifier.py -q`（7 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_evidence_claim.py tests/evidence/test_fallback_policy_registry.py tests/evidence/test_evidence_verifier.py tests/negative/test_synthetic_evidence_rejected.py tests/negative/test_fallback_registry_fail_closed.py -q`（127 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（662 passed）。
 
 ### V2-050C: 实现 FinalEvidenceTable
 

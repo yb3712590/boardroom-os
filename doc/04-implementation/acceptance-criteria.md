@@ -221,9 +221,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 #### AC 检查清单
 
 - [x] AC-V2-EXECUTION-001（execution package required）— 由 V2-030C `test_execution_package_fail_closed.py` 证明：缺 ticket_ref / graph_version / seat_ref / model_execution_profile / acceptance_refs / allowed_write_set / evidence_obligations / fallback_policy_ref 必须失败；只传 ticket_id alias 或 model_execution_profile_ref 也必须失败
-- [ ] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— V2-030E `test_fallback_cannot_satisfy_implementation.py` 已提供 typed evaluator（类型化判定器）与真值表负例；V2-050A1 已补齐 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录），待 V2-050B 证明 EvidenceVerifier（证据验证器）实际通过 registry 解析 fallback_policy_ref、消费 decision record 并拒绝未解析 registry、缺 decision 或 allowed=False 的 fallback artifact 后勾选
+- [x] AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence）— V2-030E `test_fallback_cannot_satisfy_implementation.py` 已提供 typed evaluator（类型化判定器）与真值表负例；V2-050A1 已补齐 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）；V2-050B `test_synthetic_evidence_rejected.py` 已证明 EvidenceVerifier（证据验证器）实际通过 registry 解析 fallback_policy_ref、消费 decision record 并拒绝未解析 registry、缺 decision 或 allowed=False 的 fallback artifact
 
-> Phase-gating 说明：`backlog.md` 的 Phase 3 `完成` 只表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003 的最终 verifier wiring（验证器接线）证据仍按 V2-050A1 / V2-050B 延期闭合，因此该 AC 与“上述 AC checkbox 全部勾选”保持未勾选。
+> Phase-gating 说明：`backlog.md` 的 Phase 3 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；AC-V2-EXECUTION-003 的最终 verifier wiring（验证器接线）证据已由 V2-050A1 / V2-050B 闭合。
 
 - [x] Role / Seat / Provider 接入链闭合 — V2-030A 已证明 RoleProfile / SkillBinding / ModelExecutionProfile 边界；V2-030B 已证明 AgentSeat 生命周期与派工投影；V2-030D 已证明 AgentTeamProjector 单一治理投影入口与 ExecutionPackage compiler 严格消费已派工 ready ticket，闭合 AgentSeat -> ExecutionPackage 链路（见 DEC-0011 / DEC-0013）
 - [x] Agent context index 可审计 — 由 V2-030F `test_agent_context_index.py` 证明：缺 execution_package_ref / model_execution_profile / allowed_write_set / provider_attempt_refs 必须失败；ExecutionPackage（执行包）可生成确定性 AgentContextSnapshot（智能体上下文快照）；最终 AgentContextIndexEntry（智能体上下文索引条目）必须绑定有序 ProviderAttemptRef（模型调用尝试引用）
@@ -238,7 +238,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 4 前置
 
-- [ ] 上述 AC checkbox 全部勾选
+- [x] 上述 AC checkbox 全部勾选
 - [x] V2-030A ~ V2-030F 状态全部 DONE
 - [x] ExecutionPackage schema 稳定（V2-040 / V2-080 都会消费）
 - [x] 项目日志记录完成
@@ -276,7 +276,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [ ] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D 证明
 - [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
 - [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明：正式 evidence/checker 模型不得绕过 `WORK_PRODUCT_SUBMITTED` 与 provider attempt 门禁
-- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 2/7）
+- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 3/7）
 - [ ] `backlog.md` 进度总览 Phase 5 显示 7/7
 
 #### 本批产出
