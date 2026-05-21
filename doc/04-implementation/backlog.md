@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050D`
+**当前未完成工作包**：`V2-050E`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050D CheckerVerdict（检查结论），让 checker（检查者）独立消费 work product（工作产物）、source diff（源码差异）、VerifiedEvidence（已验证证据）和 contracts（合同），并保证 notes（备注）不能覆盖 blocker（阻断项）。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050E rework ticket 触发（返工任务触发），把 checker blocker（检查阻断项）和 evidence gaps（证据缺口）转换成 graph（任务图）中的 rework ticket（返工任务）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 4 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 5 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **32 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **33 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -614,7 +614,7 @@ RoleProfile（角色模板）
 
 ### V2-050D: 实现 CheckerVerdict
 
-- 状态：TODO
+- 状态：DONE
 - 目标：让 checker 独立消费 work product、source diff、verified evidence 和 contracts，输出 verdict。
 - 输入文档：`agent-team-model.md`、`contract-and-evidence-model.md`。
 - 依赖：V2-050C。
@@ -622,6 +622,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：verified evidence incomplete 但 checker approved、notes 覆盖 blocker、checker 自行补 evidence 必须失败。
 - 必须证明的 happy path：evidence complete 时 checker 可 APPROVED 或 APPROVED_WITH_NON_BLOCKING_NOTES。
 - 验收口径：checker 不能替 verifier 放行。
+- 完成证据：2026-05-21 新增 CheckerVerdict（检查结论）、CheckerVerdictBlocker（检查结论阻断项）、CheckerNote（检查备注）、SourceDiffRef（源码差异引用）、CheckerServiceInput（检查服务输入）和 CheckerService（检查服务）；关键产出文件为 `src/boardroom_os/checker/verdict.py`、`src/boardroom_os/checker/checker.py`、`src/boardroom_os/checker/__init__.py`、`tests/evidence/test_checker_verdict.py`。负例证明 dict / raw EvidenceClaim（证据声明）/ VerifiedEvidence（已验证证据）/ EvidenceVerificationResult（证据验证结果）/ final_evidence_blockers（最终证据阻断项）/ override 字段不能进入 CheckerService；inactive contract、contract mismatch、ticket mismatch、空 source_diff_ref、缺 artifact_refs / claim_refs、FinalEvidenceTable（最终证据表）complete 不一致、FAILED row 缺 blocker、row status 非枚举、row acceptance_ref 越界、copied CheckerServiceInput（复制后的检查服务输入）篡改均 fail closed；missing / failed evidence rows 生成 `REWORK_REQUIRED` blocker；notes 不能清除 blocker；manual checker blocker 强制 rework。正例证明 complete evidence 无备注返回 `approved`，有非阻断备注返回 `approved_with_non_blocking_notes`，并提供 audit-friendly JSON（审计友好 JSON）与确定性 `checker-verdict.<ticket_ref>.<final_evidence_table_ref>`。验证命令：`PYTHONPATH="src:." python -m pytest tests/evidence/test_checker_verdict.py -q`（43 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_final_evidence_table.py tests/evidence/test_checker_verdict.py tests/negative/test_missing_acceptance_map_blocks_closeout.py -q`（73 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（735 passed）。
 
 ### V2-050E: 实现 rework ticket 触发
 

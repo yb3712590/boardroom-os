@@ -21,6 +21,8 @@
 | `v2-050b-evidence-verifier-implementation-plan.md` | V2-050B EvidenceVerifier（证据验证器）实施计划 |
 | `v2-050c-final-evidence-table-spec.md` | V2-050C FinalEvidenceTable（最终证据表）同行评审 spec |
 | `v2-050c-final-evidence-table-implementation-plan.md` | V2-050C FinalEvidenceTable（最终证据表）实施计划 |
+| `v2-050d-checker-verdict-spec.md` | V2-050D CheckerVerdict（检查结论）同行评审 spec |
+| `v2-050d-checker-verdict-implementation-plan.md` | V2-050D CheckerVerdict（检查结论）实施计划 |
 
 ## AI 启动入口
 
