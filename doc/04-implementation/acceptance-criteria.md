@@ -274,9 +274,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] AC-V2-EVIDENCE-003（evidence map complete）— 由 V2-050C `test_missing_acceptance_map_blocks_closeout.py` 证明
 - [x] AC-V2-CHECKER-001（checker blocks gaps）— 由 V2-050D `test_checker_verdict.py` 证明：FinalEvidenceTable（最终证据表）missing / failed rows 必须转为 `REWORK_REQUIRED` blocker，malformed typed input（畸形类型化输入）必须 fail closed
 - [x] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D `test_checker_verdict.py` 证明：notes（备注）不会清除 evidence blocker（证据阻断项）或 manual checker blocker（手动检查阻断项）
-- [ ] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
+- [x] Rework 闭环 — 由 V2-050E `test_rework_ticket_generation.py` 证明
 - [ ] Completion gate 接入 reducer — 由 V2-050F `test_completion_gate_with_evidence.py` 证明：正式 evidence/checker 模型不得绕过 `WORK_PRODUCT_SUBMITTED` 与 provider attempt 门禁
-- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 5/7）
+- [ ] V2-050A ~ V2-050F 七个工作包全部 DONE（含 V2-050A1；当前 6/7）
 - [ ] `backlog.md` 进度总览 Phase 5 显示 7/7
 
 #### 本批产出

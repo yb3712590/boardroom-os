@@ -23,6 +23,7 @@
 | `v2-050c-final-evidence-table-implementation-plan.md` | V2-050C FinalEvidenceTable（最终证据表）实施计划 |
 | `v2-050d-checker-verdict-spec.md` | V2-050D CheckerVerdict（检查结论）同行评审 spec |
 | `v2-050d-checker-verdict-implementation-plan.md` | V2-050D CheckerVerdict（检查结论）实施计划 |
+| `v2-050e-rework-ticket-generation-spec.md` | V2-050E ReworkTicketGenerator（返工任务生成器）同行评审 spec |
 
 ## AI 启动入口
 

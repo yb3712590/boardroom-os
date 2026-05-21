@@ -1,6 +1,15 @@
 """Checker-layer primitives for Boardroom OS V2."""
 
 from boardroom_os.checker.checker import CheckerService, CheckerServiceInput
+from boardroom_os.checker.rework import (
+    ReworkTicketGenerationError,
+    ReworkTicketGenerationInput,
+    ReworkTicketGenerationResult,
+    ReworkTicketGenerator,
+    ReworkTicketOverrides,
+    ReworkTicketPlan,
+    ReworkTicketPlanRef,
+)
 from boardroom_os.checker.verdict import (
     CheckerBlockerCode,
     CheckerBlockerRef,
@@ -26,5 +35,12 @@ __all__ = [
     "CheckerVerdictError",
     "CheckerVerdictRef",
     "CheckerVerdictStatus",
+    "ReworkTicketGenerationError",
+    "ReworkTicketGenerationInput",
+    "ReworkTicketGenerationResult",
+    "ReworkTicketGenerator",
+    "ReworkTicketOverrides",
+    "ReworkTicketPlan",
+    "ReworkTicketPlanRef",
     "SourceDiffRef",
 ]

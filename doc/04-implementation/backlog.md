@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050E`
+**当前未完成工作包**：`V2-050F`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050E rework ticket 触发（返工任务触发），把 checker blocker（检查阻断项）和 evidence gaps（证据缺口）转换成 graph（任务图）中的 rework ticket（返工任务）。
+**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050F completion gate（完成门禁）接入，把 verified evidence（已验证证据）和 checker verdict（检查结论）适配到 reducer（状态归约器）的 ticket completion boundary（任务完成边界）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 5 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 6 / 7 | 进行中 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **33 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **34 / 53** | **Phase 5 进行中** |
 
 ## 当前约束摘要
 
@@ -626,7 +626,7 @@ RoleProfile（角色模板）
 
 ### V2-050E: 实现 rework ticket 触发
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 checker blocker 和 evidence gaps 转换成 graph 中的 rework ticket。
 - 输入文档：`agent-team-model.md`、`domain-model.md`。
 - 依赖：V2-050D、V2-020D。
@@ -634,6 +634,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：blocking gap 不生成 rework、rework ticket 缺 acceptance_refs/evidence_obligations 必须失败。
 - 必须证明的 happy path：missing test evidence 生成绑定原 ticket 的 rework ticket。
 - 验收口径：缺口在 checker/rework 阶段暴露，不留到 closeout 首次发现。
+- 完成证据：2026-05-21 新增 ReworkTicketGenerator（返工任务生成器）、ReworkTicketPlan（返工任务计划）、ReworkTicketOverrides（返工覆盖项）和 ReworkTicketGenerationResult（返工任务生成结果）；负例覆盖 approved/escalate verdict（批准/升级结论）、ticket/verdict mismatch（任务/结论不匹配）、缺 blocker、空 blocker 文本、未知 acceptance_ref（验收引用）、畸形 ticket scope（任务范围）、allowed_read_refs 非字符串、allowed_write_set 扩展、naive generated_at（无时区生成时间）、extra input fields（额外输入字段）、result/payload mismatch（结果/载荷不一致）和 EventRecord 越界；正例证明 missing/failed/manual blocker（缺失/失败/手动阻断项）生成 `depends_on=()` 的 rework ticket，allowed_read_refs 使用 `.value` 字符串，purpose override（目的覆盖）仍保留 original/blocker trace（原任务/阻断项追踪），并通过 TicketReducer（任务状态归约器）证明 original ticket BLOCKED（原任务阻塞）且 rework ticket READY（返工任务就绪）。验证命令：`PYTHONPATH="src:." python -m pytest tests/evidence/test_rework_ticket_generation.py -q`（42 passed）；`PYTHONPATH="src:." python -m pytest tests/evidence/test_checker_verdict.py tests/evidence/test_rework_ticket_generation.py -q`（85 passed）；`PYTHONPATH="src:." python -m pytest tests/reducers/test_ticket_reducer_transitions.py tests/evidence/test_rework_ticket_generation.py -q`（54 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（777 passed）。
 
 ### V2-050F: evidence 与 reducer 集成门禁
 
