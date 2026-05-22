@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-050F`
+**当前未完成工作包**：`V2-060A`
 
-**当前重点**：Phase 5 Evidence + Checker（证据、检查与返工）继续推进；当前重点转为 V2-050F completion gate（完成门禁）接入，把 verified evidence（已验证证据）和 checker verdict（检查结论）适配到 reducer（状态归约器）的 ticket completion boundary（任务完成边界）。
+**当前重点**：Phase 6 Workspace + Package（工作区与项目包）启动；当前重点转为 V2-060A workspace manifest（工作区清单），表达 generated project workspace（生成项目工作区）的逻辑结构，并防止把 `00-boardroom` / `10-project` / `20-evidence` / `30-audit` 误作框架源码布局。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -155,11 +155,11 @@ RoleProfile（角色模板）
 | Phase 2：Event + Reducer Kernel | V2-020 | 6 / 6 | 完成 |
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
-| Phase 5：Evidence + Checker | V2-050 | 6 / 7 | 进行中 |
+| Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **34 / 53** | **Phase 5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **35 / 53** | **Phase 6 待启动** |
 
 ## 当前约束摘要
 
@@ -638,7 +638,7 @@ RoleProfile（角色模板）
 
 ### V2-050F: evidence 与 reducer 集成门禁
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 verified evidence + checker verdict 接入 reducer 的 ticket completion gate。
 - 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`、`decisions.md`（DEC-0011 / DEC-0014）。
 - 依赖：V2-050E、V2-020D。
@@ -646,6 +646,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：checker approved 但 evidence table missing、evidence complete 但 checker blocker、attempt count 为 0、缺 `WORK_PRODUCT_SUBMITTED` 历史事实、任一 verified evidence 关联的 fallback decision allowed=False、缺 `FALLBACK_DECISION_RECORDED` lineage 必须阻断 completion。
 - 必须证明的 happy path：evidence complete + checker approved + provider attempts recorded + work product submitted + fallback decisions all allowed 时 reducer 可完成 ticket。
 - 验收口径：ticket completion 不由 runtime 或 checker 单独决定；V2-050F 只能适配正式 evidence/checker 模型到既有 completion boundary，不能绕过 work product、provider attempt 或 fallback decision 门禁。
+- 完成证据：2026-05-22 新增 CompletionGate（完成门禁）、CompletionGateInput（完成门禁输入）和 CompletionGateResult（完成门禁结果）；负例覆盖 checker/evidence/provider/work_product/fallback/reducer history（检查结论/证据/模型调用/工作产物/降级/归约历史）；正例覆盖 primary evidence（主路径证据）、approved_with_non_blocking_notes（带非阻断备注批准）、allowed deterministic fallback lineage（允许的确定性降级来源链）和 TicketReducer（任务状态归约器）completion；验证命令：`PYTHONPATH="src:." python -m pytest tests/reducers/test_completion_gate_with_evidence.py -q`（28 passed）；`PYTHONPATH="src:." python -m pytest tests/reducers/test_ticket_reducer_transitions.py tests/evidence/test_final_evidence_table.py tests/evidence/test_checker_verdict.py tests/evidence/test_fallback_policy_registry.py tests/evidence/test_evidence_verifier.py tests/reducers/test_completion_gate_with_evidence.py -q`（111 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/negative -q`（805 passed）。
 
 ---
 
