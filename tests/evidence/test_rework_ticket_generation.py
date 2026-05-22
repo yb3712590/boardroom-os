@@ -565,6 +565,29 @@ def test_rework_ticket_allowed_read_refs_include_verdict_table_work_product_and_
     assert all(isinstance(ref, str) for ref in result.rework_ticket_payload.allowed_read_refs)
 
 
+def test_rework_allowed_read_ref_overrides_are_appended_without_removing_required_refs() -> None:
+    from boardroom_os.checker.rework import ReworkTicketOverrides
+
+    verdict = _verdict()
+    blocker_ref = verdict.blockers[0].blocker_id
+    assert blocker_ref is not None
+    assert verdict.checker_verdict_id is not None
+
+    result = _generate(
+        checker_verdict=verdict,
+        overrides=ReworkTicketOverrides(allowed_read_refs=("extra.audit.context",)),
+    )
+
+    assert result.rework_ticket_payload.allowed_read_refs == (
+        "contract.acceptance.backend",
+        verdict.checker_verdict_id.value,
+        verdict.final_evidence_table_ref.value,
+        verdict.work_product_ref.value,
+        blocker_ref.value,
+        "extra.audit.context",
+    )
+
+
 def test_rework_ticket_generation_is_deterministic() -> None:
     first = _generate()
     second = _generate()

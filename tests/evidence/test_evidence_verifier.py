@@ -520,6 +520,38 @@ def test_command_verification_run_claim_becomes_verified_evidence() -> None:
     ) == ("command_stdout", "command_stderr")
 
 
+def test_verifier_rejects_verification_run_artifact_refs_out_of_order() -> None:
+    run = _verification_run()
+    claim = _verification_run_claim(run).model_copy(
+        update={
+            "artifact_refs": (
+                EvidenceArtifactRef(value=run.stderr_ref.value),
+                EvidenceArtifactRef(value=run.stdout_ref.value),
+            )
+        }
+    )
+
+    result = EvidenceVerifier().verify(
+        _input(
+            claim=claim,
+            evidence_obligation=_evidence_obligation(
+                required_artifact_type=RequiredArtifactType(value="command_run")
+            ),
+            artifact_manifest=_verification_run_manifest(run),
+            purpose_policy=_purpose_policy(
+                required_artifact_type=RequiredArtifactType(value="command_run")
+            ),
+            verification_runs=(run,),
+        )
+    )
+
+    assert result.success is False
+    assert result.verified_evidence is None
+    assert tuple(blocker.code for blocker in result.blockers) == (
+        EvidenceVerificationBlockerCode.VERIFICATION_RUN_ARTIFACT_REFS_MISMATCH,
+    )
+
+
 def test_allowed_deterministic_fallback_claim_becomes_verified_evidence() -> None:
     claim = _fallback_claim()
 
