@@ -270,7 +270,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### AC 检查清单
 
-- [ ] AC-V2-EVIDENCE-002（source inventory proves lineage）— 由 V2-060C 提供，V2-050B 中 verifier 端的占位测试 `test_synthetic_evidence_rejected.py` 同步验证
+- [ ] AC-V2-EVIDENCE-002（source inventory proves lineage）— 明确延后至 V2-060C 提供；V2-050B 中 verifier 端的 `test_synthetic_evidence_rejected.py` 只覆盖 synthetic / fallback evidence（合成/降级证据）不能替代 source inventory lineage（源码清单来源链）
 - [x] AC-V2-EVIDENCE-003（evidence map complete）— 由 V2-050C `test_missing_acceptance_map_blocks_closeout.py` 证明
 - [x] AC-V2-CHECKER-001（checker blocks gaps）— 由 V2-050D `test_checker_verdict.py` 证明：FinalEvidenceTable（最终证据表）missing / failed rows 必须转为 `REWORK_REQUIRED` blocker，malformed typed input（畸形类型化输入）必须 fail closed
 - [x] AC-V2-CHECKER-002（notes 不能覆盖 blocker）— 由 V2-050D `test_checker_verdict.py` 证明：notes（备注）不会清除 evidence blocker（证据阻断项）或 manual checker blocker（手动检查阻断项）
@@ -283,11 +283,11 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 - 代码：`src/boardroom_os/evidence/{claim,fallback_registry,verifier,table}.py`、`src/boardroom_os/checker/{verdict,checker,rework}.py`、`src/boardroom_os/reducers/completion_gate.py`
 - 测试：`tests/evidence/`、`tests/reducers/test_completion_gate_with_evidence.py`、相应 negative 测试
-- 文档同步：本文件 Phase 5 checkbox 全勾选
+- 文档同步：V2-050-owned checkbox（V2-050 负责的验收项）已勾选；AC-V2-EVIDENCE-002 明确延后至 V2-060C
 
 #### 进入 Phase 6 前置
 
-- [x] 上述 AC checkbox 全部勾选
+- [x] V2-050-owned checkbox（V2-050 负责的验收项）全部勾选；AC-V2-EVIDENCE-002 明确延后至 V2-060C
 - [x] V2-050A ~ V2-050F 状态全部 DONE（含 V2-050A1）
 - [x] FinalEvidenceTable schema 稳定（V2-060 / V2-070 会消费）
 
@@ -295,6 +295,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### AC 检查清单
 
+- [x] V2-060A WorkspaceManifest（工作区清单）完成 — 由 `tests/proving/test_workspace_manifest.py` 证明：缺 `10-project` / `20-evidence`、package root 非 `10-project`、repo layout misuse（仓库布局误用）、cache/secrets/scratch section（缓存/密钥/临时区段）均 fail closed；happy path 可定位 boardroom/package/evidence/audit roots（四区根路径）
 - [ ] AC-V2-PACKAGE-001（package 是最终输出）— 由 V2-060B `test_package_assembler.py` 证明：缺 package-contract / run-manifest / source 写到 package root 外必须失败
 - [ ] AC-V2-PACKAGE-002（package 必须可运行）— 由 V2-060D `test_run_manifest.py` 证明
 - [ ] AC-V2-EVIDENCE-002（source inventory lineage）— 由 V2-060C `test_source_inventory_ref_only_rejected.py` 证明：ref-only / 缺 producer_attempt_ref / 缺 evidence_refs 必须失败
@@ -305,9 +306,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 本批产出
 
-- 代码：`src/boardroom_os/workspace/{manifest,assembler,source_inventory,run_manifest,evidence_export,agent_asset_import}.py`
-- 测试：`tests/proving/` 至少 6 个测试文件 + `tests/negative/test_source_inventory_ref_only_rejected.py`
-- 文档同步：本文件 Phase 6 checkbox 全勾选
+- 代码：`src/boardroom_os/workspace/{manifest,assembler,source_inventory,run_manifest,evidence_export,agent_asset_import}.py`（当前已存在 `src/boardroom_os/workspace/manifest.py`）
+- 测试：`tests/proving/` 至少 6 个测试文件 + `tests/negative/test_source_inventory_ref_only_rejected.py`（当前已存在 `tests/proving/test_workspace_manifest.py`）
+- 文档同步：本文件 Phase 6 随工作包逐项勾选；Phase 6 全部完成后再全勾选
 
 #### 进入 Phase 7 前置
 

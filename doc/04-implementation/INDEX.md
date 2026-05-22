@@ -25,6 +25,8 @@
 | `v2-050d-checker-verdict-implementation-plan.md` | V2-050D CheckerVerdict（检查结论）实施计划 |
 | `v2-050e-rework-ticket-generation-spec.md` | V2-050E ReworkTicketGenerator（返工任务生成器）同行评审 spec |
 | `v2-050f-completion-gate-spec.md` | V2-050F CompletionGate（完成门禁）同行评审 spec |
+| `v2-060a-workspace-manifest-spec.md` | V2-060A WorkspaceManifest（工作区清单）同行评审 spec |
+| `v2-060a-workspace-manifest-implementation-plan.md` | V2-060A WorkspaceManifest（工作区清单）实施计划 |
 
 ## AI 启动入口
 

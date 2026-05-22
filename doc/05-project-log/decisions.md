@@ -238,3 +238,20 @@ V2-030E 不保留 `TEST_ONLY_SIMULATION`（测试环境模拟）可在“测试�
 - `TOOLING_PREFLIGHT`（工具预检）即使满足 diagnostic evidence（诊断证据），也不得计入 FinalEvidenceTable（最终证据表）的 blocking criteria（阻塞验收项）。
 - V2-050F completion gate（完成门禁）必须阻断任何关联 allowed=False fallback decision 的 evidence；V2-070C process audit（流程审计）必须能追踪 fallback decision lineage（降级判定来源链）。
 
+## DEC-0015: WorkspaceManifest 采用严格固定四区
+
+- 状态：Accepted
+- 日期：2026-05-22
+
+### 决策
+
+WorkspaceManifest（工作区清单）第一版只接受 durable/auditable（可持久/可审计）四区：`00-boardroom` / `10-project` / `20-evidence` / `30-audit`。排除 build cache（构建缓存）、secrets/credentials（密钥/凭据）和 runtime scratch（运行时临时区）；PackageContract.package_root（包合同项目根）必须固定绑定 `10-project`。
+
+### 理由
+
+固定四区可保证 generated project workspace（生成项目工作区）边界清晰、可审计、可重放，并避免把 workspace layout（工作区布局）误作 Boardroom OS V2 框架 repo layout（仓库布局）。
+
+### 影响
+
+- V2-060B/C/E/F 通过 manifest（清单）读取 canonical roots（规范根路径）。
+- 临时缓存和密钥只能作为外部引用或显式排除，不进入 WorkspaceManifest contract（工作区清单合同）。

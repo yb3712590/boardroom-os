@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060A`
+**当前未完成工作包**：`V2-060B`
 
-**当前重点**：Phase 6 Workspace + Package（工作区与项目包）启动；当前重点转为 V2-060A workspace manifest（工作区清单），表达 generated project workspace（生成项目工作区）的逻辑结构，并防止把 `00-boardroom` / `10-project` / `20-evidence` / `30-audit` 误作框架源码布局。
+**当前重点**：Phase 6 继续推进 V2-060B package assembler（项目包装配器），基于 WorkspaceManifest（工作区清单）canonical roots（规范根路径）装配 `10-project`，并保持 generated project workspace（生成项目工作区）不是框架源码布局。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -139,7 +139,7 @@ RoleProfile（角色模板）
   -> ProviderAttempt（模型调用尝试记录，绑定 execution_package_ref）
   -> WorkProduct（工作产物，绑定 producer_attempt_ref）
   -> EvidenceClaim（证据声明，绑定 producer_attempt_ref）
-  -> VerifiedEvidenceTable（已验证证据表）
+  -> FinalEvidenceTable（最终证据表）
   -> SourceInventory（源码清单，绑定 producer_ticket / attempt / evidence）
   -> CloseoutPackage（收尾包）
 ```
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 0 / 6 | 待开始 |
+| Phase 6：Workspace + Package | V2-060 | 1 / 6 | 进行中 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **35 / 53** | **Phase 6 待启动** |
+| **合计** | **V2-000 ~ V2-080** | **36 / 53** | **Phase 6 进行中** |
 
 ## 当前约束摘要
 
@@ -405,7 +405,7 @@ RoleProfile（角色模板）
 
 ## V2-030: Agent Seat + Execution Package Compiler（席位与执行包编译器）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 role（角色）、seat（席位）、skill binding（技能绑定）、ModelExecutionProfile（模型执行配置）和 ExecutionPackage（执行包）编译。
 - 输入文档：`agent-team-model.md`、`execution-and-runtime-boundary.md`、`technical-architecture.md`。
 - 输出目录：`src/boardroom_os/agents/`、`src/boardroom_os/execution/`、`tests/execution/`、`tests/negative/`。
@@ -558,7 +558,7 @@ RoleProfile（角色模板）
 
 ## V2-050: Evidence Verifier + Checker + Rework（证据验证、检查与返工）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 evidence claim（证据声明）、evidence verifier（证据验证器）、final evidence table（最终证据表）、checker verdict（检查结论）和 rework ticket（返工任务）触发。
 - 输入文档：`contract-and-evidence-model.md`、`agent-team-model.md`。
 - 输出目录：`src/boardroom_os/evidence/`、`src/boardroom_os/checker/`、`tests/evidence/`、`tests/negative/`。
@@ -652,7 +652,7 @@ RoleProfile（角色模板）
 
 ## V2-060: Workspace + Package Assembler（工作区与项目包装配器）
 
-- 状态：TODO
+- 状态：IN_PROGRESS
 - 目标：生成目标项目 workspace、run manifest、package contract 文件、source inventory、agent asset import manifest 和最终 package assembly。
 - 输入文档：`generated-project-workspace.md`、`contract-and-evidence-model.md`。
 - 输出目录：`src/boardroom_os/workspace/`、`tests/proving/`、`tests/negative/`。
@@ -662,20 +662,21 @@ RoleProfile（角色模板）
 
 ### V2-060A: 实现 workspace manifest
 
-- 状态：TODO
+- 状态：DONE
 - 目标：表达 `00-boardroom`、`10-project`、`20-evidence`、`30-audit` 的逻辑结构，但不把它误作本 repo 结构。
 - 输入文档：`generated-project-workspace.md`。
 - 依赖：V2-010D。
-- 输出文件：`src/boardroom_os/workspace/manifest.py`、`tests/proving/test_workspace_manifest.py`。
+- 输出文件：`src/boardroom_os/workspace/__init__.py`、`src/boardroom_os/workspace/manifest.py`、`tests/proving/test_workspace_manifest.py`。
 - 必须先写的 negative tests：package root 不在 workspace 内、缺 10-project、缺 20-evidence 必须失败。
 - 必须证明的 happy path：tiny workspace manifest 可定位 package root、evidence root、audit root。
 - 验收口径：workspace 是 generated project 的 staging area，不是框架源码布局。
+- 完成证据：2026-05-22 新增 WorkspaceManifest（工作区清单）与 WorkspacePath（工作区路径），固定四区 `00-boardroom` / `10-project` / `20-evidence` / `30-audit`，生成 deterministic `workspace-manifest.<workflow_ref>`，并拒绝绝对路径、Windows drive、`..`、`.`、空 segment、反斜杠、尾部斜杠、缺 project/evidence、重复 section、非 canonical section path、extra fields、workspace_root 落入框架 repo layout（`src`、`src/boardroom_os`、`tests`、`doc`、`scripts`、`examples`、`backend`）、workspace_manifest_id 与 workflow_ref 不匹配，以及 `package_contract.package_root != 10-project`。Negative / happy tests 由 `tests/proving/test_workspace_manifest.py` 覆盖；正向路径证明 tiny PackageContract（微型包合同）可构建 manifest 并定位 boardroom/package/evidence/audit roots、`full_section_path`，`model_dump` section order 稳定，重复构建稳定。验证命令：`PYTHONPATH="src:." python -m pytest tests/proving/test_workspace_manifest.py -q`（46 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts/test_package_contract.py tests/proving/test_workspace_manifest.py -q`（49 passed）；`PYTHONPATH="src:." python -m pytest -q`（853 passed）。副作用检查：未创建 `workspace/`、`00-boardroom/`、`10-project/`、`20-evidence/`、`30-audit/`。
 
 ### V2-060B: 实现 package assembler
 
 - 状态：TODO
 - 目标：把 source surfaces、docs、run manifest、package contract 装配到 `10-project`。
-- 输入文档：`generated-project-workspace.md`、`PackageContract`。
+- 输入文档：`generated-project-workspace.md`、`PackageContract`（包合同）。
 - 依赖：V2-060A。
 - 输出文件：`src/boardroom_os/workspace/assembler.py`、`tests/proving/test_package_assembler.py`。
 - 必须先写的 negative tests：缺 package-contract.json、缺 run-manifest.json、source 写到 package root 外必须失败。
