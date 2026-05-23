@@ -27,6 +27,8 @@
 | `v2-050f-completion-gate-spec.md` | V2-050F CompletionGate（完成门禁）同行评审 spec |
 | `v2-060a-workspace-manifest-spec.md` | V2-060A WorkspaceManifest（工作区清单）同行评审 spec |
 | `v2-060a-workspace-manifest-implementation-plan.md` | V2-060A WorkspaceManifest（工作区清单）实施计划 |
+| `v2-060b-package-assembler-spec.md` | V2-060B PackageAssembler（项目包装配器）同行评审 spec |
+| `v2-060b-package-assembler-implementation-plan.md` | V2-060B PackageAssembler（项目包装配器）实施计划 |
 
 ## AI 启动入口
 

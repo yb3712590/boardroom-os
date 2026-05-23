@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060B`
+**当前未完成工作包**：`V2-060C`
 
-**当前重点**：Phase 6 继续推进 V2-060B package assembler（项目包装配器），基于 WorkspaceManifest（工作区清单）canonical roots（规范根路径）装配 `10-project`，并保持 generated project workspace（生成项目工作区）不是框架源码布局。
+**当前重点**：Phase 6 继续推进 V2-060C source inventory builder（源码清单构建器），从 package root（包根）和 git/hash 构建 SourceInventory（源码清单），证明 implementation lineage（实现来源链路）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 1 / 6 | 进行中 |
+| Phase 6：Workspace + Package | V2-060 | 2 / 6 | 进行中 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **36 / 53** | **Phase 6 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **37 / 53** | **Phase 6 进行中** |
 
 ## 当前约束摘要
 
@@ -674,7 +674,7 @@ RoleProfile（角色模板）
 
 ### V2-060B: 实现 package assembler
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 source surfaces、docs、run manifest、package contract 装配到 `10-project`。
 - 输入文档：`generated-project-workspace.md`、`PackageContract`（包合同）。
 - 依赖：V2-060A。
@@ -682,6 +682,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 package-contract.json、缺 run-manifest.json、source 写到 package root 外必须失败。
 - 必须证明的 happy path：tiny package 包含 README、AGENTS、package-contract、run-manifest、src/tests 或 backend/frontend/tests。
 - 验收口径：交付物是 package，不是离散文件列表。
+- 完成证据：2026-05-23 新增 PackageArtifact（包产物）、PackageArtifactPath（包产物路径）、PackageArtifactKind（包产物类型）、PackageAssembly（项目包装配结果）和 assemble_package（装配项目包函数）；保持纯装配计划 + 校验边界，不创建目录、不写文件、不计算 hash、不构建 SourceInventory（源码清单）。负例证明缺 package-contract.json、缺 run-manifest.json、source artifact（源码产物）写到 package root（包根）外、unsafe path（不安全路径）、framework repo prefix（框架仓库前缀）、manifest/contract mismatch（清单/合同不匹配）、缺 README/AGENTS、软件包缺 source/test、docs_required 缺 DOC artifact（文档产物）、未知 source_surface_ref（源码实现面引用）、acceptance_ref 越界、source surface path 未覆盖、重复 artifact path（产物路径）和错误 artifact_kind（产物类型）均 fail closed；正例证明 tiny full-stack package（微型全栈包）包含 README、AGENTS、package-contract、run-manifest、backend/frontend/tests/docs，并生成 deterministic PackageAssembly（确定性项目包装配结果）。验证命令：`PYTHONPATH="src;." python -m pytest tests/proving/test_package_assembler.py -q`（40 passed in 0.13s）；`PYTHONPATH="src;." python -m pytest tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py -q`（86 passed in 0.21s）；`PYTHONPATH="src;." python -m pytest tests/contracts/test_package_contract.py tests/negative/test_package_contract_fail_closed.py tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py -q`（101 passed in 0.18s）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py -q`（117 passed in 0.21s）。副作用检查：未创建目录、未写文件、未复制文件，扫描仅命中 PurePosixPath / PureWindowsPath 路径校验。
 
 ### V2-060C: 实现 source inventory builder
 

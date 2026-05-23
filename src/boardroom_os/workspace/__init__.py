@@ -1,3 +1,12 @@
+from boardroom_os.workspace.assembler import (
+    PackageArtifact,
+    PackageArtifactKind,
+    PackageArtifactPath,
+    PackageAssemblerError,
+    PackageAssembly,
+    PackageAssemblyRef,
+    assemble_package,
+)
 from boardroom_os.workspace.manifest import (
     WorkflowRef,
     WorkspaceManifest,
@@ -10,6 +19,12 @@ from boardroom_os.workspace.manifest import (
 )
 
 __all__ = [
+    "PackageArtifact",
+    "PackageArtifactKind",
+    "PackageArtifactPath",
+    "PackageAssemblerError",
+    "PackageAssembly",
+    "PackageAssemblyRef",
     "WorkflowRef",
     "WorkspaceManifest",
     "WorkspaceManifestError",
@@ -17,5 +32,6 @@ __all__ = [
     "WorkspacePath",
     "WorkspaceSection",
     "WorkspaceSectionPath",
+    "assemble_package",
     "build_workspace_manifest",
 ]
