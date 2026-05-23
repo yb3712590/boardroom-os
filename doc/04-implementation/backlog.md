@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060D`
+**当前未完成工作包**：`V2-060E`
 
-**当前重点**：Phase 6 继续推进 V2-060D run manifest 与 command binding（运行清单与命令绑定），把 PackageContract（包合同）中的 run/test commands（运行/测试命令）落到可验证 manifest。
+**当前重点**：Phase 6 继续推进 V2-060E workspace/package 与 evidence 集成（工作区/项目包与证据集成），把 SourceInventory（源码清单）、RunManifest（运行清单）、VerificationRun（验证运行）和 FinalEvidenceTable（最终证据表）汇入 `20-evidence`。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 3 / 6 | 进行中 |
+| Phase 6：Workspace + Package | V2-060 | 4 / 6 | 进行中 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **38 / 53** | **Phase 6 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **39 / 53** | **Phase 6 进行中** |
 
 ## 当前约束摘要
 
@@ -698,14 +698,15 @@ RoleProfile（角色模板）
 
 ### V2-060D: 实现 run manifest 与 command binding
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 package contract 的 run/test commands 落到 run manifest，并供 CommandRunner 校验。
 - 输入文档：`generated-project-workspace.md`、`execution-and-runtime-boundary.md`。
 - 依赖：V2-060B、V2-040D。
-- 输出文件：`src/boardroom_os/workspace/run_manifest.py`、`tests/proving/test_run_manifest.py`。
+- 输出文件：`src/boardroom_os/workspace/run_manifest.py`、`tests/proving/test_run_manifest.py`；同步调整 `src/boardroom_os/execution/runtime_executor.py` 的 CommandRunner（命令执行器）延迟导入边界，避免独立导入 runner 时形成循环导入。
 - 必须先写的 negative tests：软件项目缺 run/test commands、runner 执行未声明命令、manifest 命令与 PackageContract 不一致必须失败。
 - 必须证明的 happy path：declared command 可被 runner 执行并生成 verification evidence。
 - 验收口径：可运行软件项目必须有可验证 run/test commands。
+- 完成证据：2026-05-23 新增 RunManifest（运行清单）、RunManifestCommand（运行清单命令）、RunManifestBinding（运行清单绑定）和 build_run_manifest / validate_run_manifest_binding（运行清单构建/绑定校验入口）；同步导出 `boardroom_os.workspace` public API（公开入口），并将 `RuntimeExecutor`（运行时执行器）中的 CommandRunner（命令执行器）改为执行时延迟导入，避免干净进程独立导入 `boardroom_os.adapters.process_runner` 时触发循环导入。负例覆盖 software/mixed package 缺 run/test commands、未声明 command、manifest/contract command label/command/cwd/kind 不一致、manifest 缺/多 declared command、重复 command_id、空 command / command item / cwd、extra fields、workspace/package contract ref mismatch（工作区/包合同引用不匹配）、package root mismatch（包根不匹配）、非 canonical `10-project` package root 和伪造 run_manifest_id 均 fail closed；documentation package 可无 commands。正例证明 declared command 先通过 validate_run_manifest_binding，再使用 binding.command_id 串联 CommandRunner.run，生成真实 VerificationRun（验证运行）及 stdout/stderr refs（标准输出/错误引用）。验证命令：`PYTHONPATH="src;." python -c "from boardroom_os.adapters.process_runner import CommandRunner; print(CommandRunner.__name__)"`（输出 `CommandRunner`）；`PYTHONPATH="src;." python -m pytest tests/proving/test_run_manifest.py -q`（24 passed）；`PYTHONPATH="src;." python -m pytest tests/execution/test_command_runner.py -q --basetemp=.pytest_cache/tmp-command-runner`（36 passed）；`PYTHONPATH="src;." python -m pytest tests/execution/test_command_runner.py tests/proving/test_run_manifest.py -q --basetemp=.pytest_cache/tmp-run-manifest-command-runner`（60 passed）；`PYTHONPATH="src;." python -m pytest tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py tests/proving/test_source_inventory.py tests/proving/test_run_manifest.py -q --basetemp=.pytest_cache/tmp-workspace-proving`（112 passed）。
 
 ### V2-060E: workspace/package 与 evidence 集成
 
@@ -746,7 +747,7 @@ RoleProfile（角色模板）
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-050F、V2-060E。
 - 输出文件：`src/boardroom_os/closeout/gate.py`、`tests/closeout/test_closeout_gate.py`、`tests/negative/test_closeout_fail_closed.py`。
-- 必须先写的 negative tests：缺 replay bundle、缺 evidence map、open blocker、provider attempt count 为 0、git dirty 必须失败。
+- 必须先写的 negative tests：缺 replay bundle、缺 evidence map、open blocker、provider attempt count 为 0、git dirty、任一 declared command 未经 RunManifestBinding 即被用作 final command evidence 必须失败。
 - 必须证明的 happy path：所有 gate 输入 ready 时 closeout verdict passed。
 - 验收口径：closeout 只收束已证明事实。
 

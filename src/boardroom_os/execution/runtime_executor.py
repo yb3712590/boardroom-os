@@ -7,7 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
-from boardroom_os.adapters.process_runner import CommandRunner, CommandRunnerInput
 from boardroom_os.agents.categories import RoleCategory
 from boardroom_os.agents.team import AgentTeamProjection
 from boardroom_os.contracts.package import PackageContract
@@ -319,6 +318,8 @@ class RuntimeExecutor:
                 timestamp=runtime_input.timestamp,
             )
         )
+
+        from boardroom_os.adapters.process_runner import CommandRunner, CommandRunnerInput
 
         command_runner = CommandRunner()
         verification_runs: list[VerificationRun] = []

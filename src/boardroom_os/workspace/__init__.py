@@ -17,6 +17,16 @@ from boardroom_os.workspace.manifest import (
     WorkspaceSectionPath,
     build_workspace_manifest,
 )
+from boardroom_os.workspace.run_manifest import (
+    RunManifest,
+    RunManifestBinding,
+    RunManifestCommand,
+    RunManifestCommandKind,
+    RunManifestError,
+    RunManifestRef,
+    build_run_manifest,
+    validate_run_manifest_binding,
+)
 from boardroom_os.workspace.source_inventory import (
     PackageCommitRef,
     SourceFilePath,
@@ -37,6 +47,12 @@ __all__ = [
     "PackageAssembly",
     "PackageAssemblyRef",
     "PackageCommitRef",
+    "RunManifest",
+    "RunManifestBinding",
+    "RunManifestCommand",
+    "RunManifestCommandKind",
+    "RunManifestError",
+    "RunManifestRef",
     "SourceFilePath",
     "SourceFileRecord",
     "SourceInventory",
@@ -52,6 +68,8 @@ __all__ = [
     "WorkspaceSection",
     "WorkspaceSectionPath",
     "assemble_package",
+    "build_run_manifest",
     "build_source_inventory",
     "build_workspace_manifest",
+    "validate_run_manifest_binding",
 ]

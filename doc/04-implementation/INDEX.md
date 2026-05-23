@@ -31,6 +31,8 @@
 | `v2-060b-package-assembler-implementation-plan.md` | V2-060B PackageAssembler（项目包装配器）实施计划 |
 | `v2-060c-source-inventory-spec.md` | V2-060C SourceInventory（源码清单）同行评审 spec |
 | `v2-060c-source-inventory-implementation-plan.md` | V2-060C SourceInventory（源码清单）实施计划 |
+| `v2-060d-run-manifest-spec.md` | V2-060D RunManifest（运行清单）同行评审 spec |
+| `v2-060d-run-manifest-implementation-plan.md` | V2-060D RunManifest（运行清单）实施计划 |
 
 ## AI 启动入口
 
