@@ -33,6 +33,8 @@
 | `v2-060c-source-inventory-implementation-plan.md` | V2-060C SourceInventory（源码清单）实施计划 |
 | `v2-060d-run-manifest-spec.md` | V2-060D RunManifest（运行清单）同行评审 spec |
 | `v2-060d-run-manifest-implementation-plan.md` | V2-060D RunManifest（运行清单）实施计划 |
+| `v2-060e-workspace-evidence-export-spec.md` | V2-060E WorkspaceEvidenceExport（工作区证据导出）同行评审 spec |
+| `v2-060e-workspace-evidence-export-implementation-plan.md` | V2-060E WorkspaceEvidenceExport（工作区证据导出）实施计划 |
 
 ## AI 启动入口
 

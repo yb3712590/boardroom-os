@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060E`
+**当前未完成工作包**：`V2-060F`
 
-**当前重点**：Phase 6 继续推进 V2-060E workspace/package 与 evidence 集成（工作区/项目包与证据集成），把 SourceInventory（源码清单）、RunManifest（运行清单）、VerificationRun（验证运行）和 FinalEvidenceTable（最终证据表）汇入 `20-evidence`。
+**当前重点**：Phase 6 继续推进 V2-060F agent asset bundle 导入（智能体资产包导入），把外部 role config（角色配置）、skill file（技能文件）、prompt file（提示词文件）和 MCP interface manifest（MCP 接口清单）导入为 `00-boardroom/agents/` 可审计快照。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 4 / 6 | 进行中 |
+| Phase 6：Workspace + Package | V2-060 | 5 / 6 | 进行中 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **39 / 53** | **Phase 6 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **40 / 53** | **Phase 6 进行中** |
 
 ## 当前约束摘要
 
@@ -710,7 +710,7 @@ RoleProfile（角色模板）
 
 ### V2-060E: workspace/package 与 evidence 集成
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 source inventory、run manifest、verification runs 和 final evidence table 汇入 `20-evidence`。
 - 输入文档：`generated-project-workspace.md`、`contract-and-evidence-model.md`。
 - 依赖：V2-060C、V2-060D、V2-050C。
@@ -718,6 +718,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：final evidence table 缺 blocking criterion、source inventory 缺 lineage、verification runs 缺 stdout/stderr refs 时不得导出 closeout-ready evidence。
 - 必须证明的 happy path：`20-evidence` 形成可供 closeout 消费的 evidence bundle。
 - 验收口径：package assembly 与 evidence assembly 同步，不允许先交付再补证据。
+- 完成证据：2026-05-23 新增 WorkspaceEvidenceBundle（工作区证据包）、EvidenceBundleArtifact（证据包产物）、EvidenceBundleArtifactPath（证据包产物路径）、EvidenceBundleArtifactKind（证据包产物类型）和 build_workspace_evidence_bundle（构建工作区证据包函数）；保持纯 bundle plan（证据包计划）边界，不创建目录、不写 `20-evidence` JSON、不复制 stdout/stderr、不重新运行命令、不调用 git、不重新验证 EvidenceClaim（证据声明）。负例覆盖 FinalEvidenceTable（最终证据表）missing / failed rows、complete 派生不一致、SourceInventory（源码清单）空 entries 和缺 lineage 字段、source inventory/package assembly mismatch（源码清单/项目包装配错配）、VerificationRun（验证运行）缺 stdout_ref 模型层失败、failed status run、重复 verification_run_id、RunManifest（运行清单）workspace mismatch、INV-X1 source inventory evidence refs 不被 final evidence table 承认、FinalEvidenceTable orphan VerifiedEvidenceRef（孤儿已验证证据引用）、INV-X2 orphan VerificationRun（孤儿验证运行）、非 `20-evidence` artifact path（产物路径）和伪造 closeout_ready 均 fail closed。正例证明 `20-evidence/source-inventory/source-inventory.json`、`20-evidence/tests/verification-runs.json`、`20-evidence/tests/run-manifest.json`、`20-evidence/closeout/final-evidence-table.json`、`20-evidence/closeout/evidence-bundle-manifest.json` 五类 logical artifacts（逻辑产物）可按确定性顺序生成，且 refs 在 WorkspaceManifest / PackageAssembly / SourceInventory / RunManifest / VerificationRun / VerifiedEvidence / FinalEvidenceTable 之间闭合。验证命令：`PYTHONPATH="src;." python -m pytest tests/proving/test_workspace_evidence_export.py -q`（17 passed in 0.22s）；`PYTHONPATH="src;." python -m pytest tests/proving/test_workspace_evidence_export.py tests/proving/test_source_inventory.py tests/proving/test_run_manifest.py tests/evidence/test_final_evidence_table.py tests/evidence/test_evidence_verifier.py -q`（65 passed in 0.25s）；`PYTHONPATH="src;." python -m pytest tests/proving -q`（129 passed in 0.28s）。
 
 ### V2-060F: 导入 agent asset bundle
 

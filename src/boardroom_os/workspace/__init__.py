@@ -7,6 +7,15 @@ from boardroom_os.workspace.assembler import (
     PackageAssemblyRef,
     assemble_package,
 )
+from boardroom_os.workspace.evidence_export import (
+    EvidenceBundleArtifact,
+    EvidenceBundleArtifactKind,
+    EvidenceBundleArtifactPath,
+    WorkspaceEvidenceBundle,
+    WorkspaceEvidenceBundleRef,
+    WorkspaceEvidenceExportError,
+    build_workspace_evidence_bundle,
+)
 from boardroom_os.workspace.manifest import (
     WorkflowRef,
     WorkspaceManifest,
@@ -40,6 +49,9 @@ from boardroom_os.workspace.source_inventory import (
 )
 
 __all__ = [
+    "EvidenceBundleArtifact",
+    "EvidenceBundleArtifactKind",
+    "EvidenceBundleArtifactPath",
     "PackageArtifact",
     "PackageArtifactKind",
     "PackageArtifactPath",
@@ -61,6 +73,9 @@ __all__ = [
     "SourceInventoryRef",
     "SourceLineageRecord",
     "WorkflowRef",
+    "WorkspaceEvidenceBundle",
+    "WorkspaceEvidenceBundleRef",
+    "WorkspaceEvidenceExportError",
     "WorkspaceManifest",
     "WorkspaceManifestError",
     "WorkspaceManifestRef",
@@ -70,6 +85,7 @@ __all__ = [
     "assemble_package",
     "build_run_manifest",
     "build_source_inventory",
+    "build_workspace_evidence_bundle",
     "build_workspace_manifest",
     "validate_run_manifest_binding",
 ]
