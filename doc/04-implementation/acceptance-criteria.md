@@ -298,7 +298,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] V2-060A WorkspaceManifest（工作区清单）完成 — 由 `tests/proving/test_workspace_manifest.py` 证明：缺 `10-project` / `20-evidence`、package root 非 `10-project`、repo layout misuse（仓库布局误用）、cache/secrets/scratch section（缓存/密钥/临时区段）均 fail closed；happy path 可定位 boardroom/package/evidence/audit roots（四区根路径）
 - [x] AC-V2-PACKAGE-001（package 是最终输出）— 由 V2-060B `test_package_assembler.py` 证明：缺 package-contract / run-manifest / source 写到 package root 外必须失败
 - [ ] AC-V2-PACKAGE-002（package 必须可运行）— 由 V2-060D `test_run_manifest.py` 证明
-- [ ] AC-V2-EVIDENCE-002（source inventory lineage）— 由 V2-060C `test_source_inventory_ref_only_rejected.py` 证明：ref-only / 缺 producer_attempt_ref / 缺 evidence_refs 必须失败
+- [x] AC-V2-EVIDENCE-002（source inventory lineage）— 由 V2-060C `test_source_inventory_ref_only_rejected.py` 与 `test_source_inventory.py` 证明：ref-only / 缺 sha256 / 缺 producer_ticket_ref / 缺 producer_attempt_ref / 缺 acceptance_refs / 缺 evidence_refs 必须失败；happy path 绑定 path、sha256、source_surface_ref、producer_ticket_ref、producer_attempt_ref、acceptance_refs 和 evidence_refs
 - [ ] Workspace / package / evidence 三者同步 — 由 V2-060E `test_workspace_evidence_export.py` 证明
 - [ ] Agent asset bundle 导入可审计 — 由 V2-060F `test_agent_asset_import.py` 证明：外部 role/skill/prompt/MCP 资产必须物化为 `00-boardroom/agents/` 快照并记录 `asset-import-manifest.yaml` 来源链；ExecutionPackage compiler 保持 0 外部文件输入
 - [ ] V2-060A ~ V2-060F 六个工作包全部 DONE

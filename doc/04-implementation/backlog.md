@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060C`
+**当前未完成工作包**：`V2-060D`
 
-**当前重点**：Phase 6 继续推进 V2-060C source inventory builder（源码清单构建器），从 package root（包根）和 git/hash 构建 SourceInventory（源码清单），证明 implementation lineage（实现来源链路）。
+**当前重点**：Phase 6 继续推进 V2-060D run manifest 与 command binding（运行清单与命令绑定），把 PackageContract（包合同）中的 run/test commands（运行/测试命令）落到可验证 manifest。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 2 / 6 | 进行中 |
+| Phase 6：Workspace + Package | V2-060 | 3 / 6 | 进行中 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **37 / 53** | **Phase 6 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **38 / 53** | **Phase 6 进行中** |
 
 ## 当前约束摘要
 
@@ -686,7 +686,7 @@ RoleProfile（角色模板）
 
 ### V2-060C: 实现 source inventory builder
 
-- 状态：TODO
+- 状态：DONE
 - 目标：从 package root 和 git/hash 构建 SourceInventory（源码清单）。
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-060B、V2-050B。
@@ -694,6 +694,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：只证明 ref 存在、缺 sha256、缺 producer_ticket_ref、缺 producer_attempt_ref、缺 acceptance_refs、缺 evidence_refs 必须失败。
 - 必须证明的 happy path：package root 内文件可映射到 source_surface、producer ticket、attempt 和 evidence。
 - 验收口径：source inventory 证明 implementation lineage（实现来源链路）。
+- 完成证据：2026-05-23 新增 SourceInventory（源码清单）、SourceFileRecord（源码文件记录）、SourceLineageRecord（源码来源链记录）、SourceInventoryEntry（源码清单条目）、PackageCommitRef（包提交引用）和 build_source_inventory（构建源码清单函数）；保持纯领域模型边界，不读取文件系统、不调用 git、不写 `20-evidence`，并明确只把 SOURCE / TEST / DOC package artifacts（源码/测试/文档包产物）作为 implementation-bearing artifacts（承载实现的产物），run-manifest 由 V2-060D 证明。负例证明 ref-only PackageAssembly（只有引用的项目包装配结果）、缺 sha256、缺 producer_ticket_ref、缺 producer_attempt_ref、缺 acceptance_refs、缺 evidence_refs、unsafe source path（不安全源码路径）、重复 source/lineage path、source/lineage/package artifact 不一致、未知 source surface、surface/acceptance 覆盖不一致、scalar tuple refs（标量元组引用）和 package contract mismatch（包合同错配）均 fail closed；正例证明 package files 可稳定映射到 source_surface、producer TicketId（任务 ID）、ProviderAttemptRef（模型调用尝试引用）、VerifiedEvidenceRef（已验证证据引用）和 audit-friendly model_dump（审计友好转储）。验证命令：`PYTHONPATH="src;." python -m pytest tests/negative/test_source_inventory_ref_only_rejected.py tests/proving/test_source_inventory.py -q`（36 passed in 0.18s）；`PYTHONPATH="src;." python -m pytest tests/contracts/test_package_contract.py tests/negative/test_package_contract_fail_closed.py tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py tests/negative/test_source_inventory_ref_only_rejected.py tests/proving/test_source_inventory.py -q`（137 passed in 0.27s）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/proving/test_workspace_manifest.py tests/proving/test_package_assembler.py tests/negative/test_source_inventory_ref_only_rejected.py tests/proving/test_source_inventory.py -q`（153 passed in 0.27s）。
 
 ### V2-060D: 实现 run manifest 与 command binding
 

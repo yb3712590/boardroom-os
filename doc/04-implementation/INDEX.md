@@ -29,6 +29,8 @@
 | `v2-060a-workspace-manifest-implementation-plan.md` | V2-060A WorkspaceManifest（工作区清单）实施计划 |
 | `v2-060b-package-assembler-spec.md` | V2-060B PackageAssembler（项目包装配器）同行评审 spec |
 | `v2-060b-package-assembler-implementation-plan.md` | V2-060B PackageAssembler（项目包装配器）实施计划 |
+| `v2-060c-source-inventory-spec.md` | V2-060C SourceInventory（源码清单）同行评审 spec |
+| `v2-060c-source-inventory-implementation-plan.md` | V2-060C SourceInventory（源码清单）实施计划 |
 
 ## AI 启动入口
 

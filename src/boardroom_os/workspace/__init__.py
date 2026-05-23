@@ -17,6 +17,17 @@ from boardroom_os.workspace.manifest import (
     WorkspaceSectionPath,
     build_workspace_manifest,
 )
+from boardroom_os.workspace.source_inventory import (
+    PackageCommitRef,
+    SourceFilePath,
+    SourceFileRecord,
+    SourceInventory,
+    SourceInventoryEntry,
+    SourceInventoryError,
+    SourceInventoryRef,
+    SourceLineageRecord,
+    build_source_inventory,
+)
 
 __all__ = [
     "PackageArtifact",
@@ -25,6 +36,14 @@ __all__ = [
     "PackageAssemblerError",
     "PackageAssembly",
     "PackageAssemblyRef",
+    "PackageCommitRef",
+    "SourceFilePath",
+    "SourceFileRecord",
+    "SourceInventory",
+    "SourceInventoryEntry",
+    "SourceInventoryError",
+    "SourceInventoryRef",
+    "SourceLineageRecord",
     "WorkflowRef",
     "WorkspaceManifest",
     "WorkspaceManifestError",
@@ -33,5 +52,6 @@ __all__ = [
     "WorkspaceSection",
     "WorkspaceSectionPath",
     "assemble_package",
+    "build_source_inventory",
     "build_workspace_manifest",
 ]
