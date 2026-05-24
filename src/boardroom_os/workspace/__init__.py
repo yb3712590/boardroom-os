@@ -1,3 +1,22 @@
+from boardroom_os.workspace.agent_asset_import import (
+    AgentAssetBundleSourceKind,
+    AgentAssetBundleSourceRef,
+    AgentAssetImportBatch,
+    AgentAssetImportEntry,
+    AgentAssetImportError,
+    AgentAssetImportManifest,
+    AgentAssetImportManifestRef,
+    AgentAssetKind,
+    AgentAssetManifestPath,
+    AgentAssetMaterializationResult,
+    AgentAssetRef,
+    AgentAssetSha256,
+    AgentAssetSourcePath,
+    AgentAssetTargetPath,
+    dump_agent_asset_import_manifest,
+    materialize_agent_assets,
+    validate_agent_asset_registry_bindings,
+)
 from boardroom_os.workspace.assembler import (
     PackageArtifact,
     PackageArtifactKind,
@@ -49,6 +68,20 @@ from boardroom_os.workspace.source_inventory import (
 )
 
 __all__ = [
+    "AgentAssetBundleSourceKind",
+    "AgentAssetBundleSourceRef",
+    "AgentAssetImportBatch",
+    "AgentAssetImportEntry",
+    "AgentAssetImportError",
+    "AgentAssetImportManifest",
+    "AgentAssetImportManifestRef",
+    "AgentAssetKind",
+    "AgentAssetManifestPath",
+    "AgentAssetMaterializationResult",
+    "AgentAssetRef",
+    "AgentAssetSha256",
+    "AgentAssetSourcePath",
+    "AgentAssetTargetPath",
     "EvidenceBundleArtifact",
     "EvidenceBundleArtifactKind",
     "EvidenceBundleArtifactPath",
@@ -87,5 +120,8 @@ __all__ = [
     "build_source_inventory",
     "build_workspace_evidence_bundle",
     "build_workspace_manifest",
+    "dump_agent_asset_import_manifest",
+    "materialize_agent_assets",
+    "validate_agent_asset_registry_bindings",
     "validate_run_manifest_binding",
 ]

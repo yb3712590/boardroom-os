@@ -35,6 +35,8 @@
 | `v2-060d-run-manifest-implementation-plan.md` | V2-060D RunManifest（运行清单）实施计划 |
 | `v2-060e-workspace-evidence-export-spec.md` | V2-060E WorkspaceEvidenceExport（工作区证据导出）同行评审 spec |
 | `v2-060e-workspace-evidence-export-implementation-plan.md` | V2-060E WorkspaceEvidenceExport（工作区证据导出）实施计划 |
+| `v2-060f-agent-asset-import-spec.md` | V2-060F AgentAssetImport（智能体资产导入）同行评审 spec |
+| `v2-060f-agent-asset-import-implementation-plan.md` | V2-060F AgentAssetImport（智能体资产导入）实施计划 |
 
 ## AI 启动入口
 

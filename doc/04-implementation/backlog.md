@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-060F`
+**当前未完成工作包**：`V2-070A`
 
-**当前重点**：Phase 6 继续推进 V2-060F agent asset bundle 导入（智能体资产包导入），把外部 role config（角色配置）、skill file（技能文件）、prompt file（提示词文件）和 MCP interface manifest（MCP 接口清单）导入为 `00-boardroom/agents/` 可审计快照。
+**当前重点**：Phase 7 启动 V2-070A closeout gate（收尾门禁），在 verified evidence（已验证证据）、source inventory（源码清单）、run manifest（运行清单）、agent asset import manifest（智能体资产导入清单）和 checker verdict（检查结论）均闭合后，判断是否允许进入 closeout（收尾）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -156,10 +156,10 @@ RoleProfile（角色模板）
 | Phase 3：Agent + Execution Package | V2-030 | 6 / 6 | 完成 |
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
-| Phase 6：Workspace + Package | V2-060 | 5 / 6 | 进行中 |
+| Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **40 / 53** | **Phase 6 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **41 / 53** | **Phase 7 待启动** |
 
 ## 当前约束摘要
 
@@ -652,7 +652,7 @@ RoleProfile（角色模板）
 
 ## V2-060: Workspace + Package Assembler（工作区与项目包装配器）
 
-- 状态：IN_PROGRESS
+- 状态：DONE
 - 目标：生成目标项目 workspace、run manifest、package contract 文件、source inventory、agent asset import manifest 和最终 package assembly。
 - 输入文档：`generated-project-workspace.md`、`contract-and-evidence-model.md`。
 - 输出目录：`src/boardroom_os/workspace/`、`tests/proving/`、`tests/negative/`。
@@ -722,7 +722,7 @@ RoleProfile（角色模板）
 
 ### V2-060F: 导入 agent asset bundle
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把外部预置的 role config、skill file、prompt file 和 MCP interface manifest 导入为 generated project workspace 内的 `00-boardroom/agents/` 快照，并记录来源链。
 - 输入文档：`generated-project-workspace.md`、`agent-team-model.md`、`process-audit-and-replay.md`。
 - 依赖：V2-060A、V2-030A。
@@ -730,6 +730,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：导入目标写到 `00-boardroom/agents/` 外、缺 `asset-import-manifest.yaml`、manifest 缺 source_ref/source_kind/imported_at、导入项缺 source_path/target_path/sha256、静默覆盖已有不同 hash 资产必须失败。
 - 必须证明的 happy path：本地 agent asset bundle 可被复制/物化为 `00-boardroom/agents/` 快照，生成 `asset-import-manifest.yaml`，并保留 role/skill/prompt/MCP 文件的 source lineage（来源链）。
 - 验收口径：外部 skill/prompt/MCP 资产是 workspace/package 阶段的可审计输入，不是 ExecutionPackage compiler 的运行时外部依赖；既有项目更新资产必须产生新 ref 或显式导入记录，不能静默改写。
+- 完成证据：2026-05-23 新增 AgentAssetImportManifest（智能体资产导入清单）、AgentAssetImportBatch（智能体资产导入批次）、AgentAssetImportEntry（智能体资产导入条目）、AgentAssetMaterializationResult（智能体资产物化结果）、validate_agent_asset_registry_bindings（校验智能体资产注册表绑定函数）、dump_agent_asset_import_manifest（导出资产导入清单函数）和 materialize_agent_assets（物化智能体资产函数）；实现本地 agent asset bundle（智能体资产包）复制/物化到 `00-boardroom/agents/`，并写出 canonical JSON 内容的 `asset-import-manifest.yaml`。负例覆盖 unsafe source/target/manifest paths（不安全来源/目标/清单路径）、Windows drive/backslash（Windows 盘符/反斜杠）、缺 manifest/batch/entry 字段、naive imported_at（无时区导入时间）、sha256 mismatch（哈希不一致）、source missing/directory/symlink（来源缺失/目录/符号链接）、registry binding gap（注册表绑定缺口）、target overwrite（目标覆盖）、existing manifest 非 prefix（既有清单非前缀）、mutated historical batch（历史批次被改写）和 historical target missing/changed（历史目标缺失/变更）均 fail closed。正例证明四类 role/skill/prompt/MCP asset 可写入快照、项目可只导入实际使用 asset kind 子集、相同 manifest 幂等重跑、追加新 source_ref batch 不改写历史、canonical JSON dump 稳定且不包含宿主绝对路径；ExecutionPackage compiler（执行包编译器）边界回归保持 0 外部文件输入。验证命令：`PYTHONPATH="src;." python -m pytest tests/proving/test_agent_asset_import.py -q --basetemp=.pytest-tmp`（45 passed, 2 skipped）；`PYTHONPATH="src;." python -m pytest tests/proving -q --basetemp=.pytest-tmp-proving`（174 passed, 2 skipped）；`PYTHONPATH="src;." python -m pytest tests/execution/test_execution_package_compiler.py tests/execution/test_agent_profiles.py tests/proving/test_agent_asset_import.py -q --basetemp=.pytest-tmp-compiler`（58 passed, 2 skipped）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/negative -q --basetemp=.pytest-tmp-all`（1015 passed, 2 skipped）。
 
 ---
 
