@@ -38,6 +38,7 @@
 | `v2-060f-agent-asset-import-spec.md` | V2-060F AgentAssetImport（智能体资产导入）同行评审 spec |
 | `v2-060f-agent-asset-import-implementation-plan.md` | V2-060F AgentAssetImport（智能体资产导入）实施计划 |
 | `v2-070a-closeout-gate-spec.md` | V2-070A CloseoutGate（收尾门禁）同行评审 spec |
+| `v2-070b-replay-bundle-spec.md` | V2-070B ReplayBundle（重放包）同行评审 spec |
 
 ## AI 启动入口
 

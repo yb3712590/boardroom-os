@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070B`
+**当前未完成工作包**：`V2-070C`
 
-**当前重点**：Phase 7 继续 V2-070B replay bundle builder（重放包构建器），在 V2-070A CloseoutGate（收尾门禁）已能消费 typed readiness summaries（类型化就绪摘要）后，产出正式 replay bundle readiness（重放包就绪摘要）。
+**当前重点**：Phase 7 继续 V2-070C process audit builder（流程审计构建器），在 V2-070B ReplayBundle（重放包）已能产出 replay bundle readiness（重放包就绪摘要）后，生成 `30-audit/` 人类可读流程审计产物。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 1 / 6 | 进行中 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 2 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **42 / 53** | **Phase 7 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **43 / 53** | **Phase 7 进行中** |
 
 ## 当前约束摘要
 
@@ -756,7 +756,7 @@ RoleProfile（角色模板）
 
 ### V2-070B: 实现 replay bundle builder
 
-- 状态：TODO
+- 状态：DONE
 - 目标：产出 event range、projection versions、artifact manifest、hash manifest 和 replay report。
 - 输入文档：`process-audit-and-replay.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-020F、V2-060E。
@@ -764,6 +764,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：event range 缺失、projection version 不匹配、artifact hash 缺失、event log hash chain / hash manifest 缺失、replay report 缺失必须失败。
 - 必须证明的 happy path：事件 + artifact manifest + hash manifest 可重建 typed summary，并证明 replay 输入未被静默篡改。
 - 验收口径：缺 replay bundle 不允许 terminal success；hash chain / hash manifest 在 replay bundle 层处理，不回填到 Phase 2 的 InMemoryEventLog 最小接口。
+- 完成证据：2026-05-24 新增 ReplayBundle（重放包）builder、ReplayAttestation（重放证明条目）、ReplayPayloadManifest（重放载荷清单）、ReplayArtifactManifest（重放产物清单）、ReplayHashManifest（重放哈希清单）、ReplayReport（重放报告）和 `replay_bundle_readiness`（重放包就绪摘要投影）；首版只允许 `seat_assignment_graph`（席位分配图）证明条目，复用 CloseoutGate（收尾门禁）的 `ReplaySummaryHash` / `EventRangeRef` / `ProjectionVersionRef` 类型，归档 EventRecord（事件记录）切片并在 readiness 中重算 event hash chain（事件哈希链）与 manifest hashes（清单哈希）。Negative tests 覆盖缺 event range、projection version 不匹配、artifact/hash/report 缺失、placeholder sha256、unsafe content_ref、projection_summary.graph_version mismatch、event_hash 篡改后同步重算仍失败、EVENT_WINDOW content_ref 篡改后同步重算仍失败；happy path 证明 replay bundle 可生成 `ReplayBundleReadiness` 并与 hash manifest 独立闭合。验证证据：`PYTHONPATH="src;." python -m pytest tests/closeout/test_replay_bundle.py -q` 通过（59 passed）；`PYTHONPATH="src;." python -m pytest tests/reducers/test_projection_replay.py tests/closeout/test_replay_bundle.py -q` 通过（70 passed）；`PYTHONPATH="src;." python -m pytest tests/negative/test_closeout_fail_closed.py tests/closeout/test_closeout_gate.py tests/closeout/test_replay_bundle.py -q` 通过（86 passed）；完整套件首次因 Windows pytest 临时目录权限失败，改用 `--basetemp=/tmp/boardroom-os-pytest` 后 `PYTHONPATH="src;." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --basetemp=/tmp/boardroom-os-pytest` 通过（1101 passed, 2 skipped）。
 
 ### V2-070C: 实现 process audit builder
 
