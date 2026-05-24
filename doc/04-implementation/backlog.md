@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070C`
+**当前未完成工作包**：`V2-070D`
 
-**当前重点**：Phase 7 继续 V2-070C process audit builder（流程审计构建器），在 V2-070B ReplayBundle（重放包）已能产出 replay bundle readiness（重放包就绪摘要）后，生成 `30-audit/` 人类可读流程审计产物。
+**当前重点**：Phase 7 继续 V2-070D GitVersionAudit（Git 版本审计），在 V2-070C ProcessAuditBundle（流程审计包）已能生成 `30-audit/` 十项流程审计产物后，记录 final package commit（最终项目包提交）、dirty status（脏工作区状态）、diff summary（差异摘要）、source inventory hash（源码清单哈希）和 final command evidence（最终命令证据）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 2 / 6 | 进行中 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 3 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **43 / 53** | **Phase 7 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **44 / 53** | **Phase 7 进行中** |
 
 ## 当前约束摘要
 
@@ -768,11 +768,11 @@ RoleProfile（角色模板）
 
 ### V2-070C: 实现 process audit builder
 
-- 状态：TODO
+- 状态：DONE
 - 目标：生成人类可读 process audit（流程审计），解释需求、决策、角色、上下文、ticket、evidence 和 closeout。生成 `30-audit/` 全部 10 项产物。
 - 输入文档：`process-audit-and-replay.md`。
 - 依赖：V2-030F、V2-050C、V2-060E。
-- 输出文件：`src/boardroom_os/audit/process_audit.py`、`tests/closeout/test_process_audit.py`、`tests/closeout/test_process_audit_artifacts.py`。
+- 输出文件：`src/boardroom_os/audit/process_audit.py`、`src/boardroom_os/audit/__init__.py`、`tests/closeout/test_process_audit.py`、`tests/closeout/test_process_audit_artifacts.py`。
 - 30-audit 必需产物（每项独立校验）：
   1. `process-audit.md`
   2. `timeline.json`
@@ -795,6 +795,7 @@ RoleProfile（角色模板）
   - `git-version-audit.md` 缺 final commit / dirty status / source inventory hash 必须失败
 - 必须证明的 happy path：audit 能回答"谁做了什么决策、agent 收到什么上下文、哪些 evidence 满足哪些 acceptance、最终 git 状态是什么、replay 是否可重建"。10 项产物全部存在且互相一致。
 - 验收口径：process audit 是产品能力，不是 raw event dump；10 项产物缺一不可，且必须互相一致。
+- 完成证据：2026-05-24 新增 ProcessAuditBundle（流程审计包）、ProcessAuditArtifact（流程审计产物）、ProcessAuditArtifactManifest（流程审计产物清单）、ProcessAuditHashManifest（流程审计哈希清单）、ProcessAuditReport（流程审计报告）、build_process_audit_bundle（构建流程审计包函数）和 process_audit_readiness（流程审计就绪摘要投影函数），按 V2-070B ReplayBundle（重放包）风格物化 `30-audit/` 十项流程审计产物并闭合 content_ref（内容引用）、sha256（内容哈希）、artifact manifest（产物清单）和 hash manifest（哈希清单）。Negative tests 覆盖十项必需 artifact 缺失、额外/重复/unsafe path、timeline key event 缺失、decision log 缺 CEO / human board decision、agent context index 缺 execution package / model profile / provider attempts、主 artifact lineage 和 fallback lineage 缺失、evidence map 与 FinalEvidenceTable（最终证据表）不一致、git version audit markdown 缺 final commit / dirty status / source inventory hash、replay bundle report mismatch 和 hash manifest mismatch；happy path 证明 bundle materialization（包物化）、hash manifest closure（哈希清单闭合）、CloseoutGate（收尾门禁）readiness projection（就绪投影）、audit-friendly JSON（审计友好 JSON）、report indexing（报告索引）、标准 Markdown human readability（人类可读 Markdown）、真实 EventRecord（事件记录）timeline projection（时间线投影）和 typed builder boundary（类型化构建输入边界）。验证证据：`PYTHONPATH="src;." python -m pytest tests/closeout/test_process_audit_artifacts.py tests/closeout/test_process_audit.py -q` 通过（41 passed in 0.53s）；`PYTHONPATH="src;." python -m pytest tests/negative/test_closeout_fail_closed.py tests/closeout/test_replay_bundle.py tests/closeout/test_process_audit_artifacts.py tests/closeout/test_process_audit.py -q` 通过（124 passed in 0.66s）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2070c-final` 通过（1142 passed, 2 skipped in 1.91s）。
 
 ### V2-070D: 实现 git version audit
 
