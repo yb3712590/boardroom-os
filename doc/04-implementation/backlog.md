@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070D`
+**当前未完成工作包**：`V2-070E`
 
-**当前重点**：Phase 7 继续 V2-070D GitVersionAudit（Git 版本审计），在 V2-070C ProcessAuditBundle（流程审计包）已能生成 `30-audit/` 十项流程审计产物后，记录 final package commit（最终项目包提交）、dirty status（脏工作区状态）、diff summary（差异摘要）、source inventory hash（源码清单哈希）和 final command evidence（最终命令证据）。
+**当前重点**：Phase 7 继续 V2-070E CloseoutPackage（收尾包），在 V2-070D GitVersionAudit（Git 版本审计）已能证明最终版本后，把 closeout gate result（收尾门禁结果）、SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、ReplayBundle（重放包）、ProcessAuditBundle（流程审计包）和 GitVersionAuditBundle（Git 版本审计包）绑定为最终收尾包。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 3 / 6 | 进行中 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 4 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **44 / 53** | **Phase 7 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **45 / 53** | **Phase 7 进行中** |
 
 ## 当前约束摘要
 
@@ -799,7 +799,7 @@ RoleProfile（角色模板）
 
 ### V2-070D: 实现 git version audit
 
-- 状态：TODO
+- 状态：DONE
 - 目标：记录 final package commit、dirty status、diff summary、source inventory hash 和 final command evidence。
 - 输入文档：`process-audit-and-replay.md`。
 - 依赖：V2-060C、V2-060D。
@@ -807,6 +807,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：dirty package、source inventory hash 不匹配、final commands 不是最终 commit 运行必须失败。
 - 必须证明的 happy path：clean package commit 可生成 git audit summary。
 - 验收口径：closeout 可证明最终版本是什么。
+- 完成证据：2026-05-24 新增 GitVersionAuditBundle（Git 版本审计包）、GitVersionAuditFactSet（Git 版本审计事实集）、GitCommandEvidenceBinding（Git 命令证据绑定）、GitVersionAuditReport（Git 版本审计报告）、GitVersionAuditHashManifest（Git 版本审计哈希清单）、build_git_version_audit_bundle（构建 Git 版本审计包函数）、git_version_audit_readiness（Git 版本审计就绪摘要投影函数）和 GitAuditAdapter（Git 审计适配器）。Negative tests 覆盖 dirty package（脏项目包）、source inventory hash mismatch（源码清单哈希不匹配）、final command evidence（最终命令证据）不在 final commit（最终提交）、SourceInventory.package_commit_ref（源码清单项目提交引用）不匹配、缺/孤儿 command evidence binding（命令证据绑定）、未声明 RunManifest command（运行清单命令）、失败 VerificationRun（验证运行）、hash manifest mismatch（哈希清单不匹配）、raw dict / scalar tuple input（原始字典/标量元组输入）、无时区 generated_at（生成时间）、placeholder source inventory hash（占位源码清单哈希）、git command failure（Git 命令失败）和 write git command（写 Git 命令）均 fail closed。Happy path 证明 clean package commit（干净项目包提交）可生成 GitVersionAuditBundle，投影为 CloseoutGate（收尾门禁）可消费的 GitAuditReadiness（Git 审计就绪摘要），source_inventory_hash（源码清单哈希）确定性重算，hash manifest（哈希清单）闭合，JSON 审计友好且 GitAuditAdapter 可通过可注入 transport（传输层）采集 Git facts（Git 事实）。验证证据：`PYTHONPATH="src;." python -m pytest tests/closeout/test_git_version_audit.py -q` 通过（21 passed in 0.32s）；`PYTHONPATH="src;." python -m pytest tests/closeout -q` 通过（124 passed in 0.71s）；`PYTHONPATH="src;." python -m pytest tests/negative -q` 通过（304 passed in 0.43s）；初次 proving/full run 受 Windows pytest temp 权限阻断，改用仓库内 basetemp 后 `PYTHONPATH="src;." python -m pytest tests/proving -q --basetemp=.pytest-tmp-v2-070d-proving` 通过（174 passed, 2 skipped in 0.56s），`PYTHONPATH="src;." python -m pytest tests -q --basetemp=.pytest-tmp-v2-070d-all` 通过（1163 passed, 2 skipped in 1.83s）。
 
 ### V2-070E: 实现 CloseoutPackage
 
