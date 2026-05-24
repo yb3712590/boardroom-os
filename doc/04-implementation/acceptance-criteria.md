@@ -325,9 +325,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] AC-V2-CLOSEOUT-003（人类可读 process audit）— 由 V2-070C `test_process_audit_artifacts.py` 与 `test_process_audit.py` 证明：ProcessAuditBundle（流程审计包）物化 10 项 30-audit 产物且缺一不可（process-audit.md / timeline.json / decision-log.md / agent-context-index.json / ticket-graph.md / artifact-lineage.json / evidence-map.json / git-version-audit.md / closeout-summary.md / replay-bundle-report.json），artifact manifest（产物清单）、hash manifest（哈希清单）、evidence map（证据映射）、readiness projection（就绪投影）、标准 Markdown 可读性和真实 EventRecord timeline projection（事件记录时间线投影）篡改均 fail closed
 - [x] Git version audit 完整 — 由 V2-070D `test_git_version_audit.py` 证明：GitVersionAuditBundle（Git 版本审计包）记录 final package commit（最终项目包提交）、dirty status（脏工作区状态）、diff summary（差异摘要）、source inventory hash（源码清单哈希）和 final command evidence（最终命令证据），并在 readiness projection（就绪投影）中重算 hash manifest（哈希清单）后输出 CloseoutGate（收尾门禁）可消费的 GitAuditReadiness（Git 审计就绪摘要）
 - [x] CloseoutPackage 绑定一致 — 由 V2-070E `test_closeout_package.py` 证明：CloseoutPackage（收尾包）稳定绑定 CloseoutGateResult（收尾门禁结果）、SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、ReplayBundle（重放包）、ProcessAuditBundle（流程审计包）和 GitVersionAuditBundle（Git 版本审计包），并对 readiness/bundle mismatch（就绪摘要/完整包不一致）、project_ref mismatch（项目引用不一致）、unsafe checked_refs（不安全检查引用）和 version/verdict 不变量 fail closed
-- [ ] Closeout reducer 接入 — 由 V2-070F `test_closeout_reducer.py` 证明：增量 reducer/replay 不得丢失历史 `WORK_PRODUCT_SUBMITTED` 事实
-- [ ] V2-070A ~ V2-070F 六个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 7 显示 6/6
+- [x] Closeout reducer 接入 — 由 V2-070F `test_closeout_reducer.py` 证明：增量 reducer/replay 不得丢失历史 `WORK_PRODUCT_SUBMITTED` 事实
+- [x] V2-070A ~ V2-070F 六个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 7 显示 6/6
 
 #### 本批产出
 
@@ -337,9 +337,9 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### 进入 Phase 8 前置
 
-- [ ] 上述 AC checkbox 全部勾选
-- [ ] V2-070A ~ V2-070F 状态全部 DONE
-- [ ] 10 项 30-audit 产物的 schema 稳定
+- [x] 上述 AC checkbox 全部勾选
+- [x] V2-070A ~ V2-070F 状态全部 DONE
+- [x] 10 项 30-audit 产物的 schema 稳定
 
 ### Phase 8 验收 — V2-080 Tiny Full-stack Proving Scenario
 

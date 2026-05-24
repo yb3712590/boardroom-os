@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070F`
+**当前未完成工作包**：`V2-080A`
 
-**当前重点**：Phase 7 继续 V2-070F closeout reducer（收尾归约器）集成，在 V2-070E CloseoutPackage（收尾包）已能绑定 closeout gate result（收尾门禁结果）、SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、ReplayBundle（重放包）、ProcessAuditBundle（流程审计包）和 GitVersionAuditBundle（Git 版本审计包）后，让 reducer 在 closeout gate passed 后产生 terminal success projection（终态成功投影）。
+**当前重点**：Phase 8 启动 V2-080A tiny scenario active contracts（微型场景活跃合同）定义，在 Phase 7 Closeout + Replay + Audit（收尾、重放与审计）闭合后，为 tiny book availability tracker（微型图书可用性追踪器）生成 ProjectCharter（项目章程）、AcceptanceContract（验收合同）和 PackageContract（包合同）fixture（测试夹具）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 5 / 6 | 进行中 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **46 / 53** | **Phase 7 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **47 / 53** | **Phase 8 待开始** |
 
 ## 当前约束摘要
 
@@ -822,7 +822,7 @@ RoleProfile（角色模板）
 
 ### V2-070F: closeout reducer 集成
 
-- 状态：TODO
+- 状态：DONE
 - 目标：让 reducer 在 closeout gate passed 后产生 terminal success projection。
 - 输入文档：`execution-and-runtime-boundary.md`、`process-audit-and-replay.md`、`decisions.md`（DEC-0011）。
 - 依赖：V2-070E、V2-020D。
@@ -830,6 +830,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：runtime 直接 closeout、workflow completed 但 closeout gate missing、缺 replay bundle、增量 reducer/replay 输入缺历史 `WORK_PRODUCT_SUBMITTED` 事实必须失败。
 - 必须证明的 happy path：CloseoutPackage passed 事件可投影为 project terminal success；若采用 base projection + new events（基准投影 + 新事件）增量模式，work product 历史必须作为显式 projection/replay 输入保留。
 - 验收口径：不把 workflow completed 当作项目完成；closeout reducer 不能依赖 `TicketReducer.reduce()` 调用内局部集合来推断历史 work product。
+- 完成证据：2026-05-25 新增 `EventType.CLOSEOUT_COMMITTED`（收尾已提交事件）作为 governance event（治理事件），并保持 `RuntimeEventBoundary`（运行时事件边界）拒绝 runtime emit（运行时发出）；新增 `CloseoutReducer`（收尾归约器）、`CloseoutCommitPayload`（收尾提交载荷）、`CloseoutHistoryProjection`（收尾历史投影）和 `CloseoutProjection`（收尾投影）。Negative tests 覆盖 runtime/executor closeout、workflow completed 替代 closeout、缺 work product 历史、增量历史缺 `WORK_PRODUCT_SUBMITTED`、重复 closeout、已 succeeded base history 再 closeout、graph_version 乱序、cross project、payload/package ref mismatch、缺 replay bundle binding、raw dict payload/package、checked_refs gap 和非 passed terminal verdict 均 fail closed。Happy path 证明 passed CloseoutPackage（通过的收尾包）经 `CLOSEOUT_COMMITTED` 可投影为 project terminal success（项目终态成功），且增量 base_history 必须显式携带 work product history。验证证据：`PYTHONPATH="src;." python -m pytest tests/closeout/test_closeout_reducer.py -q` 通过（24 passed in 1.09s）；`PYTHONPATH="src;." python -m pytest tests/closeout/test_closeout_reducer.py tests/closeout/test_closeout_package.py tests/closeout/test_closeout_gate.py tests/negative/test_closeout_fail_closed.py -q` 通过（69 passed in 1.57s）；`PYTHONPATH="src;." python -m pytest tests/reducers/test_completion_gate_with_evidence.py tests/reducers/test_ticket_reducer_transitions.py tests/closeout/test_closeout_reducer.py -q` 通过（64 passed in 0.99s）；`PYTHONPATH="src;." python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2070f-all` 通过（1208 passed, 2 skipped in 3.39s）。
 
 ---
 

@@ -59,3 +59,4 @@ class EventType(StrEnum):
     TOOL_ATTEMPT_RECORDED = "tool_attempt_recorded"
     WORK_PRODUCT_SUBMITTED = "work_product_submitted"
     COMMAND_RUN_RECORDED = "command_run_recorded"
+    CLOSEOUT_COMMITTED = "closeout_committed"

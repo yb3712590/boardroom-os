@@ -163,6 +163,7 @@ def test_closeout_package_checked_refs_are_stable_and_complete() -> None:
         builder_input.replay_bundle.replay_bundle_id.value,
         builder_input.process_audit_bundle.process_audit_bundle_id.value,
         builder_input.git_version_audit_bundle.git_version_audit_bundle_id.value,
+        builder_input.source_inventory.package_commit_ref.value,
         builder_input.git_audit_readiness.final_commit_sha.value,
         builder_input.git_audit_readiness.source_inventory_hash.value,
         builder_input.replay_readiness.summary_hash.value,

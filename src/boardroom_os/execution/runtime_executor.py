@@ -37,7 +37,6 @@ class RuntimeExecutorError(ValueError):
 
 class ReservedRuntimeGovernanceEvent(StrEnum):
     PROJECT_COMPLETED = "project_completed"
-    CLOSEOUT_COMMITTED = "closeout_committed"
 
 
 class RuntimeEventBoundary:
@@ -50,8 +49,8 @@ class RuntimeEventBoundary:
     }
     _REJECTED_GOVERNANCE_EVENT_VALUES = {
         EventType.TICKET_COMPLETED.value,
+        EventType.CLOSEOUT_COMMITTED.value,
         ReservedRuntimeGovernanceEvent.PROJECT_COMPLETED.value,
-        ReservedRuntimeGovernanceEvent.CLOSEOUT_COMMITTED.value,
     }
     _EXECUTABLE_ROLE_CATEGORIES = {
         RoleCategory.IMPLEMENTATION,
