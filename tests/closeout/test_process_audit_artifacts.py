@@ -8,6 +8,10 @@ import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from boardroom_os.agents.profiles import ModelExecutionProfile, ModelExecutionProfileId
+from boardroom_os.audit.git_version_audit import (
+    GitVersionAuditBundle,
+    git_version_audit_readiness,
+)
 from boardroom_os.audit.process_audit import (
     REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS,
     ProcessAuditArtifact,
@@ -44,6 +48,7 @@ from boardroom_os.evidence.fallback_registry import FallbackDecisionRecordRef
 from boardroom_os.evidence.verifier import FallbackDecisionRecordedRef, VerifiedEvidence
 from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.package import ExecutionPackageRef
+from tests.closeout.test_git_version_audit import _build_bundle as _build_git_version_audit_bundle
 from tests.closeout.test_replay_bundle import _builder_input as _replay_builder_input
 from tests.negative.test_closeout_fail_closed import _NOW, _ready_input as _closeout_gate_ready_input
 
@@ -179,12 +184,20 @@ def _ticket_graph_summary() -> MinimalTicketGraphSummary:
 def _process_audit_builder_input(
     *,
     agent_context_index: MinimalAgentContextIndex | None = None,
+    git_version_audit_bundle: GitVersionAuditBundle | None = None,
     git_audit_readiness: GitAuditReadiness | None = None,
     verified_evidence: tuple[VerifiedEvidence, ...] | None = None,
 ) -> ProcessAuditBuilderInput:
     gate_input = _closeout_gate_ready_input()
     replay_bundle = build_replay_bundle(_replay_builder_input())
     replay_readiness = replay_bundle_readiness(replay_bundle)
+    resolved_git_version_audit_bundle = (
+        git_version_audit_bundle or _build_git_version_audit_bundle()
+    )
+    resolved_git_audit_readiness = (
+        git_audit_readiness
+        or git_version_audit_readiness(resolved_git_version_audit_bundle)
+    )
     return ProcessAuditBuilderInput(
         project_ref=replay_bundle.project_ref,
         generated_at=_NOW,
@@ -203,7 +216,8 @@ def _process_audit_builder_input(
         provider_attempt_refs=gate_input.provider_attempt_refs,
         replay_bundle=replay_bundle,
         replay_readiness=replay_readiness,
-        git_audit_readiness=git_audit_readiness or gate_input.git_audit_readiness,
+        git_version_audit_bundle=resolved_git_version_audit_bundle,
+        git_audit_readiness=resolved_git_audit_readiness,
     )
 
 

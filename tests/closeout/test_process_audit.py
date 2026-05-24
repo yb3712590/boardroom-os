@@ -14,7 +14,7 @@ from boardroom_os.audit.process_audit import (
     build_process_audit_bundle,
     process_audit_readiness,
 )
-from boardroom_os.closeout.gate import ProcessAuditReadiness
+from boardroom_os.closeout.gate import GitAuditReadiness, ProcessAuditReadiness
 
 from tests.closeout.test_process_audit_artifacts import (
     _artifact_by_kind,
@@ -124,6 +124,11 @@ def test_process_audit_report_indexes_all_artifacts() -> None:
     assert "provider-attempt.app" in checked_refs
     assert any(ref.startswith("replay-bundle.") for ref in checked_refs)
     assert any(ref.startswith("report.replay.") for ref in checked_refs)
+    assert any(ref.startswith("git-version-audit-bundle.") for ref in checked_refs)
+    assert any(ref.startswith("git-version-audit-report.") for ref in checked_refs)
+    assert any(ref.startswith("git-version-audit-facts.") for ref in checked_refs)
+    assert "verification-run.app" in checked_refs
+    assert "git-command-evidence-binding.verification-run.app" in checked_refs
 
 
 def test_process_audit_markdown_is_human_readable() -> None:
@@ -150,7 +155,15 @@ def test_process_audit_markdown_is_human_readable() -> None:
     assert "ticket.app" in ticket_graph.content
     assert "AC-APP" in ticket_graph.content
     assert "Final commit SHA" in git_audit.content
+    assert "Git clean status" in git_audit.content
     assert "Source inventory hash" in git_audit.content
+    assert "Source inventory ref" in git_audit.content
+    assert "Package commit ref" in git_audit.content
+    assert "Git bundle id" in git_audit.content
+    assert "Git report id" in git_audit.content
+    assert "Git hash manifest id" in git_audit.content
+    assert "Git fact set id" in git_audit.content
+    assert "Command binding ids" in git_audit.content
     assert "package-contract.closeout-gate" in closeout_summary.content
     assert "source-inventory" in closeout_summary.content
     assert "checker-verdict" in closeout_summary.content
@@ -237,11 +250,53 @@ def test_process_audit_builder_input_rejects_wrong_typed_model_field() -> None:
                 "checker_verdict": base_input.checker_verdict,
                 "replay_bundle": base_input.replay_bundle,
                 "replay_readiness": base_input.replay_readiness,
+                "git_version_audit_bundle": base_input.git_version_audit_bundle,
                 "git_audit_readiness": base_input.git_audit_readiness,
                 "agent_context_index": base_input.agent_context_index,
                 "ticket_graph_summary": base_input.ticket_graph_summary,
             }
         )
+
+
+def test_process_audit_builder_input_requires_git_version_audit_bundle() -> None:
+    base_input = _process_audit_builder_input()
+    payload = base_input.model_dump(mode="python")
+    payload.pop("git_version_audit_bundle")
+
+    with pytest.raises(ValidationError, match="git_version_audit_bundle"):
+        ProcessAuditBuilderInput.model_validate(payload)
+
+
+def test_process_audit_builder_input_rejects_git_audit_readiness_mismatch() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="git version audit readiness mismatch",
+    ):
+        ProcessAuditBuilderInput.model_validate(
+            _process_audit_builder_input(
+                git_audit_readiness=GitAuditReadiness(
+                    git_clean=False,
+                    final_commit_sha="d" * 40,
+                    source_inventory_hash="e" * 64,
+                    source_inventory_hash_matches=False,
+                    final_command_evidence_at_final_commit=False,
+                )
+            ).model_dump(mode="python")
+        )
+
+
+def test_process_audit_builder_input_rejects_git_version_audit_project_ref_mismatch() -> None:
+    base_input = _process_audit_builder_input()
+    mismatched_input = base_input.model_copy(
+        update={
+            "git_version_audit_bundle": base_input.git_version_audit_bundle.model_copy(
+                update={"project_ref": type(base_input.project_ref)(value="project.other")}
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="git version audit bundle project_ref mismatch"):
+        ProcessAuditBuilderInput.model_validate(mismatched_input)
 
 
 def test_process_audit_builder_input_requires_typed_model_instances() -> None:

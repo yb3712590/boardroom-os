@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070E`
+**当前未完成工作包**：`V2-070F`
 
-**当前重点**：Phase 7 继续 V2-070E CloseoutPackage（收尾包），在 V2-070D GitVersionAudit（Git 版本审计）已能证明最终版本后，把 closeout gate result（收尾门禁结果）、SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、ReplayBundle（重放包）、ProcessAuditBundle（流程审计包）和 GitVersionAuditBundle（Git 版本审计包）绑定为最终收尾包。
+**当前重点**：Phase 7 继续 V2-070F closeout reducer（收尾归约器）集成，在 V2-070E CloseoutPackage（收尾包）已能绑定 closeout gate result（收尾门禁结果）、SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、ReplayBundle（重放包）、ProcessAuditBundle（流程审计包）和 GitVersionAuditBundle（Git 版本审计包）后，让 reducer 在 closeout gate passed 后产生 terminal success projection（终态成功投影）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 4 / 6 | 进行中 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 5 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **45 / 53** | **Phase 7 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **46 / 53** | **Phase 7 进行中** |
 
 ## 当前约束摘要
 
@@ -811,14 +811,14 @@ RoleProfile（角色模板）
 
 ### V2-070E: 实现 CloseoutPackage
 
-- 状态：TODO
-- 目标：把 closeout gate 结果、source inventory、evidence table、replay bundle 和 process audit 绑定为最终收尾包。
-- 输入文档：`domain-model.md`、`contract-and-evidence-model.md`。
+- 状态：DONE
+- 目标：把 closeout gate 结果、source inventory、evidence table、replay bundle、process audit 和 git version audit 绑定为最终收尾包。
+- 输入文档：`domain-model.md`、`contract-and-evidence-model.md`、`doc/04-implementation/v2-070e-closeout-package-spec.md`。
 - 依赖：V2-070A、V2-070B、V2-070C、V2-070D。
-- 输出文件：`src/boardroom_os/closeout/package.py`、`tests/closeout/test_closeout_package.py`。
-- 必须先写的 negative tests：closeout package 缺任一必需 ref、verdict 与 gate 结果不一致必须失败。
-- 必须证明的 happy path：passed closeout package 可指向完整 audit/evidence/replay/source inventory。
-- 验收口径：最终完成只由 CloseoutPackage 表达。
+- 输出文件：`src/boardroom_os/closeout/package.py`、`tests/closeout/test_closeout_package.py`；同步升级 `src/boardroom_os/audit/process_audit.py` 以消费完整 `GitVersionAuditBundle`。
+- 必须先写的 negative tests：closeout package 缺任一必需 typed input、raw dict/scalar refs、blocked gate result、verdict mismatch、version 非 1、naive generated_at、gate result id mismatch、source inventory / git audit / replay / process readiness mismatch、project_ref mismatch、unsafe checked_refs 均必须失败。
+- 必须证明的 happy path：passed CloseoutPackage 可稳定绑定完整 closeout gate result、SourceInventory、FinalEvidenceTable、ReplayBundle、ProcessAuditBundle 和 GitVersionAuditBundle，`checked_refs` 稳定唯一完整且 JSON 审计友好。
+- 验收口径：最终完成只由 CloseoutPackage 表达；CloseoutGate 继续消费 readiness summaries，不从 bundle 二次提取事实。
 
 ### V2-070F: closeout reducer 集成
 

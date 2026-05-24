@@ -37,6 +37,10 @@ from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.verification_run import VerificationRun
 from boardroom_os.workspace.evidence_export import WorkspaceEvidenceBundle
 from boardroom_os.workspace.source_inventory import SourceInventory
+from boardroom_os.audit.git_version_audit import (
+    GitVersionAuditBundle,
+    git_version_audit_readiness,
+)
 from boardroom_os.audit.replay_bundle import ReplayBundle
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -667,6 +671,7 @@ class ProcessAuditBuilderInput(BaseModel):
     provider_attempt_refs: tuple[ProviderAttemptRef, ...]
     replay_bundle: SkipValidation[ReplayBundle]
     replay_readiness: SkipValidation[ReplayBundleReadiness]
+    git_version_audit_bundle: SkipValidation[GitVersionAuditBundle]
     git_audit_readiness: SkipValidation[GitAuditReadiness]
 
     @model_validator(mode="before")
@@ -739,6 +744,15 @@ class ProcessAuditBuilderInput(BaseModel):
     def _require_replay_readiness(cls, value: Any) -> Any:
         return _require_instance(value, ReplayBundleReadiness, "replay_readiness")
 
+    @field_validator("git_version_audit_bundle", mode="before")
+    @classmethod
+    def _require_git_version_audit_bundle(cls, value: Any) -> Any:
+        return _require_instance(
+            value,
+            GitVersionAuditBundle,
+            "git_version_audit_bundle",
+        )
+
     @field_validator("git_audit_readiness", mode="before")
     @classmethod
     def _require_git_audit_readiness(cls, value: Any) -> Any:
@@ -791,6 +805,8 @@ class ProcessAuditBuilderInput(BaseModel):
     def _validate_input(self) -> Self:
         if self.replay_bundle.project_ref != self.project_ref:
             raise ProcessAuditError("replay bundle project_ref mismatch")
+        if self.git_version_audit_bundle.project_ref != self.project_ref:
+            raise ProcessAuditError("git version audit bundle project_ref mismatch")
         for event in self.events:
             if event.project_ref != self.project_ref:
                 raise ProcessAuditError("event project_ref mismatch")
@@ -802,6 +818,11 @@ class ProcessAuditBuilderInput(BaseModel):
             raise ProcessAuditError("checker verdict final table mismatch")
         if self.replay_readiness.summary_hash != self.replay_bundle.attestations[0].summary_hash:
             raise ProcessAuditError("replay readiness summary_hash mismatch")
+        derived_git_audit_readiness = git_version_audit_readiness(
+            self.git_version_audit_bundle
+        )
+        if derived_git_audit_readiness != self.git_audit_readiness:
+            raise ProcessAuditError("git version audit readiness mismatch")
         return self
 
 
@@ -1232,14 +1253,40 @@ def _evidence_map_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, 
 
 
 def _git_version_audit_markdown(builder_input: ProcessAuditBuilderInput) -> str:
-    readiness = builder_input.git_audit_readiness
+    git_bundle = builder_input.git_version_audit_bundle
+    report = git_bundle.report
+    fact_set = git_bundle.fact_set
+    binding_ids = ", ".join(
+        binding.binding_id.value for binding in git_bundle.command_evidence_bindings
+    )
+    changed_files = (
+        ", ".join(file.path for file in fact_set.changed_files)
+        if fact_set.changed_files
+        else "none"
+    )
     return _markdown_lines(
         "# Git Version Audit",
-        f"Final commit SHA: {readiness.final_commit_sha.value}",
-        f"Git clean status: {readiness.git_clean}",
-        f"Source inventory hash: {readiness.source_inventory_hash.value}",
-        f"Source inventory hash matches: {readiness.source_inventory_hash_matches}",
-        f"Final command evidence at final commit: {readiness.final_command_evidence_at_final_commit}",
+        f"Git bundle id: {git_bundle.git_version_audit_bundle_id.value}",
+        f"Git report id: {report.git_version_audit_report_id.value}",
+        f"Git hash manifest id: {git_bundle.hash_manifest.hash_manifest_id.value}",
+        f"Git fact set id: {fact_set.fact_set_id.value}",
+        f"Final commit SHA: {fact_set.final_commit_sha.value}",
+        f"Base commit SHA: {fact_set.base_commit_sha.value}",
+        f"Git clean status: {fact_set.dirty_status.value}",
+        f"Git clean: {report.git_clean}",
+        f"Source inventory hash: {fact_set.source_inventory_hash.value}",
+        f"Source inventory ref: {report.source_inventory_ref.value}",
+        f"Source inventory hash matches: {report.source_inventory_hash_matches}",
+        f"Package commit ref: {report.package_commit_ref.value}",
+        f"Branch ref: {fact_set.branch_ref.value}",
+        f"Worktree ref: {fact_set.worktree_ref.value}",
+        f"Package root: {fact_set.package_root}",
+        f"Changed files: {changed_files}",
+        f"Diff summary ref: {fact_set.diff_summary.diff_summary_id.value}",
+        f"Diff summary text: {fact_set.diff_summary.summary_text}",
+        f"Final command evidence at final commit: {report.final_command_evidence_at_final_commit}",
+        f"Command evidence refs: {', '.join(report.command_evidence_refs)}",
+        f"Command binding ids: {binding_ids}",
     )
 
 
@@ -1270,6 +1317,7 @@ def _replay_bundle_report_payload(builder_input: ProcessAuditBuilderInput) -> di
 
 
 def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
+    git_bundle = builder_input.git_version_audit_bundle
     refs = [
         builder_input.project_ref.value,
         builder_input.package_contract.package_contract_id.value,
@@ -1281,8 +1329,13 @@ def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
         builder_input.checker_verdict.source_diff_ref.value,
         builder_input.replay_bundle.replay_bundle_id.value,
         builder_input.replay_bundle.replay_report.replay_report_id.value,
+        git_bundle.git_version_audit_bundle_id.value,
+        git_bundle.report.git_version_audit_report_id.value,
+        git_bundle.hash_manifest.hash_manifest_id.value,
+        git_bundle.fact_set.fact_set_id.value,
         builder_input.git_audit_readiness.final_commit_sha.value,
         builder_input.git_audit_readiness.source_inventory_hash.value,
+        *(binding.binding_id.value for binding in git_bundle.command_evidence_bindings),
         *(event.event_id.value for event in builder_input.events),
         *(attempt.value for attempt in builder_input.provider_attempt_refs),
         *(run.verification_run_id.value for run in builder_input.verification_runs),

@@ -41,6 +41,7 @@
 | `v2-070b-replay-bundle-spec.md` | V2-070B ReplayBundle（重放包）同行评审 spec |
 | `v2-070c-process-audit-spec.md` | V2-070C ProcessAudit（流程审计）同行评审 spec |
 | `v2-070d-git-version-audit-spec.md` | V2-070D GitVersionAudit（Git 版本审计）同行评审 spec |
+| `v2-070e-closeout-package-spec.md` | V2-070E CloseoutPackage（收尾包）同行评审 spec |
 
 ## AI 启动入口
 
