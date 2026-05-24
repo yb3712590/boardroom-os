@@ -320,7 +320,7 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 #### AC 检查清单
 
-- [ ] AC-V2-CLOSEOUT-001（closeout 只能在 verified evidence 之后）— 由 V2-070A `test_closeout_fail_closed.py` 证明
+- [x] AC-V2-CLOSEOUT-001（closeout 只能在 verified evidence 之后）— 由 V2-070A `test_closeout_fail_closed.py` 证明
 - [ ] AC-V2-CLOSEOUT-002（replay bundle required）— 由 V2-070A + V2-070B 证明：event log hash chain / hash manifest 缺失必须失败
 - [ ] AC-V2-CLOSEOUT-003（人类可读 process audit）— 由 V2-070C `test_process_audit_artifacts.py` 证明：10 项 30-audit 产物缺一不可（process-audit.md / timeline.json / decision-log.md / agent-context-index.json / ticket-graph.md / artifact-lineage.json / evidence-map.json / git-version-audit.md / closeout-summary.md / replay-bundle-report.json）
 - [ ] Git version audit 完整 — 由 V2-070D `test_git_version_audit.py` 证明

@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-070A`
+**当前未完成工作包**：`V2-070B`
 
-**当前重点**：Phase 7 启动 V2-070A closeout gate（收尾门禁），在 verified evidence（已验证证据）、source inventory（源码清单）、run manifest（运行清单）、agent asset import manifest（智能体资产导入清单）和 checker verdict（检查结论）均闭合后，判断是否允许进入 closeout（收尾）。
+**当前重点**：Phase 7 继续 V2-070B replay bundle builder（重放包构建器），在 V2-070A CloseoutGate（收尾门禁）已能消费 typed readiness summaries（类型化就绪摘要）后，产出正式 replay bundle readiness（重放包就绪摘要）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -157,9 +157,9 @@ RoleProfile（角色模板）
 | Phase 4：Runtime + Provider + Runner | V2-040 | 5 / 5 | 完成 |
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
-| Phase 7：Closeout + Replay + Audit | V2-070 | 0 / 6 | 待开始 |
+| Phase 7：Closeout + Replay + Audit | V2-070 | 1 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **41 / 53** | **Phase 7 待启动** |
+| **合计** | **V2-000 ~ V2-080** | **42 / 53** | **Phase 7 进行中** |
 
 ## 当前约束摘要
 
@@ -744,7 +744,7 @@ RoleProfile（角色模板）
 
 ### V2-070A: 实现 closeout gate
 
-- 状态：TODO
+- 状态：DONE
 - 目标：检查 graph、source inventory、final evidence table、package contract、commands、provider attempts、git audit、replay、process audit。
 - 输入文档：`contract-and-evidence-model.md`。
 - 依赖：V2-050F、V2-060E。
@@ -752,6 +752,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 replay bundle、缺 evidence map、open blocker、provider attempt count 为 0、git dirty、任一 declared command 未经 RunManifestBinding 即被用作 final command evidence 必须失败。
 - 必须证明的 happy path：所有 gate 输入 ready 时 closeout verdict passed。
 - 验收口径：closeout 只收束已证明事实。
+- 完成证据：2026-05-24 新增 CloseoutGate（收尾门禁）typed readiness summaries（类型化就绪摘要）与 fail-closed evaluator（失败关闭判定器），覆盖 replay/git/process audit readiness、FinalEvidenceTable（最终证据表）、SourceInventory（源码清单）、WorkspaceEvidenceBundle（工作区证据包）、RunManifestBinding（运行清单绑定）、CheckerVerdict（检查结论）、ProviderAttemptRef（模型调用尝试引用）、package commit / final commit 一致性和 fallback decision lineage（降级判定来源链）；`PYTHONPATH=src pytest tests/negative/test_closeout_fail_closed.py tests/closeout/test_closeout_gate.py -q` 通过（27 passed）；`PYTHONPATH="src;." pytest -q --basetemp=.pytest_tmp` 通过（1042 passed, 2 skipped）。
 
 ### V2-070B: 实现 replay bundle builder
 
