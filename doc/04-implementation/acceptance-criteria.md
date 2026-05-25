@@ -111,6 +111,34 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 
 必须产出人类可读 process audit。
 
+### AC-V2-CLOSEOUT-004: fact-chain 单一权威源
+
+V2-070 大阶段的事实链必须存在唯一权威源：EventLog 是事件事实的唯一权威源；ReplayBundle 必须从 events 重新投影出 ProjectionReplaySummary，不接受调用方传入的 summary 内容字段；ProcessAuditBundle 必须直接复用 ReplayBundle.events，不接受独立 events 输入；CloseoutPackage 不得二次提取 bundle 内部字段构造判定。
+
+### AC-V2-CLOSEOUT-005: 构造无环
+
+V2-070 阶段的对象构造顺序必须为 `EventLog → ReplayBundle → ProcessAuditBundle → GitVersionAuditBundle → CloseoutPackage → CLOSEOUT_COMMITTED 治理事件 → CloseoutReducer → CloseoutClosure`，不得形成构造环。ProcessAudit 不得要求 `CLOSEOUT_COMMITTED` 事件已经存在于事件流中；`CLOSEOUT_COMMITTED` 必须在 CloseoutPackage 构造完成后发出。
+
+### AC-V2-CLOSEOUT-006: 无隐式 fallback
+
+V2-070 阶段任何 adapter / builder / readiness 不得对缺失输入采用静默 fallback 或占位 sentinel 值。GitAuditAdapter 的 `base_commit_sha` / `worktree_ref`、ProcessAudit 的 `unknown` / `ticket` 占位、artifact-lineage 的 `verifier.unresolved` sentinel、`getattr(entry, ..., None)` 顶层平铺 fallback 均必须由 fail-closed 校验替代。
+
+### AC-V2-CLOSEOUT-007: graph_version 边界严格
+
+`CloseoutPackage.graph_version` 必须严格等于 `ReplayBundle.last_graph_version`（除非额外设计扩展证明窗口）。允许 closeout 包覆盖范围超过 replay 已证明的事件边界即视为越界。
+
+### AC-V2-CLOSEOUT-008: payload 内容绑定
+
+`ReplayPayloadManifest.entries[*].sha256` 必须能通过 `ReplayPayloadResolver` 在 readiness 阶段重新计算真实 payload 内容的 hash 并比对；只有 ref 覆盖检查不构成可信 payload 证明。
+
+### AC-V2-CLOSEOUT-009: 跨包引用命名空间
+
+V2-070 阶段所有持久化引用（`fact_set_id`、`artifact_ref`、`content_ref`、`closeout_package_id` 等）必须包含 `project_ref` 与 `content_hash`（或 `run_id`）命名空间段，禁止跨 run / 跨 project / 跨 bundle 串包。
+
+### AC-V2-CLOSEOUT-010: 确定性哈希
+
+V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest entries、verification_runs、command_evidence_bindings、checked_refs 等），必须 canonical sort（规范排序）后参与 hash；若语义为序列（events、event_hash_chain），必须说明序列权威来源并保持稳定。同一事实重建必须产出字节相同的 hash。
+
 ## Negative acceptance
 
 以下情况必须失败：
@@ -340,6 +368,47 @@ Closeout 只能在 evidence、source inventory、git audit、replay bundle 全�
 - [x] 上述 AC checkbox 全部勾选
 - [x] V2-070A ~ V2-070F 状态全部 DONE
 - [x] 10 项 30-audit 产物的 schema 稳定
+
+> **Phase 7 重审说明（2026-05-25）**：外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016）。Phase 7 抽象 AC（AC-V2-CLOSEOUT-001/002/003）所要求的"可信收尾"在 fact chain（事实链）权威源、构造顺序、跨包绑定、确定性哈希、Git 审计 fallback、命名空间命名等 6 个维度仍存在结构性缺口。原 Phase 7 checkbox 保留勾选作为"070A~F 各自工作包已交付"的依据，但**整体 Phase 7 不视为关闭**；进入 Phase 8 还须先通过 Phase 7.5（V2-071）的 fact-chain 重构闭合验收。
+
+### Phase 7.5 验收 — V2-071 Closeout fact-chain hardening（事实链强化重构）
+
+> 本批验收负责消除 V2-070-batch-review-report.md 列出的 18 项 P0/P1/P2 缺口；Phase 7 的抽象 AC（AC-V2-CLOSEOUT-001/002/003）必须在 Phase 7.5 完成后才能视为完整闭合。Phase 7.5 完成后，Phase 8 的"进入前置"中"V2-071F 闭合"checkbox 自动满足。
+
+#### AC 检查清单
+
+- [ ] AC-V2-CLOSEOUT-004（事实链单一权威源；新增抽象原则，见本文件第 1 部分）— 由 V2-071B + V2-071C 证明：ReplayBundle 从 events 重新投影，ProcessAudit 直接复用 ReplayBundle.events，调用方无法通过 builder 输入伪造 ProjectionReplaySummary 内容字段或独立 events
+- [ ] AC-V2-CLOSEOUT-005（无构造环；新增抽象原则）— 由 V2-071C `test_process_audit_construction_loop_rejected.py` 证明：事件流不含 `CLOSEOUT_COMMITTED` 时 ProcessAuditBundle 必须可成功构造；CloseoutPackage 构造完成后才发出 `CLOSEOUT_COMMITTED` 治理事件
+- [ ] AC-V2-CLOSEOUT-006（无隐式 fallback；映射到 No silent fallbacks 硬规则）— 由 V2-071D `test_git_audit_fallback_rejected.py` 证明：GitAuditAdapter 缺 `base_commit_sha` / `worktree_ref` 必须 raise，不再 fallback 到 `final_commit_sha` 或 `worktree.{package_root}`
+- [ ] AC-V2-CLOSEOUT-007（graph_version 边界严格）— 由 V2-071E `test_closeout_package_graph_version_overflow_rejected.py` 证明：`CloseoutPackage.graph_version > ReplayBundle.last_graph_version` 必须 fail closed
+- [ ] AC-V2-CLOSEOUT-008（payload 内容绑定）— 由 V2-071E `test_replay_payload_manifest_tampering_rejected.py` 证明：`ReplayPayloadManifest.entries[*].sha256` 与 resolver 重算结果不一致必须 raise
+- [ ] AC-V2-CLOSEOUT-009（跨包引用命名空间）— 由 V2-071A `test_namespaced_refs.py` + V2-071E `test_closeout_package_boundary.py` 证明：`fact_set_id` / `artifact_ref` / `content_ref` 含 `project_ref` + `content_hash` + 必要时 `run_id` 命名空间；同一 project 多次构建得到不同 id
+- [ ] AC-V2-CLOSEOUT-010（确定性哈希）— 由 V2-071B / V2-071C / V2-071D 各自负例证明：payload manifest entries / artifact manifest entries / verification_runs / command_evidence_bindings / checked_refs 等集合语义输入乱序后仍产生稳定 hash
+- [ ] artifact-lineage producer/consumer 正确分离 — 由 V2-071C 证明：当 ticket A 产出源码、ticket B 消费时，artifact-lineage.json 必须分别记录 producer_ticket_ref 与 consumer_ticket_ref
+- [ ] ProcessAudit `unknown` / `ticket` 占位 fallback 消除 — 由 V2-071C 证明：`ticket_graph_summary` / `agent_context_index` 缺字段时直接 raise，不输出占位字符串
+- [ ] expected_fallback_decision_refs 排他校验 — 由 V2-071C 证明：`expected_fallback_decision_refs` 为空但 actual fallback lineages 非空必须 fail closed
+- [ ] AgentContextIndex 字段路径正确 — 由 V2-071C 证明：从 `entry.snapshot.execution_package_ref` / `entry.snapshot.model_execution_profile` 读取，不再 `getattr(entry, ..., None)` 取顶层平铺字段
+- [ ] Git status `--porcelain -z` 解析鲁棒 — 由 V2-071D 证明：含换行 / 引号 / 反斜杠 / 制表符的文件名可被正确解析
+- [ ] Git diff stat 锚定 summary footer — 由 V2-071D 证明：含 `12 insertions.md` 等特殊文件名不污染 `GitDiffSummary.insertions`
+- [ ] V2-070-batch-review-report.md 18 项 P0/P1/P2 缺口逐项闭合 — 由 V2-071F `test_v2_070_audit_report_p0_regressions.py` / `test_v2_070_audit_report_p1_regressions.py` / `test_v2_070_audit_report_p2_regressions.py` 证明
+- [ ] V2-071A ~ V2-071F 六个工作包全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 7.5 显示 6/6
+
+#### 本批产出
+
+- 新增代码：`src/boardroom_os/contracts/refs.py`（跨包命名空间 helper + canonical sort helper）
+- 修改代码：`src/boardroom_os/audit/replay_bundle.py`、`src/boardroom_os/audit/process_audit.py`、`src/boardroom_os/audit/git_version_audit.py`、`src/boardroom_os/adapters/git_audit.py`、`src/boardroom_os/closeout/package.py`、必要时 `src/boardroom_os/workspace/source_inventory.py`
+- 新增 spec：`doc/04-implementation/v2-071a-fact-chain-design-spec.md` ~ `v2-071f-fact-chain-regression-spec.md` 共 6 份
+- 新增测试：`tests/closeout/test_replay_bundle_rereplay.py`、`tests/closeout/test_process_audit_fact_chain.py`、`tests/closeout/test_git_audit_hardening.py`、`tests/closeout/test_closeout_package_boundary.py`、`tests/closeout/test_v2_070_fact_chain_end_to_end.py`、`tests/contracts/test_namespaced_refs.py` 及对应 `tests/negative/` 负例
+- 文档同步：本文件 Phase 7.5 checkbox 全勾选；`backlog.md` 工作包状态翻 DONE；`decisions.md` 新增 DEC-0016 / DEC-0017；`INDEX.md` 增加 6 份 spec 条目；`2026-05.md` 追加 V2-071A~F 完成日志
+
+#### 进入 Phase 8 前置（更新版）
+
+- [ ] 上述 Phase 7.5 AC checkbox 全部勾选
+- [ ] V2-071A ~ V2-071F 状态全部 DONE
+- [ ] `v2-070-batch-review-report.md` 列出的 18 项缺口全部有独立 negative test 证明已闭合
+- [ ] CloseoutPackage / CloseoutClosure 端到端集成测试通过（不再依赖合成事件）
+- [ ] 全量套件（`tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative`）通过
 
 ### Phase 8 验收 — V2-080 Tiny Full-stack Proving Scenario
 

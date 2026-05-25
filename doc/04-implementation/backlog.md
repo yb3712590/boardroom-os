@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080A`
+**当前未完成工作包**：`V2-071A`
 
-**当前重点**：Phase 8 启动 V2-080A tiny scenario active contracts（微型场景活跃合同）定义，在 Phase 7 Closeout + Replay + Audit（收尾、重放与审计）闭合后，为 tiny book availability tracker（微型图书可用性追踪器）生成 ProjectCharter（项目章程）、AcceptanceContract（验收合同）和 PackageContract（包合同）fixture（测试夹具）。
+**当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -126,6 +126,7 @@ V2-001 Phase 0 audit
   -> V2-050 Evidence Verifier + Checker + Rework
   -> V2-060 Workspace + Package Assembler
   -> V2-070 Closeout + Replay + Process Audit
+  -> V2-071 Closeout fact-chain hardening（事实链强化重构）
   -> V2-080 Tiny Full-stack Proving Scenario
 ```
 
@@ -158,8 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **47 / 53** | **Phase 8 待开始** |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 0 / 6 | 待开始 |
+| Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
+| **合计** | **V2-000 ~ V2-080** | **47 / 59** | **Phase 7.5 待开始** |
 
 ## 当前约束摘要
 
@@ -834,7 +836,116 @@ RoleProfile（角色模板）
 
 ---
 
-## V2-080: Tiny Full-stack Proving Scenario（端到端证明场景）
+## V2-071: Closeout fact-chain hardening（收尾事实链强化重构）
+
+- 状态：TODO
+- 目标：在不重写 V2-070A~G 实现的前提下，修复 2026-05-25 外部独立审计（`doc/04-implementation/v2-070-batch-review-report.md`）识别的 18 项 P0/P1/P2 缺口，重新固定 V2-070 大阶段的事实链权威源、跨包绑定与确定性哈希契约。
+- 输入文档：`doc/04-implementation/v2-070-batch-review-report.md`、`doc/03-architecture/process-audit-and-replay.md`、`doc/03-architecture/contract-and-evidence-model.md`、`doc/05-project-log/decisions.md`（DEC-0016、DEC-0017）。
+- 输出目录：`src/boardroom_os/contracts/refs.py`（新建）、复用 `src/boardroom_os/audit/`、`src/boardroom_os/closeout/`、`src/boardroom_os/adapters/`、`src/boardroom_os/reducers/`；`tests/closeout/`、`tests/negative/`、`tests/contracts/` 新增 fail-closed 回归。
+- 顶层验收口径：审计报告 P0 1-5 / P1 1-5 / P2 1-5 全部通过独立 negative test 证明已闭合；ProcessAudit 不再要求 `CLOSEOUT_COMMITTED` 出现在事件流中；ReplayBundle 从 events 重新投影而非接受外部 ProjectionReplaySummary；ProcessAudit events 与 ReplayBundle.events 逐条一致；GitAuditAdapter 无任何 fallback；CloseoutPackage.graph_version 严格等于 ReplayBundle.last_graph_version；payload manifest sha256 与真实内容通过 PayloadResolver 校验；所有跨包引用使用 project/run/hash 命名空间；所有集合语义输入按 canonical sort 进入 hash；Phase 7.5 AC checkbox 全部勾选后方可进入 Phase 8。
+- 兼容性策略：按 CLAUDE.md hard rule **no second source of truth** 与 **no silent fallbacks**，本次必须删除所有冲突旧 boundary，不保留 backwards-compat shim；测试 fixture 同步迁移。
+
+### V2-071A: 事实链权威源设计 + 跨包命名空间 helper
+
+- 状态：TODO
+- 目标：冻结 V2-071 整体事实链设计（CloseoutDomainInputs / CloseoutDomainOutputs 与构造顺序）；抽出共享 ref namespacing helper（引用命名空间助手）与确定性哈希助手，作为后续 V2-071B~E 修改的共同地基。
+- 输入文档：`doc/04-implementation/v2-070-batch-review-report.md`、`doc/04-implementation/v2-070g-closeout-closure-hardening-spec.md`、`doc/03-architecture/process-audit-and-replay.md`、`decisions.md`（DEC-0016、DEC-0017）。
+- 依赖：V2-070F。
+- 输出文件：`doc/04-implementation/v2-071a-fact-chain-design-spec.md`、`src/boardroom_os/contracts/refs.py`、`tests/contracts/test_namespaced_refs.py`、`tests/negative/test_namespaced_refs_fail_closed.py`；同步更新 `src/boardroom_os/contracts/__init__.py`、`doc/04-implementation/INDEX.md`。
+- 必须先写的 negative tests：跨包引用缺 `project_ref` namespace（项目引用命名空间）、缺 `run_id` 或 `content_hash` 段、namespace segment 含 unsafe path component（不安全路径段）、命名空间助手对相同输入产生不同 hash、canonical_sort helper 收到非可哈希集合元素必须 fail closed。
+- 必须证明的 happy path：`namespaced_ref(project_ref, kind, content_hash, run_id)` 对同一输入稳定返回同一 ref；`canonical_sort_for_hash(values, key=...)` 对乱序输入返回确定性序列；fact-chain 设计文档完整描述 V2-070 构造顺序与禁止外部传入的字段清单。
+- 验收口径：V2-071A 不修改任何 070 已有 builder，仅冻结设计并提供共享工具；V2-071B~E 修改必须复用 `boardroom_os.contracts.refs`，禁止在 audit/closeout 模块内自行实现 namespace 拼接。
+
+### V2-071B: ReplayBundle re-replay（从 events 重新投影）
+
+- 状态：TODO
+- 目标：让 ReplayBundle（重放包）成为 events 的唯一权威派生，不接受调用方传入的 `ProjectionReplaySummary`（投影回放摘要）内容字段；同步对 manifest entries 进行 canonical sort（规范排序），消除顺序敏感哈希。
+- 输入文档：`v2-071a-fact-chain-design-spec.md`、`process-audit-and-replay.md`、V2-070B 产物。
+- 依赖：V2-071A。
+- 输出文件：`doc/04-implementation/v2-071b-replay-bundle-rereplay-spec.md`、修改 `src/boardroom_os/audit/replay_bundle.py`、`tests/closeout/test_replay_bundle_rereplay.py`、`tests/negative/test_replay_bundle_external_summary_rejected.py`；同步调整 `tests/closeout/test_replay_bundle.py` fixture。
+- 必须先写的 negative tests：调用方通过 `ReplayBundleBuilderInput` 直接传入 `ProjectionReplaySummary.nodes` / `seat_assignments` / `blocked_by` 等内容字段必须失败；外部传入的 summary 字段内容与从 events 重新投影的结果不一致必须失败；payload_manifest entries 顺序变化导致 `payload_manifest_hash` 不稳定必须失败；artifact_manifest entries 顺序变化导致 `artifact_manifest_hash` 不稳定必须失败；篡改 events 中任一事件 payload 后 `summary_hash` 必须随之变化（不可静默通过）。
+- 必须证明的 happy path：`ReplayBundleBuilderInput` 仅接受 `project_ref`、`events`、manifest refs 与 generated_at，**不再接受 `projection_summary`**；builder 内部调用 `ProjectionReplay.replay_events(...)` 从 events 重新计算 `ProjectionReplaySummary`，并把 `summary_hash` 作为唯一权威 hash 来源写入 `ReplayReport` 与 `ReplayAttestation`；同一组 events 在不同输入顺序下经 canonical sort 产生同一 `replay_bundle_id`。
+- 验收口径：ReplayBundle 不再是"调用方提供的 summary 的包装层"；任何对 events 的篡改都会传播到 summary_hash；篡改 summary_hash（已不暴露）不再可能。
+
+### V2-071C: ProcessAudit 解构构造环 + events 单一来源
+
+- 状态：TODO
+- 目标：解除 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）之间的构造环；ProcessAudit 不再要求 `CLOSEOUT_COMMITTED` 出现在事件流中；ProcessAudit 直接复用 `ReplayBundle.events`，与 ReplayBundle 形成 events 单一权威源；移除 `getattr(..., "unknown")` 占位 fallback、`consumer_ticket_ref` 伪造、`expected_fallback_decision_refs` 为空时不拒绝额外 fallback_lineages 等隐式宽松校验；对 `checked_refs` canonical sort。
+- 输入文档：`v2-071a-fact-chain-design-spec.md`、`v2-071b-replay-bundle-rereplay-spec.md`、`process-audit-and-replay.md`、V2-070C 产物。
+- 依赖：V2-071B。
+- 输出文件：`doc/04-implementation/v2-071c-process-audit-fact-chain-spec.md`、修改 `src/boardroom_os/audit/process_audit.py`、修改 `src/boardroom_os/workspace/source_inventory.py`（若需要新增 `consumer_ticket_refs` 字段以分离 producer / consumer）；`tests/closeout/test_process_audit_fact_chain.py`、`tests/negative/test_process_audit_construction_loop_rejected.py`；同步调整既有 `tests/closeout/test_process_audit.py`、`tests/closeout/test_process_audit_artifacts.py` fixture。
+- 必须先写的 negative tests：
+  - ProcessAudit 输入事件流不包含 `CLOSEOUT_COMMITTED` 时**必须可成功构造**（旧实现会失败）；
+  - ProcessAudit 的 `events` 与 `replay_bundle.events` 任意中间事件 `event_type` / `payload_refs` / `actor_ref` 不一致必须失败；
+  - `ticket_graph_summary.tickets[*].status` / `owner_seat_ref` / `ticket_ref` 缺失时不得在 audit 产物中出现 `"unknown"` / `"ticket"` 字面量，必须直接 raise；
+  - `agent_context_index.entries[*]` 缺 `snapshot.execution_package_ref` / `snapshot.model_execution_profile` 必须失败（不再依赖顶层平铺字段）；
+  - SourceInventory 中 `producer_ticket_ref` 与 `consumer_ticket_ref` 相同但 ticket B 在 evidence chain 中实际消费 ticket A 的产出时，artifact-lineage.json 必须明确分离两者；
+  - `expected_fallback_decision_refs` 为空但 artifact-lineage.json 含 `fallback_lineages` 必须失败；
+  - `provider_attempt_refs` / `verification_runs` / `verified_evidence` 输入乱序时 `checked_refs` 仍按 canonical sort 产生稳定结果。
+- 必须证明的 happy path：ProcessAudit 在 CloseoutPackage 构造**之前**完成，事件流不含 `CLOSEOUT_COMMITTED`；ProcessAudit.events 与 ReplayBundle.events 完全相等（逐条比对，不仅是首尾 event_id）；agent context index 从 `entry.snapshot.*` 读取真实字段；`checked_refs` 在乱序输入下哈希稳定。
+- 验收口径：构造顺序变为 `Replay → ProcessAudit → GitAudit → CloseoutPackage → CLOSEOUT_COMMITTED → CloseoutReducer`，与 `closeout_reducer.py` 已实现的 reducer 顺序一致；不再可能在真实流程之外构造 synthetic event 通过 audit。
+
+### V2-071D: Git 审计强化（移除 fallback + 解析正确性 + 确定性哈希）
+
+- 状态：TODO
+- 目标：`GitAuditAdapter` 强制 `base_commit_sha` / `worktree_ref` 显式传入，禁止任何 fallback；`git status --porcelain` 改为 `--porcelain=v1 -z` 并按 NUL 分隔解析；`git diff` 统计使用 `--shortstat` 或锚定 summary footer 的 regex；对 `verification_runs` / `command_evidence_bindings` 按 canonical sort 计算 `command_evidence_refs` / `checked_refs` / `bundle_payload_hash`。
+- 输入文档：`v2-071a-fact-chain-design-spec.md`、V2-070D 产物。
+- 依赖：V2-071A（命名空间 helper 与 canonical sort helper）。
+- 输出文件：`doc/04-implementation/v2-071d-git-audit-hardening-spec.md`、修改 `src/boardroom_os/adapters/git_audit.py`、修改 `src/boardroom_os/audit/git_version_audit.py`；`tests/closeout/test_git_audit_hardening.py`、`tests/negative/test_git_audit_fallback_rejected.py`。
+- 必须先写的 negative tests：
+  - `GitAuditAdapter.collect(base_commit_sha=None, ...)` 必须 raise `GitAuditAdapterError("base_commit_sha is required")`，**不再 fallback 到 `final_commit_sha`**；
+  - `GitAuditAdapter.collect(worktree_ref=None, ...)` 必须 raise，**不再 fallback 到 `worktree.{package_root}`**；
+  - 文件名含换行 / 引号 / 反斜杠 / 制表符 / ` -> ` 字符串的 `git status` 输出必须能被正确解析（使用 `-z`）；
+  - 文件名含 `12 insertions.md` 的 diff 输出不得污染 `GitDiffSummary.insertions` 计数；
+  - `verification_runs` 输入顺序变化必须产生**相同** `command_evidence_refs` 与 `bundle_payload_hash`（canonical sort 后稳定）；
+  - `command_evidence_bindings` 输入顺序变化同样必须产生稳定 `checked_refs`；
+  - `fact_set_id` 必须包含 `final_commit_sha` 段（命名空间助手提供），同一项目不同 commit 不能复用同一 `fact_set_id`。
+- 必须证明的 happy path：合法显式传入 base/worktree 的 `GitAuditAdapter.collect(...)` 仍可生成 GitVersionAuditFactSet；`bundle_payload_hash` 在任意输入顺序下稳定；`fact_set_id` 与 `final_commit_sha` 形成强绑定。
+- 验收口径：审计报告 P0-4 / P2-1 / P2-4 / P2-5 全部闭合；GitAuditAdapter 不再有任何 silent fallback；Git 解析对特殊文件名鲁棒；同一事实重建得到同一哈希。
+
+### V2-071E: CloseoutPackage 边界严格化 + payload 内容绑定
+
+- 状态：TODO
+- 目标：`CloseoutPackage.graph_version` 严格等于 `ReplayBundle.last_graph_version`（不再允许超过）；引入 `ReplayPayloadResolver` 协议，让 `ReplayBundleReadiness` 在投影时通过 resolver 重新计算 `ReplayPayloadManifest.entries[*].sha256` 并与提供值比较；`artifact_ref` / `content_ref` / `fact_set_id` 全部改用 V2-071A 的 namespace helper；CloseoutPackage / ProcessAudit / ReplayBundle 之间的引用必须经 `assert_namespaced_ref_binding(...)` 校验。
+- 输入文档：`v2-071a-fact-chain-design-spec.md`、`v2-071b-replay-bundle-rereplay-spec.md`、`v2-071c-process-audit-fact-chain-spec.md`、V2-070E 产物。
+- 依赖：V2-071B、V2-071C。
+- 输出文件：`doc/04-implementation/v2-071e-closeout-package-boundary-spec.md`、修改 `src/boardroom_os/closeout/package.py`、修改 `src/boardroom_os/audit/replay_bundle.py`（引入 PayloadResolver 协议）、修改 `src/boardroom_os/audit/process_audit.py` 与 `src/boardroom_os/audit/git_version_audit.py`（namespace 改造）；`tests/closeout/test_closeout_package_boundary.py`、`tests/negative/test_closeout_package_graph_version_overflow_rejected.py`、`tests/negative/test_replay_payload_manifest_tampering_rejected.py`。
+- 必须先写的 negative tests：
+  - `builder_input.graph_version > replay_bundle.last_graph_version` 时必须 raise `CloseoutPackageError("graph_version must equal replay bundle proof boundary")`；
+  - `ReplayPayloadManifest.entries[*].sha256` 与 resolver 重算结果不一致时必须 raise；
+  - `ReplayPayloadResolver` 未提供时 `replay_bundle_readiness(...)` 必须降级为只校验 ref 覆盖并显式标记 `payload_sha256_verified=False`，或要求调用方必须传入 resolver（按 spec 选定）；
+  - `ProcessAuditArtifactRef(value="process-audit-artifact.{kind}")` 形式被替换为 `namespaced_ref(project_ref, "process-audit-artifact", kind, content_hash=...)`；旧形式被检测到必须 raise；
+  - 同一 `project_ref` 多次构建 CloseoutPackage 应得到不同 `closeout_package_id`（基于 run_id / generated_at 命名空间）。
+- 必须证明的 happy path：`CloseoutPackage.graph_version == replay_last_graph_version` 时可成功构造；payload resolver 提供真实内容时 sha256 重算通过；所有跨包引用通过 namespace 校验。
+- 验收口径：审计报告 P0-5 / P1-1 / P1-5 全部闭合；CloseoutPackage 不再可能声称覆盖超出 Replay 证明边界的状态；artifact 引用不再可能跨 run / 跨 project 串包。
+
+### V2-071F: 端到端 fail-closed 回归 + Phase 7 重锁
+
+- 状态：TODO
+- 目标：构造一个完整的 V2-070 fact-chain 集成测试（从 EventLog 真实跑到 CloseoutClosure），覆盖审计报告所有 18 项缺口的端到端 negative test；在 V2-070A~G 既有 negative tests 之上新增 fact-chain 级别的回归；重新勾选 Phase 7 验收 checkbox 并补齐 Phase 7.5 验收段；解锁 Phase 8。
+- 输入文档：`v2-071a-fact-chain-design-spec.md` ~ `v2-071e-closeout-package-boundary-spec.md`、`acceptance-criteria.md`、`v2-070-batch-review-report.md`。
+- 依赖：V2-071A、V2-071B、V2-071C、V2-071D、V2-071E。
+- 输出文件：`doc/04-implementation/v2-071f-fact-chain-regression-spec.md`、`tests/closeout/test_v2_070_fact_chain_end_to_end.py`、`tests/negative/test_v2_070_audit_report_p0_regressions.py`、`tests/negative/test_v2_070_audit_report_p1_regressions.py`、`tests/negative/test_v2_070_audit_report_p2_regressions.py`；同步更新 `doc/04-implementation/acceptance-criteria.md` Phase 7.5 段、`doc/04-implementation/backlog.md` 进度总览、`doc/05-project-log/2026-05.md`。
+- 必须先写的 negative tests（审计报告 18 项逐条对应）：
+  - P0-1：合法事件流不含 `closeout_committed` 时 ProcessAuditBundle 必须可成功构造，且后续 CloseoutPackage 构造完成后再发出 `CLOSEOUT_COMMITTED` 事件经 CloseoutReducer 投影为 succeeded；
+  - P0-2：调用方通过 builder 输入伪造 `ProjectionReplaySummary` 内容字段必须被拒绝（V2-071B 已删除该输入字段）；
+  - P0-3：ProcessAudit.events 与 ReplayBundle.events 中间事件不一致必须失败；
+  - P0-4：GitAuditAdapter 缺 `base_commit_sha` / `worktree_ref` 必须失败；
+  - P0-5：CloseoutPackage.graph_version > ReplayBundle.last_graph_version 必须失败；
+  - P1-1：ReplayPayloadManifest sha256 被篡改必须失败；
+  - P1-2：ProcessAudit 输入缺字段时不得输出 `"unknown"` / `"ticket"` 占位；
+  - P1-3：producer ticket 与 consumer ticket 不同时 artifact-lineage.json 必须正确分离；
+  - P1-4：`expected_fallback_decision_refs` 为空但 actual fallback lineages 非空必须失败；
+  - P1-5：跨 run / 跨 project 的 `fact_set_id` / `artifact_ref` / `content_ref` 串包必须失败；
+  - P2-1：GitVersionAudit `verification_runs` 乱序输入哈希必须稳定；
+  - P2-2：Replay manifest entries 乱序输入哈希必须稳定；
+  - P2-3：ProcessAudit `checked_refs` 乱序输入哈希必须稳定；
+  - P2-4：含特殊字符文件名的 `git status` 必须正确解析；
+  - P2-5：含 "insertions" 关键字的文件名 diff 输出必须不污染统计。
+- 必须证明的 happy path：真实 EventLog（含 work product / provider attempt / command run / verification 等事件，**不含** `closeout_committed`）→ Replay → ProcessAudit → GitAudit → CloseoutGate → CloseoutPackage → `CLOSEOUT_COMMITTED`（governance event）→ CloseoutReducer.terminal_status = SUCCEEDED；CloseoutClosure 闭包校验通过；端到端构造稳定可重复执行 N 次得到字节相同的 readiness 与 hash。
+- 验收口径：Phase 7.5 全部 AC checkbox 勾选；`v2-070-batch-review-report.md` 列出的 18 项 P0/P1/P2 缺口均有独立 negative test 证明已闭合；Phase 8 V2-080A 解锁可启动；本工作包完成后 backlog 顶部 TL;DR 的"当前未完成工作包"指向 `V2-080A`。
+
+---
 
 - 状态：TODO
 - 目标：端到端生成 tiny book availability tracker，证明 contract-first、reducer-protected、evidence-backed、package-oriented、audit-readable、replayable 的闭环。
@@ -847,7 +958,7 @@ RoleProfile（角色模板）
 - 状态：TODO
 - 目标：为 tiny book availability tracker 生成 ProjectCharter、AcceptanceContract、PackageContract fixture。
 - 输入文档：`proving-scenario-tiny-fullstack.md`、V2-010 产物。
-- 依赖：V2-010G。
+- 依赖：V2-010G、V2-071F（Phase 7.5 fact-chain 重构闭合后方可进入 Phase 8）。
 - 输出文件：`tests/proving/fixtures/tiny_fullstack_contracts.py`、`tests/proving/test_tiny_contracts.py`。
 - 必须先写的 negative tests：缺 API/UI/persistence/run/test acceptance refs 时 scenario 无效。
 - 必须证明的 happy path：active contracts 能覆盖 full-stack package 的 source surfaces 和 evidence obligations。

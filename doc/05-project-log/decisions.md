@@ -255,3 +255,64 @@ WorkspaceManifest（工作区清单）第一版只接受 durable/auditable（可
 
 - V2-060B/C/E/F 通过 manifest（清单）读取 canonical roots（规范根路径）。
 - 临时缓存和密钥只能作为外部引用或显式排除，不进入 WorkspaceManifest contract（工作区清单合同）。
+
+## DEC-0016: V2-070G 不视为 V2-070 阶段闭合；启动 V2-071 fact-chain hardening
+
+- 状态：Accepted
+- 日期：2026-05-25
+
+### 决策
+
+V2-070A~G 已实施完毕，但 2026-05-25 外部独立审计（详见 `doc/04-implementation/v2-070-batch-review-report.md`）在代码层验证后识别出 18 项 P0/P1/P2 缺口，主要集中在事实链结构（ProcessAudit 与 CloseoutPackage 构造环、ReplayBundle 接受外部 ProjectionReplaySummary 形成第二事实源、ProcessAudit events 与 ReplayBundle.events 缺少内容级一致性校验）、隐式 fallback（GitAuditAdapter `base_commit_sha` / `worktree_ref` 隐式 fallback、ProcessAudit `getattr(..., "unknown")` 占位）、边界越界（CloseoutPackage.graph_version 允许超过 ReplayBundle 已证明范围）、命名空间不足（`fact_set_id` / `artifact_ref` / `content_ref` 缺 project/run/hash 命名空间）和确定性哈希（多处 set 语义输入未 canonical sort）。
+
+V2-070G 已补强 Closeout Closure 阶段失败封闭校验，但未覆盖上述结构性缺口。本次决策：
+
+1. V2-070A~G 各工作包**保持 DONE 状态**，作为"各阶段独立交付"的依据；
+2. V2-070 大阶段整体**不视为闭合**，Phase 7 整体进入"待重构"状态；
+3. 在 V2-080 之前**新增 Phase 7.5 / V2-071 里程碑**（6 个工作包 V2-071A~F），专门负责 fact-chain hardening 重构与 18 项缺口闭合；
+4. 不采用"逐项串行打补丁"，也不"推倒重写 V2-070"，而是按"事实链权威源 → ReplayBundle re-replay → ProcessAudit 解构构造环 → Git 审计强化 → CloseoutPackage 边界严格化 → 端到端 fail-closed 回归"分包推进；
+5. V2-080A 的依赖追加 V2-071F；Phase 8 在 V2-071 闭合前不得启动。
+
+### 理由
+
+- **结构性问题不能用补丁解决**：ProcessAudit 与 CloseoutPackage 之间的构造环（ProcessAudit 要求 `CLOSEOUT_COMMITTED` 事件，而 CloseoutPackage 又要求 ProcessAuditBundle）需要重新设计构造顺序，单点修改会留下"测试可构造，真实流程不可构造"的隐患。
+- **第二事实源是系统性风险**：ReplayBundle 接受外部 ProjectionReplaySummary 而不重新投影、ProcessAudit 接受独立 events 而不直接复用 ReplayBundle.events，会让伪造 projection 字段在不被检测的情况下进入持久审计产物。
+- **CLAUDE.md hard rules 不可妥协**：GitAuditAdapter 的 `base_commit_sha or final_commit_sha` 直接违反 "No silent fallbacks"，必须删除而非保留兼容路径。
+- **不全推倒重写的理由**：V2-070A~G 在 event_hash_chain、artifact manifest sha256、checked_refs 闭包、artifact format 校验等维度提供了大量正确资产，全部重做会浪费。
+- **不纯补丁的理由**：补丁修完单点 fallback 后，原本依赖 fallback 通过的合成测试会大面积暴露上游流程不成立，最终仍需结构性重构，只是会被推迟到更糟的时间点。
+
+### 影响
+
+- `doc/04-implementation/backlog.md`：新增 Phase 7.5 / V2-071A~F 共 6 个工作包；TL;DR 当前未完成工作包改为 V2-071A；V2-080A 依赖追加 V2-071F；进度总览总数 53 → 59。
+- `doc/04-implementation/acceptance-criteria.md`：Phase 7 验收段追加"重审说明"，明确 070A~F checkbox 保留勾选但 Phase 7 整体不闭合；新增 Phase 7.5 验收段；抽象 AC 层新增 AC-V2-CLOSEOUT-004 ~ 010。
+- `doc/04-implementation/INDEX.md`：登记 6 份新 spec。
+- 后续 V2-071A~F 实施完成后，本决策结合 V2-071F 的全量回归证据共同关闭 Phase 7。
+
+## DEC-0017: V2-070 事实链单一权威源原则
+
+- 状态：Accepted
+- 日期：2026-05-25
+
+### 决策
+
+V2-070 大阶段的事实链必须遵循以下权威源原则，由 V2-071 阶段落地：
+
+1. **EventLog 是事件事实的唯一权威源**。任何 audit / replay / closeout 产物对事件的引用必须通过 EventRecord 切片，不得通过其他对象重新声明事件内容。
+2. **ReplayBundle 是 projection 事实的唯一权威源**。ReplayBundleBuilderInput 不再接受 `projection_summary` 字段；builder 内部必须调用 `ProjectionReplay.replay_events(...)` 从 events 重新投影 `ProjectionReplaySummary`，并以此为唯一 `summary_hash` 来源。
+3. **ProcessAuditBundle 必须直接复用 `ReplayBundle.events`**，不接受独立 events 输入；ProcessAudit.events 与 ReplayBundle.events 在内容层（event_type / payload_refs / actor_ref 等）必须逐条一致。
+4. **GitVersionAuditBundle 是 git facts 的唯一权威源**。GitAuditAdapter 的 base_commit_sha / worktree_ref / source_inventory_hash 必须显式传入；任何 fallback 必须 fail closed。
+5. **CloseoutPackage 不重新提取 bundle 内部字段**。CloseoutPackage 通过 readiness summaries 与 bundle refs 形成绑定，但绑定校验必须经过 `assert_namespaced_ref_binding(...)` 与 `assert_checked_refs_cover(...)` 共享 helper，而不是各模块内部独立比较。
+6. **构造顺序固定**：`EventLog → ReplayBundle → ProcessAuditBundle → GitVersionAuditBundle → CloseoutPackage → CLOSEOUT_COMMITTED 治理事件 → CloseoutReducer → CloseoutClosure`，不存在构造环。`CLOSEOUT_COMMITTED` 在 CloseoutPackage 构造完成后才能出现，ProcessAudit 不得要求该事件存在。
+
+### 理由
+
+外部审计报告显示，V2-070A~G 的实施在每个单点工作包上都满足"输入→输出"语义闭合，但在跨包视角下出现"测试可构造，真实流程不可构造"的合成路径。根因是缺少统一的事实链权威源原则——builder 输入接口允许调用方注入"看似与边界一致"的派生字段（projection_summary、独立 events、`base_commit_sha or final_commit_sha`），让伪事实可以在不修改 hash 链的前提下进入持久产物。一次性写明权威源原则比逐个工作包修补更稳健。
+
+### 影响
+
+- V2-071B：删除 `ReplayBundleBuilderInput.projection_summary` 字段，builder 内部重新投影。
+- V2-071C：删除 `ProcessAuditBuilderInput.events` 字段，强制复用 `replay_bundle.events`；删除 ProcessAudit `_REQUIRED_TIMELINE_EVENT_KINDS` 中的 `closeout_committed`。
+- V2-071D：删除 GitAuditAdapter 所有 `or fallback` 表达式。
+- V2-071E：CloseoutPackage 引用绑定经过 V2-071A 命名空间 helper。
+- 测试 fixture：所有依赖 V2-070 旧 builder input 形态的 fixture（包括 V2-070B/C/E/F 已提交的测试）必须同步迁移；本决策接受这部分回归成本。
+- 后续阶段（V2-080 及之后）的 audit / closeout 消费者只能从 readiness summaries 与 CloseoutProjection 读取事实，不得直接读 CloseoutPackage / ReplayBundle 内部字段绕过权威源。
