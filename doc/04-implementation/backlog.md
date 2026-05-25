@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-071A`
+**当前未完成工作包**：`V2-071B`
 
 **当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
 
@@ -159,9 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 0 / 6 | 待开始 |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 1 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
-| **合计** | **V2-000 ~ V2-080** | **47 / 59** | **Phase 7.5 待开始** |
+| **合计** | **V2-000 ~ V2-080** | **48 / 59** | **Phase 7.5 进行中** |
 
 ## 当前约束摘要
 
@@ -847,7 +847,7 @@ RoleProfile（角色模板）
 
 ### V2-071A: 事实链权威源设计 + 跨包命名空间 helper
 
-- 状态：TODO
+- 状态：DONE
 - 目标：冻结 V2-071 整体事实链设计（CloseoutDomainInputs / CloseoutDomainOutputs 与构造顺序）；抽出共享 ref namespacing helper（引用命名空间助手）与确定性哈希助手，作为后续 V2-071B~E 修改的共同地基。
 - 输入文档：`doc/04-implementation/v2-070-batch-review-report.md`、`doc/04-implementation/v2-070g-closeout-closure-hardening-spec.md`、`doc/03-architecture/process-audit-and-replay.md`、`decisions.md`（DEC-0016、DEC-0017）。
 - 依赖：V2-070F。
@@ -855,6 +855,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：跨包引用缺 `project_ref` namespace（项目引用命名空间）、缺 `run_id` 或 `content_hash` 段、namespace segment 含 unsafe path component（不安全路径段）、命名空间助手对相同输入产生不同 hash、canonical_sort helper 收到非可哈希集合元素必须 fail closed。
 - 必须证明的 happy path：`namespaced_ref(project_ref, kind, content_hash, run_id)` 对同一输入稳定返回同一 ref；`canonical_sort_for_hash(values, key=...)` 对乱序输入返回确定性序列；fact-chain 设计文档完整描述 V2-070 构造顺序与禁止外部传入的字段清单。
 - 验收口径：V2-071A 不修改任何 070 已有 builder，仅冻结设计并提供共享工具；V2-071B~E 修改必须复用 `boardroom_os.contracts.refs`，禁止在 audit/closeout 模块内自行实现 namespace 拼接。
+- 完成证据：2026-05-25 修订 `v2-071a-fact-chain-design-spec.md`，明确 `content_hash` 必须复用 `Sha256Hex`（SHA-256 摘要值对象）并由完整摘要派生短 hash，Git audit ref 使用包含 commit SHA 的 payload hash 而非直接使用 Git SHA-1；新增 `boardroom_os.contracts.refs`（引用命名空间 helper）与 negative / happy tests，覆盖 unsafe namespace segment、短/占位 hash、禁止无 `run_id` 的 `extra_suffix` 单尾段、非 dict / 非 JSONable payload、BaseModel / StrEnum / tuple/list canonicalization、重复 canonical sort key、非字符串 sort key、乱序输入稳定性与 UTF-8 canonical payload hash。验证命令：`PYTHONPATH="src:." python -m pytest tests/contracts/test_namespaced_refs.py tests/negative/test_namespaced_refs_fail_closed.py -q --basetemp=.pytest-tmp-v2071a-review-final-focused` 通过（22 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/closeout -q --basetemp=.pytest-tmp-v2071a-review-regression` 通过（257 passed）。
 
 ### V2-071B: ReplayBundle re-replay（从 events 重新投影）
 

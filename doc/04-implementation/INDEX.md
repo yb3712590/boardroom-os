@@ -44,6 +44,7 @@
 | `v2-070e-closeout-package-spec.md` | V2-070E CloseoutPackage（收尾包）同行评审 spec |
 | `v2-070f-closeout-reducer-spec.md` | V2-070F CloseoutReducer（收尾归约器）同行评审 spec |
 | `v2-070f-closeout-reducer-implementation-plan.md` | V2-070F CloseoutReducer（收尾归约器）实施计划 |
+| `v2-071a-fact-chain-design-spec.md` | V2-071A Fact-chain（事实链）权威源设计与引用命名空间 helper spec |
 
 ## AI 启动入口
 

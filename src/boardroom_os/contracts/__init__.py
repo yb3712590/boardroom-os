@@ -42,6 +42,13 @@ from boardroom_os.contracts.project import (
     ProjectCharterRegistry,
     create_project_charter,
 )
+from boardroom_os.contracts.refs import (
+    NamespacedRefError,
+    assert_namespace_segment,
+    canonical_sort_for_hash,
+    hash_namespaced_payload,
+    namespaced_ref,
+)
 from boardroom_os.contracts.source_surface import (
     OwnerSeatRef,
     RequiredTestRef,
@@ -77,6 +84,7 @@ __all__ = [
     "MethodologyProfile",
     "MethodologyProfileRegistry",
     "MethodologyTemplateKind",
+    "NamespacedRefError",
     "OwnerSeatRef",
     "PackageCommand",
     "PackageContract",
@@ -89,11 +97,15 @@ __all__ = [
     "SourceSurface",
     "SourceSurfaceRef",
     "VerificationStrategy",
+    "assert_namespace_segment",
+    "canonical_sort_for_hash",
     "compile_evidence_obligations",
     "create_acceptance_contract",
     "create_package_contract",
     "create_project_charter",
     "default_documentation_obligations_for",
     "docs_template_key_for",
+    "hash_namespaced_payload",
+    "namespaced_ref",
     "validate_contract_gate",
 ]
