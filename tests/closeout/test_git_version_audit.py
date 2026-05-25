@@ -17,6 +17,9 @@ from boardroom_os.audit.git_version_audit import (
     GitVersionAuditBundle,
     GitVersionAuditError,
     GitVersionAuditFactSet,
+    _bundle_payload_for_hash,
+    _hash_jsonable,
+    _hash_model,
     build_git_version_audit_bundle,
     git_version_audit_readiness,
     source_inventory_hash,
@@ -28,8 +31,9 @@ from boardroom_os.workspace.source_inventory import PackageCommitRef
 from tests.closeout.test_closeout_gate import _FINAL_COMMIT_SHA, _ready_input
 
 _NOW = datetime(2026, 5, 24, 12, 0, tzinfo=UTC)
-_BASE_COMMIT_SHA = "a" * 40
-_OTHER_COMMIT_SHA = "d" * 40
+_BASE_COMMIT_SHA = "abcdef0123456789abcdef0123456789abcdef01"
+_OTHER_COMMIT_SHA = "fedcba9876543210fedcba9876543210fedcba98"
+_TAMPERED_SHA256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
 
 class FakeGitTransport:
@@ -131,7 +135,7 @@ def test_git_version_audit_rejects_dirty_package() -> None:
 
 
 def test_git_version_audit_rejects_source_inventory_hash_mismatch() -> None:
-    mismatched_facts = _git_facts(source_inventory_hash="e" * 64)
+    mismatched_facts = _git_facts(source_inventory_hash=_TAMPERED_SHA256)
 
     with pytest.raises(GitVersionAuditError, match="source inventory hash mismatch"):
         build_git_version_audit_bundle(_builder_input(git_facts=mismatched_facts))
@@ -193,10 +197,57 @@ def test_git_version_audit_rejects_failed_verification_run() -> None:
 
 def test_git_version_audit_rejects_hash_manifest_mismatch() -> None:
     bundle = _build_bundle()
-    tampered_manifest = bundle.hash_manifest.model_copy(update={"report_hash": "f" * 64})
+    tampered_manifest = bundle.hash_manifest.model_copy(update={"report_hash": _TAMPERED_SHA256})
     tampered_bundle = bundle.model_copy(update={"hash_manifest": tampered_manifest})
 
     with pytest.raises(GitVersionAuditError, match="hash manifest"):
+        git_version_audit_readiness(tampered_bundle)
+
+
+def test_git_version_audit_readiness_recomputes_report_booleans() -> None:
+    bundle = _build_bundle()
+    tampered_report = bundle.report.model_copy(
+        update={"final_command_evidence_at_final_commit": False}
+    )
+    tampered_bundle = bundle.model_copy(update={"report": tampered_report})
+    tampered_manifest = tampered_bundle.hash_manifest.model_copy(
+        update={
+            "report_hash": type(tampered_bundle.hash_manifest.report_hash)(
+                value=_hash_model(tampered_report)
+            ),
+        }
+    )
+    tampered_bundle = tampered_bundle.model_copy(update={"hash_manifest": tampered_manifest})
+    tampered_manifest = tampered_bundle.hash_manifest.model_copy(
+        update={
+            "bundle_payload_hash": type(tampered_bundle.hash_manifest.bundle_payload_hash)(
+                value=_hash_jsonable(
+                    _bundle_payload_for_hash(
+                        bundle_id=tampered_bundle.git_version_audit_bundle_id,
+                        project_ref=tampered_bundle.project_ref,
+                        generated_at=tampered_bundle.generated_at,
+                        fact_set=tampered_bundle.fact_set,
+                        command_evidence_bindings=tampered_bundle.command_evidence_bindings,
+                        report=tampered_bundle.report,
+                        checked_refs=tampered_bundle.checked_refs,
+                        hash_manifest_without_bundle_hash={
+                            "hash_manifest_id": tampered_bundle.hash_manifest.hash_manifest_id.value,
+                            "project_ref": tampered_bundle.hash_manifest.project_ref.value,
+                            "fact_set_hash": tampered_bundle.hash_manifest.fact_set_hash.value,
+                            "report_hash": tampered_bundle.hash_manifest.report_hash.value,
+                            "command_binding_hashes": {
+                                key: value.value
+                                for key, value in tampered_bundle.hash_manifest.command_binding_hashes.items()
+                            },
+                        },
+                    )
+                )
+            ),
+        }
+    )
+    tampered_bundle = tampered_bundle.model_copy(update={"hash_manifest": tampered_manifest})
+
+    with pytest.raises(GitVersionAuditError, match="report final command evidence readiness mismatch"):
         git_version_audit_readiness(tampered_bundle)
 
 
@@ -243,11 +294,10 @@ def test_git_audit_adapter_rejects_git_command_failure() -> None:
         adapter.collect(package_root="10-project", project_ref="project-tiny-fullstack", cwd="D:/tmp/repo")
 
 
-def test_git_audit_adapter_rejects_write_git_commands() -> None:
+def test_git_audit_adapter_does_not_expose_arbitrary_git_runner() -> None:
     adapter = GitAuditAdapter(transport=FakeGitTransport({}))
 
-    with pytest.raises(GitAuditAdapterError, match="read-only"):
-        adapter.run_git(("git", "commit", "-m", "nope"), cwd="D:/tmp/repo")
+    assert not hasattr(adapter, "run_git")
 
 
 def test_git_version_audit_bundle_records_clean_final_version() -> None:
@@ -362,3 +412,10 @@ def test_git_audit_adapter_collects_git_facts_from_transport() -> None:
     assert facts.package_root == "10-project"
     assert facts.worktree_ref.value == "worktree.final-package"
     assert facts.optional_tag_ref.value == "tag.v1.0.0"
+    assert transport.commands == [
+        ("git", "rev-parse", "HEAD"),
+        ("git", "rev-parse", "--abbrev-ref", "HEAD"),
+        ("git", "status", "--porcelain"),
+        ("git", "diff", "--stat"),
+        ("git", "tag", "--points-at", "HEAD"),
+    ]

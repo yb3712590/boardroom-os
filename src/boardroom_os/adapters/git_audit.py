@@ -15,6 +15,21 @@ from boardroom_os.audit.git_version_audit import (
     GitVersionAuditFactSet,
 )
 
+_GIT_REV_PARSE_HEAD = ("git", "rev-parse", "HEAD")
+_GIT_REV_PARSE_BRANCH = ("git", "rev-parse", "--abbrev-ref", "HEAD")
+_GIT_STATUS_PORCELAIN = ("git", "status", "--porcelain")
+_GIT_DIFF_STAT = ("git", "diff", "--stat")
+_GIT_TAG_POINTS_AT_HEAD = ("git", "tag", "--points-at", "HEAD")
+_GIT_COMMAND_TEMPLATES = frozenset(
+    {
+        _GIT_REV_PARSE_HEAD,
+        _GIT_REV_PARSE_BRANCH,
+        _GIT_STATUS_PORCELAIN,
+        _GIT_DIFF_STAT,
+        _GIT_TAG_POINTS_AT_HEAD,
+    }
+)
+
 
 class GitAuditAdapterError(ValueError):
     pass
@@ -59,14 +74,6 @@ class GitAuditAdapter:
     def __init__(self, *, transport: GitCommandTransport | None = None) -> None:
         self._transport = transport or SubprocessGitCommandTransport()
 
-    def run_git(self, command: tuple[str, ...], *, cwd: str) -> GitCommandResult:
-        normalized_command = self._normalize_command(command)
-        self._require_read_only_command(normalized_command)
-        result = self._transport.run(normalized_command, cwd=cwd)
-        if result.exit_code != 0:
-            raise GitAuditAdapterError("git command failed")
-        return result
-
     def collect(
         self,
         *,
@@ -78,11 +85,11 @@ class GitAuditAdapter:
         worktree_ref: str | None = None,
         generated_at: datetime | None = None,
     ) -> GitVersionAuditFactSet:
-        final_commit_sha = self.run_git(("git", "rev-parse", "HEAD"), cwd=cwd).stdout.strip()
-        branch_name = self.run_git(("git", "rev-parse", "--abbrev-ref", "HEAD"), cwd=cwd).stdout.strip()
-        status_output = self.run_git(("git", "status", "--porcelain"), cwd=cwd).stdout
-        diff_stat_output = self.run_git(("git", "diff", "--stat"), cwd=cwd).stdout
-        tag_output = self.run_git(("git", "tag", "--points-at", "HEAD"), cwd=cwd).stdout
+        final_commit_sha = self._rev_parse_head(cwd=cwd).stdout.strip()
+        branch_name = self._rev_parse_branch(cwd=cwd).stdout.strip()
+        status_output = self._status_porcelain(cwd=cwd).stdout
+        diff_stat_output = self._diff_stat(cwd=cwd).stdout
+        tag_output = self._tags_pointing_at_head(cwd=cwd).stdout
 
         if source_inventory_hash is None:
             raise GitAuditAdapterError("source_inventory_hash is required")
@@ -115,38 +122,28 @@ class GitAuditAdapter:
             generated_at=now,
         )
 
-    def _normalize_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
-        if not isinstance(command, tuple | list):
-            raise GitAuditAdapterError("git command must be a tuple or list")
-        normalized = tuple(part.strip() for part in command)
-        if not normalized or any(not part for part in normalized):
-            raise GitAuditAdapterError("git command must not contain empty items")
-        if normalized[0] != "git":
-            raise GitAuditAdapterError("git command must start with git")
-        return normalized
+    def _run_template(self, command: tuple[str, ...], *, cwd: str) -> GitCommandResult:
+        if command not in _GIT_COMMAND_TEMPLATES:
+            raise GitAuditAdapterError("arbitrary git command execution is not supported")
+        result = self._transport.run(command, cwd=cwd)
+        if result.exit_code != 0:
+            raise GitAuditAdapterError("git command failed")
+        return result
 
-    def _require_read_only_command(self, command: tuple[str, ...]) -> None:
-        if len(command) < 2:
-            raise GitAuditAdapterError("git command must include subcommand")
-        subcommand = command[1]
-        allowed = {
-            "branch",
-            "diff",
-            "log",
-            "rev-list",
-            "rev-parse",
-            "show",
-            "status",
-            "tag",
-        }
-        if subcommand not in allowed:
-            raise GitAuditAdapterError("git command must be read-only")
-        if subcommand == "tag" and command[2:4] != ("--points-at", "HEAD"):
-            raise GitAuditAdapterError("git command must be read-only")
-        if subcommand == "branch" and any(part in {"-D", "-d", "-m", "-M", "--delete", "--move"} for part in command[2:]):
-            raise GitAuditAdapterError("git command must be read-only")
-        if subcommand == "diff" and any(part in {"--output", "--quiet", "--exit-code"} for part in command[2:]):
-            raise GitAuditAdapterError("git command must be read-only")
+    def _rev_parse_head(self, *, cwd: str) -> GitCommandResult:
+        return self._run_template(_GIT_REV_PARSE_HEAD, cwd=cwd)
+
+    def _rev_parse_branch(self, *, cwd: str) -> GitCommandResult:
+        return self._run_template(_GIT_REV_PARSE_BRANCH, cwd=cwd)
+
+    def _status_porcelain(self, *, cwd: str) -> GitCommandResult:
+        return self._run_template(_GIT_STATUS_PORCELAIN, cwd=cwd)
+
+    def _diff_stat(self, *, cwd: str) -> GitCommandResult:
+        return self._run_template(_GIT_DIFF_STAT, cwd=cwd)
+
+    def _tags_pointing_at_head(self, *, cwd: str) -> GitCommandResult:
+        return self._run_template(_GIT_TAG_POINTS_AT_HEAD, cwd=cwd)
 
     def _parse_status(self, status_output: str) -> tuple[GitChangedFile, ...]:
         changed_files: list[GitChangedFile] = []

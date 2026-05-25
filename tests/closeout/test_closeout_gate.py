@@ -56,9 +56,9 @@ from boardroom_os.workspace.source_inventory import (
 )
 
 _NOW = datetime(2026, 5, 24, 10, 30, tzinfo=UTC)
-_FINAL_COMMIT_SHA = "b" * 40
-_SOURCE_INVENTORY_HASH = "c" * 64
-_SUMMARY_HASH = "a" * 64
+_FINAL_COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
+_SOURCE_INVENTORY_HASH = "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+_SUMMARY_HASH = "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
 _FALLBACK_DECISION_REF = "fallback-decision-record.closeout-gate"
 _PROCESS_AUDIT_ARTIFACT_PATHS = (
     "30-audit/process-audit.md",

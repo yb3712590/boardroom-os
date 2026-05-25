@@ -37,6 +37,7 @@ from boardroom_os.closeout.gate import (
     ProcessAuditReadiness,
     ReplayBundleReadiness,
 )
+from boardroom_os.closeout.closure import assert_checked_refs_cover
 from boardroom_os.contracts.types import NonEmptyTextValue
 from boardroom_os.evidence.table import FinalEvidenceTable, FinalEvidenceTableRef
 from boardroom_os.events.types import ProjectRef
@@ -385,6 +386,46 @@ def _validate_builder_input(builder_input: CloseoutPackageBuilderInput) -> None:
         raise CloseoutPackageError("git audit readiness bundle mismatch")
 
     _validate_gate_checked_refs(builder_input)
+    _validate_process_audit_checked_refs(builder_input)
+
+
+def _validate_process_audit_checked_refs(builder_input: CloseoutPackageBuilderInput) -> None:
+    required = _process_audit_required_checked_refs(builder_input)
+    try:
+        assert_checked_refs_cover(
+            builder_input.process_audit_bundle.process_audit_bundle_id.value,
+            required,
+            builder_input.process_audit_bundle.checked_refs,
+        )
+        assert_checked_refs_cover(
+            builder_input.process_audit_bundle.process_audit_report.process_audit_report_id.value,
+            required,
+            builder_input.process_audit_bundle.process_audit_report.checked_refs,
+        )
+    except ValueError as error:
+        raise CloseoutPackageError("process audit checked_refs missing required closeout refs") from error
+
+
+def _process_audit_required_checked_refs(builder_input: CloseoutPackageBuilderInput) -> set[str]:
+    git_bundle = builder_input.git_version_audit_bundle
+    return {
+        *builder_input.closeout_gate_result.checked_refs,
+        builder_input.source_inventory.source_inventory_id.value,
+        builder_input.final_evidence_table.final_evidence_table_id.value,
+        builder_input.replay_bundle.replay_bundle_id.value,
+        builder_input.replay_bundle.replay_report.replay_report_id.value,
+        builder_input.replay_readiness.summary_hash.value,
+        builder_input.replay_readiness.event_range.value,
+        builder_input.git_audit_readiness.final_commit_sha.value,
+        builder_input.git_audit_readiness.source_inventory_hash.value,
+        git_bundle.git_version_audit_bundle_id.value,
+        git_bundle.report.git_version_audit_report_id.value,
+        git_bundle.hash_manifest.hash_manifest_id.value,
+        git_bundle.fact_set.fact_set_id.value,
+        *(version.value for version in builder_input.replay_readiness.projection_versions),
+        *(path.value for path in builder_input.process_audit_readiness.artifact_paths),
+        *(binding.binding_id.value for binding in git_bundle.command_evidence_bindings),
+    }
 
 
 def _validate_gate_checked_refs(builder_input: CloseoutPackageBuilderInput) -> None:

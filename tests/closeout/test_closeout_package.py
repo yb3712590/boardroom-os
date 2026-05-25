@@ -13,6 +13,8 @@ from boardroom_os.audit.git_version_audit import (
     source_inventory_hash,
 )
 from boardroom_os.audit.process_audit import (
+    _hash_bundle_payload,
+    _hash_model,
     build_process_audit_bundle,
     process_audit_readiness,
 )
@@ -37,7 +39,7 @@ from boardroom_os.workspace.source_inventory import PackageCommitRef
 from tests.closeout.test_git_version_audit import _builder_input as _git_version_audit_builder_input
 from tests.closeout.test_git_version_audit import _build_bundle as _build_git_version_audit_bundle
 from tests.closeout.test_process_audit_artifacts import _process_audit_builder_input
-from tests.negative.test_closeout_fail_closed import _ready_input as _closeout_gate_ready_input
+from tests.closeout.test_closeout_gate import _ready_input as _closeout_gate_ready_input
 
 _GENERATED_AT = datetime(2026, 5, 24, 13, 0, tzinfo=UTC)
 
@@ -89,6 +91,8 @@ def _closeout_package_builder_input(**overrides: Any) -> CloseoutPackageBuilderI
         process_input = _process_audit_builder_input(
             git_version_audit_bundle=git_version_audit_bundle,
             git_audit_readiness=git_audit_readiness,
+            replay_bundle=process_input.replay_bundle,
+            replay_readiness=process_input.replay_readiness,
         )
     process_audit_bundle = build_process_audit_bundle(process_input)
     process_audit_readiness_value = process_audit_readiness(process_audit_bundle)
@@ -282,8 +286,8 @@ def test_closeout_package_rejects_git_readiness_bundle_mismatch() -> None:
     builder_input = _closeout_package_builder_input()
     mismatched_readiness = GitAuditReadiness(
         git_clean=False,
-        final_commit_sha="d" * 40,
-        source_inventory_hash="e" * 64,
+        final_commit_sha="fedcba9876543210fedcba9876543210fedcba98",
+        source_inventory_hash="abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         source_inventory_hash_matches=False,
         final_command_evidence_at_final_commit=False,
     )
@@ -297,7 +301,7 @@ def test_closeout_package_rejects_git_readiness_bundle_mismatch() -> None:
 def test_closeout_package_rejects_replay_readiness_bundle_mismatch() -> None:
     builder_input = _closeout_package_builder_input()
     mismatched_readiness = builder_input.replay_readiness.model_copy(
-        update={"summary_hash": "2" * 64}
+        update={"summary_hash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"}
     )
 
     with pytest.raises(ValidationError, match="replay readiness bundle mismatch"):
@@ -327,6 +331,69 @@ def test_closeout_package_rejects_gate_checked_refs_gap() -> None:
     with pytest.raises(ValidationError, match="closeout gate checked_refs"):
         CloseoutPackageBuilderInput.model_validate(
             builder_input.model_copy(update={"closeout_gate_result": gate_result})
+        )
+
+
+def test_closeout_package_rejects_process_audit_checked_refs_gap() -> None:
+    builder_input = _closeout_package_builder_input()
+    required_ref = builder_input.replay_readiness.summary_hash.value
+    process_audit_bundle = builder_input.process_audit_bundle.model_copy(
+        update={
+            "checked_refs": tuple(
+                ref for ref in builder_input.process_audit_bundle.checked_refs if ref != required_ref
+            ),
+            "process_audit_report": builder_input.process_audit_bundle.process_audit_report.model_copy(
+                update={
+                    "checked_refs": tuple(
+                        ref
+                        for ref in builder_input.process_audit_bundle.process_audit_report.checked_refs
+                        if ref != required_ref
+                    )
+                }
+            ),
+        }
+    )
+    process_audit_bundle = process_audit_bundle.model_copy(
+        update={
+            "hash_manifest": process_audit_bundle.hash_manifest.model_copy(
+                update={
+                    "process_audit_report_hash": type(
+                        process_audit_bundle.hash_manifest.process_audit_report_hash
+                    )(value=_hash_model(process_audit_bundle.process_audit_report)),
+                }
+            )
+        }
+    )
+    process_audit_bundle = process_audit_bundle.model_copy(
+        update={
+            "hash_manifest": process_audit_bundle.hash_manifest.model_copy(
+                update={
+                    "bundle_payload_hash": type(process_audit_bundle.hash_manifest.bundle_payload_hash)(
+                        value=_hash_bundle_payload(
+                            process_audit_bundle_id=process_audit_bundle.process_audit_bundle_id,
+                            project_ref=process_audit_bundle.project_ref,
+                            generated_at=process_audit_bundle.generated_at,
+                            artifacts=process_audit_bundle.artifacts,
+                            artifact_manifest=process_audit_bundle.artifact_manifest,
+                            hash_manifest_without_bundle_hash={
+                                "hash_manifest_id": process_audit_bundle.hash_manifest.hash_manifest_id,
+                                "project_ref": process_audit_bundle.hash_manifest.project_ref,
+                                "artifact_hashes": process_audit_bundle.hash_manifest.artifact_hashes,
+                                "artifact_manifest_hash": process_audit_bundle.hash_manifest.artifact_manifest_hash,
+                                "process_audit_report_hash": process_audit_bundle.hash_manifest.process_audit_report_hash,
+                            },
+                            process_audit_report=process_audit_bundle.process_audit_report,
+                            checked_refs=process_audit_bundle.checked_refs,
+                        )
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="process audit checked_refs"):
+        CloseoutPackageBuilderInput.model_validate(
+            builder_input.model_copy(update={"process_audit_bundle": process_audit_bundle})
         )
 
 

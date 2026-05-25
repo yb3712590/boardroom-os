@@ -15,6 +15,7 @@ from boardroom_os.audit.process_audit import (
     process_audit_readiness,
 )
 from boardroom_os.closeout.gate import GitAuditReadiness, ProcessAuditReadiness
+from boardroom_os.events.types import EventType
 
 from tests.closeout.test_process_audit_artifacts import (
     _artifact_by_kind,
@@ -118,12 +119,15 @@ def test_process_audit_report_indexes_all_artifacts() -> None:
 
     assert indexed_refs == artifact_refs
     checked_refs = set(report.checked_refs)
-    assert "package-contract.closeout-gate" in checked_refs
+    assert any(ref.startswith("package-contract.closeout-gate") for ref in checked_refs)
     assert "acceptance-contract.process-audit" in checked_refs
     assert "source-diff.app" in checked_refs
     assert "provider-attempt.app" in checked_refs
     assert any(ref.startswith("replay-bundle.") for ref in checked_refs)
     assert any(ref.startswith("report.replay.") for ref in checked_refs)
+    assert bundle.process_audit_report.replay_summary_hash in checked_refs
+    assert bundle.process_audit_report.replay_projection_versions[0] in checked_refs
+    assert any(ref.startswith("event-range.") for ref in checked_refs)
     assert any(ref.startswith("git-version-audit-bundle.") for ref in checked_refs)
     assert any(ref.startswith("git-version-audit-report.") for ref in checked_refs)
     assert any(ref.startswith("git-version-audit-facts.") for ref in checked_refs)
@@ -190,7 +194,12 @@ def test_process_audit_timeline_includes_real_event_records() -> None:
 
     for source_event in builder_input.events:
         projected = event_by_ref[source_event.event_id.value]
-        assert projected["kind"] == source_event.event_type.value
+        expected_kind = (
+            "ticket_started"
+            if source_event.event_type is EventType.TICKET_LEASED
+            else source_event.event_type.value
+        )
+        assert projected["kind"] == expected_kind
         assert projected["timestamp"] == source_event.timestamp.isoformat()
         assert projected["actor_ref"] == source_event.actor_ref.value
         assert projected["graph_version"] == source_event.graph_version
@@ -198,26 +207,32 @@ def test_process_audit_timeline_includes_real_event_records() -> None:
         assert projected["source"] == "event_log"
 
 
-def test_process_audit_timeline_keeps_audit_milestones_separate_from_event_log() -> None:
+def test_process_audit_timeline_contains_only_real_event_log_sources() -> None:
     builder_input = _process_audit_builder_input()
     bundle = build_process_audit_bundle(builder_input)
 
     timeline = _artifact_by_kind(bundle, ProcessAuditArtifactKind.TIMELINE)
-    source_events = [event for event in timeline.content["events"] if event["source"] == "event_log"]
-    audit_milestones = [event for event in timeline.content["events"] if event["source"] == "process_audit_projection"]
+    timeline_events = timeline.content["events"]
 
-    assert [event["event_ref"] for event in source_events] == [
+    assert [event["event_ref"] for event in timeline_events] == [
         event.event_id.value for event in builder_input.events
     ]
-    assert {event["kind"] for event in audit_milestones} >= {
-        "directive_received",
-        "acceptance_contract_created",
-        "package_contract_created",
-        "evidence_verified",
-        "checker_verdict_recorded",
-        "closeout_prepared",
-        "replay_bundle_materialized",
-    }
+    assert {event["source"] for event in timeline_events} == {"event_log"}
+    assert "process_audit_projection" not in json.dumps(timeline.content, sort_keys=True)
+
+
+def test_process_audit_rejects_missing_required_real_timeline_event_kind() -> None:
+    events = tuple(
+        event
+        for event in _process_audit_builder_input().events
+        if event.event_type is not EventType.PROVIDER_ATTEMPT_RECORDED
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="timeline|provider_attempt_recorded|real event",
+    ):
+        build_process_audit_bundle(_process_audit_builder_input(events=events))
 
 
 def test_process_audit_builder_input_rejects_raw_dict_inputs() -> None:
@@ -276,8 +291,8 @@ def test_process_audit_builder_input_rejects_git_audit_readiness_mismatch() -> N
             _process_audit_builder_input(
                 git_audit_readiness=GitAuditReadiness(
                     git_clean=False,
-                    final_commit_sha="d" * 40,
-                    source_inventory_hash="e" * 64,
+                    final_commit_sha="fedcba9876543210fedcba9876543210fedcba98",
+                    source_inventory_hash="abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
                     source_inventory_hash_matches=False,
                     final_command_evidence_at_final_commit=False,
                 )

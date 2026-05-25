@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -24,7 +25,7 @@ from boardroom_os.audit.process_audit import (
     process_audit_readiness,
 )
 from boardroom_os.audit.replay_bundle import build_replay_bundle, replay_bundle_readiness
-from boardroom_os.closeout.gate import GitAuditReadiness
+from boardroom_os.closeout.gate import GitAuditReadiness, ReplayBundleReadiness
 from boardroom_os.contracts.acceptance import (
     AcceptanceContract,
     AcceptanceCriterion,
@@ -32,25 +33,55 @@ from boardroom_os.contracts.acceptance import (
     VerificationStrategy,
     create_acceptance_contract,
 )
+from boardroom_os.contracts.evidence_obligation import EvidenceObligation, RequiredArtifactType, RequiredVerifier
 from boardroom_os.contracts.directive import (
     BoardDirective,
     BoardDirectiveSourceType,
     DirectiveRegistry,
 )
-from boardroom_os.contracts.package import PackageContract
+from boardroom_os.contracts.package import PackageCommand, PackageContract
 from boardroom_os.contracts.project import (
     DeliveryType,
     ProjectCharterRegistry,
     create_project_charter,
 )
-from boardroom_os.contracts.types import AcceptanceRef, ContractId, ContractStatus
+from boardroom_os.contracts.types import (
+    AcceptanceRef,
+    ContractId,
+    ContractStatus,
+    EvidenceObligationRef,
+    SourceSurfaceRef,
+)
 from boardroom_os.evidence.fallback_registry import FallbackDecisionRecordRef
-from boardroom_os.evidence.verifier import FallbackDecisionRecordedRef, VerifiedEvidence
-from boardroom_os.execution.context_index import ProviderAttemptRef
-from boardroom_os.execution.package import ExecutionPackageRef
+from boardroom_os.evidence.table import FinalEvidenceStatus
+from boardroom_os.evidence.verifier import FallbackDecisionRecordedRef, VerifiedEvidence, VerifiedEvidenceRef
+from boardroom_os.events.record import EventRecord
+from boardroom_os.events.types import ActorRef, EventId, EventPayloadRef, EventType, ProjectRef
+from boardroom_os.execution.context_index import (
+    AgentContextIndex,
+    AgentContextIndexEntry,
+    AgentContextIndexEntryId,
+    ProviderAttemptRef,
+    build_agent_context_snapshot,
+)
+from boardroom_os.execution.package import (
+    AllowedReadRef,
+    AllowedWritePath,
+    AuditRequirement,
+    ContextRef,
+    ExecutionPackage,
+    ExecutionPackageId,
+    FallbackPolicyRef,
+    RequiredOutput,
+)
+from boardroom_os.graph.ticket import TicketId
 from tests.closeout.test_git_version_audit import _build_bundle as _build_git_version_audit_bundle
 from tests.closeout.test_replay_bundle import _builder_input as _replay_builder_input
-from tests.negative.test_closeout_fail_closed import _NOW, _ready_input as _closeout_gate_ready_input
+from tests.closeout.test_replay_bundle import _projection_summary as _replay_projection_summary
+from tests.closeout.test_replay_bundle import _artifact_manifest_entries as _replay_artifact_manifest_entries
+from tests.closeout.test_replay_bundle import _payload_manifest_entries as _replay_payload_manifest_entries
+from tests.closeout.test_replay_bundle import PROJECTION_VERSION as _REPLAY_PROJECTION_VERSION
+from tests.closeout.test_closeout_gate import _NOW, _ready_input as _closeout_gate_ready_input
 
 
 class MinimalTicketGraphNode(BaseModel):
@@ -72,19 +103,19 @@ class MinimalTicketGraphSummary(BaseModel):
     tickets: tuple[MinimalTicketGraphNode, ...]
 
 
-class MinimalAgentContextIndexEntry(BaseModel):
+class LegacyAgentContextIndexEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     entry_id: str
-    execution_package_ref: ExecutionPackageRef | None
-    model_execution_profile: ModelExecutionProfile | None
+    execution_package_ref: str | None = None
+    model_execution_profile: ModelExecutionProfile | None = None
     provider_attempt_refs: tuple[ProviderAttemptRef, ...]
 
 
-class MinimalAgentContextIndex(BaseModel):
+class LegacyAgentContextIndex(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    entries: tuple[MinimalAgentContextIndexEntry, ...]
+    entries: tuple[LegacyAgentContextIndexEntry, ...]
 
 
 _REQUIRED_PATH_SET = set(REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS)
@@ -148,17 +179,52 @@ def _model_execution_profile() -> ModelExecutionProfile:
     )
 
 
+def _agent_context_execution_package() -> ExecutionPackage:
+    return ExecutionPackage(
+        execution_package_id=ExecutionPackageId(value="execution-package.worker.app"),
+        ticket_ref=TicketId(value="ticket.app"),
+        graph_version=7,
+        seat_ref="seat-worker-backend",
+        model_execution_profile=_model_execution_profile(),
+        objective="Implement app acceptance evidence.",
+        context_refs=(ContextRef(value="context.package-contract.closeout-gate"),),
+        constraints=("Use only the declared package contract and evidence refs.",),
+        acceptance_refs=(AcceptanceRef(value="AC-APP"),),
+        source_surface_refs=(SourceSurfaceRef(value="app-source"),),
+        allowed_read_refs=(AllowedReadRef(value="package-contract.closeout-gate"),),
+        allowed_write_set=(AllowedWritePath(value="app.py"),),
+        required_outputs=(RequiredOutput(value="source.app"),),
+        commands=(
+            PackageCommand(
+                command_id=ContractId(value="test-app"),
+                label="Run app tests",
+                command=("python", "-m", "pytest"),
+                cwd=".",
+            ),
+        ),
+        evidence_obligations=(
+            EvidenceObligation(
+                evidence_obligation_id=EvidenceObligationRef(value="evidence-obligation.app"),
+                acceptance_refs=(AcceptanceRef(value="AC-APP"),),
+                source_surface_refs=(SourceSurfaceRef(value="app-source"),),
+                required_artifact_type=RequiredArtifactType(value="source"),
+                required_verifier=RequiredVerifier(value="checker"),
+                blocking=True,
+            ),
+        ),
+        fallback_policy_ref=FallbackPolicyRef(value="fallback-policy.contract.allowed"),
+        audit_requirements=(AuditRequirement(value="record.agent-context.snapshot"),),
+    )
+
+
 def _agent_context_index(
     provider_attempt_refs: tuple[ProviderAttemptRef, ...],
-) -> MinimalAgentContextIndex:
-    return MinimalAgentContextIndex(
+) -> AgentContextIndex:
+    return AgentContextIndex(
         entries=(
-            MinimalAgentContextIndexEntry(
-                entry_id="agent-context-entry.worker.app",
-                execution_package_ref=ExecutionPackageRef(
-                    value="execution-package.worker.app"
-                ),
-                model_execution_profile=_model_execution_profile(),
+            AgentContextIndexEntry(
+                entry_id=AgentContextIndexEntryId(value="agent-context-entry.worker.app"),
+                snapshot=build_agent_context_snapshot(_agent_context_execution_package()),
                 provider_attempt_refs=provider_attempt_refs,
             ),
         )
@@ -181,16 +247,66 @@ def _ticket_graph_summary() -> MinimalTicketGraphSummary:
     )
 
 
+def _audit_event(
+    *,
+    event_type: EventType,
+    graph_version: int,
+    payload_ref: str,
+    event_ref: str | None = None,
+    actor_ref: str = "boardroom-os",
+) -> EventRecord:
+    return EventRecord(
+        event_id=EventId(value=event_ref or f"event.process-audit.{graph_version}.{event_type.value}"),
+        event_type=event_type,
+        project_ref=ProjectRef(value="project-tiny-fullstack"),
+        actor_ref=ActorRef(value=actor_ref),
+        timestamp=_NOW + timedelta(seconds=graph_version),
+        graph_version=graph_version,
+        payload_refs=(EventPayloadRef(value=payload_ref),),
+    )
+
+
+def _process_audit_events() -> tuple[EventRecord, ...]:
+    return (
+        _audit_event(event_type=EventType.TICKET_CREATED, graph_version=1, payload_ref="payload:ticket-backend-api-created", event_ref="evt-ticket-created-1", actor_ref="seat-architect"),
+        _audit_event(event_type=EventType.SEAT_ASSIGNED, graph_version=2, payload_ref="payload:ticket-backend-api-seat-assigned", event_ref="evt-seat-assigned-2", actor_ref="seat-ceo"),
+        _audit_event(event_type=EventType.TICKET_LEASED, graph_version=3, payload_ref="payload:ticket-started"),
+        _audit_event(event_type=EventType.PROVIDER_ATTEMPT_RECORDED, graph_version=4, payload_ref="provider-attempt.app"),
+        _audit_event(event_type=EventType.WORK_PRODUCT_SUBMITTED, graph_version=5, payload_ref="source-inventory"),
+        _audit_event(event_type=EventType.COMMAND_RUN_RECORDED, graph_version=6, payload_ref="verification-run.app"),
+        _audit_event(event_type=EventType.CLOSEOUT_COMMITTED, graph_version=7, payload_ref="closeout-prepared"),
+    )
+
+
+def _build_replay_bundle_for_process_audit(events: tuple[EventRecord, ...]):
+    replay_events = events[:2]
+    return build_replay_bundle(
+        _replay_builder_input(
+            events=replay_events,
+            projection_summary=_replay_projection_summary(replay_events),
+            payload_manifest_entries=_replay_payload_manifest_entries(replay_events),
+            artifact_manifest_entries=_replay_artifact_manifest_entries(),
+            projection_version=_REPLAY_PROJECTION_VERSION,
+        )
+    )
+
+
 def _process_audit_builder_input(
     *,
-    agent_context_index: MinimalAgentContextIndex | None = None,
+    agent_context_index: BaseModel | None = None,
     git_version_audit_bundle: GitVersionAuditBundle | None = None,
     git_audit_readiness: GitAuditReadiness | None = None,
     verified_evidence: tuple[VerifiedEvidence, ...] | None = None,
+    events: tuple[EventRecord, ...] | None = None,
+    replay_bundle: Any | None = None,
+    replay_readiness: ReplayBundleReadiness | None = None,
+    source_inventory: Any | None = None,
+    final_evidence_table: Any | None = None,
 ) -> ProcessAuditBuilderInput:
     gate_input = _closeout_gate_ready_input()
-    replay_bundle = build_replay_bundle(_replay_builder_input())
-    replay_readiness = replay_bundle_readiness(replay_bundle)
+    resolved_events = events or _process_audit_events()
+    replay_bundle = replay_bundle or _build_replay_bundle_for_process_audit(resolved_events)
+    resolved_replay_readiness = replay_readiness or replay_bundle_readiness(replay_bundle)
     resolved_git_version_audit_bundle = (
         git_version_audit_bundle or _build_git_version_audit_bundle()
     )
@@ -201,21 +317,21 @@ def _process_audit_builder_input(
     return ProcessAuditBuilderInput(
         project_ref=replay_bundle.project_ref,
         generated_at=_NOW,
-        events=replay_bundle.events,
+        events=resolved_events,
         package_contract=gate_input.package_contract,
         acceptance_contract=_acceptance_contract(gate_input.package_contract),
         agent_context_index=agent_context_index
         or _agent_context_index(gate_input.provider_attempt_refs),
         ticket_graph_summary=_ticket_graph_summary(),
-        source_inventory=gate_input.source_inventory,
+        source_inventory=source_inventory if source_inventory is not None else gate_input.source_inventory,
         workspace_evidence_bundle=gate_input.workspace_evidence_bundle,
-        final_evidence_table=gate_input.final_evidence_table,
+        final_evidence_table=final_evidence_table if final_evidence_table is not None else gate_input.final_evidence_table,
         checker_verdict=gate_input.checker_verdict,
         verification_runs=gate_input.verification_runs,
-        verified_evidence=verified_evidence or gate_input.verified_evidence,
+        verified_evidence=verified_evidence if verified_evidence is not None else gate_input.verified_evidence,
         provider_attempt_refs=gate_input.provider_attempt_refs,
         replay_bundle=replay_bundle,
-        replay_readiness=replay_readiness,
+        replay_readiness=resolved_replay_readiness,
         git_version_audit_bundle=resolved_git_version_audit_bundle,
         git_audit_readiness=resolved_git_audit_readiness,
     )
@@ -426,28 +542,138 @@ def test_process_audit_rejects_decision_log_without_ceo_or_human_board_decision(
         process_audit_readiness(broken_bundle)
 
 
-@pytest.mark.parametrize(
-    ("field_name", "replacement", "expected_match"),
-    (
-        ("execution_package_ref", None, "execution_package_ref|agent context|hash manifest"),
-        ("model_execution_profile", None, "model_execution_profile|agent context|hash manifest"),
-        ("provider_attempt_refs", (), "provider_attempt_refs|agent context|hash manifest"),
-    ),
-)
-def test_process_audit_rejects_incomplete_agent_context_index(
-    field_name: str,
-    replacement: object,
-    expected_match: str,
-) -> None:
+def test_process_audit_rejects_agent_context_entry_without_real_snapshot() -> None:
     gate_input = _closeout_gate_ready_input()
-    broken_entry = _agent_context_index(gate_input.provider_attempt_refs).entries[0].model_copy(
-        update={field_name: replacement}
+    legacy_index = LegacyAgentContextIndex(
+        entries=(
+            LegacyAgentContextIndexEntry(
+                entry_id="agent-context-entry.legacy",
+                execution_package_ref="execution-package.legacy",
+                model_execution_profile=_model_execution_profile(),
+                provider_attempt_refs=gate_input.provider_attempt_refs,
+            ),
+        )
     )
-    broken_index = MinimalAgentContextIndex(entries=(broken_entry,))
 
-    with pytest.raises((ProcessAuditError, ValidationError), match=expected_match):
+    with pytest.raises((ProcessAuditError, ValidationError), match="agent context|snapshot"):
+        build_process_audit_bundle(
+            _process_audit_builder_input(agent_context_index=legacy_index)
+        )
+
+
+def test_process_audit_rejects_agent_context_provider_attempt_mismatch() -> None:
+    extra_ref = ProviderAttemptRef(value="provider-attempt.extra")
+    broken_index = _agent_context_index((extra_ref,))
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="agent context|provider_attempt_refs|missing|extra",
+    ):
         build_process_audit_bundle(
             _process_audit_builder_input(agent_context_index=broken_index)
+        )
+
+
+def test_process_audit_rejects_verified_evidence_without_verification_run_refs() -> None:
+    gate_input = _closeout_gate_ready_input()
+    broken_evidence = gate_input.verified_evidence[0].model_copy(
+        update={"verification_run_refs": ()}
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="verified evidence|verification_run_refs",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(verified_evidence=(broken_evidence,))
+        )
+
+
+def test_process_audit_rejects_source_inventory_evidence_ref_missing_from_verified_evidence() -> None:
+    gate_input = _closeout_gate_ready_input()
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="source inventory|evidence_refs|verified evidence|verified_evidence must not be empty",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(
+                verified_evidence=(),
+                source_inventory=gate_input.source_inventory,
+            )
+        )
+
+
+def test_process_audit_rejects_final_evidence_table_ref_missing_from_verified_evidence() -> None:
+    gate_input = _closeout_gate_ready_input()
+    missing_ref_row = gate_input.final_evidence_table.rows[0].model_copy(
+        update={
+            "verified_evidence_refs": (
+                VerifiedEvidenceRef(value="verified-evidence.missing"),
+            )
+        }
+    )
+    broken_table = gate_input.final_evidence_table.model_copy(update={"rows": (missing_ref_row,)})
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="final evidence table|verified evidence",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(final_evidence_table=broken_table)
+        )
+
+
+def test_process_audit_rejects_source_inventory_evidence_ref_missing_from_final_table() -> None:
+    gate_input = _closeout_gate_ready_input()
+    extra_ref = VerifiedEvidenceRef(value="verified-evidence.extra")
+    extra_evidence = gate_input.verified_evidence[0].model_copy(
+        update={"verified_evidence_id": extra_ref}
+    )
+    broken_entry = gate_input.source_inventory.entries[0].model_copy(
+        update={"evidence_refs": (extra_ref,)}
+    )
+    broken_inventory = gate_input.source_inventory.model_copy(update={"entries": (broken_entry,)})
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="source inventory|final evidence table",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(
+                source_inventory=broken_inventory,
+                verified_evidence=(gate_input.verified_evidence[0], extra_evidence),
+            )
+        )
+
+
+def test_process_audit_rejects_replay_readiness_event_range_mismatch() -> None:
+    base_input = _process_audit_builder_input()
+    mismatched_readiness = base_input.replay_readiness.model_copy(
+        update={"event_range": type(base_input.replay_readiness.event_range)(value="event-range.project-tiny-fullstack.9-10")}
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="replay readiness mismatch",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(replay_readiness=mismatched_readiness)
+        )
+
+
+def test_process_audit_rejects_git_source_inventory_binding_mismatch() -> None:
+    gate_input = _closeout_gate_ready_input()
+    changed_inventory = gate_input.source_inventory.model_copy(
+        update={"package_commit_ref": type(gate_input.source_inventory.package_commit_ref)(value="package-commit.fedcba9876543210fedcba9876543210fedcba98")}
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="git version audit|source inventory|hash|package_commit_ref",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(source_inventory=changed_inventory)
         )
 
 
@@ -571,7 +797,7 @@ def test_process_audit_rejects_hash_manifest_mismatch() -> None:
     broken_payload = bundle.model_dump(mode="python", exclude={"bundle_hash"})
     broken_payload["hash_manifest"]["artifact_hashes"][
         "30-audit/process-audit.md"
-    ] = "a" * 64
+    ] = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),

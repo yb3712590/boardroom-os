@@ -15,6 +15,7 @@ from pydantic import (
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.checker.verdict import CheckerVerdict, CheckerVerdictStatus
+from boardroom_os.contracts.hashes import Sha1Hex, Sha256Hex
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
 from boardroom_os.evidence.table import FinalEvidenceStatus, FinalEvidenceTable, FinalEvidenceTableRef
@@ -34,7 +35,7 @@ class CloseoutGateResultRef(NonEmptyTextValue):
     pass
 
 
-class ReplaySummaryHash(NonEmptyTextValue):
+class ReplaySummaryHash(Sha256Hex):
     pass
 
 
@@ -46,11 +47,11 @@ class ProjectionVersionRef(NonEmptyTextValue):
     pass
 
 
-class GitCommitSha(NonEmptyTextValue):
+class GitCommitSha(Sha1Hex):
     pass
 
 
-class SourceInventoryHash(NonEmptyTextValue):
+class SourceInventoryHash(Sha256Hex):
     pass
 
 
@@ -626,6 +627,16 @@ def _workspace_evidence_bundle_blockers(gate_input: CloseoutGateInput) -> list[C
             _blocker(
                 CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY,
                 "workspace evidence bundle verified evidence refs must match gate input",
+                bundle.workspace_evidence_bundle_id.value,
+            )
+        ]
+    if {ref.value for ref in bundle.verification_run_refs} != {
+        run.verification_run_id.value for run in gate_input.verification_runs
+    }:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY,
+                "workspace evidence bundle verification run refs must match gate input",
                 bundle.workspace_evidence_bundle_id.value,
             )
         ]

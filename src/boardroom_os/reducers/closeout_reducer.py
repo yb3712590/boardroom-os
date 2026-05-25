@@ -204,12 +204,13 @@ class CloseoutReducer:
         graph_version = base_history.graph_version if base_history is not None else 0
         work_product_refs = list(base_history.work_product_submitted_refs) if base_history else []
         checked_refs: list[str] = [ref.value for ref in work_product_refs]
-        closeout_event_count = sum(
-            1 for event in events if event.event_type is EventType.CLOSEOUT_COMMITTED
-        )
-        if closeout_event_count > 1:
-            raise CloseoutReducerError("duplicate closeout commit is not allowed")
         closeout_committed = bool(base_history.closeout_package_refs) if base_history else False
+        self._pre_scan_events(
+            events,
+            project_ref=project_ref,
+            previous_graph_version=graph_version,
+            closeout_already_committed=closeout_committed,
+        )
 
         previous_graph_version = graph_version
         for event in events:
@@ -326,6 +327,26 @@ class CloseoutReducer:
         }
         if not required_checked_refs.issubset(package_checked_refs):
             raise CloseoutReducerError("closeout package checked_refs missing payload refs")
+
+    @staticmethod
+    def _pre_scan_events(
+        events: tuple[EventRecord, ...],
+        *,
+        project_ref: ProjectRef,
+        previous_graph_version: int,
+        closeout_already_committed: bool,
+    ) -> None:
+        closeout_seen = closeout_already_committed
+        for event in events:
+            if event.project_ref != project_ref:
+                raise CloseoutReducerError("events must belong to one project_ref")
+            if event.graph_version <= previous_graph_version:
+                raise CloseoutReducerError("events must be strictly increasing by graph_version")
+            previous_graph_version = event.graph_version
+            if closeout_seen:
+                raise CloseoutReducerError("events after closeout commit are not allowed")
+            if event.event_type is EventType.CLOSEOUT_COMMITTED:
+                closeout_seen = True
 
     @staticmethod
     def _reject_runtime_closeout(event: EventRecord) -> None:

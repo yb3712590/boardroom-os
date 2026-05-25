@@ -20,20 +20,13 @@ from pydantic import (
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.closeout.gate import GitAuditReadiness, GitCommitSha, SourceInventoryHash
+from boardroom_os.contracts.hashes import Sha256Hex
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
 from boardroom_os.events.types import ProjectRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunRef, VerificationRunStatus, WorkspaceSnapshotRef
 from boardroom_os.workspace.run_manifest import RunManifest, RunManifestRef
 from boardroom_os.workspace.source_inventory import PackageCommitRef, SourceInventory, SourceInventoryRef
-
-_SHA1_PATTERN = re.compile(r"[0-9a-f]{40}")
-_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
-
-
-def _is_placeholder_sha256(value: str) -> bool:
-    return value in {"a" * 64, "0" * 64, "1" * 64, "f" * 64}
-
 
 class GitVersionAuditError(ValueError):
     pass
@@ -55,15 +48,8 @@ class GitVersionAuditManifestRef(NonEmptyTextValue):
     pass
 
 
-class GitVersionAuditContentHash(NonEmptyTextValue):
-    @field_validator("value")
-    @classmethod
-    def _require_lowercase_sha256(cls, value: str) -> str:
-        if not _SHA256_PATTERN.fullmatch(value):
-            raise ValueError("sha256 must be a 64-character lowercase hex digest")
-        if _is_placeholder_sha256(value):
-            raise ValueError("sha256 must not be a placeholder or synthetic digest")
-        return value
+class GitVersionAuditContentHash(Sha256Hex):
+    pass
 
 
 class GitVersionAuditCheckedRef(NonEmptyTextValue):
@@ -100,7 +86,11 @@ class GitChangedFileStatus(StrEnum):
 
 
 def _is_valid_sha1(value: str) -> bool:
-    return _SHA1_PATTERN.fullmatch(value) is not None
+    try:
+        GitCommitSha(value=value)
+    except ValueError:
+        return False
+    return True
 
 
 def _reject_unsafe_ref(value: str, *, field_name: str, allow_current_dir: bool = False) -> str:
@@ -327,17 +317,11 @@ class GitVersionAuditFactSet(BaseModel):
     @field_validator("base_commit_sha", "final_commit_sha")
     @classmethod
     def _validate_commit_sha(cls, value: GitCommitSha) -> GitCommitSha:
-        if not _is_valid_sha1(value.value):
-            raise GitVersionAuditError("git commit sha must be a 40-character lowercase sha1")
         return value
 
     @field_validator("source_inventory_hash")
     @classmethod
     def _validate_source_inventory_hash(cls, value: SourceInventoryHash) -> SourceInventoryHash:
-        if not _SHA256_PATTERN.fullmatch(value.value):
-            raise GitVersionAuditError("source inventory hash must be a sha256 digest")
-        if _is_placeholder_sha256(value.value):
-            raise GitVersionAuditError("source inventory hash must not be placeholder or synthetic")
         return value
 
     @field_validator("generated_at")
@@ -429,17 +413,11 @@ class GitCommandEvidenceBinding(BaseModel):
     @field_validator("commit_sha")
     @classmethod
     def _validate_commit_sha(cls, value: GitCommitSha) -> GitCommitSha:
-        if not _is_valid_sha1(value.value):
-            raise GitVersionAuditError("commit_sha must be a 40-character lowercase sha1")
         return value
 
     @field_validator("source_inventory_hash")
     @classmethod
     def _validate_source_inventory_hash(cls, value: SourceInventoryHash) -> SourceInventoryHash:
-        if not _SHA256_PATTERN.fullmatch(value.value):
-            raise GitVersionAuditError("source inventory hash must be a sha256 digest")
-        if _is_placeholder_sha256(value.value):
-            raise GitVersionAuditError("source inventory hash must not be placeholder or synthetic")
         return value
 
 
@@ -746,19 +724,71 @@ def git_version_audit_readiness(bundle: GitVersionAuditBundle) -> GitAuditReadin
     if not isinstance(bundle, GitVersionAuditBundle):
         raise GitVersionAuditError("bundle must be GitVersionAuditBundle")
     _validate_hash_manifest(bundle)
-    if bundle.fact_set.git_clean is not True:
+    _validate_report_semantics(bundle)
+    git_clean = bundle.fact_set.git_clean is True and bundle.fact_set.dirty_status is GitDirtyStatus.CLEAN
+    source_inventory_hash_matches = (
+        bundle.report.source_inventory_hash == bundle.fact_set.source_inventory_hash
+    )
+    final_command_evidence_at_final_commit = all(
+        binding.commit_sha == bundle.fact_set.final_commit_sha
+        for binding in bundle.command_evidence_bindings
+    )
+    if git_clean is not True:
         raise GitVersionAuditError("git facts must be clean")
-    if bundle.report.source_inventory_hash_matches is not True:
+    if source_inventory_hash_matches is not True:
         raise GitVersionAuditError("source inventory hash mismatch")
-    if bundle.report.final_command_evidence_at_final_commit is not True:
+    if final_command_evidence_at_final_commit is not True:
         raise GitVersionAuditError("final command evidence must be at final commit")
     return GitAuditReadiness(
-        git_clean=bundle.fact_set.git_clean,
+        git_clean=git_clean,
         final_commit_sha=bundle.fact_set.final_commit_sha,
         source_inventory_hash=bundle.fact_set.source_inventory_hash,
-        source_inventory_hash_matches=bundle.report.source_inventory_hash_matches,
-        final_command_evidence_at_final_commit=bundle.report.final_command_evidence_at_final_commit,
+        source_inventory_hash_matches=source_inventory_hash_matches,
+        final_command_evidence_at_final_commit=final_command_evidence_at_final_commit,
     )
+
+
+def _validate_report_semantics(bundle: GitVersionAuditBundle) -> None:
+    report = bundle.report
+    fact_set = bundle.fact_set
+    bindings = bundle.command_evidence_bindings
+    if report.fact_set_ref != fact_set.fact_set_id:
+        raise GitVersionAuditError("report fact_set_ref mismatch")
+    if report.final_commit_sha != fact_set.final_commit_sha:
+        raise GitVersionAuditError("report final_commit_sha mismatch")
+    _validate_package_commit_ref(report.package_commit_ref.value, fact_set.final_commit_sha.value)
+    if report.source_inventory_hash != fact_set.source_inventory_hash:
+        raise GitVersionAuditError("report source inventory hash mismatch")
+
+    expected_git_clean = fact_set.git_clean is True and fact_set.dirty_status is GitDirtyStatus.CLEAN
+    if report.git_clean is not expected_git_clean:
+        raise GitVersionAuditError("report git_clean mismatch")
+
+    expected_command_refs = tuple(binding.verification_run_ref.value for binding in bindings)
+    if report.command_evidence_refs != expected_command_refs:
+        raise GitVersionAuditError("report command evidence refs mismatch")
+
+    source_inventory_hash_matches = report.source_inventory_hash == fact_set.source_inventory_hash
+    if report.source_inventory_hash_matches is not source_inventory_hash_matches:
+        raise GitVersionAuditError("report source inventory hash readiness mismatch")
+
+    final_command_evidence_at_final_commit = all(
+        binding.commit_sha == fact_set.final_commit_sha for binding in bindings
+    )
+    if report.final_command_evidence_at_final_commit is not final_command_evidence_at_final_commit:
+        raise GitVersionAuditError("report final command evidence readiness mismatch")
+
+    required_checked_refs = {
+        fact_set.fact_set_id.value,
+        fact_set.final_commit_sha.value,
+        fact_set.source_inventory_hash.value,
+        *expected_command_refs,
+        *(binding.binding_id.value for binding in bindings),
+    }
+    if not required_checked_refs.issubset(set(report.checked_refs)):
+        raise GitVersionAuditError("report checked_refs missing git audit closure refs")
+    if not required_checked_refs.issubset(set(bundle.checked_refs)):
+        raise GitVersionAuditError("bundle checked_refs missing git audit closure refs")
 
 
 def _validate_builder_input(builder_input: GitVersionAuditBuilderInput) -> None:
@@ -781,8 +811,6 @@ def _validate_builder_input(builder_input: GitVersionAuditBuilderInput) -> None:
     expected_hash = source_inventory_hash(builder_input.source_inventory)
     if builder_input.git_facts.source_inventory_hash != expected_hash:
         raise GitVersionAuditError("source inventory hash mismatch")
-    if _is_placeholder_sha256(builder_input.git_facts.source_inventory_hash.value):
-        raise GitVersionAuditError("source inventory hash must not be placeholder or synthetic")
     _validate_package_commit_ref(
         builder_input.source_inventory.package_commit_ref.value,
         builder_input.git_facts.final_commit_sha.value,

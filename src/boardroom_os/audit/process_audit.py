@@ -20,6 +20,10 @@ from pydantic import (
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.checker.verdict import CheckerVerdict
+from boardroom_os.closeout.closure import (
+    CloseoutClosureError,
+    assert_source_inventory_evidence_refs_resolve,
+)
 from boardroom_os.closeout.gate import (
     GitAuditReadiness,
     ProcessAuditArtifactPath,
@@ -40,8 +44,9 @@ from boardroom_os.workspace.source_inventory import SourceInventory
 from boardroom_os.audit.git_version_audit import (
     GitVersionAuditBundle,
     git_version_audit_readiness,
+    source_inventory_hash,
 )
-from boardroom_os.audit.replay_bundle import ReplayBundle
+from boardroom_os.audit.replay_bundle import ReplayBundle, replay_bundle_readiness
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -60,20 +65,13 @@ REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS = (
 
 _REQUIRED_PATH_SET = set(REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS)
 _REQUIRED_TIMELINE_EVENT_KINDS = {
-    "directive_received",
-    "charter_created",
-    "acceptance_contract_created",
-    "package_contract_created",
     "seat_assigned",
     "ticket_created",
     "ticket_started",
     "provider_attempt_recorded",
     "work_product_submitted",
     "command_run_recorded",
-    "evidence_verified",
-    "checker_verdict_recorded",
-    "closeout_prepared",
-    "replay_bundle_materialized",
+    "closeout_committed",
 }
 _EVENT_TYPE_TO_TIMELINE_KIND: dict[EventType, str] = {
     EventType.TICKET_CREATED: "ticket_created",
@@ -816,14 +814,157 @@ class ProcessAuditBuilderInput(BaseModel):
             raise ProcessAuditError("workspace evidence bundle final table mismatch")
         if self.checker_verdict.final_evidence_table_ref != self.final_evidence_table.final_evidence_table_id:
             raise ProcessAuditError("checker verdict final table mismatch")
-        if self.replay_readiness.summary_hash != self.replay_bundle.attestations[0].summary_hash:
-            raise ProcessAuditError("replay readiness summary_hash mismatch")
+        _validate_event_timeline_closure(self)
+        _validate_agent_context_index_closure(self)
+        _validate_evidence_closure(self)
+        _validate_git_version_audit_binding(self)
+        derived_replay_readiness = replay_bundle_readiness(self.replay_bundle)
+        if derived_replay_readiness != self.replay_readiness:
+            raise ProcessAuditError("replay readiness mismatch")
         derived_git_audit_readiness = git_version_audit_readiness(
             self.git_version_audit_bundle
         )
         if derived_git_audit_readiness != self.git_audit_readiness:
             raise ProcessAuditError("git version audit readiness mismatch")
         return self
+
+
+def _validate_event_timeline_closure(builder_input: ProcessAuditBuilderInput) -> None:
+    previous_graph_version = 0
+    kinds: set[str] = set()
+    events_by_graph_version: dict[int, EventRecord] = {}
+    for event in builder_input.events:
+        if event.graph_version <= previous_graph_version:
+            raise ProcessAuditError("events must be strictly increasing by graph_version")
+        previous_graph_version = event.graph_version
+        kinds.add(_timeline_kind_from_event(event))
+        events_by_graph_version[event.graph_version] = event
+
+    missing = _REQUIRED_TIMELINE_EVENT_KINDS - kinds
+    if missing:
+        raise ProcessAuditError(f"timeline missing real event kind: {sorted(missing)[0]}")
+
+    for attestation in builder_input.replay_bundle.attestations:
+        event_window = attestation.event_window
+        covered_versions = range(
+            event_window.first_graph_version,
+            event_window.last_graph_version + 1,
+        )
+        for graph_version in covered_versions:
+            if graph_version not in events_by_graph_version:
+                raise ProcessAuditError("events must cover replay bundle event window")
+        first_event = events_by_graph_version[event_window.first_graph_version]
+        last_event = events_by_graph_version[event_window.last_graph_version]
+        if first_event.event_id != event_window.first_event_id or last_event.event_id != event_window.last_event_id:
+            raise ProcessAuditError("events must match replay bundle event window")
+
+
+def _agent_context_provider_attempt_refs(agent_context_index: BaseModel) -> set[str]:
+    if not hasattr(agent_context_index, "entries"):
+        raise ProcessAuditError("agent context index must expose entries")
+    refs: set[str] = set()
+    for entry in getattr(agent_context_index, "entries", ()):
+        if not hasattr(entry, "snapshot"):
+            raise ProcessAuditError("agent context index entry missing snapshot")
+        snapshot = getattr(entry, "snapshot")
+        if not getattr(snapshot, "execution_package_ref", None):
+            raise ProcessAuditError("agent context snapshot missing execution_package_ref")
+        if not getattr(snapshot, "model_execution_profile", None):
+            raise ProcessAuditError("agent context snapshot missing model_execution_profile")
+        provider_attempt_refs = tuple(getattr(entry, "provider_attempt_refs", ()))
+        if not provider_attempt_refs:
+            raise ProcessAuditError("agent context index missing provider_attempt_refs")
+        for provider_attempt_ref in provider_attempt_refs:
+            value = _ref_value(provider_attempt_ref)
+            if value in refs:
+                raise ProcessAuditError("agent context provider_attempt_refs must be unique")
+            refs.add(value)
+    if not refs:
+        raise ProcessAuditError("agent context index entries must not be empty")
+    return refs
+
+
+def _validate_agent_context_index_closure(builder_input: ProcessAuditBuilderInput) -> None:
+    expected_refs = {ref.value for ref in builder_input.provider_attempt_refs}
+    actual_refs = _agent_context_provider_attempt_refs(builder_input.agent_context_index)
+    if actual_refs != expected_refs:
+        raise ProcessAuditError(
+            "agent context provider_attempt_refs mismatch: "
+            f"missing={sorted(expected_refs - actual_refs)}; "
+            f"extra={sorted(actual_refs - expected_refs)}"
+        )
+
+
+def _final_table_verified_evidence_refs(builder_input: ProcessAuditBuilderInput) -> set[str]:
+    return {
+        evidence_ref.value
+        for row in builder_input.final_evidence_table.rows
+        for evidence_ref in row.verified_evidence_refs
+    }
+
+
+def _source_inventory_evidence_refs(builder_input: ProcessAuditBuilderInput) -> set[str]:
+    return {
+        evidence_ref.value
+        for entry in builder_input.source_inventory.entries
+        for evidence_ref in entry.evidence_refs
+    }
+
+
+def _validate_evidence_closure(builder_input: ProcessAuditBuilderInput) -> None:
+    verified_refs = {evidence.verified_evidence_id.value for evidence in builder_input.verified_evidence}
+    if len(verified_refs) != len(builder_input.verified_evidence):
+        raise ProcessAuditError("verified_evidence refs must be unique")
+    for evidence in builder_input.verified_evidence:
+        _verification_ref_for_evidence(evidence)
+
+    final_table_refs = _final_table_verified_evidence_refs(builder_input)
+    missing_final_refs = final_table_refs - verified_refs
+    if missing_final_refs:
+        raise ProcessAuditError(
+            "final evidence table references missing verified evidence: "
+            f"{sorted(missing_final_refs)}"
+        )
+
+    try:
+        assert_source_inventory_evidence_refs_resolve(
+            builder_input.source_inventory.source_inventory_id.value,
+            builder_input.source_inventory,
+            builder_input.verified_evidence,
+        )
+    except CloseoutClosureError as error:
+        raise ProcessAuditError(f"source inventory evidence_refs missing verified evidence: {error}") from error
+
+    dangling_source_refs = _source_inventory_evidence_refs(builder_input) - final_table_refs
+    if dangling_source_refs:
+        raise ProcessAuditError(
+            "source inventory evidence_refs missing from final evidence table: "
+            f"{sorted(dangling_source_refs)}"
+        )
+
+
+def _validate_git_version_audit_binding(builder_input: ProcessAuditBuilderInput) -> None:
+    git_bundle = builder_input.git_version_audit_bundle
+    expected_source_inventory_hash = source_inventory_hash(builder_input.source_inventory)
+    if git_bundle.report.source_inventory_ref != builder_input.source_inventory.source_inventory_id:
+        raise ProcessAuditError("git version audit source_inventory_ref mismatch")
+    if git_bundle.report.source_inventory_hash != expected_source_inventory_hash:
+        raise ProcessAuditError("git version audit source inventory hash mismatch")
+    if git_bundle.fact_set.source_inventory_hash != expected_source_inventory_hash:
+        raise ProcessAuditError("git version audit fact source inventory hash mismatch")
+    if git_bundle.report.package_commit_ref != builder_input.source_inventory.package_commit_ref:
+        raise ProcessAuditError("git version audit package_commit_ref mismatch")
+
+    verification_run_refs = {run.verification_run_id.value for run in builder_input.verification_runs}
+    report_command_refs = set(git_bundle.report.command_evidence_refs)
+    binding_run_refs = {binding.verification_run_ref.value for binding in git_bundle.command_evidence_bindings}
+    if report_command_refs != verification_run_refs or binding_run_refs != verification_run_refs:
+        raise ProcessAuditError("git version audit command evidence refs mismatch")
+    for binding in git_bundle.command_evidence_bindings:
+        if binding.package_contract_ref != builder_input.package_contract.package_contract_id:
+            raise ProcessAuditError("git version audit package_contract_ref mismatch")
+        if binding.source_inventory_hash != expected_source_inventory_hash:
+            raise ProcessAuditError("git version audit binding source inventory hash mismatch")
 
 
 def build_process_audit_bundle(builder_input: ProcessAuditBuilderInput) -> ProcessAuditBundle:
@@ -1036,23 +1177,21 @@ def _process_audit_markdown(builder_input: ProcessAuditBuilderInput) -> str:
 
 def _timeline_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, Any]:
     event_log_items = [_timeline_item_from_event(event) for event in builder_input.events]
-    covered_kinds = {item["kind"] for item in event_log_items}
-    milestone_items = _timeline_milestone_items(builder_input, covered_kinds)
-    ordered_events = sorted(
-        (*event_log_items, *milestone_items),
-        key=lambda item: (item["timestamp"], item["graph_version"], item["event_ref"]),
-    )
     return {
         "project_ref": builder_input.project_ref.value,
         "archived_event_refs": [event.event_id.value for event in builder_input.events],
-        "events": ordered_events,
+        "events": event_log_items,
     }
+
+
+def _timeline_kind_from_event(event: EventRecord) -> str:
+    return _EVENT_TYPE_TO_TIMELINE_KIND.get(event.event_type, event.event_type.value)
 
 
 def _timeline_item_from_event(event: EventRecord) -> dict[str, Any]:
     return {
         "event_ref": event.event_id.value,
-        "kind": _EVENT_TYPE_TO_TIMELINE_KIND.get(event.event_type, event.event_type.value),
+        "kind": _timeline_kind_from_event(event),
         "timestamp": event.timestamp.isoformat(),
         "actor_ref": event.actor_ref.value,
         "graph_version": event.graph_version,
@@ -1061,43 +1200,6 @@ def _timeline_item_from_event(event: EventRecord) -> dict[str, Any]:
         "correlation_refs": [event_ref.value for event_ref in event.correlation_refs],
         "source": "event_log",
     }
-
-
-def _timeline_milestone_items(
-    builder_input: ProcessAuditBuilderInput,
-    covered_kinds: set[str],
-) -> list[dict[str, Any]]:
-    milestone_specs = {
-        "directive_received": (builder_input.acceptance_contract.project_charter_ref.value,),
-        "charter_created": (builder_input.acceptance_contract.project_charter_ref.value,),
-        "acceptance_contract_created": (builder_input.acceptance_contract.acceptance_contract_id.value,),
-        "package_contract_created": (builder_input.package_contract.package_contract_id.value,),
-        "seat_assigned": tuple(attempt.value for attempt in builder_input.provider_attempt_refs),
-        "ticket_created": tuple(_ticket_refs(builder_input)),
-        "ticket_started": tuple(_ticket_refs(builder_input)),
-        "provider_attempt_recorded": tuple(attempt.value for attempt in builder_input.provider_attempt_refs),
-        "work_product_submitted": tuple(entry.path.value for entry in builder_input.source_inventory.entries),
-        "command_run_recorded": tuple(run.verification_run_id.value for run in builder_input.verification_runs),
-        "evidence_verified": tuple(evidence.verified_evidence_id.value for evidence in builder_input.verified_evidence),
-        "checker_verdict_recorded": (builder_input.checker_verdict.checker_verdict_id.value,),
-        "closeout_prepared": (builder_input.final_evidence_table.final_evidence_table_id.value,),
-        "replay_bundle_materialized": (builder_input.replay_bundle.replay_bundle_id.value,),
-    }
-    base_graph_version = max(event.graph_version for event in builder_input.events)
-    items = []
-    for index, kind in enumerate(sorted(_REQUIRED_TIMELINE_EVENT_KINDS - covered_kinds), start=1):
-        items.append(
-            {
-                "event_ref": f"process-audit-timeline.{kind}",
-                "kind": kind,
-                "timestamp": builder_input.generated_at.isoformat(),
-                "actor_ref": "boardroom-os",
-                "graph_version": base_graph_version + index,
-                "related_refs": list(milestone_specs[kind]),
-                "source": "process_audit_projection",
-            }
-        )
-    return items
 
 
 def _ticket_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
@@ -1124,15 +1226,18 @@ def _decision_log_markdown(builder_input: ProcessAuditBuilderInput) -> str:
 def _agent_context_index_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, Any]:
     entries = []
     for entry in getattr(builder_input.agent_context_index, "entries", ()):
+        if not hasattr(entry, "snapshot"):
+            raise ProcessAuditError("agent context index entry missing snapshot")
+        snapshot = getattr(entry, "snapshot")
         provider_attempt_refs = tuple(getattr(entry, "provider_attempt_refs", ()))
         entries.append(
             {
                 "entry_id": _ref_value(getattr(entry, "entry_id", "agent-context-entry")),
-                "execution_package_ref": _optional_ref_value(
-                    getattr(entry, "execution_package_ref", None)
-                ),
+                "snapshot_ref": _ref_value(getattr(snapshot, "context_snapshot_id")),
+                "snapshot_fingerprint": getattr(snapshot, "snapshot_fingerprint"),
+                "execution_package_ref": _ref_value(snapshot.execution_package_ref),
                 "model_execution_profile": _model_execution_profile_payload(
-                    getattr(entry, "model_execution_profile", None)
+                    snapshot.model_execution_profile
                 ),
                 "provider_attempt_refs": [
                     _ref_value(ref) for ref in provider_attempt_refs
@@ -1149,11 +1254,6 @@ def _model_execution_profile_payload(value: Any) -> dict[str, Any] | None:
         return value.model_dump(mode="json")
     return _canonical_jsonable(value)
 
-
-def _optional_ref_value(value: Any) -> str | None:
-    if value is None:
-        return None
-    return _ref_value(value)
 
 
 def _ticket_graph_markdown(builder_input: ProcessAuditBuilderInput) -> str:
@@ -1186,7 +1286,7 @@ def _artifact_lineage_payload(builder_input: ProcessAuditBuilderInput) -> dict[s
                     "producer_attempt_ref": entry.producer_attempt_ref.value,
                     "artifact_ref": entry.path.value,
                     "consumer_ticket_ref": entry.producer_ticket_ref.value,
-                    "evidence_claim_ref": evidence.evidence_claim_ref.value if evidence else evidence_ref.value,
+                    "evidence_claim_ref": evidence.evidence_claim_ref.value,
                     "verified_evidence_ref": evidence_ref.value,
                     "verifier_ref": _verification_ref_for_evidence(evidence),
                     "closeout_related_ref": builder_input.final_evidence_table.final_evidence_table_id.value,
@@ -1211,9 +1311,13 @@ def _artifact_lineage_payload(builder_input: ProcessAuditBuilderInput) -> dict[s
     return {"lineages": lineages, "fallback_lineages": fallback_lineages}
 
 
-def _verification_ref_for_evidence(evidence: VerifiedEvidence | None) -> str:
-    if evidence is None or not evidence.verification_run_refs:
-        return "verifier.unresolved"
+def _verification_ref_for_evidence(evidence: VerifiedEvidence) -> str:
+    if not isinstance(evidence, VerifiedEvidence):
+        raise ProcessAuditError("verified evidence must resolve to VerifiedEvidence")
+    if not evidence.verification_run_refs:
+        raise ProcessAuditError(
+            f"verified evidence missing verification_run_refs: {evidence.verified_evidence_id.value}"
+        )
     return evidence.verification_run_refs[0].value
 
 
@@ -1327,8 +1431,13 @@ def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
         builder_input.final_evidence_table.final_evidence_table_id.value,
         builder_input.checker_verdict.checker_verdict_id.value,
         builder_input.checker_verdict.source_diff_ref.value,
+        builder_input.package_contract.package_contract_id.value,
         builder_input.replay_bundle.replay_bundle_id.value,
         builder_input.replay_bundle.replay_report.replay_report_id.value,
+        builder_input.replay_readiness.summary_hash.value,
+        builder_input.replay_readiness.event_range.value,
+        *(version.value for version in builder_input.replay_readiness.projection_versions),
+        *REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS,
         git_bundle.git_version_audit_bundle_id.value,
         git_bundle.report.git_version_audit_report_id.value,
         git_bundle.hash_manifest.hash_manifest_id.value,
@@ -1336,17 +1445,40 @@ def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
         builder_input.git_audit_readiness.final_commit_sha.value,
         builder_input.git_audit_readiness.source_inventory_hash.value,
         *(binding.binding_id.value for binding in git_bundle.command_evidence_bindings),
+        *(binding.run_manifest_ref.value for binding in git_bundle.command_evidence_bindings),
+        *(binding.package_contract_ref.value for binding in git_bundle.command_evidence_bindings),
+        *(binding.command_id.value for binding in git_bundle.command_evidence_bindings),
+        *(binding.source_inventory_hash.value for binding in git_bundle.command_evidence_bindings),
         *(event.event_id.value for event in builder_input.events),
         *(attempt.value for attempt in builder_input.provider_attempt_refs),
         *(run.verification_run_id.value for run in builder_input.verification_runs),
         *(evidence.verified_evidence_id.value for evidence in builder_input.verified_evidence),
         *(entry.path.value for entry in builder_input.source_inventory.entries),
+        *(_agent_context_checked_refs(builder_input.agent_context_index)),
         *(
             evidence.fallback_decision_record_ref.value
             for evidence in builder_input.verified_evidence
             if evidence.fallback_decision_record_ref is not None
         ),
     ]
+    return tuple(dict.fromkeys(refs))
+
+
+def _agent_context_checked_refs(agent_context_index: BaseModel) -> tuple[str, ...]:
+    refs: list[str] = []
+    for entry in getattr(agent_context_index, "entries", ()):
+        if hasattr(entry, "entry_id"):
+            refs.append(_ref_value(getattr(entry, "entry_id")))
+        snapshot = getattr(entry, "snapshot", None)
+        if snapshot is not None:
+            if hasattr(snapshot, "context_snapshot_id"):
+                refs.append(_ref_value(getattr(snapshot, "context_snapshot_id")))
+            fingerprint = getattr(snapshot, "snapshot_fingerprint", None)
+            if fingerprint:
+                refs.append(str(fingerprint))
+            if getattr(snapshot, "execution_package_ref", None):
+                refs.append(_ref_value(snapshot.execution_package_ref))
+        refs.extend(_ref_value(ref) for ref in getattr(entry, "provider_attempt_refs", ()))
     return tuple(dict.fromkeys(refs))
 
 

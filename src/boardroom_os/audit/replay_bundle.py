@@ -45,10 +45,6 @@ def _is_placeholder_hash(value: str) -> bool:
 
 
 def _validate_replay_summary_hash(value: ReplaySummaryHash) -> ReplaySummaryHash:
-    if not _SHA256_PATTERN.fullmatch(value.value):
-        raise ReplayBundleError(
-            "summary_hash must be a 64-character lowercase sha256 hex digest"
-        )
     return value
 
 

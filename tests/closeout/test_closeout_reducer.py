@@ -240,7 +240,7 @@ def test_closeout_reducer_rejects_duplicate_closeout_commit() -> None:
         actor_ref="seat-closeout",
     )
 
-    with pytest.raises(CloseoutReducerError, match="duplicate|already"):
+    with pytest.raises(CloseoutReducerError, match="events after closeout|duplicate|already"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
             (
                 _work_product_event(graph_version=9),
@@ -250,10 +250,23 @@ def test_closeout_reducer_rejects_duplicate_closeout_commit() -> None:
         )
 
     duplicate_history = _base_history(closeout_package_refs=(package.closeout_package_id,))
-    with pytest.raises(CloseoutReducerError, match="duplicate|already"):
+    with pytest.raises(CloseoutReducerError, match="events after closeout|duplicate|already"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
             (_closeout_event(graph_version=package.graph_version),),
             base_history=duplicate_history,
+        )
+
+
+def test_closeout_reducer_rejects_any_event_after_closeout_commit() -> None:
+    package = _passed_package()
+
+    with pytest.raises(CloseoutReducerError, match="events after closeout commit"):
+        CloseoutReducer(_resolver_for_package(package)).reduce(
+            (
+                _work_product_event(graph_version=9),
+                _closeout_event(graph_version=package.graph_version),
+                _work_product_event(graph_version=package.graph_version + 1),
+            )
         )
 
 
@@ -347,7 +360,7 @@ def test_closeout_reducer_rejects_missing_replay_bundle_binding() -> None:
         ("final_evidence_table_ref", "final-evidence-table.other"),
         ("process_audit_bundle_ref", "process-audit-bundle.other"),
         ("git_version_audit_bundle_ref", "git-version-audit-bundle.other"),
-        ("package_commit_ref", "package-commit." + "f" * 40),
+        ("package_commit_ref", "package-commit.fedcba9876543210fedcba9876543210fedcba98"),
     ),
 )
 def test_closeout_reducer_rejects_package_payload_ref_mismatch(
