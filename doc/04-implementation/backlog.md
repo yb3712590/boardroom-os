@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-071B`
+**当前未完成工作包**：`V2-071C`
 
 **当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
 
@@ -159,9 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 1 / 6 | 进行中 |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 2 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
-| **合计** | **V2-000 ~ V2-080** | **48 / 59** | **Phase 7.5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **49 / 59** | **Phase 7.5 进行中** |
 
 ## 当前约束摘要
 
@@ -859,7 +859,7 @@ RoleProfile（角色模板）
 
 ### V2-071B: ReplayBundle re-replay（从 events 重新投影）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：让 ReplayBundle（重放包）成为 events 的唯一权威派生，不接受调用方传入的 `ProjectionReplaySummary`（投影回放摘要）内容字段；同步对 manifest entries 进行 canonical sort（规范排序），消除顺序敏感哈希。
 - 输入文档：`v2-071a-fact-chain-design-spec.md`、`process-audit-and-replay.md`、V2-070B 产物。
 - 依赖：V2-071A。
@@ -867,6 +867,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：调用方通过 `ReplayBundleBuilderInput` 直接传入 `ProjectionReplaySummary.nodes` / `seat_assignments` / `blocked_by` 等内容字段必须失败；外部传入的 summary 字段内容与从 events 重新投影的结果不一致必须失败；payload_manifest entries 顺序变化导致 `payload_manifest_hash` 不稳定必须失败；artifact_manifest entries 顺序变化导致 `artifact_manifest_hash` 不稳定必须失败；篡改 events 中任一事件 payload 后 `summary_hash` 必须随之变化（不可静默通过）。
 - 必须证明的 happy path：`ReplayBundleBuilderInput` 仅接受 `project_ref`、`events`、manifest refs 与 generated_at，**不再接受 `projection_summary`**；builder 内部调用 `ProjectionReplay.replay_events(...)` 从 events 重新计算 `ProjectionReplaySummary`，并把 `summary_hash` 作为唯一权威 hash 来源写入 `ReplayReport` 与 `ReplayAttestation`；同一组 events 在不同输入顺序下经 canonical sort 产生同一 `replay_bundle_id`。
 - 验收口径：ReplayBundle 不再是"调用方提供的 summary 的包装层"；任何对 events 的篡改都会传播到 summary_hash；篡改 summary_hash（已不暴露）不再可能。
+- 完成证据：2026-05-26 删除 `ReplayBundleBuilderInput.projection_summary` 外部输入，ReplayBundle（重放包）builder 内部调用 `ProjectionReplay.replay_events(...)` 从 EventRecord（事件记录）重新投影 `ProjectionReplaySummary`（投影回放摘要），以内部 `summary_hash` 作为唯一权威来源写入 `ReplayReport`（重放报告）与 attestation（证明条目）；payload/artifact manifest entries（载荷/产物清单条目）经 `canonical_sort_for_hash` 规范排序后参与 hash；`replay_bundle_id` 改为基于 `namespaced_ref` 的 project/run/hash 命名空间引用。Negative tests 覆盖外部 `projection_summary` 输入被 `extra="forbid"` 拒绝、`model_copy(update=...)` 注入额外 `projection_summary` 被构建入口拒绝、events payload 篡改导致 summary/hash 变化、payload/artifact manifest 输入乱序仍稳定。验证证据：`PYTHONPATH="src:." python -m pytest tests/closeout/test_replay_bundle.py tests/closeout/test_replay_bundle_rereplay.py tests/negative/test_replay_bundle_external_summary_rejected.py -q --basetemp=.pytest-tmp-v2071b-final-targeted` 通过（74 passed）；`PYTHONPATH="src:." python -m pytest tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2071b-final-closeout-negative` 通过（519 passed）；`PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2071b-final-full` 通过（732 passed）。
 
 ### V2-071C: ProcessAudit 解构构造环 + events 单一来源
 

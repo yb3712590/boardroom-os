@@ -377,13 +377,18 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 #### AC 检查清单
 
-- [ ] AC-V2-CLOSEOUT-004（事实链单一权威源；新增抽象原则，见本文件第 1 部分）— 由 V2-071B + V2-071C 证明：ReplayBundle 从 events 重新投影，ProcessAudit 直接复用 ReplayBundle.events，调用方无法通过 builder 输入伪造 ProjectionReplaySummary 内容字段或独立 events
+- [ ] AC-V2-CLOSEOUT-004（事实链单一权威源；新增抽象原则，见本文件第 1 部分）— 分项闭合进度：
+  - [x] V2-071B ReplayBundle（重放包）部分已由 `test_replay_bundle_rereplay.py` / `test_replay_bundle_external_summary_rejected.py` 证明：ReplayBundle 从 events 重新投影，调用方无法通过 builder 输入伪造 ProjectionReplaySummary 内容字段
+  - [ ] V2-071C ProcessAudit（流程审计）部分待证明：ProcessAudit 直接复用 ReplayBundle.events，不接受独立 events
 - [ ] AC-V2-CLOSEOUT-005（无构造环；新增抽象原则）— 由 V2-071C `test_process_audit_construction_loop_rejected.py` 证明：事件流不含 `CLOSEOUT_COMMITTED` 时 ProcessAuditBundle 必须可成功构造；CloseoutPackage 构造完成后才发出 `CLOSEOUT_COMMITTED` 治理事件
 - [ ] AC-V2-CLOSEOUT-006（无隐式 fallback；映射到 No silent fallbacks 硬规则）— 由 V2-071D `test_git_audit_fallback_rejected.py` 证明：GitAuditAdapter 缺 `base_commit_sha` / `worktree_ref` 必须 raise，不再 fallback 到 `final_commit_sha` 或 `worktree.{package_root}`
 - [ ] AC-V2-CLOSEOUT-007（graph_version 边界严格）— 由 V2-071E `test_closeout_package_graph_version_overflow_rejected.py` 证明：`CloseoutPackage.graph_version > ReplayBundle.last_graph_version` 必须 fail closed
 - [ ] AC-V2-CLOSEOUT-008（payload 内容绑定）— 由 V2-071E `test_replay_payload_manifest_tampering_rejected.py` 证明：`ReplayPayloadManifest.entries[*].sha256` 与 resolver 重算结果不一致必须 raise
 - [ ] AC-V2-CLOSEOUT-009（跨包引用命名空间）— V2-071A 已交付 `boardroom_os.contracts.refs`（引用命名空间 helper）基础设施与 `test_namespaced_refs.py` / `test_namespaced_refs_fail_closed.py`；最终由 V2-071E `test_closeout_package_boundary.py` 证明 `fact_set_id` / `artifact_ref` / `content_ref` / `closeout_package_id` 全面采用 `project_ref` + `content_hash` + 必要时 `run_id` 命名空间，禁止跨 run / 跨 project / 跨 bundle 串包
-- [ ] AC-V2-CLOSEOUT-010（确定性哈希）— V2-071A 已交付 `canonical_sort_for_hash` 与 `hash_namespaced_payload` helper；最终由 V2-071B / V2-071C / V2-071D 各自负例证明 payload manifest entries / artifact manifest entries / verification_runs / command_evidence_bindings / checked_refs 等集合语义输入乱序后仍产生稳定 hash
+- [ ] AC-V2-CLOSEOUT-010（确定性哈希）— 分项闭合进度：
+  - [x] V2-071A 已交付 `canonical_sort_for_hash` 与 `hash_namespaced_payload` helper
+  - [x] V2-071B 已由 `test_replay_bundle_rereplay.py` 证明 payload manifest entries / artifact manifest entries 乱序后仍产生稳定 hash
+  - [ ] V2-071C / V2-071D 待证明 verification_runs / command_evidence_bindings / checked_refs 等集合语义输入乱序后仍产生稳定 hash
 - [ ] artifact-lineage producer/consumer 正确分离 — 由 V2-071C 证明：当 ticket A 产出源码、ticket B 消费时，artifact-lineage.json 必须分别记录 producer_ticket_ref 与 consumer_ticket_ref
 - [ ] ProcessAudit `unknown` / `ticket` 占位 fallback 消除 — 由 V2-071C 证明：`ticket_graph_summary` / `agent_context_index` 缺字段时直接 raise，不输出占位字符串
 - [ ] expected_fallback_decision_refs 排他校验 — 由 V2-071C 证明：`expected_fallback_decision_refs` 为空但 actual fallback lineages 非空必须 fail closed
@@ -391,7 +396,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [ ] Git status `--porcelain -z` 解析鲁棒 — 由 V2-071D 证明：含换行 / 引号 / 反斜杠 / 制表符的文件名可被正确解析
 - [ ] Git diff stat 锚定 summary footer — 由 V2-071D 证明：含 `12 insertions.md` 等特殊文件名不污染 `GitDiffSummary.insertions`
 - [ ] V2-070-batch-review-report.md 18 项 P0/P1/P2 缺口逐项闭合 — 由 V2-071F `test_v2_070_audit_report_p0_regressions.py` / `test_v2_070_audit_report_p1_regressions.py` / `test_v2_070_audit_report_p2_regressions.py` 证明
-- [ ] V2-071A ~ V2-071F 六个工作包全部 DONE（当前 V2-071A 已 DONE）
+- [ ] V2-071A ~ V2-071F 六个工作包全部 DONE（当前 V2-071A、V2-071B 已 DONE）
 - [ ] `backlog.md` 进度总览 Phase 7.5 显示 6/6
 
 #### 本批产出
