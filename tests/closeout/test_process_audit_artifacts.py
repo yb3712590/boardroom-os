@@ -77,7 +77,6 @@ from boardroom_os.execution.package import (
 from boardroom_os.graph.ticket import TicketId
 from tests.closeout.test_git_version_audit import _build_bundle as _build_git_version_audit_bundle
 from tests.closeout.test_replay_bundle import _builder_input as _replay_builder_input
-from tests.closeout.test_replay_bundle import _projection_summary as _replay_projection_summary
 from tests.closeout.test_replay_bundle import _artifact_manifest_entries as _replay_artifact_manifest_entries
 from tests.closeout.test_replay_bundle import _payload_manifest_entries as _replay_payload_manifest_entries
 from tests.closeout.test_replay_bundle import PROJECTION_VERSION as _REPLAY_PROJECTION_VERSION
@@ -283,7 +282,6 @@ def _build_replay_bundle_for_process_audit(events: tuple[EventRecord, ...]):
     return build_replay_bundle(
         _replay_builder_input(
             events=replay_events,
-            projection_summary=_replay_projection_summary(replay_events),
             payload_manifest_entries=_replay_payload_manifest_entries(replay_events),
             artifact_manifest_entries=_replay_artifact_manifest_entries(),
             projection_version=_REPLAY_PROJECTION_VERSION,

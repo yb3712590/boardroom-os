@@ -20,7 +20,7 @@ from boardroom_os.closeout.gate import EventRangeRef, ProjectionVersionRef, Repl
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import ActorRef, EventId, EventPayloadRef, EventType, ProjectRef
 from boardroom_os.graph.projection import TicketGraphProjector
-from boardroom_os.graph.replay import ProjectionReplay
+from boardroom_os.graph.replay import ProjectionReplay, ProjectionReplayError
 from boardroom_os.graph.seat_assignment import SeatAssignmentPayload, SeatAssignmentProjector
 from boardroom_os.graph.ticket import TicketCreatedPayload, TicketId
 
@@ -208,16 +208,6 @@ def _projector(
         ticket_projector=TicketGraphProjector(resolver),
         payload_resolver=resolver,
         seat_projection=seat_projection or _seat_projection(),
-    )
-
-
-
-def _projection_summary(events: tuple[EventRecord, ...]):
-    return ProjectionReplay(projection_kind="seat_assignment_graph").replay_events(
-        events=events,
-        project_ref=PROJECT_REF,
-        expected_graph_version=events[-1].graph_version,
-        projector=_projector(),
     )
 
 
@@ -438,18 +428,14 @@ def _builder_input(
     payload_manifest_entries: tuple[ReplayManifestEntry, ...] | None = None,
     artifact_manifest_entries: tuple[ReplayArtifactManifestEntry, ...] | None = None,
     event_window_ref: str = EVENT_WINDOW_REF,
-    projection_kind: str = "seat_assignment_graph",
-    projection_summary=None,
     project_ref: ProjectRef = PROJECT_REF,
+    seat_assignment_projector: SeatAssignmentProjector | None = None,
 ):
     events = events or (_ticket_created_event(), _seat_assigned_event())
-    summary = projection_summary or _projection_summary(events)
-    if projection_kind != summary.projection_kind:
-        summary = summary.model_copy(update={"projection_kind": projection_kind})
     return ReplayBundleBuilderInput(
         project_ref=project_ref,
         events=events,
-        projection_summary=summary,
+        seat_assignment_projector=seat_assignment_projector or _projector(),
         projection_version=projection_version,
         payload_manifest_ref=PAYLOAD_MANIFEST_REF,
         payload_manifest_entries=payload_manifest_entries or _payload_manifest_entries(events),
@@ -463,43 +449,39 @@ def _builder_input(
 
 
 
-def test_replay_bundle_rejects_missing_event_range() -> None:
-    summary = _projection_summary((_ticket_created_event(), _seat_assigned_event()))
-    broken_summary = summary.model_dump(mode="python")
-    broken_summary["event_range"] = None
+def test_replay_bundle_rejects_empty_event_window() -> None:
+    builder_payload = _builder_input().model_dump(mode="python")
+    builder_payload["events"] = ()
 
-    with pytest.raises(ValidationError, match="event_range"):
-        ReplayBundleBuilderInput.model_validate(
-            {
-                **_builder_input().model_dump(mode="python"),
-                "projection_summary": broken_summary,
-            }
-        )
+    with pytest.raises(ValidationError, match="events"):
+        ReplayBundleBuilderInput.model_validate(builder_payload)
 
 
 
 def test_replay_bundle_rejects_projection_version_mismatch() -> None:
-    with pytest.raises(ReplayBundleError, match="projection version mismatch"):
-        build_replay_bundle(
-            _builder_input(
-                projection_version=ProjectionVersionRef(
-                    value="projection.ticket_graph.v1"
-                )
+    builder_input = _builder_input().model_copy(
+        update={
+            "projection_version": ProjectionVersionRef(
+                value="projection.ticket_graph.v1"
             )
-        )
-
-
-
-def test_replay_bundle_builder_explicitly_rejects_projection_kind_mismatch() -> None:
-    builder_input = _builder_input()
-    broken_input = builder_input.model_dump(
-        mode="python",
-        exclude={"projection_summary": {"summary_hash"}},
+        }
     )
-    broken_input["projection_summary"]["projection_kind"] = "ticket_graph"
 
-    with pytest.raises(ValidationError, match="projection_kind|projection kind mismatch"):
-        ReplayBundleBuilderInput.model_validate(broken_input)
+    with pytest.raises(ReplayBundleError, match="projection version mismatch"):
+        build_replay_bundle(builder_input)
+
+
+
+def test_replay_bundle_builder_rejects_non_seat_assignment_projector() -> None:
+    builder_input = _builder_input().model_copy(
+        update={"seat_assignment_projector": object()}
+    )
+
+    with pytest.raises(
+        ReplayBundleError,
+        match="seat_assignment_projector must be SeatAssignmentProjector",
+    ):
+        build_replay_bundle(builder_input)
 
 
 
@@ -705,10 +687,9 @@ def test_replay_bundle_rejects_event_graph_version_gap() -> None:
         _ticket_created_event(graph_version=1),
         _seat_assigned_event(graph_version=3),
     )
-    summary = _projection_summary((_ticket_created_event(), _seat_assigned_event()))
 
-    with pytest.raises(ValidationError, match="graph_version"):
-        _builder_input(events=events, projection_summary=summary)
+    with pytest.raises(ProjectionReplayError, match="graph_version.*contiguous"):
+        build_replay_bundle(_builder_input(events=events))
 
 
 
@@ -717,10 +698,9 @@ def test_replay_bundle_rejects_unordered_event_input() -> None:
         _seat_assigned_event(graph_version=2),
         _ticket_created_event(graph_version=1),
     )
-    summary = _projection_summary((_ticket_created_event(), _seat_assigned_event()))
 
-    with pytest.raises(ValidationError, match="strictly ordered"):
-        _builder_input(events=events, projection_summary=summary)
+    with pytest.raises(ProjectionReplayError, match="strictly ordered"):
+        build_replay_bundle(_builder_input(events=events))
 
 
 
@@ -730,23 +710,41 @@ def test_replay_bundle_rejects_event_project_mismatch() -> None:
         _ticket_created_event(graph_version=1),
         _seat_assigned_event(graph_version=2, project_ref=other_project),
     )
-    summary = _projection_summary((_ticket_created_event(), _seat_assigned_event()))
 
     with pytest.raises(ValidationError, match="project_ref"):
-        _builder_input(events=events, projection_summary=summary)
+        _builder_input(events=events)
 
 
 
-def test_replay_bundle_rejects_projection_summary_graph_version_mismatch() -> None:
-    builder_input = _builder_input()
-    broken_input = builder_input.model_dump(
-        mode="python",
-        exclude={"projection_summary": {"summary_hash"}},
+class LaggingSeatAssignmentProjector(SeatAssignmentProjector):
+    def project(self, events: tuple[EventRecord, ...]):
+        projection = super().project(events)
+        return projection.model_copy(update={"graph_version": projection.graph_version - 1})
+
+
+
+
+def test_replay_bundle_rejects_projector_graph_version_mismatch() -> None:
+    events = (_ticket_created_event(), _seat_assigned_event())
+    resolver = InMemoryReplayPayloadResolver(
+        created_payloads={"payload:ticket-backend-api-created": _ticket_payload()},
+        assignment_payloads={
+            "payload:ticket-backend-api-seat-assigned": _seat_assignment_payload()
+        },
     )
-    broken_input["projection_summary"]["graph_version"] = 1
+    projector = LaggingSeatAssignmentProjector(
+        ticket_projector=TicketGraphProjector(resolver),
+        payload_resolver=resolver,
+        seat_projection=_seat_projection(),
+    )
 
-    with pytest.raises(ValidationError, match="graph_version"):
-        ReplayBundleBuilderInput.model_validate(broken_input)
+    with pytest.raises(ProjectionReplayError, match="projection version mismatch"):
+        build_replay_bundle(
+            _builder_input(
+                events=events,
+                seat_assignment_projector=projector,
+            )
+        )
 
 
 
@@ -1294,9 +1292,14 @@ def test_replay_report_requires_passed_true_and_empty_blockers() -> None:
 
 
 
-def test_replay_bundle_builds_seat_assignment_attestation_from_projection_summary() -> None:
+def test_replay_bundle_builds_seat_assignment_attestation_from_rereplay() -> None:
     events = (_ticket_created_event(), _seat_assigned_event())
-    summary = _projection_summary(events)
+    summary = ProjectionReplay(projection_kind="seat_assignment_graph").replay_events(
+        events=events,
+        project_ref=PROJECT_REF,
+        expected_graph_version=events[-1].graph_version,
+        projector=_projector(),
+    )
 
     bundle = build_replay_bundle(_builder_input(events=events))
 

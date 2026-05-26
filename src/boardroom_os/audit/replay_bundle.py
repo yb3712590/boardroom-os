@@ -11,6 +11,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SkipValidation,
     StrictBool,
     ValidationError,
     computed_field,
@@ -26,10 +27,17 @@ from boardroom_os.closeout.gate import (
     ReplayBundleReadiness,
     ReplaySummaryHash,
 )
+from boardroom_os.contracts.refs import (
+    NamespacedRefError,
+    assert_namespace_segment,
+    canonical_sort_for_hash,
+    namespaced_ref,
+)
 from boardroom_os.contracts.types import NonEmptyTextValue
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import EventId, ProjectRef
-from boardroom_os.graph.replay import ProjectionReplaySummary
+from boardroom_os.graph.replay import ProjectionReplay
+from boardroom_os.graph.seat_assignment import SeatAssignmentProjector
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _ZERO_HASH = "0" * 64
@@ -234,10 +242,14 @@ class ReplayPayloadManifest(BaseModel):
     ) -> tuple[ReplayManifestEntry, ...]:
         if not values:
             raise ReplayBundleError("payload manifest entries must not be empty")
-        refs = [entry.content_ref.value for entry in values]
-        if len(set(refs)) != len(refs):
-            raise ReplayBundleError("payload manifest content refs must be unique")
-        return values
+        return canonical_sort_for_hash(
+            values,
+            key=lambda entry: entry.content_ref.value,
+        )
+
+    @property
+    def payload_manifest_hash(self) -> str:
+        return _hash_model(self)
 
 
 class ReplayArtifactManifest(BaseModel):
@@ -276,8 +288,19 @@ class ReplayArtifactManifest(BaseModel):
             raise ReplayBundleError("artifact manifest refs must be unique")
         if len(set(content_refs)) != len(content_refs):
             raise ReplayBundleError("artifact manifest content refs must be unique")
-        return values
+        try:
+            return canonical_sort_for_hash(
+                values,
+                key=lambda entry: entry.kind.value,
+            )
+        except NamespacedRefError as error:
+            if "duplicate key" in str(error):
+                raise ReplayBundleError("duplicate kind values must be unique") from error
+            raise
 
+    @property
+    def artifact_manifest_hash(self) -> str:
+        return _hash_model(self)
 
     @property
     def entries_by_kind(
@@ -592,7 +615,7 @@ class ReplayBundleBuilderInput(BaseModel):
 
     project_ref: ProjectRef
     events: tuple[EventRecord, ...]
-    projection_summary: ProjectionReplaySummary
+    seat_assignment_projector: SkipValidation[SeatAssignmentProjector]
     projection_version: ProjectionVersionRef
     payload_manifest_ref: ReplayManifestRef
     payload_manifest_entries: tuple[ReplayManifestEntry, ...]
@@ -602,6 +625,7 @@ class ReplayBundleBuilderInput(BaseModel):
     hash_manifest_ref: ReplayManifestRef
     replay_report_ref: ReplayReportRef
     generated_at: datetime
+    run_id: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -641,38 +665,26 @@ class ReplayBundleBuilderInput(BaseModel):
     def _validate_events(cls, values: tuple[EventRecord, ...]) -> tuple[EventRecord, ...]:
         if not values:
             raise ReplayBundleError("events must not be empty")
-        previous_graph_version: int | None = None
-        for event in values:
-            if previous_graph_version is not None:
-                if event.graph_version <= previous_graph_version:
-                    raise ReplayBundleError("events graph_version must be strictly ordered")
-                if event.graph_version != previous_graph_version + 1:
-                    raise ReplayBundleError("events graph_version must be contiguous")
-            previous_graph_version = event.graph_version
         return values
 
     @model_validator(mode="after")
     def _validate_input(self) -> Self:
+        if not isinstance(self.seat_assignment_projector, SeatAssignmentProjector):
+            raise ReplayBundleError(
+                "seat_assignment_projector must be SeatAssignmentProjector"
+            )
+        try:
+            assert_namespace_segment(self.project_ref.value, field_name="project_ref")
+        except NamespacedRefError as error:
+            raise ReplayBundleError("project_ref must be a namespace segment") from error
         for event in self.events:
             if event.project_ref != self.project_ref:
                 raise ReplayBundleError("event project_ref mismatch")
-        summary = self.projection_summary
-        if summary.project_ref != self.project_ref:
-            raise ReplayBundleError("projection_summary project_ref mismatch")
-        if summary.projection_kind != ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH.value:
-            raise ReplayBundleError("projection kind mismatch")
-        if summary.event_range.first_graph_version != self.events[0].graph_version:
-            raise ReplayBundleError("projection_summary event_range mismatch")
-        if summary.event_range.last_graph_version != self.events[-1].graph_version:
-            raise ReplayBundleError("projection_summary event_range mismatch")
-        if summary.event_range.first_event_id != self.events[0].event_id:
-            raise ReplayBundleError("projection_summary event_range mismatch")
-        if summary.event_range.last_event_id != self.events[-1].event_id:
-            raise ReplayBundleError("projection_summary event_range mismatch")
-        if summary.event_count != len(self.events):
-            raise ReplayBundleError("projection_summary event_count mismatch")
-        if summary.graph_version != self.events[-1].graph_version:
-            raise ReplayBundleError("projection_summary graph_version mismatch")
+        expected_projection_version = _projection_version_for_kind(
+            ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH.value
+        )
+        if self.projection_version.value != expected_projection_version:
+            raise ReplayBundleError("projection version mismatch")
         return self
 
 
@@ -680,13 +692,16 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
     if not isinstance(builder_input, ReplayBundleBuilderInput):
         raise ReplayBundleError("builder_input must be ReplayBundleBuilderInput")
     builder_input = _validate_builder_input_instance(builder_input)
-    if ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH.value != builder_input.projection_summary.projection_kind:
-        raise ReplayBundleError("projection kind mismatch")
-    expected_projection_version = _projection_version_for_kind(
-        builder_input.projection_summary.projection_kind
+
+    summary = ProjectionReplay(
+        projection_kind=ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH.value
+    ).replay_events(
+        events=builder_input.events,
+        project_ref=builder_input.project_ref,
+        expected_graph_version=builder_input.events[-1].graph_version,
+        projector=builder_input.seat_assignment_projector,
     )
-    if builder_input.projection_version.value != expected_projection_version:
-        raise ReplayBundleError("projection version mismatch")
+    summary_hash = summary.summary_hash
 
     payload_manifest = ReplayPayloadManifest(
         payload_manifest_id=builder_input.payload_manifest_ref,
@@ -733,8 +748,8 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
         projection_kind=ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH.value,
         projection_version=builder_input.projection_version,
         event_range=event_window,
-        event_count=builder_input.projection_summary.event_count,
-        summary_hash=ReplaySummaryHash(value=builder_input.projection_summary.summary_hash),
+        event_count=summary.event_count,
+        summary_hash=ReplaySummaryHash(value=summary_hash),
         replay_passed=True,
         blockers=(),
         generated_at=builder_input.generated_at,
@@ -745,7 +760,7 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
             value=(
                 "attestation."
                 f"{builder_input.project_ref.value}."
-                f"{builder_input.projection_summary.summary_hash[:12]}"
+                f"{summary_hash[:12]}"
             )
         ),
         kind=ReplayAttestationKind.SEAT_ASSIGNMENT_GRAPH,
@@ -758,7 +773,7 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
         artifact_manifest_ref=builder_input.artifact_manifest_ref,
         hash_manifest_ref=builder_input.hash_manifest_ref,
         replay_report_ref=builder_input.replay_report_ref,
-        summary_hash=ReplaySummaryHash(value=builder_input.projection_summary.summary_hash),
+        summary_hash=ReplaySummaryHash(value=summary_hash),
         replay_passed=True,
     )
 
@@ -812,16 +827,17 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
                 builder_input.artifact_manifest_ref.value,
                 builder_input.hash_manifest_ref.value,
                 builder_input.replay_report_ref.value,
-                builder_input.projection_summary.summary_hash,
+                summary_hash,
             ]
         )
     )
 
     replay_bundle_id = ReplayBundleRef(
-        value=(
-            "replay-bundle."
-            f"{builder_input.project_ref.value}."
-            f"{builder_input.projection_summary.summary_hash[:12]}"
+        value=namespaced_ref(
+            kind="replay-bundle",
+            project_ref=builder_input.project_ref.value,
+            content_hash=summary_hash,
+            run_id=builder_input.run_id,
         )
     )
 
@@ -870,12 +886,19 @@ def _validate_bundle_instance(bundle: ReplayBundle) -> ReplayBundle:
 def _validate_builder_input_instance(
     builder_input: ReplayBundleBuilderInput,
 ) -> ReplayBundleBuilderInput:
-    return ReplayBundleBuilderInput.model_validate(
-        builder_input.model_dump(
-            mode="python",
-            exclude={"projection_summary": {"summary_hash"}},
-        )
+    unexpected_fields = sorted(
+        set(builder_input.__dict__) - set(type(builder_input).model_fields)
     )
+    if unexpected_fields:
+        raise ReplayBundleError(
+            "unexpected builder input fields: " + ", ".join(unexpected_fields)
+        )
+    try:
+        return ReplayBundleBuilderInput.model_validate(
+            builder_input.model_dump(mode="python")
+        )
+    except ValidationError as error:
+        raise ReplayBundleError(str(error)) from error
 
 
 def _revalidate_hash_manifest(bundle: ReplayBundle) -> None:
