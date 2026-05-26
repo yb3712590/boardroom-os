@@ -148,18 +148,22 @@ def _lineage(
     surface_ref: str = "backend-api",
     acceptance_ref: str = "AC-BACKEND",
     *,
+    consumer_ticket_refs: tuple[TicketId, ...],
     producer_ticket_ref: TicketId | None = None,
     producer_attempt_ref: ProviderAttemptRef | None = None,
+    acceptance_refs: tuple[AcceptanceRef, ...] | None = None,
     evidence_refs: tuple[VerifiedEvidenceRef, ...] | None = None,
 ):
     from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
 
+    producer_ref = producer_ticket_ref or TicketId(value="ticket.backend")
     return SourceLineageRecord(
         path=SourceFilePath(value=path),
         source_surface_ref=SourceSurfaceRef(value=surface_ref),
-        producer_ticket_ref=producer_ticket_ref or TicketId(value="ticket.backend"),
+        producer_ticket_ref=producer_ref,
         producer_attempt_ref=producer_attempt_ref or ProviderAttemptRef(value="provider-attempt.backend.1"),
-        acceptance_refs=(AcceptanceRef(value=acceptance_ref),),
+        consumer_ticket_refs=consumer_ticket_refs,
+        acceptance_refs=acceptance_refs or (AcceptanceRef(value=acceptance_ref),),
         evidence_refs=evidence_refs or (VerifiedEvidenceRef(value="verified-evidence.backend"),),
     )
 
@@ -173,7 +177,9 @@ def _build(*, source_files=None, lineage_records=None, package_commit_ref="commi
         package_contract=_package_contract(),
         package_commit_ref=PackageCommitRef(value=package_commit_ref),
         source_files=source_files if source_files is not None else (_source_file(),),
-        lineage_records=lineage_records if lineage_records is not None else (_lineage(),),
+        lineage_records=lineage_records
+        if lineage_records is not None
+        else (_lineage(consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
     )
 
 
@@ -207,6 +213,7 @@ def test_source_inventory_rejects_lineage_without_producer_ticket_ref() -> None:
                 "path": SourceFilePath(value="backend/app.py"),
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
                 "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
             }
@@ -223,6 +230,24 @@ def test_source_inventory_rejects_lineage_without_producer_attempt_ref() -> None
                 "path": SourceFilePath(value="backend/app.py"),
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
+                "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
+                "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
+            }
+        )
+
+
+
+def test_source_inventory_rejects_lineage_without_consumer_ticket_refs() -> None:
+    from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
+
+    with pytest.raises(_VERIFY_ERRORS, match="consumer_ticket_refs|Field required"):
+        SourceLineageRecord.model_validate(
+            {
+                "path": SourceFilePath(value="backend/app.py"),
+                "source_surface_ref": SourceSurfaceRef(value="backend-api"),
+                "producer_ticket_ref": TicketId(value="ticket.backend"),
+                "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
                 "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
                 "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
             }
@@ -240,6 +265,7 @@ def test_source_inventory_rejects_lineage_without_acceptance_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
             }
         )
@@ -256,8 +282,70 @@ def test_source_inventory_rejects_lineage_without_evidence_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
             }
+        )
+
+
+def test_source_inventory_rejects_lineage_with_empty_consumer_ticket_refs() -> None:
+    from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
+
+    with pytest.raises(_VERIFY_ERRORS, match="consumer ticket refs must not be empty"):
+        SourceLineageRecord(
+            path=SourceFilePath(value="backend/app.py"),
+            source_surface_ref=SourceSurfaceRef(value="backend-api"),
+            producer_ticket_ref=TicketId(value="ticket.backend"),
+            producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend.1"),
+            consumer_ticket_refs=(),
+            acceptance_refs=(AcceptanceRef(value="AC-BACKEND"),),
+            evidence_refs=(VerifiedEvidenceRef(value="verified-evidence.backend"),),
+        )
+
+
+
+def test_source_inventory_rejects_duplicate_consumer_ticket_refs() -> None:
+    from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
+
+    with pytest.raises(_VERIFY_ERRORS, match="consumer ticket refs must be unique"):
+        SourceLineageRecord(
+            path=SourceFilePath(value="backend/app.py"),
+            source_surface_ref=SourceSurfaceRef(value="backend-api"),
+            producer_ticket_ref=TicketId(value="ticket.backend"),
+            producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend.1"),
+            consumer_ticket_refs=(TicketId(value="ticket.backend"), TicketId(value="ticket.backend")),
+            acceptance_refs=(AcceptanceRef(value="AC-BACKEND"),),
+            evidence_refs=(VerifiedEvidenceRef(value="verified-evidence.backend"),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "duplicate_values", "expected_message"),
+    (
+        (
+            "acceptance_refs",
+            (AcceptanceRef(value="AC-BACKEND"), AcceptanceRef(value="AC-BACKEND")),
+            "acceptance refs must be unique",
+        ),
+        (
+            "evidence_refs",
+            (
+                VerifiedEvidenceRef(value="verified-evidence.backend"),
+                VerifiedEvidenceRef(value="verified-evidence.backend"),
+            ),
+            "evidence refs must be unique",
+        ),
+    ),
+)
+def test_source_inventory_rejects_duplicate_lineage_tuple_refs(
+    field_name: str,
+    duplicate_values: tuple[object, object],
+    expected_message: str,
+) -> None:
+    with pytest.raises(_VERIFY_ERRORS, match=expected_message):
+        _lineage(
+            consumer_ticket_refs=(TicketId(value="ticket.backend"),),
+            **{field_name: duplicate_values},
         )
 
 
@@ -285,19 +373,19 @@ def test_source_file_path_rejects_paths_outside_package_root_or_framework_paths(
 
 def test_source_inventory_rejects_duplicate_source_file_paths() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="source file paths must be unique"):
-        _build(source_files=(_source_file(), _source_file()), lineage_records=(_lineage(),))
+        _build(source_files=(_source_file(), _source_file()), lineage_records=(_lineage(consumer_ticket_refs=(TicketId(value="ticket.backend"),)),))
 
 
 def test_source_inventory_rejects_duplicate_lineage_paths() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="lineage paths must be unique"):
-        _build(source_files=(_source_file(),), lineage_records=(_lineage(), _lineage()))
+        _build(source_files=(_source_file(),), lineage_records=(_lineage(consumer_ticket_refs=(TicketId(value="ticket.backend"),)), _lineage(consumer_ticket_refs=(TicketId(value="ticket.backend"),))))
 
 
 def test_source_inventory_rejects_source_file_missing_lineage() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="missing lineage"):
         _build(
             source_files=(_source_file("backend/app.py"),),
-            lineage_records=(_lineage("frontend/App.tsx", "frontend-ui", "AC-FRONTEND"),),
+            lineage_records=(_lineage("frontend/App.tsx", "frontend-ui", "AC-FRONTEND", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
         )
 
 
@@ -306,8 +394,8 @@ def test_source_inventory_rejects_lineage_for_unknown_source_file() -> None:
         _build(
             source_files=(_source_file("backend/app.py"),),
             lineage_records=(
-                _lineage("backend/app.py"),
-                _lineage("frontend/App.tsx", "frontend-ui", "AC-FRONTEND"),
+                _lineage("backend/app.py", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),
+                _lineage("frontend/App.tsx", "frontend-ui", "AC-FRONTEND", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),
             ),
         )
 
@@ -316,30 +404,30 @@ def test_source_inventory_rejects_lineage_path_not_in_package_assembly() -> None
     with pytest.raises(_VERIFY_ERRORS, match="lineage path is not in package assembly"):
         _build(
             source_files=(_source_file("backend/ghost.py"),),
-            lineage_records=(_lineage("backend/ghost.py"),),
+            lineage_records=(_lineage("backend/ghost.py", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
         )
 
 
 def test_source_inventory_rejects_missing_implementation_bearing_artifact_entry() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="missing source inventory entry"):
-        _build(source_files=(_source_file("backend/app.py"),), lineage_records=(_lineage("backend/app.py"),))
+        _build(source_files=(_source_file("backend/app.py"),), lineage_records=(_lineage("backend/app.py", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),))
 
 
 def test_source_inventory_rejects_unknown_source_surface_ref() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="unknown source surface"):
-        _build(source_files=(_source_file(),), lineage_records=(_lineage(surface_ref="unknown-surface"),))
+        _build(source_files=(_source_file(),), lineage_records=(_lineage(surface_ref="unknown-surface", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),))
 
 
 def test_source_inventory_rejects_acceptance_ref_outside_source_surface() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="acceptance refs outside source surface"):
-        _build(source_files=(_source_file(),), lineage_records=(_lineage(acceptance_ref="AC-FRONTEND"),))
+        _build(source_files=(_source_file(),), lineage_records=(_lineage(acceptance_ref="AC-FRONTEND", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),))
 
 
 def test_source_inventory_rejects_source_surface_not_compatible_with_package_artifact() -> None:
     with pytest.raises(_VERIFY_ERRORS, match="source surface is not compatible"):
         _build(
             source_files=(_source_file("backend/app.py"),),
-            lineage_records=(_lineage("backend/app.py", "frontend-ui", "AC-FRONTEND"),),
+            lineage_records=(_lineage("backend/app.py", "frontend-ui", "AC-FRONTEND", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
         )
 
 
@@ -377,7 +465,7 @@ def test_source_inventory_rejects_acceptance_refs_that_do_not_cover_package_arti
             package_contract=expanded_contract,
             package_commit_ref=PackageCommitRef(value="commit.source-inventory"),
             source_files=(_source_file("backend/app.py"),),
-            lineage_records=(_lineage("backend/app.py", "backend-api", "AC-OTHER"),),
+            lineage_records=(_lineage("backend/app.py", "backend-api", "AC-OTHER", consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
         )
 
 
@@ -395,7 +483,7 @@ def test_source_inventory_rejects_package_contract_mismatch() -> None:
             package_contract=other_contract,
             package_commit_ref=PackageCommitRef(value="commit.source-inventory"),
             source_files=(_source_file(),),
-            lineage_records=(_lineage(),),
+            lineage_records=(_lineage(consumer_ticket_refs=(TicketId(value="ticket.backend"),)),),
         )
 
 
@@ -419,6 +507,24 @@ def test_source_inventory_models_reject_extra_fields() -> None:
         )
 
 
+def test_source_lineage_record_rejects_scalar_consumer_ticket_refs() -> None:
+    from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
+
+    with pytest.raises(_VERIFY_ERRORS, match="consumer_ticket_refs must be a tuple or list"):
+        SourceLineageRecord.model_validate(
+            {
+                "path": SourceFilePath(value="backend/app.py"),
+                "source_surface_ref": SourceSurfaceRef(value="backend-api"),
+                "producer_ticket_ref": TicketId(value="ticket.backend"),
+                "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": "ticket.backend",
+                "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
+                "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
+            }
+        )
+
+
+
 def test_source_lineage_record_rejects_scalar_acceptance_refs() -> None:
     from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
 
@@ -429,6 +535,7 @@ def test_source_lineage_record_rejects_scalar_acceptance_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": "AC-BACKEND",
                 "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
             }
@@ -445,10 +552,30 @@ def test_source_lineage_record_rejects_scalar_evidence_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
                 "evidence_refs": "verified-evidence.backend",
             }
         )
+
+
+def test_source_inventory_entry_rejects_scalar_consumer_ticket_refs() -> None:
+    from boardroom_os.workspace.source_inventory import SourceFilePath, SourceInventoryEntry
+
+    with pytest.raises(_VERIFY_ERRORS, match="consumer_ticket_refs must be a tuple or list"):
+        SourceInventoryEntry.model_validate(
+            {
+                "path": SourceFilePath(value="backend/app.py"),
+                "sha256": _SHA,
+                "source_surface_ref": SourceSurfaceRef(value="backend-api"),
+                "producer_ticket_ref": TicketId(value="ticket.backend"),
+                "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": "ticket.backend",
+                "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
+                "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
+            }
+        )
+
 
 
 def test_source_inventory_entry_rejects_scalar_acceptance_refs() -> None:
@@ -462,6 +589,7 @@ def test_source_inventory_entry_rejects_scalar_acceptance_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": "AC-BACKEND",
                 "evidence_refs": (VerifiedEvidenceRef(value="verified-evidence.backend"),),
             }
@@ -479,6 +607,7 @@ def test_source_inventory_entry_rejects_scalar_evidence_refs() -> None:
                 "source_surface_ref": SourceSurfaceRef(value="backend-api"),
                 "producer_ticket_ref": TicketId(value="ticket.backend"),
                 "producer_attempt_ref": ProviderAttemptRef(value="provider-attempt.backend.1"),
+                "consumer_ticket_refs": (TicketId(value="ticket.backend"),),
                 "acceptance_refs": (AcceptanceRef(value="AC-BACKEND"),),
                 "evidence_refs": "verified-evidence.backend",
             }

@@ -52,6 +52,7 @@ _RESERVED_FRAMEWORK_LAYOUT_PREFIXES = {
 
 _SOURCE_INVENTORY_TUPLE_REF_FIELDS = (
     "acceptance_refs",
+    "consumer_ticket_refs",
     "evidence_refs",
 )
 
@@ -126,6 +127,7 @@ class SourceLineageRecord(BaseModel):
     source_surface_ref: SourceSurfaceRef
     producer_ticket_ref: TicketId
     producer_attempt_ref: ProviderAttemptRef
+    consumer_ticket_refs: tuple[TicketId, ...]
     acceptance_refs: tuple[AcceptanceRef, ...]
     evidence_refs: tuple[VerifiedEvidenceRef, ...]
 
@@ -142,29 +144,46 @@ class SourceLineageRecord(BaseModel):
                 "producer_attempt_ref": ProviderAttemptRef,
             },
             {
+                "consumer_ticket_refs": TicketId,
                 "acceptance_refs": AcceptanceRef,
                 "evidence_refs": VerifiedEvidenceRef,
             },
         )
 
+    @field_validator("consumer_ticket_refs")
+    @classmethod
+    def _reject_invalid_consumer_ticket_refs(
+        cls,
+        values: tuple[TicketId, ...],
+    ) -> tuple[TicketId, ...]:
+        if not values:
+            raise ValueError("consumer ticket refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("consumer ticket refs must be unique")
+        return values
+
     @field_validator("acceptance_refs")
     @classmethod
-    def _reject_empty_acceptance_refs(
+    def _reject_invalid_acceptance_refs(
         cls,
         values: tuple[AcceptanceRef, ...],
     ) -> tuple[AcceptanceRef, ...]:
         if not values:
             raise ValueError("acceptance refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("acceptance refs must be unique")
         return values
 
     @field_validator("evidence_refs")
     @classmethod
-    def _reject_empty_evidence_refs(
+    def _reject_invalid_evidence_refs(
         cls,
         values: tuple[VerifiedEvidenceRef, ...],
     ) -> tuple[VerifiedEvidenceRef, ...]:
         if not values:
             raise ValueError("evidence refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("evidence refs must be unique")
         return values
 
 
@@ -176,6 +195,7 @@ class SourceInventoryEntry(BaseModel):
     source_surface_ref: SourceSurfaceRef
     producer_ticket_ref: TicketId
     producer_attempt_ref: ProviderAttemptRef
+    consumer_ticket_refs: tuple[TicketId, ...]
     acceptance_refs: tuple[AcceptanceRef, ...]
     evidence_refs: tuple[VerifiedEvidenceRef, ...]
 
@@ -193,6 +213,7 @@ class SourceInventoryEntry(BaseModel):
                 "producer_attempt_ref": ProviderAttemptRef,
             },
             {
+                "consumer_ticket_refs": TicketId,
                 "acceptance_refs": AcceptanceRef,
                 "evidence_refs": VerifiedEvidenceRef,
             },
@@ -211,6 +232,13 @@ class SourceInventoryEntry(BaseModel):
     ) -> dict[str, str]:
         return value.model_dump()
 
+    @field_serializer("consumer_ticket_refs")
+    def _serialize_consumer_ticket_refs(
+        self,
+        values: tuple[TicketId, ...],
+    ) -> list[dict[str, str]]:
+        return [value.model_dump() for value in values]
+
     @field_serializer("acceptance_refs")
     def _serialize_acceptance_refs(
         self,
@@ -225,24 +253,40 @@ class SourceInventoryEntry(BaseModel):
     ) -> list[dict[str, str]]:
         return [value.model_dump() for value in values]
 
+    @field_validator("consumer_ticket_refs")
+    @classmethod
+    def _reject_invalid_consumer_ticket_refs(
+        cls,
+        values: tuple[TicketId, ...],
+    ) -> tuple[TicketId, ...]:
+        if not values:
+            raise ValueError("consumer ticket refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("consumer ticket refs must be unique")
+        return values
+
     @field_validator("acceptance_refs")
     @classmethod
-    def _reject_empty_acceptance_refs(
+    def _reject_invalid_acceptance_refs(
         cls,
         values: tuple[AcceptanceRef, ...],
     ) -> tuple[AcceptanceRef, ...]:
         if not values:
             raise ValueError("acceptance refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("acceptance refs must be unique")
         return values
 
     @field_validator("evidence_refs")
     @classmethod
-    def _reject_empty_evidence_refs(
+    def _reject_invalid_evidence_refs(
         cls,
         values: tuple[VerifiedEvidenceRef, ...],
     ) -> tuple[VerifiedEvidenceRef, ...]:
         if not values:
             raise ValueError("evidence refs must not be empty")
+        if len({value.value for value in values}) != len(values):
+            raise ValueError("evidence refs must be unique")
         return values
 
 
@@ -366,6 +410,7 @@ def build_source_inventory(
                 source_surface_ref=lineage_record.source_surface_ref,
                 producer_ticket_ref=lineage_record.producer_ticket_ref,
                 producer_attempt_ref=lineage_record.producer_attempt_ref,
+                consumer_ticket_refs=lineage_record.consumer_ticket_refs,
                 acceptance_refs=lineage_record.acceptance_refs,
                 evidence_refs=lineage_record.evidence_refs,
             )

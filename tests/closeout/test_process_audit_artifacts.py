@@ -24,7 +24,7 @@ from boardroom_os.audit.process_audit import (
     build_process_audit_bundle,
     process_audit_readiness,
 )
-from boardroom_os.audit.replay_bundle import build_replay_bundle, replay_bundle_readiness
+from boardroom_os.audit.replay_bundle import ReplayContentRef, ReplayManifestKind, build_replay_bundle, replay_bundle_readiness
 from boardroom_os.closeout.gate import GitAuditReadiness, ReplayBundleReadiness
 from boardroom_os.contracts.acceptance import (
     AcceptanceContract,
@@ -74,11 +74,13 @@ from boardroom_os.execution.package import (
     FallbackPolicyRef,
     RequiredOutput,
 )
-from boardroom_os.graph.ticket import TicketId
+from boardroom_os.graph.seat_assignment import SeatAssignmentProjector
+from boardroom_os.graph.ticket import TicketGraph, TicketId, TicketStatus
 from tests.closeout.test_git_version_audit import _build_bundle as _build_git_version_audit_bundle
 from tests.closeout.test_replay_bundle import _builder_input as _replay_builder_input
 from tests.closeout.test_replay_bundle import _artifact_manifest_entries as _replay_artifact_manifest_entries
 from tests.closeout.test_replay_bundle import _payload_manifest_entries as _replay_payload_manifest_entries
+from tests.closeout.test_replay_bundle import _projector as _replay_projector
 from tests.closeout.test_replay_bundle import PROJECTION_VERSION as _REPLAY_PROJECTION_VERSION
 from tests.closeout.test_closeout_gate import _NOW, _ready_input as _closeout_gate_ready_input
 
@@ -246,6 +248,76 @@ def _ticket_graph_summary() -> MinimalTicketGraphSummary:
     )
 
 
+class ProcessAuditReplayProjector(SeatAssignmentProjector):
+    pass
+
+
+class ProcessAuditReplayPayloadResolver:
+    def __init__(
+        self,
+        delegate: Any,
+        extra_payload_refs: tuple[str, ...],
+    ) -> None:
+        self._delegate = delegate
+        self._extra_payload_refs = set(extra_payload_refs)
+
+    def resolve_ticket_created(self, payload_ref: EventPayloadRef):
+        return self._delegate.resolve_ticket_created(payload_ref)
+
+    def resolve_ticket_blocked(self, payload_ref: EventPayloadRef):
+        return self._delegate.resolve_ticket_blocked(payload_ref)
+
+    def resolve_seat_assignment(self, payload_ref: EventPayloadRef):
+        return self._delegate.resolve_seat_assignment(payload_ref)
+
+    def resolve_process_audit_event(self, payload_ref: EventPayloadRef) -> dict[str, str]:
+        if payload_ref.value not in self._extra_payload_refs:
+            raise KeyError(payload_ref.value)
+        return {"payload_ref": payload_ref.value}
+
+
+class ProcessAuditReplayTicketProjector:
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+
+    def project(self, events: tuple[EventRecord, ...]):
+        ticket_events = tuple(
+            event
+            for event in events
+            if event.event_type is EventType.TICKET_CREATED
+            or event.event_type is EventType.TICKET_BLOCKED
+        )
+        ticket_graph = self._delegate.project(ticket_events)
+        if events and ticket_graph.graph_version != events[-1].graph_version:
+            nodes = tuple(
+                node.model_copy(update={"status": TicketStatus.COMPLETED})
+                for node in ticket_graph.nodes.values()
+            )
+            return TicketGraph.from_nodes(
+                graph_version=events[-1].graph_version,
+                nodes=nodes,
+            )
+        return ticket_graph
+
+
+class ProcessAuditReplaySeatAssignmentProjector(ProcessAuditReplayProjector):
+    def __init__(self) -> None:
+        base_projector = _replay_projector()
+        super().__init__(
+            ticket_projector=ProcessAuditReplayTicketProjector(base_projector._ticket_projector),
+            payload_resolver=ProcessAuditReplayPayloadResolver(
+                base_projector._payload_resolver,
+                (
+                    "payload:ticket-started",
+                    "provider-attempt.app",
+                    "source-inventory",
+                    "verification-run.app",
+                ),
+            ),
+            seat_projection=base_projector._seat_projection,
+        )
+
+
 def _audit_event(
     *,
     event_type: EventType,
@@ -273,18 +345,29 @@ def _process_audit_events() -> tuple[EventRecord, ...]:
         _audit_event(event_type=EventType.PROVIDER_ATTEMPT_RECORDED, graph_version=4, payload_ref="provider-attempt.app"),
         _audit_event(event_type=EventType.WORK_PRODUCT_SUBMITTED, graph_version=5, payload_ref="source-inventory"),
         _audit_event(event_type=EventType.COMMAND_RUN_RECORDED, graph_version=6, payload_ref="verification-run.app"),
-        _audit_event(event_type=EventType.CLOSEOUT_COMMITTED, graph_version=7, payload_ref="closeout-prepared"),
     )
 
 
 def _build_replay_bundle_for_process_audit(events: tuple[EventRecord, ...]):
-    replay_events = events[:2]
+    replay_events = events
+    event_window_ref = (
+        "event-range."
+        f"{replay_events[0].project_ref.value}."
+        f"{replay_events[0].graph_version}-{replay_events[-1].graph_version}"
+    )
+    artifact_manifest_entries = tuple(
+        entry.model_copy(update={"content_ref": ReplayContentRef(value=event_window_ref)})
+        if entry.kind is ReplayManifestKind.EVENT_WINDOW
+        else entry
+        for entry in _replay_artifact_manifest_entries()
+    )
     return build_replay_bundle(
         _replay_builder_input(
             events=replay_events,
             payload_manifest_entries=_replay_payload_manifest_entries(replay_events),
-            artifact_manifest_entries=_replay_artifact_manifest_entries(),
+            artifact_manifest_entries=artifact_manifest_entries,
             projection_version=_REPLAY_PROJECTION_VERSION,
+            seat_assignment_projector=ProcessAuditReplaySeatAssignmentProjector(),
         )
     )
 
@@ -295,15 +378,15 @@ def _process_audit_builder_input(
     git_version_audit_bundle: GitVersionAuditBundle | None = None,
     git_audit_readiness: GitAuditReadiness | None = None,
     verified_evidence: tuple[VerifiedEvidence, ...] | None = None,
-    events: tuple[EventRecord, ...] | None = None,
+    replay_events: tuple[EventRecord, ...] | None = None,
     replay_bundle: Any | None = None,
     replay_readiness: ReplayBundleReadiness | None = None,
     source_inventory: Any | None = None,
     final_evidence_table: Any | None = None,
 ) -> ProcessAuditBuilderInput:
     gate_input = _closeout_gate_ready_input()
-    resolved_events = events or _process_audit_events()
-    replay_bundle = replay_bundle or _build_replay_bundle_for_process_audit(resolved_events)
+    resolved_replay_events = replay_events or _process_audit_events()
+    replay_bundle = replay_bundle or _build_replay_bundle_for_process_audit(resolved_replay_events)
     resolved_replay_readiness = replay_readiness or replay_bundle_readiness(replay_bundle)
     resolved_git_version_audit_bundle = (
         git_version_audit_bundle or _build_git_version_audit_bundle()
@@ -315,7 +398,6 @@ def _process_audit_builder_input(
     return ProcessAuditBuilderInput(
         project_ref=replay_bundle.project_ref,
         generated_at=_NOW,
-        events=resolved_events,
         package_contract=gate_input.package_contract,
         acceptance_contract=_acceptance_contract(gate_input.package_contract),
         agent_context_index=agent_context_index
@@ -680,7 +762,7 @@ def test_process_audit_rejects_incomplete_artifact_lineage() -> None:
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     primary_lineages = [dict(item) for item in content["lineages"]]
-    primary_lineages[0].pop("closeout_related_ref", None)
+    primary_lineages[0].pop("producer_attempt_ref", None)
     content["lineages"] = primary_lineages
     broken_bundle = _replace_artifact(
         bundle,

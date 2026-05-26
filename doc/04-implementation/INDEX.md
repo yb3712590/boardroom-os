@@ -46,6 +46,7 @@
 | `v2-070f-closeout-reducer-implementation-plan.md` | V2-070F CloseoutReducer（收尾归约器）实施计划 |
 | `v2-071a-fact-chain-design-spec.md` | V2-071A Fact-chain（事实链）权威源设计与引用命名空间 helper spec |
 | `v2-071b-replay-bundle-rereplay-spec.md` | V2-071B ReplayBundle（重放包）re-replay（重新投影）spec |
+| `v2-071c-process-audit-fact-chain-spec.md` | V2-071C ProcessAudit（流程审计）fact-chain（事实链）强化 spec |
 
 ## AI 启动入口
 

@@ -111,6 +111,7 @@ def _source_inventory(evidence_refs: tuple[VerifiedEvidenceRef, ...]) -> SourceI
                 source_surface_ref=SourceSurfaceRef(value="source-surface.closeout-closure"),
                 producer_ticket_ref=TicketId(value="ticket.closeout-closure"),
                 producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.closeout-closure"),
+                consumer_ticket_refs=(TicketId(value="ticket.closeout-closure"),),
                 acceptance_refs=(AcceptanceRef(value="AC-CLOSURE"),),
                 evidence_refs=evidence_refs,
             ),

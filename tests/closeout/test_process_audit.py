@@ -23,6 +23,7 @@ from tests.closeout.test_process_audit_artifacts import (
     _artifact_content_hash,
     _build_bundle,
     _process_audit_builder_input,
+    _process_audit_events,
 )
 
 
@@ -192,7 +193,7 @@ def test_process_audit_timeline_includes_real_event_records() -> None:
     timeline = _artifact_by_kind(bundle, ProcessAuditArtifactKind.TIMELINE)
     event_by_ref = {event["event_ref"]: event for event in timeline.content["events"]}
 
-    for source_event in builder_input.events:
+    for source_event in builder_input.replay_bundle.events:
         projected = event_by_ref[source_event.event_id.value]
         expected_kind = (
             "ticket_started"
@@ -215,7 +216,7 @@ def test_process_audit_timeline_contains_only_real_event_log_sources() -> None:
     timeline_events = timeline.content["events"]
 
     assert [event["event_ref"] for event in timeline_events] == [
-        event.event_id.value for event in builder_input.events
+        event.event_id.value for event in builder_input.replay_bundle.events
     ]
     assert {event["source"] for event in timeline_events} == {"event_log"}
     assert "process_audit_projection" not in json.dumps(timeline.content, sort_keys=True)
@@ -223,16 +224,22 @@ def test_process_audit_timeline_contains_only_real_event_log_sources() -> None:
 
 def test_process_audit_rejects_missing_required_real_timeline_event_kind() -> None:
     events = tuple(
-        event
-        for event in _process_audit_builder_input().events
-        if event.event_type is not EventType.PROVIDER_ATTEMPT_RECORDED
+        event.model_copy(update={"graph_version": index})
+        for index, event in enumerate(
+            (
+                event
+                for event in _process_audit_events()
+                if event.event_type is not EventType.PROVIDER_ATTEMPT_RECORDED
+            ),
+            start=1,
+        )
     )
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
         match="timeline|provider_attempt_recorded|real event",
     ):
-        build_process_audit_bundle(_process_audit_builder_input(events=events))
+        build_process_audit_bundle(_process_audit_builder_input(replay_events=events))
 
 
 def test_process_audit_builder_input_rejects_raw_dict_inputs() -> None:

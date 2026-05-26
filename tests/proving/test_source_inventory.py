@@ -140,11 +140,13 @@ def _source_file(path: str, sha: str) -> SourceFileRecord:
 
 def _lineage(path: str, surface_ref: str, acceptance_ref: str) -> SourceLineageRecord:
     normalized = path.replace("/", ".").replace("_", "-")
+    producer_ticket_ref = TicketId(value=f"ticket.{normalized}")
     return SourceLineageRecord(
         path=SourceFilePath(value=path),
         source_surface_ref=SourceSurfaceRef(value=surface_ref),
-        producer_ticket_ref=TicketId(value=f"ticket.{normalized}"),
+        producer_ticket_ref=producer_ticket_ref,
         producer_attempt_ref=ProviderAttemptRef(value=f"provider-attempt.{normalized}.1"),
+        consumer_ticket_refs=(producer_ticket_ref,),
         acceptance_refs=(AcceptanceRef(value=acceptance_ref),),
         evidence_refs=(VerifiedEvidenceRef(value=f"verified-evidence.{normalized}"),),
     )
@@ -193,6 +195,7 @@ def test_source_inventory_builds_deterministic_lineage_for_package_files() -> No
     )
     assert inventory.entries[0].producer_ticket_ref == TicketId(value="ticket.backend.app.py")
     assert inventory.entries[0].producer_attempt_ref == ProviderAttemptRef(value="provider-attempt.backend.app.py.1")
+    assert inventory.entries[0].consumer_ticket_refs == (TicketId(value="ticket.backend.app.py"),)
     assert inventory.entries[0].evidence_refs == (VerifiedEvidenceRef(value="verified-evidence.backend.app.py"),)
 
 
@@ -224,5 +227,6 @@ def test_source_inventory_model_dump_is_audit_friendly() -> None:
     assert dumped["entries"][0]["sha256"] == {"value": "a" * 64}
     assert dumped["entries"][0]["producer_ticket_ref"] == {"value": "ticket.backend.app.py"}
     assert dumped["entries"][0]["producer_attempt_ref"] == {"value": "provider-attempt.backend.app.py.1"}
+    assert dumped["entries"][0]["consumer_ticket_refs"] == [{"value": "ticket.backend.app.py"}]
     assert dumped["entries"][0]["acceptance_refs"] == [{"value": "AC-BACKEND"}]
     assert dumped["entries"][0]["evidence_refs"] == [{"value": "verified-evidence.backend.app.py"}]
