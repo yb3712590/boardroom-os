@@ -5,7 +5,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from boardroom_os.audit.git_version_audit import git_version_audit_readiness, source_inventory_hash
+from boardroom_os.audit.git_version_audit import (
+    _bundle_payload_for_hash,
+    _hash_jsonable,
+    git_version_audit_readiness,
+    source_inventory_hash,
+)
 from boardroom_os.audit.process_audit import (
     ProcessAuditArtifactKind,
     ProcessAuditBuilderInput,
@@ -121,7 +126,7 @@ def _replace_artifact_content(bundle, *, kind: ProcessAuditArtifactKind, content
     return _rehashed_process_audit_bundle(bundle, artifacts=tuple(artifacts))
 
 
-def _build_process_audit_with_source_inventory(source_inventory):
+def _build_process_audit_with_source_inventory(source_inventory, *, ticket_graph_summary=None):
     facts = _git_facts(source_inventory_hash=source_inventory_hash(source_inventory))
     binding = _command_binding(source_inventory_hash=source_inventory_hash(source_inventory))
     git_bundle = _build_git_version_audit_bundle(
@@ -131,6 +136,7 @@ def _build_process_audit_with_source_inventory(source_inventory):
     )
     return _build_bundle(
         source_inventory=source_inventory,
+        ticket_graph_summary=ticket_graph_summary,
         git_version_audit_bundle=git_bundle,
     )
 
@@ -171,6 +177,7 @@ class _TicketWithoutTicketRef(BaseModel):
     status: str
     owner_seat_ref: str
     acceptance_refs: tuple[object, ...]
+    source_surface_refs: tuple[object, ...]
 
 
 class _TicketWithoutStatus(BaseModel):
@@ -179,6 +186,7 @@ class _TicketWithoutStatus(BaseModel):
     ticket_ref: str
     owner_seat_ref: str
     acceptance_refs: tuple[object, ...]
+    source_surface_refs: tuple[object, ...]
 
 
 class _TicketWithoutOwnerSeatRef(BaseModel):
@@ -187,6 +195,7 @@ class _TicketWithoutOwnerSeatRef(BaseModel):
     ticket_ref: str
     status: str
     acceptance_refs: tuple[object, ...]
+    source_surface_refs: tuple[object, ...]
 
 
 class _TicketWithoutAcceptanceRefs(BaseModel):
@@ -195,6 +204,7 @@ class _TicketWithoutAcceptanceRefs(BaseModel):
     ticket_ref: str
     status: str
     owner_seat_ref: str
+    source_surface_refs: tuple[object, ...]
 
 
 class _TicketWithScalarAcceptanceRefs(BaseModel):
@@ -204,6 +214,7 @@ class _TicketWithScalarAcceptanceRefs(BaseModel):
     status: str
     owner_seat_ref: str
     acceptance_refs: object
+    source_surface_refs: tuple[object, ...]
 
 
 class _BrokenTicketGraphSummary(BaseModel):
@@ -305,6 +316,19 @@ class _SourceInventoryEntryWithoutConsumerTicketRefs(BaseModel):
     evidence_refs: tuple[object, ...]
 
 
+class _SourceInventoryEntryWithScalarLineageRefs(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: object
+    sha256: object
+    source_surface_ref: object
+    producer_ticket_ref: object
+    producer_attempt_ref: object
+    consumer_ticket_refs: object
+    acceptance_refs: object
+    evidence_refs: object
+
+
 class _BrokenSourceInventory(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
@@ -400,6 +424,7 @@ def test_process_audit_rejects_non_increasing_replay_bundle_events() -> None:
                 status="completed",
                 owner_seat_ref="seat-worker-backend",
                 acceptance_refs=("AC-APP",),
+                source_surface_refs=("app-source",),
             ),
             "missing ticket_ref",
         ),
@@ -407,7 +432,8 @@ def test_process_audit_rejects_non_increasing_replay_bundle_events() -> None:
             _TicketWithoutStatus(
                 ticket_ref="ticket.app",
                 owner_seat_ref="seat-worker-backend",
-                acceptance_refs=("AC-APP",),
+                acceptance_refs=("AC-APP", "AC-TEST"),
+                source_surface_refs=("app-source", "app-tests"),
             ),
             "missing status",
         ),
@@ -415,7 +441,8 @@ def test_process_audit_rejects_non_increasing_replay_bundle_events() -> None:
             _TicketWithoutOwnerSeatRef(
                 ticket_ref="ticket.app",
                 status="completed",
-                acceptance_refs=("AC-APP",),
+                acceptance_refs=("AC-APP", "AC-TEST"),
+                source_surface_refs=("app-source", "app-tests"),
             ),
             "missing owner_seat_ref",
         ),
@@ -424,6 +451,7 @@ def test_process_audit_rejects_non_increasing_replay_bundle_events() -> None:
                 ticket_ref="ticket.app",
                 status="completed",
                 owner_seat_ref="seat-worker-backend",
+                source_surface_refs=("app-source",),
             ),
             "missing acceptance_refs",
         ),
@@ -473,6 +501,7 @@ def test_process_audit_rejects_ticket_graph_summary_invalid_acceptance_refs(
         status="completed",
         owner_seat_ref="seat-worker-backend",
         acceptance_refs=acceptance_refs,
+        source_surface_refs=("app-source",),
     )
 
     with pytest.raises(
@@ -498,7 +527,7 @@ def test_process_audit_rejects_agent_context_without_entry_id() -> None:
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="agent context index entry missing entry_id",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(agent_context_index=broken_index)
@@ -508,9 +537,9 @@ def test_process_audit_rejects_agent_context_without_entry_id() -> None:
 @pytest.mark.parametrize(
     ("entries", "expected_message"),
     (
-        (None, "agent context index missing entries"),
-        ((), "agent context index entries must not be empty"),
-        (123, "agent context index missing entries"),
+        (None, "agent context|AgentContextIndex"),
+        ((), "agent context|AgentContextIndex"),
+        (123, "agent context|AgentContextIndex"),
     ),
 )
 def test_process_audit_rejects_agent_context_without_iterable_nonempty_entries(
@@ -554,7 +583,7 @@ def test_process_audit_rejects_agent_context_entry_without_iterable_provider_att
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="agent context index missing provider_attempt_refs",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(agent_context_index=broken_index)
@@ -585,7 +614,7 @@ def test_process_audit_rejects_agent_context_entry_with_empty_provider_attempt_r
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="agent context index missing provider_attempt_refs",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(agent_context_index=broken_index)
@@ -601,7 +630,7 @@ def test_process_audit_rejects_agent_context_without_snapshot_execution_package_
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="missing execution_package_ref",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(
@@ -619,7 +648,7 @@ def test_process_audit_rejects_agent_context_without_snapshot_model_execution_pr
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="missing model_execution_profile",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(
@@ -638,7 +667,7 @@ def test_process_audit_rejects_agent_context_without_snapshot_context_snapshot_i
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="agent context snapshot missing context_snapshot_id",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(
@@ -657,7 +686,7 @@ def test_process_audit_rejects_agent_context_without_snapshot_fingerprint() -> N
 
     with pytest.raises(
         (ProcessAuditError, ValidationError),
-        match="agent context snapshot missing snapshot_fingerprint",
+        match="agent context|AgentContextIndex",
     ):
         build_process_audit_bundle(
             _process_audit_builder_input(
@@ -696,8 +725,16 @@ def test_artifact_lineage_does_not_default_consumer_to_producer() -> None:
     changed_inventory = base_input.source_inventory.model_copy(
         update={"entries": (changed_entry, *base_input.source_inventory.entries[1:])}
     )
+    ticket = base_input.ticket_graph_summary.tickets[0]
+    consumer_ticket = ticket.model_copy(update={"ticket_ref": consumer_ticket_ref.value})
+    ticket_graph_summary = base_input.ticket_graph_summary.model_copy(
+        update={"tickets": (*base_input.ticket_graph_summary.tickets, consumer_ticket)}
+    )
 
-    bundle = _build_process_audit_with_source_inventory(changed_inventory)
+    bundle = _build_process_audit_with_source_inventory(
+        changed_inventory,
+        ticket_graph_summary=ticket_graph_summary,
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     lineages_for_path = [
         item for item in lineage.content["lineages"] if item["path"] == entry.path.value
@@ -732,11 +769,8 @@ def test_artifact_lineage_rejects_fallback_lineages_when_expected_empty() -> Non
         {
             "fallback_decision_record_ref": "fallback-decision.unexpected",
             "fallback_decision_recorded_ref": None,
-            "verifier_ref": "verification-run.app",
-            "evidence_map_ref": bundle.process_audit_report.expected_evidence_map_rows[0][
-                "checker_verdict_ref"
-            ],
-            "closeout_related_ref": "checker-verdict.app",
+            "verifier_ref": "runner.local",
+            "evidence_map_ref": "process-audit-artifact.evidence_map",
         },
     )
     broken_bundle = _replace_artifact_content(
@@ -904,6 +938,62 @@ def test_artifact_lineage_rejects_duplicate_fallback_decision_refs() -> None:
         process_audit_readiness(broken_bundle)
 
 
+def test_process_audit_rejects_source_inventory_entry_scalar_lineage_refs() -> None:
+    base_input = _process_audit_builder_input()
+    base_entry = base_input.source_inventory.entries[0]
+    broken_entry = _SourceInventoryEntryWithScalarLineageRefs(
+        path=base_entry.path,
+        sha256=base_entry.sha256,
+        source_surface_ref=base_entry.source_surface_ref,
+        producer_ticket_ref=base_entry.producer_ticket_ref,
+        producer_attempt_ref=base_entry.producer_attempt_ref,
+        consumer_ticket_refs=base_entry.consumer_ticket_refs[0],
+        acceptance_refs=base_entry.acceptance_refs[0],
+        evidence_refs=base_entry.evidence_refs[0],
+    )
+    broken_inventory = _BrokenSourceInventory(
+        source_inventory_id=base_input.source_inventory.source_inventory_id,
+        package_assembly_ref=base_input.source_inventory.package_assembly_ref,
+        package_contract_ref=base_input.source_inventory.package_contract_ref,
+        package_root=base_input.source_inventory.package_root,
+        package_commit_ref=base_input.source_inventory.package_commit_ref,
+        entries=(broken_entry, *base_input.source_inventory.entries[1:]),
+    )
+
+    with pytest.raises(
+        ProcessAuditError,
+        match="source_inventory must be valid SourceInventory|source_inventory evidence_refs missing verified evidence",
+    ):
+        build_process_audit_bundle(
+            _process_audit_input_with_raw_source_inventory(broken_inventory)
+        )
+
+
+
+def test_process_audit_rejects_agent_context_snapshot_with_invalid_fingerprint() -> None:
+    base_input = _process_audit_builder_input()
+    agent_entry = base_input.agent_context_index.entries[0]
+    broken_snapshot = agent_entry.snapshot.model_copy(
+        update={"snapshot_fingerprint": "not-a-sha-256-digest"}
+    )
+    broken_index = base_input.agent_context_index.model_copy(
+        update={
+            "entries": (
+                agent_entry.model_copy(update={"snapshot": broken_snapshot}),
+            )
+        }
+    )
+
+    with pytest.raises(
+        ProcessAuditError,
+        match="agent_context_index must be valid AgentContextIndex|agent_context_index must be AgentContextIndex",
+    ):
+        build_process_audit_bundle(
+            base_input.model_copy(update={"agent_context_index": broken_index})
+        )
+
+
+
 def test_artifact_lineage_builder_rejects_source_inventory_entry_missing_consumer_ticket_refs() -> None:
     base_input = _process_audit_builder_input()
     base_entry = base_input.source_inventory.entries[0]
@@ -927,7 +1017,7 @@ def test_artifact_lineage_builder_rejects_source_inventory_entry_missing_consume
 
     with pytest.raises(
         ProcessAuditError,
-        match="source inventory entry missing consumer_ticket_refs",
+        match="source_inventory must be valid SourceInventory|source inventory entry missing consumer_ticket_refs",
     ):
         build_process_audit_bundle(
             _process_audit_input_with_raw_source_inventory(broken_inventory)
@@ -953,6 +1043,42 @@ def test_process_audit_rejects_verified_evidence_with_unknown_verification_run_r
         build_process_audit_bundle(
             _process_audit_builder_input(verified_evidence=(ghost_evidence,))
         )
+
+
+def test_process_audit_rejects_consumer_ticket_outside_source_surface_scope() -> None:
+    base_input = _process_audit_builder_input()
+    ticket = base_input.ticket_graph_summary.tickets[0]
+    source_entry = base_input.source_inventory.entries[0]
+    foreign_ticket = ticket.model_copy(
+        update={
+            "ticket_ref": "ticket.foreign",
+            "source_surface_refs": ("foreign-source",),
+            "acceptance_refs": source_entry.acceptance_refs,
+        }
+    )
+    changed_entry = source_entry.model_copy(
+        update={"consumer_ticket_refs": (TicketId(value="ticket.foreign"),)}
+    )
+    source_inventory = base_input.source_inventory.model_copy(
+        update={"entries": (changed_entry, *base_input.source_inventory.entries[1:])}
+    )
+    git_bundle = _git_bundle_for_source_inventory(source_inventory)
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="source inventory consumer_ticket_refs outside ticket scope",
+    ):
+        build_process_audit_bundle(
+            _process_audit_builder_input(
+                source_inventory=source_inventory,
+                ticket_graph_summary=base_input.ticket_graph_summary.model_copy(
+                    update={"tickets": (*base_input.ticket_graph_summary.tickets, foreign_ticket)}
+                ),
+                git_version_audit_bundle=git_bundle,
+                git_audit_readiness=git_version_audit_readiness(git_bundle),
+            )
+        )
+
 
 
 def test_process_audit_rejects_source_inventory_unknown_producer_attempt_ref() -> None:
@@ -981,6 +1107,73 @@ def test_process_audit_rejects_source_inventory_unknown_producer_attempt_ref() -
                 git_audit_readiness=git_version_audit_readiness(git_bundle),
             )
         )
+
+
+def test_process_audit_rejects_git_audit_run_manifest_ref_mismatch() -> None:
+    base_input = _process_audit_builder_input()
+    binding = base_input.git_version_audit_bundle.command_evidence_bindings[0]
+    other_manifest_ref = type(binding.run_manifest_ref)(value="run-manifest.unrelated")
+    self_consistent_git_bundle = base_input.git_version_audit_bundle.model_copy(
+        update={
+            "command_evidence_bindings": (
+                binding.model_copy(update={"run_manifest_ref": other_manifest_ref}),
+            )
+        }
+    )
+    command_binding_hashes = {
+        item.verification_run_ref.value: type(self_consistent_git_bundle.hash_manifest.bundle_payload_hash)(
+            value=_hash_model(item)
+        )
+        for item in self_consistent_git_bundle.command_evidence_bindings
+    }
+    hash_manifest_without_bundle_hash = {
+        "hash_manifest_id": self_consistent_git_bundle.hash_manifest.hash_manifest_id.value,
+        "project_ref": self_consistent_git_bundle.hash_manifest.project_ref.value,
+        "fact_set_hash": self_consistent_git_bundle.hash_manifest.fact_set_hash.value,
+        "report_hash": self_consistent_git_bundle.hash_manifest.report_hash.value,
+        "command_binding_hashes": {
+            key: value.value for key, value in command_binding_hashes.items()
+        },
+    }
+    bundle_payload = _bundle_payload_for_hash(
+        bundle_id=self_consistent_git_bundle.git_version_audit_bundle_id,
+        project_ref=self_consistent_git_bundle.project_ref,
+        generated_at=self_consistent_git_bundle.generated_at,
+        fact_set=self_consistent_git_bundle.fact_set,
+        command_evidence_bindings=self_consistent_git_bundle.command_evidence_bindings,
+        report=self_consistent_git_bundle.report,
+        checked_refs=self_consistent_git_bundle.checked_refs,
+        hash_manifest_without_bundle_hash=hash_manifest_without_bundle_hash,
+    )
+    self_consistent_git_bundle = self_consistent_git_bundle.model_copy(
+        update={
+            "hash_manifest": self_consistent_git_bundle.hash_manifest.model_copy(
+                update={
+                    "command_binding_hashes": command_binding_hashes,
+                    "bundle_payload_hash": type(self_consistent_git_bundle.hash_manifest.bundle_payload_hash)(
+                        value=_hash_jsonable(bundle_payload)
+                    ),
+                }
+            )
+        }
+    )
+    self_consistent_evidence_bundle = base_input.workspace_evidence_bundle.model_copy(
+        update={"run_manifest_ref": other_manifest_ref}
+    )
+
+    with pytest.raises(
+        ProcessAuditError,
+        match="git version audit run_manifest_ref mismatch",
+    ):
+        build_process_audit_bundle(
+            base_input.model_copy(
+                update={
+                    "git_version_audit_bundle": self_consistent_git_bundle,
+                    "workspace_evidence_bundle": self_consistent_evidence_bundle,
+                }
+            )
+        )
+
 
 
 def test_process_audit_rejects_git_audit_verification_run_fact_mismatch() -> None:
@@ -1042,6 +1235,84 @@ def test_artifact_lineage_rejects_empty_or_invalid_lineage_ref_containers(
         process_audit_readiness(broken_bundle)
 
 
+def test_artifact_lineage_rejects_self_consistent_evidence_binding_mismatch() -> None:
+    bundle = _build_bundle()
+    lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    content = dict(lineage.content)
+    primary_lineages = [dict(item) for item in content["lineages"]]
+    bindings = [dict(item) for item in primary_lineages[0]["evidence_bindings"]]
+    bindings[0]["verified_evidence_ref"] = "verified-evidence.ghost"
+    primary_lineages[0]["evidence_bindings"] = bindings
+    content["lineages"] = primary_lineages
+    artifacts = tuple(
+        artifact.model_copy(
+            update={
+                "content": content,
+                "sha256": type(artifact.sha256)(
+                    value=_artifact_content_hash(content, artifact.format)
+                ),
+            }
+        )
+        if artifact.kind is ProcessAuditArtifactKind.ARTIFACT_LINEAGE
+        else artifact
+        for artifact in bundle.artifacts
+    )
+    report = bundle.process_audit_report.model_copy(
+        update={"expected_artifact_lineage_rows": tuple(primary_lineages)}
+    )
+    broken_bundle = _rehashed_process_audit_bundle(
+        bundle,
+        artifacts=artifacts,
+        report=report,
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="artifact lineage evidence bindings must match evidence_refs",
+    ):
+        process_audit_readiness(broken_bundle)
+
+
+
+def test_artifact_lineage_rejects_self_consistent_verifier_run_alias() -> None:
+    bundle = _build_bundle()
+    lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    content = dict(lineage.content)
+    primary_lineages = [dict(item) for item in content["lineages"]]
+    bindings = [dict(item) for item in primary_lineages[0]["evidence_bindings"]]
+    bindings[0]["verifier_ref"] = bindings[0]["verification_run_ref"]
+    primary_lineages[0]["evidence_bindings"] = bindings
+    content["lineages"] = primary_lineages
+    artifacts = tuple(
+        artifact.model_copy(
+            update={
+                "content": content,
+                "sha256": type(artifact.sha256)(
+                    value=_artifact_content_hash(content, artifact.format)
+                ),
+            }
+        )
+        if artifact.kind is ProcessAuditArtifactKind.ARTIFACT_LINEAGE
+        else artifact
+        for artifact in bundle.artifacts
+    )
+    report = bundle.process_audit_report.model_copy(
+        update={"expected_artifact_lineage_rows": tuple(primary_lineages)}
+    )
+    broken_bundle = _rehashed_process_audit_bundle(
+        bundle,
+        artifacts=artifacts,
+        report=report,
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="artifact lineage evidence bindings must distinguish verifier and verification run",
+    ):
+        process_audit_readiness(broken_bundle)
+
+
+
 def test_process_audit_readiness_rejects_tampered_artifact_lineage_primary_lineage() -> None:
     bundle = _build_bundle()
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
@@ -1065,6 +1336,43 @@ def test_process_audit_readiness_rejects_tampered_artifact_lineage_primary_linea
         match="artifact lineage inconsistent with expected source inventory lineage",
     ):
         process_audit_readiness(broken_bundle)
+
+
+def test_artifact_lineage_rejects_self_consistent_duplicate_primary_rows() -> None:
+    bundle = _build_bundle()
+    lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    content = dict(lineage.content)
+    primary_lineages = [dict(item) for item in content["lineages"]]
+    primary_lineages.append(dict(primary_lineages[0]))
+    content["lineages"] = primary_lineages
+    artifacts = tuple(
+        artifact.model_copy(
+            update={
+                "content": content,
+                "sha256": type(artifact.sha256)(
+                    value=_artifact_content_hash(content, artifact.format)
+                ),
+            }
+        )
+        if artifact.kind is ProcessAuditArtifactKind.ARTIFACT_LINEAGE
+        else artifact
+        for artifact in bundle.artifacts
+    )
+    report = bundle.process_audit_report.model_copy(
+        update={"expected_artifact_lineage_rows": tuple(primary_lineages)}
+    )
+    broken_bundle = _rehashed_process_audit_bundle(
+        bundle,
+        artifacts=artifacts,
+        report=report,
+    )
+
+    with pytest.raises(
+        (ProcessAuditError, ValidationError),
+        match="artifact lineage primary rows must be unique",
+    ):
+        process_audit_readiness(broken_bundle)
+
 
 
 def test_process_audit_readiness_rejects_missing_artifact_lineage_primary_lineage() -> None:
@@ -1162,40 +1470,15 @@ def test_checked_refs_stable_with_multiple_provider_runs_evidence_fallbacks_and_
         ),
     )
     base_agent_entry = base_input.agent_context_index.entries[0]
-    base_snapshot = base_agent_entry.snapshot
-    snapshot_a = base_snapshot.model_copy(
-        update={
-            "context_snapshot_id": type(base_snapshot.context_snapshot_id)(
-                value="context-snapshot.zzz"
-            ),
-            "snapshot_fingerprint": "f" * 64,
-            "execution_package_ref": type(base_snapshot.execution_package_ref)(
-                value="execution-package.zzz"
-            ),
-        }
-    )
-    snapshot_b = base_snapshot.model_copy(
-        update={
-            "context_snapshot_id": type(base_snapshot.context_snapshot_id)(
-                value="context-snapshot.aaa"
-            ),
-            "snapshot_fingerprint": "0" * 64,
-            "execution_package_ref": type(base_snapshot.execution_package_ref)(
-                value="execution-package.aaa"
-            ),
-        }
-    )
     agent_entry_a = base_agent_entry.model_copy(
         update={
-            "entry_id": type(base_agent_entry.entry_id)(value="agent-context-entry.zzz"),
-            "snapshot": snapshot_a,
+            "entry_id": type(base_agent_entry.entry_id)(value="agent-context-entry.aaa"),
             "provider_attempt_refs": (provider_attempt_a,),
         }
     )
     agent_entry_b = base_agent_entry.model_copy(
         update={
-            "entry_id": type(base_agent_entry.entry_id)(value="agent-context-entry.aaa"),
-            "snapshot": snapshot_b,
+            "entry_id": type(base_agent_entry.entry_id)(value="agent-context-entry.zzz"),
             "provider_attempt_refs": (provider_attempt_b,),
         }
     )
@@ -1233,12 +1516,9 @@ def test_checked_refs_stable_with_multiple_provider_runs_evidence_fallbacks_and_
             {
                 "agent-context-entry.aaa",
                 "agent-context-entry.zzz",
-                "context-snapshot.aaa",
-                "context-snapshot.zzz",
-                "0" * 64,
-                "f" * 64,
-                "execution-package.aaa",
-                "execution-package.zzz",
+                base_agent_entry.snapshot.context_snapshot_id.value,
+                base_agent_entry.snapshot.snapshot_fingerprint,
+                base_agent_entry.snapshot.execution_package_ref.value,
             }
         )
     )

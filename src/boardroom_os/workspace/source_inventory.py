@@ -120,6 +120,10 @@ class SourceFileRecord(BaseModel):
         )
 
 
+def _canonical_ref_tuple(values: tuple[Any, ...]) -> tuple[Any, ...]:
+    return tuple(sorted(values, key=lambda value: value.value))
+
+
 class SourceLineageRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -160,7 +164,7 @@ class SourceLineageRecord(BaseModel):
             raise ValueError("consumer ticket refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("consumer ticket refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
     @field_validator("acceptance_refs")
     @classmethod
@@ -172,7 +176,7 @@ class SourceLineageRecord(BaseModel):
             raise ValueError("acceptance refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("acceptance refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
     @field_validator("evidence_refs")
     @classmethod
@@ -184,7 +188,7 @@ class SourceLineageRecord(BaseModel):
             raise ValueError("evidence refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("evidence refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
 
 class SourceInventoryEntry(BaseModel):
@@ -263,7 +267,7 @@ class SourceInventoryEntry(BaseModel):
             raise ValueError("consumer ticket refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("consumer ticket refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
     @field_validator("acceptance_refs")
     @classmethod
@@ -275,7 +279,7 @@ class SourceInventoryEntry(BaseModel):
             raise ValueError("acceptance refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("acceptance refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
     @field_validator("evidence_refs")
     @classmethod
@@ -287,7 +291,7 @@ class SourceInventoryEntry(BaseModel):
             raise ValueError("evidence refs must not be empty")
         if len({value.value for value in values}) != len(values):
             raise ValueError("evidence refs must be unique")
-        return values
+        return _canonical_ref_tuple(values)
 
 
 class SourceInventory(BaseModel):

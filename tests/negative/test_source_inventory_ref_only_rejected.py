@@ -288,6 +288,68 @@ def test_source_inventory_rejects_lineage_without_evidence_refs() -> None:
         )
 
 
+def test_source_inventory_hash_is_stable_when_lineage_refs_are_reordered() -> None:
+    from boardroom_os.audit.git_version_audit import source_inventory_hash
+    from boardroom_os.workspace.assembler import PackageAssembly, PackageAssemblyRef
+    from boardroom_os.workspace.manifest import WorkspaceManifestRef
+
+    assembly = PackageAssembly(
+        package_assembly_id=PackageAssemblyRef(value="package-assembly.hash-stability"),
+        workspace_manifest_ref=WorkspaceManifestRef(value="workspace-manifest.hash-stability"),
+        package_contract_ref=ContractId(value="package-contract.source-inventory"),
+        package_root=WorkspacePath(value="10-project"),
+        artifacts=(
+            _artifact("backend/app.py", PackageArtifactKind.SOURCE, "backend-api", "AC-BACKEND"),
+        ),
+    )
+
+    def build_with_order(
+        consumer_ticket_refs: tuple[TicketId, ...],
+        evidence_refs: tuple[VerifiedEvidenceRef, ...],
+    ):
+        from boardroom_os.workspace.source_inventory import PackageCommitRef, build_source_inventory
+
+        return build_source_inventory(
+            package_assembly=assembly,
+            package_contract=_package_contract(),
+            package_commit_ref=PackageCommitRef(value="commit.source-inventory"),
+            source_files=(_source_file(),),
+            lineage_records=(
+                _lineage(
+                    consumer_ticket_refs=consumer_ticket_refs,
+                    evidence_refs=evidence_refs,
+                ),
+            ),
+        )
+
+    first = build_with_order(
+        (
+            TicketId(value="ticket.backend.z"),
+            TicketId(value="ticket.backend.a"),
+        ),
+        (
+            VerifiedEvidenceRef(value="verified-evidence.z"),
+            VerifiedEvidenceRef(value="verified-evidence.a"),
+        ),
+    )
+    second = build_with_order(
+        (
+            TicketId(value="ticket.backend.a"),
+            TicketId(value="ticket.backend.z"),
+        ),
+        (
+            VerifiedEvidenceRef(value="verified-evidence.a"),
+            VerifiedEvidenceRef(value="verified-evidence.z"),
+        ),
+    )
+
+    assert first.entries[0].consumer_ticket_refs == second.entries[0].consumer_ticket_refs
+    assert first.entries[0].acceptance_refs == second.entries[0].acceptance_refs
+    assert first.entries[0].evidence_refs == second.entries[0].evidence_refs
+    assert source_inventory_hash(first) == source_inventory_hash(second)
+
+
+
 def test_source_inventory_rejects_lineage_with_empty_consumer_ticket_refs() -> None:
     from boardroom_os.workspace.source_inventory import SourceFilePath, SourceLineageRecord
 

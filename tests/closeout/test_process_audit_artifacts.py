@@ -239,8 +239,8 @@ def _ticket_graph_summary() -> MinimalTicketGraphSummary:
             MinimalTicketGraphNode(
                 ticket_ref="ticket.app",
                 status="completed",
-                acceptance_refs=(AcceptanceRef(value="AC-APP"),),
-                source_surface_refs=("app-source",),
+                acceptance_refs=(AcceptanceRef(value="AC-APP"), AcceptanceRef(value="AC-TEST")),
+                source_surface_refs=("app-source", "app-tests"),
                 evidence_obligation_refs=("evidence-obligation.app",),
                 owner_seat_ref="seat-worker-backend",
             ),
@@ -383,6 +383,7 @@ def _process_audit_builder_input(
     replay_readiness: ReplayBundleReadiness | None = None,
     source_inventory: Any | None = None,
     final_evidence_table: Any | None = None,
+    ticket_graph_summary: BaseModel | None = None,
 ) -> ProcessAuditBuilderInput:
     gate_input = _closeout_gate_ready_input()
     resolved_replay_events = replay_events or _process_audit_events()
@@ -402,8 +403,9 @@ def _process_audit_builder_input(
         acceptance_contract=_acceptance_contract(gate_input.package_contract),
         agent_context_index=agent_context_index
         or _agent_context_index(gate_input.provider_attempt_refs),
-        ticket_graph_summary=_ticket_graph_summary(),
+        ticket_graph_summary=ticket_graph_summary or _ticket_graph_summary(),
         source_inventory=source_inventory if source_inventory is not None else gate_input.source_inventory,
+        run_manifest=gate_input.run_manifest,
         workspace_evidence_bundle=gate_input.workspace_evidence_bundle,
         final_evidence_table=final_evidence_table if final_evidence_table is not None else gate_input.final_evidence_table,
         checker_verdict=gate_input.checker_verdict,
@@ -635,7 +637,7 @@ def test_process_audit_rejects_agent_context_entry_without_real_snapshot() -> No
         )
     )
 
-    with pytest.raises((ProcessAuditError, ValidationError), match="agent context|snapshot"):
+    with pytest.raises((ProcessAuditError, ValidationError), match="agent context|snapshot|AgentContextIndex"):
         build_process_audit_bundle(
             _process_audit_builder_input(agent_context_index=legacy_index)
         )

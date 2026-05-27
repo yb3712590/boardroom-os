@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 from boardroom_os.agents.seat import AgentSeatRef
@@ -12,6 +13,7 @@ from boardroom_os.audit.git_version_audit import (
 from boardroom_os.audit.process_audit import (
     ProcessAuditArtifactKind,
     ProcessAuditBuilderInput,
+    ProcessAuditError,
     build_process_audit_bundle,
     process_audit_readiness,
 )
@@ -72,11 +74,16 @@ def _git_bundle_for_source_inventory(source_inventory: Any):
     )
 
 
-def _build_process_audit_with_source_inventory(source_inventory: Any):
+def _build_process_audit_with_source_inventory(
+    source_inventory: Any,
+    *,
+    ticket_graph_summary: Any | None = None,
+):
     git_bundle = _git_bundle_for_source_inventory(source_inventory)
     return build_process_audit_bundle(
         _process_audit_builder_input(
             source_inventory=source_inventory,
+            ticket_graph_summary=ticket_graph_summary,
             git_version_audit_bundle=git_bundle,
             git_audit_readiness=git_version_audit_readiness(git_bundle),
         )
@@ -143,8 +150,16 @@ def test_artifact_lineage_separates_producer_and_consumer_tickets() -> None:
     changed_inventory = base_input.source_inventory.model_copy(
         update={"entries": (changed_entry, *base_input.source_inventory.entries[1:])}
     )
+    ticket = base_input.ticket_graph_summary.tickets[0]
+    consumer_ticket = ticket.model_copy(update={"ticket_ref": "ticket-b"})
+    ticket_graph_summary = base_input.ticket_graph_summary.model_copy(
+        update={"tickets": (*base_input.ticket_graph_summary.tickets, consumer_ticket)}
+    )
 
-    bundle = _build_process_audit_with_source_inventory(changed_inventory)
+    bundle = _build_process_audit_with_source_inventory(
+        changed_inventory,
+        ticket_graph_summary=ticket_graph_summary,
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     lineage_for_entry = next(
         item
@@ -185,6 +200,58 @@ def test_artifact_lineage_hash_stable_under_source_inventory_entry_reordering() 
     assert first_lineage.sha256 == second_lineage.sha256
 
 
+def test_primary_artifact_lineage_closes_source_to_evidence_and_manifest() -> None:
+    builder_input = _process_audit_builder_input()
+    bundle = build_process_audit_bundle(builder_input)
+    lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    evidence_map = _artifact_by_kind(bundle, ProcessAuditArtifactKind.EVIDENCE_MAP)
+    row = lineage.content["lineages"][0]
+
+    assert lineage.content["checker_verdict_ref"] == builder_input.checker_verdict.checker_verdict_id.value
+    assert "closeout_related_ref" not in row
+    assert row["evidence_map_ref"] == evidence_map.artifact_id.value
+    assert row["evidence_map_ref"] != builder_input.final_evidence_table.final_evidence_table_id.value
+    assert row["final_evidence_table_ref"] == builder_input.final_evidence_table.final_evidence_table_id.value
+    assert row["evidence_bindings"] == [
+        {
+            "evidence_claim_ref": builder_input.verified_evidence[0].evidence_claim_ref.value,
+            "verified_evidence_ref": builder_input.verified_evidence[0].verified_evidence_id.value,
+            "verifier_ref": builder_input.verification_runs[0].runner_ref.value,
+            "verification_run_ref": builder_input.verification_runs[0].verification_run_id.value,
+            "run_manifest_ref": builder_input.run_manifest.run_manifest_id.value,
+        }
+    ]
+    assert row["evidence_bindings"][0]["verifier_ref"] != row["evidence_bindings"][0]["verification_run_ref"]
+
+
+
+def test_fallback_artifact_lineage_uses_verifier_runner_ref() -> None:
+    base_input = _process_audit_builder_input()
+    fallback_evidence = base_input.verified_evidence[0].model_copy(
+        update={
+            "fallback_decision_record_ref": FallbackDecisionRecordRef(
+                value="fallback-decision.verified-evidence.app"
+            ),
+            "fallback_decision_recorded_ref": FallbackDecisionRecordedRef(
+                value="fallback-decision-recorded.verified-evidence.app"
+            ),
+        }
+    )
+
+    bundle = build_process_audit_bundle(
+        _process_audit_builder_input(verified_evidence=(fallback_evidence,))
+    )
+    lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    evidence_map = _artifact_by_kind(bundle, ProcessAuditArtifactKind.EVIDENCE_MAP)
+    fallback_lineage = lineage.content["fallback_lineages"][0]
+
+    assert fallback_lineage["verifier_ref"] == base_input.verification_runs[0].runner_ref.value
+    assert fallback_lineage["verifier_ref"] != base_input.verification_runs[0].verification_run_id.value
+    assert fallback_lineage["evidence_map_ref"] == evidence_map.artifact_id.value
+    assert "closeout_related_ref" not in fallback_lineage
+
+
+
 def test_ticket_graph_markdown_uses_real_ticket_fields() -> None:
     builder_input = _process_audit_builder_input()
     ticket = builder_input.ticket_graph_summary.tickets[0]
@@ -200,7 +267,7 @@ def test_ticket_graph_markdown_uses_real_ticket_fields() -> None:
     assert "## ticket" not in markdown.splitlines()
 
 
-def test_agent_context_index_reads_snapshot_fields() -> None:
+def test_agent_context_index_rejects_legacy_top_level_fallbacks() -> None:
     base_input = _process_audit_builder_input()
     base_entry = base_input.agent_context_index.entries[0]
     agent_context_index = _AgentContextIndexWithTopLevelFallbacks(
@@ -215,23 +282,11 @@ def test_agent_context_index_reads_snapshot_fields() -> None:
         )
     )
 
-    bundle = build_process_audit_bundle(
+    with pytest.raises(
+        (ProcessAuditError, ValueError),
+        match="agent_context_index must be AgentContextIndex|AgentContextIndex",
+    ):
         _process_audit_builder_input(agent_context_index=agent_context_index)
-    )
-    agent_context = _artifact_by_kind(
-        bundle,
-        ProcessAuditArtifactKind.AGENT_CONTEXT_INDEX,
-    )
-    indexed_entry = agent_context.content["entries"][0]
-
-    assert indexed_entry["execution_package_ref"] == (
-        base_entry.snapshot.execution_package_ref.value
-    )
-    assert indexed_entry["model_execution_profile"] == (
-        base_entry.snapshot.model_execution_profile.model_dump(mode="json")
-    )
-    assert indexed_entry["execution_package_ref"] != "execution-package.legacy-top-level"
-    assert indexed_entry["model_execution_profile"] != {"model": "legacy-top-level"}
 
 
 def _stable_hash_input_with_order(
@@ -385,6 +440,7 @@ def _stable_hash_input_with_order(
         agent_context_index=agent_context_index,
         ticket_graph_summary=base_input.ticket_graph_summary,
         source_inventory=source_inventory,
+        run_manifest=base_input.run_manifest,
         workspace_evidence_bundle=workspace_evidence_bundle,
         final_evidence_table=final_evidence_table,
         checker_verdict=base_input.checker_verdict,

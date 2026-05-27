@@ -38,9 +38,10 @@ from boardroom_os.evidence.table import FinalEvidenceTable
 from boardroom_os.evidence.verifier import VerifiedEvidence
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import EventType, ProjectRef
-from boardroom_os.execution.context_index import ProviderAttemptRef
+from boardroom_os.execution.context_index import AgentContextIndex, ProviderAttemptRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunStatus
 from boardroom_os.workspace.evidence_export import WorkspaceEvidenceBundle
+from boardroom_os.workspace.run_manifest import RunManifest
 from boardroom_os.workspace.source_inventory import SourceInventory
 from boardroom_os.audit.git_version_audit import (
     GitVersionAuditBundle,
@@ -90,13 +91,22 @@ _LINEAGE_REQUIRED_FIELDS = {
     "consumer_ticket_refs",
     "acceptance_refs",
     "evidence_refs",
+    "evidence_bindings",
+    "evidence_map_ref",
+    "final_evidence_table_ref",
+}
+_LINEAGE_EVIDENCE_BINDING_REQUIRED_FIELDS = {
+    "evidence_claim_ref",
+    "verified_evidence_ref",
+    "verifier_ref",
+    "verification_run_ref",
+    "run_manifest_ref",
 }
 _FALLBACK_LINEAGE_REQUIRED_FIELDS = {
     "fallback_decision_record_ref",
     "fallback_decision_recorded_ref",
     "verifier_ref",
     "evidence_map_ref",
-    "closeout_related_ref",
 }
 _FALLBACK_LINEAGE_REQUIRED_NONEMPTY_FIELDS = _FALLBACK_LINEAGE_REQUIRED_FIELDS - {
     "fallback_decision_recorded_ref"
@@ -347,6 +357,49 @@ def _validate_source_inventory_entry_lineage_fields(builder_input: ProcessAuditB
             "source inventory producer_attempt_refs mismatch: "
             f"extra={sorted(actual_provider_refs - expected_provider_refs)}"
         )
+
+
+def _validate_source_inventory_consumer_ticket_closure(
+    builder_input: ProcessAuditBuilderInput,
+) -> None:
+    tickets_by_ref = {
+        _ref_value(_required_attr(ticket, "ticket_ref", context="ticket graph summary ticket")): ticket
+        for ticket in _ticket_graph_summary_tickets(builder_input.ticket_graph_summary)
+    }
+    for entry in builder_input.source_inventory.entries:
+        attrs = _source_inventory_entry_lineage_attrs(entry)
+        source_surface_ref = _ref_value(attrs["source_surface_ref"])
+        acceptance_refs = {_ref_value(ref) for ref in attrs["acceptance_refs"]}
+        for consumer_ticket_ref in attrs["consumer_ticket_refs"]:
+            ticket_ref = _ref_value(consumer_ticket_ref)
+            ticket = tickets_by_ref.get(ticket_ref)
+            if ticket is None:
+                raise ProcessAuditError(
+                    "source inventory consumer_ticket_refs outside ticket scope"
+                )
+            ticket_surface_refs = {
+                _ref_value(ref)
+                for ref in _required_nonempty_iterable_attr(
+                    ticket,
+                    "source_surface_refs",
+                    context="ticket graph summary ticket",
+                )
+            }
+            ticket_acceptance_refs = {
+                _ref_value(ref)
+                for ref in _required_nonempty_iterable_attr(
+                    ticket,
+                    "acceptance_refs",
+                    context="ticket graph summary ticket",
+                )
+            }
+            if (
+                source_surface_ref not in ticket_surface_refs
+                or not acceptance_refs.issubset(ticket_acceptance_refs)
+            ):
+                raise ProcessAuditError(
+                    "source inventory consumer_ticket_refs outside ticket scope"
+                )
 
 
 class ProcessAuditArtifact(BaseModel):
@@ -743,6 +796,7 @@ class ProcessAuditBuilderInput(BaseModel):
     agent_context_index: BaseModel
     ticket_graph_summary: BaseModel
     source_inventory: SkipValidation[SourceInventory]
+    run_manifest: SkipValidation[RunManifest]
     workspace_evidence_bundle: SkipValidation[WorkspaceEvidenceBundle]
     final_evidence_table: SkipValidation[FinalEvidenceTable]
     checker_verdict: SkipValidation[CheckerVerdict]
@@ -794,6 +848,11 @@ class ProcessAuditBuilderInput(BaseModel):
     def _require_source_inventory(cls, value: Any) -> Any:
         return _require_instance(value, SourceInventory, "source_inventory")
 
+    @field_validator("run_manifest", mode="before")
+    @classmethod
+    def _require_run_manifest(cls, value: Any) -> Any:
+        return _require_instance(value, RunManifest, "run_manifest")
+
     @field_validator("workspace_evidence_bundle", mode="before")
     @classmethod
     def _require_workspace_evidence_bundle(cls, value: Any) -> Any:
@@ -837,7 +896,12 @@ class ProcessAuditBuilderInput(BaseModel):
     def _require_git_audit_readiness(cls, value: Any) -> Any:
         return _require_instance(value, GitAuditReadiness, "git_audit_readiness")
 
-    @field_validator("agent_context_index", "ticket_graph_summary", mode="before")
+    @field_validator("agent_context_index", mode="before")
+    @classmethod
+    def _require_agent_context_index(cls, value: Any) -> Any:
+        return _require_instance(value, AgentContextIndex, "agent_context_index")
+
+    @field_validator("ticket_graph_summary", mode="before")
     @classmethod
     def _require_projection_model(cls, value: Any) -> Any:
         if not isinstance(value, BaseModel):
@@ -884,6 +948,8 @@ class ProcessAuditBuilderInput(BaseModel):
                 raise ProcessAuditError("event project_ref mismatch")
         if self.source_inventory.package_contract_ref != self.package_contract.package_contract_id:
             raise ProcessAuditError("source inventory package contract mismatch")
+        if self.run_manifest.package_contract_ref != self.package_contract.package_contract_id:
+            raise ProcessAuditError("run manifest package contract mismatch")
         if self.workspace_evidence_bundle.final_evidence_table_ref != self.final_evidence_table.final_evidence_table_id:
             raise ProcessAuditError("workspace evidence bundle final table mismatch")
         if self.checker_verdict.final_evidence_table_ref != self.final_evidence_table.final_evidence_table_id:
@@ -891,6 +957,7 @@ class ProcessAuditBuilderInput(BaseModel):
         _validate_event_timeline_closure(self)
         _validate_agent_context_index_closure(self)
         _validate_source_inventory_entry_lineage_fields(self)
+        _validate_source_inventory_consumer_ticket_closure(self)
         _validate_evidence_closure(self)
         _validate_git_version_audit_binding(self)
         derived_replay_readiness = replay_bundle_readiness(self.replay_bundle)
@@ -1104,6 +1171,8 @@ def _validate_git_version_audit_binding(builder_input: ProcessAuditBuilderInput)
             or binding.workspace_snapshot_ref != run.workspace_snapshot_ref
         ):
             raise ProcessAuditError("git version audit verification run facts mismatch")
+        if binding.run_manifest_ref != builder_input.run_manifest.run_manifest_id:
+            raise ProcessAuditError("git version audit run_manifest_ref mismatch")
     for binding in git_bundle.command_evidence_bindings:
         if binding.package_contract_ref != builder_input.package_contract.package_contract_id:
             raise ProcessAuditError("git version audit package_contract_ref mismatch")
@@ -1167,11 +1236,22 @@ def build_process_audit_bundle(builder_input: ProcessAuditBuilderInput) -> Proce
     )
 
 
+def _revalidate_builder_model(value: BaseModel, expected_type: type[BaseModel], field_name: str) -> None:
+    try:
+        expected_type.model_validate(value.model_dump(mode="python"))
+    except (TypeError, ValueError, ValidationError) as error:
+        raise ProcessAuditError(f"{field_name} must be valid {expected_type.__name__}") from error
+
+
 def _validate_builder_input_instance(
     builder_input: ProcessAuditBuilderInput,
 ) -> ProcessAuditBuilderInput:
     try:
-        return ProcessAuditBuilderInput.model_validate(builder_input)
+        _revalidate_builder_model(builder_input.source_inventory, SourceInventory, "source_inventory")
+        _revalidate_builder_model(builder_input.run_manifest, RunManifest, "run_manifest")
+        _revalidate_builder_model(builder_input.agent_context_index, AgentContextIndex, "agent_context_index")
+        validated = ProcessAuditBuilderInput.model_validate(builder_input)
+        return validated
     except ValidationError as error:
         raise ProcessAuditError(str(error)) from error
 
@@ -1216,12 +1296,15 @@ def _build_artifacts(
         ProcessAuditArtifactKind.DECISION_LOG: _decision_log_markdown(builder_input),
         ProcessAuditArtifactKind.AGENT_CONTEXT_INDEX: _agent_context_index_payload(builder_input),
         ProcessAuditArtifactKind.TICKET_GRAPH: _ticket_graph_markdown(builder_input),
-        ProcessAuditArtifactKind.ARTIFACT_LINEAGE: _artifact_lineage_payload(builder_input),
         ProcessAuditArtifactKind.EVIDENCE_MAP: _evidence_map_payload(builder_input),
         ProcessAuditArtifactKind.GIT_VERSION_AUDIT: _git_version_audit_markdown(builder_input),
         ProcessAuditArtifactKind.CLOSEOUT_SUMMARY: _closeout_summary_markdown(builder_input),
         ProcessAuditArtifactKind.REPLAY_BUNDLE_REPORT: _replay_bundle_report_payload(builder_input),
     }
+    content_by_kind[ProcessAuditArtifactKind.ARTIFACT_LINEAGE] = _artifact_lineage_payload(
+        builder_input,
+        evidence_map_ref=f"process-audit-artifact.{ProcessAuditArtifactKind.EVIDENCE_MAP.value}",
+    )
     artifacts: list[ProcessAuditArtifact] = []
     for path in REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS:
         kind, artifact_format = _PATH_KIND_FORMAT[path]
@@ -1288,9 +1371,17 @@ def _build_report(
         replay_bundle_report_ref=by_kind[ProcessAuditArtifactKind.REPLAY_BUNDLE_REPORT].artifact_id,
         checked_refs=checked_refs,
         expected_evidence_map_rows=tuple(_evidence_map_payload(builder_input)["rows"]),
-        expected_artifact_lineage_rows=tuple(_artifact_lineage_payload(builder_input)["lineages"]),
+        expected_artifact_lineage_rows=tuple(
+            _artifact_lineage_payload(
+                builder_input,
+                evidence_map_ref=by_kind[ProcessAuditArtifactKind.EVIDENCE_MAP].artifact_id.value,
+            )["lineages"]
+        ),
         expected_fallback_lineage_rows=tuple(
-            _artifact_lineage_payload(builder_input)["fallback_lineages"]
+            _artifact_lineage_payload(
+                builder_input,
+                evidence_map_ref=by_kind[ProcessAuditArtifactKind.EVIDENCE_MAP].artifact_id.value,
+            )["fallback_lineages"]
         ),
         expected_fallback_decision_refs=_canonical_sorted_unique_strings(
             _fallback_decision_refs(builder_input)
@@ -1506,7 +1597,38 @@ def _ticket_graph_markdown(builder_input: ProcessAuditBuilderInput) -> str:
     return _markdown_lines(*lines)
 
 
-def _artifact_lineage_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, Any]:
+def _evidence_bindings_for_entry(
+    builder_input: ProcessAuditBuilderInput,
+    evidence_refs: tuple[Any, ...],
+) -> list[dict[str, str]]:
+    evidence_by_ref = {
+        evidence.verified_evidence_id.value: evidence
+        for evidence in builder_input.verified_evidence
+    }
+    run_manifest_ref = builder_input.run_manifest.run_manifest_id.value
+    bindings: list[dict[str, str]] = []
+    for evidence_ref in evidence_refs:
+        evidence = evidence_by_ref.get(evidence_ref.value)
+        if evidence is None:
+            raise ProcessAuditError("source inventory evidence_refs missing verified evidence")
+        verification_run_ref = _verification_ref_for_evidence(evidence)
+        bindings.append(
+            {
+                "evidence_claim_ref": evidence.evidence_claim_ref.value,
+                "verified_evidence_ref": evidence.verified_evidence_id.value,
+                "verifier_ref": _verifier_ref_for_evidence(builder_input, evidence),
+                "verification_run_ref": verification_run_ref,
+                "run_manifest_ref": run_manifest_ref,
+            }
+        )
+    return sorted(bindings, key=lambda item: item["verified_evidence_ref"])
+
+
+def _artifact_lineage_payload(
+    builder_input: ProcessAuditBuilderInput,
+    *,
+    evidence_map_ref: str,
+) -> dict[str, Any]:
     lineages = []
     for entry in canonical_sort_for_hash(
         builder_input.source_inventory.entries,
@@ -1527,6 +1649,12 @@ def _artifact_lineage_payload(builder_input: ProcessAuditBuilderInput) -> dict[s
                 ],
                 "acceptance_refs": [ref.value for ref in attrs["acceptance_refs"]],
                 "evidence_refs": [ref.value for ref in attrs["evidence_refs"]],
+                "evidence_bindings": _evidence_bindings_for_entry(
+                    builder_input,
+                    attrs["evidence_refs"],
+                ),
+                "evidence_map_ref": evidence_map_ref,
+                "final_evidence_table_ref": builder_input.final_evidence_table.final_evidence_table_id.value,
             }
         )
     fallback_lineages = []
@@ -1548,12 +1676,15 @@ def _artifact_lineage_payload(builder_input: ProcessAuditBuilderInput) -> dict[s
                     if evidence.fallback_decision_recorded_ref is not None
                     else None
                 ),
-                "verifier_ref": _verification_ref_for_evidence(evidence),
-                "evidence_map_ref": builder_input.final_evidence_table.final_evidence_table_id.value,
-                "closeout_related_ref": builder_input.checker_verdict.checker_verdict_id.value,
+                "verifier_ref": _verifier_ref_for_evidence(builder_input, evidence),
+                "evidence_map_ref": evidence_map_ref,
             }
         )
-    return {"lineages": lineages, "fallback_lineages": fallback_lineages}
+    return {
+        "checker_verdict_ref": builder_input.checker_verdict.checker_verdict_id.value,
+        "lineages": lineages,
+        "fallback_lineages": fallback_lineages,
+    }
 
 
 def _verification_ref_for_evidence(evidence: VerifiedEvidence) -> str:
@@ -1564,6 +1695,25 @@ def _verification_ref_for_evidence(evidence: VerifiedEvidence) -> str:
             f"verified evidence missing verification_run_refs: {evidence.verified_evidence_id.value}"
         )
     return evidence.verification_run_refs[0].value
+
+
+def _verifier_ref_for_evidence(
+    builder_input: ProcessAuditBuilderInput,
+    evidence: VerifiedEvidence,
+) -> str:
+    verification_run_ref = _verification_ref_for_evidence(evidence)
+    verification_run = next(
+        (
+            run
+            for run in builder_input.verification_runs
+            if run.verification_run_id.value == verification_run_ref
+        ),
+        None,
+    )
+    if verification_run is None:
+        raise ProcessAuditError("verified evidence references missing verification runs")
+    return verification_run.runner_ref.value
+
 
 
 def _evidence_map_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, Any]:
@@ -1950,21 +2100,58 @@ def _validate_artifact_lineage_ref_container(value: Any) -> None:
         raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
 
 
+def _validate_artifact_lineage_evidence_bindings(lineage: dict[str, Any]) -> None:
+    bindings = lineage["evidence_bindings"]
+    if not isinstance(bindings, list | tuple) or not bindings:
+        raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+    binding_refs: list[str] = []
+    for binding in bindings:
+        if not isinstance(binding, dict) or not (
+            _LINEAGE_EVIDENCE_BINDING_REQUIRED_FIELDS <= set(binding)
+        ):
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        if any(
+            not isinstance(binding[field], str) or not binding[field]
+            for field in _LINEAGE_EVIDENCE_BINDING_REQUIRED_FIELDS
+        ):
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        if binding["verifier_ref"] == binding["verification_run_ref"]:
+            raise ProcessAuditError(
+                "artifact lineage evidence bindings must distinguish verifier and verification run"
+            )
+        binding_refs.append(binding["verified_evidence_ref"])
+    if sorted(binding_refs) != sorted(lineage["evidence_refs"]):
+        raise ProcessAuditError("artifact lineage evidence bindings must match evidence_refs")
+
+
 def _validate_artifact_lineage(bundle: ProcessAuditBundle) -> None:
     artifact = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
+    evidence_map_artifact = _artifact_by_kind(bundle, ProcessAuditArtifactKind.EVIDENCE_MAP)
     content = artifact.content
     if not isinstance(content, dict):
         raise ProcessAuditError("artifact lineage content must be an object")
+    if content.get("checker_verdict_ref") != bundle.process_audit_report.checked_refs[6]:
+        raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
     lineages = content.get("lineages")
     if not lineages:
         raise ProcessAuditError("artifact lineage must include producer attempt lineage")
+    seen_primary_paths: set[str] = set()
     for lineage in lineages:
         if not isinstance(lineage, dict) or not _LINEAGE_REQUIRED_FIELDS <= set(lineage):
             raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
         if any(not lineage[field] for field in _LINEAGE_REQUIRED_FIELDS):
             raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        path = lineage["path"]
+        if not isinstance(path, str) or not path:
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        if path in seen_primary_paths:
+            raise ProcessAuditError("artifact lineage primary rows must be unique")
+        seen_primary_paths.add(path)
         for tuple_field in ("consumer_ticket_refs", "acceptance_refs", "evidence_refs"):
             _validate_artifact_lineage_ref_container(lineage[tuple_field])
+        if lineage["evidence_map_ref"] != evidence_map_artifact.artifact_id.value:
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        _validate_artifact_lineage_evidence_bindings(lineage)
     expected_lineages = bundle.process_audit_report.expected_artifact_lineage_rows
     if _canonical_jsonable(tuple(lineages)) != _canonical_jsonable(expected_lineages):
         raise ProcessAuditError(
@@ -1984,6 +2171,8 @@ def _validate_artifact_lineage(bundle: ProcessAuditBundle) -> None:
         if any(not lineage[field] for field in _FALLBACK_LINEAGE_REQUIRED_NONEMPTY_FIELDS):
             raise ProcessAuditError("fallback lineage missing decision record")
         decision_ref = lineage["fallback_decision_record_ref"]
+        if lineage["evidence_map_ref"] != evidence_map_artifact.artifact_id.value:
+            raise ProcessAuditError("fallback lineage missing decision record")
         actual_fallback_refs.append(decision_ref)
         actual_fallback_recorded_refs[decision_ref] = lineage.get(
             "fallback_decision_recorded_ref"
