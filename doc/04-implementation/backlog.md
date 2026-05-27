@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-071C`
+**当前未完成工作包**：`V2-071D`
 
 **当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
 
@@ -159,9 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 2 / 6 | 进行中 |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 3 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
-| **合计** | **V2-000 ~ V2-080** | **49 / 59** | **Phase 7.5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **50 / 59** | **Phase 7.5 进行中** |
 
 ## 当前约束摘要
 
@@ -871,7 +871,7 @@ RoleProfile（角色模板）
 
 ### V2-071C: ProcessAudit 解构构造环 + events 单一来源
 
-- 状态：TODO
+- 状态：DONE
 - 目标：解除 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）之间的构造环；ProcessAudit 不再要求 `CLOSEOUT_COMMITTED` 出现在事件流中；ProcessAudit 直接复用 `ReplayBundle.events`，与 ReplayBundle 形成 events 单一权威源；移除 `getattr(..., "unknown")` 占位 fallback、`consumer_ticket_ref` 伪造、`expected_fallback_decision_refs` 为空时不拒绝额外 fallback_lineages 等隐式宽松校验；对 `checked_refs` canonical sort。
 - 输入文档：`v2-071a-fact-chain-design-spec.md`、`v2-071b-replay-bundle-rereplay-spec.md`、`process-audit-and-replay.md`、V2-070C 产物。
 - 依赖：V2-071B。
@@ -886,6 +886,7 @@ RoleProfile（角色模板）
   - `provider_attempt_refs` / `verification_runs` / `verified_evidence` 输入乱序时 `checked_refs` 仍按 canonical sort 产生稳定结果。
 - 必须证明的 happy path：ProcessAudit 在 CloseoutPackage 构造**之前**完成，事件流不含 `CLOSEOUT_COMMITTED`；ProcessAudit.events 与 ReplayBundle.events 完全相等（逐条比对，不仅是首尾 event_id）；agent context index 从 `entry.snapshot.*` 读取真实字段；`checked_refs` 在乱序输入下哈希稳定。
 - 验收口径：构造顺序变为 `Replay → ProcessAudit → GitAudit → CloseoutPackage → CLOSEOUT_COMMITTED → CloseoutReducer`，与 `closeout_reducer.py` 已实现的 reducer 顺序一致；不再可能在真实流程之外构造 synthetic event 通过 audit。
+- 完成证据：2026-05-27 新增 `v2-071c-process-audit-fact-chain-spec.md` 并收紧 ProcessAudit（流程审计）事实链语义：`ProcessAuditBuilderInput`（流程审计构造输入）删除外部 `events` 字段，timeline 与 checked refs 中的事件事实统一来自 `ReplayBundle.events`（重放包事件）；`_REQUIRED_TIMELINE_EVENT_KINDS` 不再要求 `closeout_committed`；ticket graph（任务图）与 AgentContextIndex（智能体上下文索引）缺字段时 fail closed，不再生成 `"unknown"` / `"ticket"` 占位；SourceInventory（源码清单）新增并强制 `consumer_ticket_refs`，artifact-lineage.json 分离 producer/consumer；fallback lineage actual refs 必须与 expected fallback decisions 完全一致；集合语义输入经 `canonical_sort_for_hash`（规范排序哈希 helper）稳定 `checked_refs`。验证证据：`PYTHONPATH="src:." python -m pytest tests/negative/test_process_audit_construction_loop_rejected.py tests/closeout/test_process_audit_fact_chain.py tests/closeout/test_process_audit.py tests/closeout/test_process_audit_artifacts.py -q --basetemp=.pytest-tmp-v2071c-audit` 通过（125 passed in 1.30s）；`PYTHONPATH="src:." python -m pytest tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2071c-audit-regression` 通过（602 passed in 2.46s）。
 
 ### V2-071D: Git 审计强化（移除 fallback + 解析正确性 + 确定性哈希）
 

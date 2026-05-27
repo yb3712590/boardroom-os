@@ -417,9 +417,10 @@ def _materialize_new_entry(
     agent_root_resolved: Path,
     entry: AgentAssetImportEntry,
 ) -> None:
-    source_file = _resolve_under(source_root_resolved, entry.source_path.value, boundary_name="source")
-    if source_file.is_symlink():
+    source_path = source_root_resolved / entry.source_path.value
+    if source_path.is_symlink():
         raise AgentAssetImportError("source file must not be a symlink")
+    source_file = _resolve_under(source_root_resolved, entry.source_path.value, boundary_name="source")
     if not source_file.exists() or not source_file.is_file():
         raise AgentAssetImportError("source file must exist and be a regular file")
     source_hash = _sha256_file(source_file)
