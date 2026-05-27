@@ -291,7 +291,14 @@ def test_git_audit_adapter_rejects_git_command_failure() -> None:
     adapter = GitAuditAdapter(transport=transport)
 
     with pytest.raises(GitAuditAdapterError, match="git command failed"):
-        adapter.collect(package_root="10-project", project_ref="project-tiny-fullstack", cwd="D:/tmp/repo")
+        adapter.collect(
+            package_root="10-project",
+            project_ref="project-tiny-fullstack",
+            cwd="D:/tmp/repo",
+            source_inventory_hash=source_inventory_hash(_ready_input().source_inventory),
+            base_commit_sha=_BASE_COMMIT_SHA,
+            worktree_ref="worktree.final-package",
+        )
 
 
 def test_git_audit_adapter_does_not_expose_arbitrary_git_runner() -> None:
@@ -337,7 +344,7 @@ def test_git_version_audit_hash_manifest_closes_bundle_payload() -> None:
 
     assert bundle.hash_manifest.fact_set_hash.value
     assert bundle.hash_manifest.report_hash.value
-    assert set(bundle.hash_manifest.command_binding_hashes) == {"verification-run.app"}
+    assert set(bundle.hash_manifest.command_binding_hashes) == {"git-command-evidence-binding.verification-run.app"}
     assert bundle.bundle_hash == bundle.hash_manifest.bundle_payload_hash.value
 
 
@@ -372,15 +379,15 @@ def test_git_audit_adapter_collects_git_facts_from_transport() -> None:
                 stdout="main\n",
                 stderr="",
             ),
-            ("git", "status", "--porcelain"): GitCommandResult(
-                command=("git", "status", "--porcelain"),
+            ("git", "status", "--porcelain=v1", "-z"): GitCommandResult(
+                command=("git", "status", "--porcelain=v1", "-z"),
                 cwd="D:/tmp/repo",
                 exit_code=0,
                 stdout="",
                 stderr="",
             ),
-            ("git", "diff", "--stat"): GitCommandResult(
-                command=("git", "diff", "--stat"),
+            ("git", "diff", "--shortstat"): GitCommandResult(
+                command=("git", "diff", "--shortstat"),
                 cwd="D:/tmp/repo",
                 exit_code=0,
                 stdout="",
@@ -415,7 +422,7 @@ def test_git_audit_adapter_collects_git_facts_from_transport() -> None:
     assert transport.commands == [
         ("git", "rev-parse", "HEAD"),
         ("git", "rev-parse", "--abbrev-ref", "HEAD"),
-        ("git", "status", "--porcelain"),
-        ("git", "diff", "--stat"),
+        ("git", "status", "--porcelain=v1", "-z"),
+        ("git", "diff", "--shortstat"),
         ("git", "tag", "--points-at", "HEAD"),
     ]

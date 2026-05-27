@@ -7,6 +7,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 
+from boardroom_os.contracts.refs import hash_namespaced_payload, namespaced_ref
+
 from boardroom_os.audit.git_version_audit import (
     GitChangedFile,
     GitChangedFileStatus,
@@ -17,8 +19,8 @@ from boardroom_os.audit.git_version_audit import (
 
 _GIT_REV_PARSE_HEAD = ("git", "rev-parse", "HEAD")
 _GIT_REV_PARSE_BRANCH = ("git", "rev-parse", "--abbrev-ref", "HEAD")
-_GIT_STATUS_PORCELAIN = ("git", "status", "--porcelain")
-_GIT_DIFF_STAT = ("git", "diff", "--stat")
+_GIT_STATUS_PORCELAIN = ("git", "status", "--porcelain=v1", "-z")
+_GIT_DIFF_STAT = ("git", "diff", "--shortstat")
 _GIT_TAG_POINTS_AT_HEAD = ("git", "tag", "--points-at", "HEAD")
 _GIT_COMMAND_TEMPLATES = frozenset(
     {
@@ -85,16 +87,20 @@ class GitAuditAdapter:
         worktree_ref: str | None = None,
         generated_at: datetime | None = None,
     ) -> GitVersionAuditFactSet:
+        if source_inventory_hash is None:
+            raise GitAuditAdapterError("source_inventory_hash is required")
+        if base_commit_sha is None:
+            raise GitAuditAdapterError("base_commit_sha is required")
+        if worktree_ref is None:
+            raise GitAuditAdapterError("worktree_ref is required")
+
         final_commit_sha = self._rev_parse_head(cwd=cwd).stdout.strip()
         branch_name = self._rev_parse_branch(cwd=cwd).stdout.strip()
         status_output = self._status_porcelain(cwd=cwd).stdout
         diff_stat_output = self._diff_stat(cwd=cwd).stdout
         tag_output = self._tags_pointing_at_head(cwd=cwd).stdout
 
-        if source_inventory_hash is None:
-            raise GitAuditAdapterError("source_inventory_hash is required")
-
-        changed_files = self._parse_status(status_output)
+        changed_files = self._parse_status_z(status_output)
         dirty_status = GitDirtyStatus.DIRTY if changed_files else GitDirtyStatus.CLEAN
         git_clean = dirty_status is GitDirtyStatus.CLEAN
         summary_text = diff_stat_output.strip() if diff_stat_output.strip() else "clean working tree"
@@ -104,14 +110,27 @@ class GitAuditAdapter:
         )
         optional_tag_ref = self._first_tag_ref(tag_output)
         now = generated_at or datetime.now(UTC)
+        fact_payload_hash = hash_namespaced_payload(
+            {
+                "project_ref": project_ref,
+                "base_commit_sha": base_commit_sha,
+                "final_commit_sha": final_commit_sha,
+                "worktree_ref": worktree_ref,
+                "source_inventory_hash": source_inventory_hash,
+            }
+        )
 
         return GitVersionAuditFactSet(
-            fact_set_id=f"git-version-audit-facts.{project_ref}",
+            fact_set_id=namespaced_ref(
+                kind="git-version-audit-facts",
+                project_ref=project_ref,
+                content_hash=fact_payload_hash,
+            ),
             project_ref=project_ref,
             package_root=package_root,
             branch_ref=f"branch.{branch_name}",
-            worktree_ref=worktree_ref or f"worktree.{package_root}",
-            base_commit_sha=base_commit_sha or final_commit_sha,
+            worktree_ref=worktree_ref,
+            base_commit_sha=base_commit_sha,
             final_commit_sha=final_commit_sha,
             optional_tag_ref=optional_tag_ref,
             dirty_status=dirty_status,
@@ -145,22 +164,28 @@ class GitAuditAdapter:
     def _tags_pointing_at_head(self, *, cwd: str) -> GitCommandResult:
         return self._run_template(_GIT_TAG_POINTS_AT_HEAD, cwd=cwd)
 
-    def _parse_status(self, status_output: str) -> tuple[GitChangedFile, ...]:
+    def _parse_status_z(self, status_output: str) -> tuple[GitChangedFile, ...]:
         changed_files: list[GitChangedFile] = []
-        for raw_line in status_output.splitlines():
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            status_code = line[:2]
-            path_part = line[3:].strip() if len(line) > 3 else ""
+        entries = [entry for entry in status_output.split("\0") if entry]
+        index = 0
+        while index < len(entries):
+            entry = entries[index]
+            if len(entry) < 4 or entry[2] != " ":
+                raise GitAuditAdapterError("invalid git status porcelain entry")
+            status_code = entry[:2]
+            path = entry[3:]
             status = self._changed_file_status(status_code)
-            if status is GitChangedFileStatus.RENAMED and " -> " in path_part:
-                previous_path, path = path_part.split(" -> ", 1)
+            if status is GitChangedFileStatus.RENAMED:
+                index += 1
+                if index >= len(entries):
+                    raise GitAuditAdapterError("renamed git status entry missing previous path")
+                previous_path = entries[index]
                 changed_files.append(
                     GitChangedFile(path=path, status=status, previous_path=previous_path)
                 )
             else:
-                changed_files.append(GitChangedFile(path=path_part, status=status))
+                changed_files.append(GitChangedFile(path=path, status=status))
+            index += 1
         return tuple(changed_files)
 
     def _changed_file_status(self, status_code: str) -> GitChangedFileStatus:

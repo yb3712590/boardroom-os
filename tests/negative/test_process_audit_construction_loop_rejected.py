@@ -1449,20 +1449,19 @@ def test_checked_refs_stable_with_multiple_provider_runs_evidence_fallbacks_and_
     )
     source_inventory = base_input.source_inventory.model_copy(update={"entries": (source_entry,)})
     inventory_hash = source_inventory_hash(source_inventory)
-    duplicate_binding_id = "git-command-evidence-binding.shared"
     git_bundle = _build_git_version_audit_bundle(
         source_inventory=source_inventory,
         verification_runs=(run_a, run_b),
         git_facts=_git_facts(source_inventory_hash=inventory_hash),
         command_evidence_bindings=(
             _command_binding(
-                binding_id=duplicate_binding_id,
+                binding_id="git-command-evidence-binding.verification-run.zzz",
                 verification_run_ref=run_b.verification_run_id,
                 workspace_snapshot_ref=run_b.workspace_snapshot_ref,
                 source_inventory_hash=inventory_hash,
             ),
             _command_binding(
-                binding_id=duplicate_binding_id,
+                binding_id="git-command-evidence-binding.verification-run.app",
                 verification_run_ref=run_a.verification_run_id,
                 workspace_snapshot_ref=run_a.workspace_snapshot_ref,
                 source_inventory_hash=inventory_hash,

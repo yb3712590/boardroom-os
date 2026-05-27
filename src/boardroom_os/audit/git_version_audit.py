@@ -21,6 +21,7 @@ from pydantic import (
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.closeout.gate import GitAuditReadiness, GitCommitSha, SourceInventoryHash
 from boardroom_os.contracts.hashes import Sha256Hex
+from boardroom_os.contracts.refs import canonical_sort_for_hash
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
 from boardroom_os.events.types import ProjectRef
@@ -575,7 +576,7 @@ class GitVersionAuditBundle(BaseModel):
     ) -> tuple[GitCommandEvidenceBinding, ...]:
         if not values:
             raise GitVersionAuditError("command evidence bindings must not be empty")
-        refs = [binding.verification_run_ref.value for binding in values]
+        refs = [binding.binding_id.value for binding in values]
         if len(set(refs)) != len(refs):
             raise GitVersionAuditError("command evidence bindings must be unique")
         return values
@@ -681,16 +682,24 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
     if not isinstance(builder_input, GitVersionAuditBuilderInput):
         raise GitVersionAuditError("builder_input must be GitVersionAuditBuilderInput")
     _validate_builder_input(builder_input)
+    sorted_runs = canonical_sort_for_hash(
+        builder_input.verification_runs,
+        key=lambda run: run.verification_run_id.value,
+    )
+    sorted_bindings = canonical_sort_for_hash(
+        builder_input.command_evidence_bindings,
+        key=lambda binding: binding.binding_id.value,
+    )
 
-    report = _build_report(builder_input)
-    checked_refs = _checked_refs(builder_input, report)
+    report = _build_report(builder_input, sorted_runs, sorted_bindings)
+    checked_refs = _checked_refs(builder_input, sorted_runs, sorted_bindings, report)
     bundle_id_placeholder = GitVersionAuditBundleRef(
         value=f"git-version-audit-bundle.{builder_input.project_ref.value}.{builder_input.git_facts.final_commit_sha.value}"
     )
     hash_manifest = _build_hash_manifest(
         project_ref=builder_input.project_ref,
         fact_set=builder_input.git_facts,
-        command_evidence_bindings=builder_input.command_evidence_bindings,
+        command_evidence_bindings=sorted_bindings,
         report=report,
         bundle_id=bundle_id_placeholder,
         generated_at=builder_input.generated_at,
@@ -702,7 +711,7 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
     hash_manifest = _build_hash_manifest(
         project_ref=builder_input.project_ref,
         fact_set=builder_input.git_facts,
-        command_evidence_bindings=builder_input.command_evidence_bindings,
+        command_evidence_bindings=sorted_bindings,
         report=report,
         bundle_id=bundle_id,
         generated_at=builder_input.generated_at,
@@ -713,7 +722,7 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
         project_ref=builder_input.project_ref,
         generated_at=builder_input.generated_at,
         fact_set=builder_input.git_facts,
-        command_evidence_bindings=builder_input.command_evidence_bindings,
+        command_evidence_bindings=sorted_bindings,
         report=report,
         hash_manifest=hash_manifest,
         checked_refs=checked_refs,
@@ -859,9 +868,13 @@ def _validate_command_bindings(
             raise GitVersionAuditError("command binding source inventory hash mismatch")
 
 
-def _build_report(builder_input: GitVersionAuditBuilderInput) -> GitVersionAuditReport:
-    command_refs = tuple(binding.verification_run_ref.value for binding in builder_input.command_evidence_bindings)
-    checked_refs = _checked_refs(builder_input, None)
+def _build_report(
+    builder_input: GitVersionAuditBuilderInput,
+    verification_runs: tuple[VerificationRun, ...],
+    command_evidence_bindings: tuple[GitCommandEvidenceBinding, ...],
+) -> GitVersionAuditReport:
+    command_refs = tuple(binding.verification_run_ref.value for binding in command_evidence_bindings)
+    checked_refs = _checked_refs(builder_input, verification_runs, command_evidence_bindings, None)
     return GitVersionAuditReport(
         git_version_audit_report_id=GitVersionAuditReportRef(
             value=f"git-version-audit-report.{builder_input.project_ref.value}.{builder_input.git_facts.final_commit_sha.value}"
@@ -883,6 +896,8 @@ def _build_report(builder_input: GitVersionAuditBuilderInput) -> GitVersionAudit
 
 def _checked_refs(
     builder_input: GitVersionAuditBuilderInput,
+    verification_runs: tuple[VerificationRun, ...],
+    command_evidence_bindings: tuple[GitCommandEvidenceBinding, ...],
     report: GitVersionAuditReport | None,
 ) -> tuple[str, ...]:
     refs = [
@@ -893,8 +908,8 @@ def _checked_refs(
         builder_input.git_facts.source_inventory_hash.value,
         builder_input.git_facts.fact_set_id.value,
     ]
-    refs.extend(run.verification_run_id.value for run in builder_input.verification_runs)
-    refs.extend(binding.binding_id.value for binding in builder_input.command_evidence_bindings)
+    refs.extend(run.verification_run_id.value for run in verification_runs)
+    refs.extend(binding.binding_id.value for binding in command_evidence_bindings)
     if report is not None:
         refs.append(report.git_version_audit_report_id.value)
     return tuple(dict.fromkeys(refs))
@@ -911,7 +926,7 @@ def _build_hash_manifest(
     checked_refs: tuple[str, ...],
 ) -> GitVersionAuditHashManifest:
     command_binding_hashes = {
-        binding.verification_run_ref.value: _content_hash(binding.model_dump(mode="json"))
+        binding.binding_id.value: _content_hash(binding.model_dump(mode="json"))
         for binding in command_evidence_bindings
     }
     bundle_payload = _bundle_payload_for_hash(
@@ -973,7 +988,7 @@ def _bundle_payload_for_hash(
 def _validate_hash_manifest(bundle: GitVersionAuditBundle) -> None:
     manifest = bundle.hash_manifest
     expected_command_hashes = {
-        binding.verification_run_ref.value: _content_hash(binding.model_dump(mode="json"))
+        binding.binding_id.value: _content_hash(binding.model_dump(mode="json"))
         for binding in bundle.command_evidence_bindings
     }
     if _hash_ref_value(manifest.fact_set_hash, "hash manifest fact_set_hash") != _hash_model(bundle.fact_set):
