@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080A`
+**当前未完成工作包**：`V2-080C`
 
-**当前重点**：Phase 7.5 V2-071 V2-070 fact-chain hardening（事实链强化重构）已闭合。V2-071A~F 已把 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）第二事实源、ProcessAudit events 与 ReplayBundle events 内容级一致性、GitAuditAdapter（Git 审计适配器）隐式 fallback、CloseoutPackage graph_version（图版本）边界、payload 内容绑定、跨包引用命名空间和确定性哈希全部纳入 fail-closed 回归。下一步进入 Phase 8 tiny full-stack proving scenario（微型全栈证明场景），从 V2-080A 定义 active contracts（活跃合同）开始。
+**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已启动。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配），证明 CEO / Architect / Worker / Checker agent team（智能体团队）不是隐式 prompt。下一步进入 V2-080C，执行 tiny implementation attempts（微型实施尝试）并记录 ProviderAttempt（模型调用尝试记录）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -160,8 +160,8 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
-| **合计** | **V2-000 ~ V2-080** | **53 / 59** | **Phase 8 待开始** |
+| Phase 8：Tiny proving scenario | V2-080 | 2 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-080** | **55 / 59** | **Phase 8 进行中** |
 
 ## 当前约束摘要
 
@@ -961,7 +961,7 @@ RoleProfile（角色模板）
 
 ### V2-080A: 定义 tiny scenario active contracts
 
-- 状态：TODO
+- 状态：DONE
 - 目标：为 tiny book availability tracker 生成 ProjectCharter、AcceptanceContract、PackageContract fixture。
 - 输入文档：`proving-scenario-tiny-fullstack.md`、V2-010 产物。
 - 依赖：V2-010G、V2-071F（Phase 7.5 fact-chain 重构闭合后方可进入 Phase 8）。
@@ -969,17 +969,19 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：缺 API/UI/persistence/run/test acceptance refs 时 scenario 无效。
 - 必须证明的 happy path：active contracts 能覆盖 full-stack package 的 source surfaces 和 evidence obligations。
 - 验收口径：scenario 不使用静态 universal AC。
+- 完成证据：2026-05-29 新增 `tests/proving/fixtures/tiny_fullstack_contracts.py`、`tests/proving/fixtures/__init__.py` 和 `tests/proving/test_tiny_contracts.py`。Negative tests 覆盖缺 API / UI / persistence / run-test acceptance refs、inactive AcceptanceContract、PackageContract source surfaces 缺 active refs、ContractGate evidence obligations 缺口均 fail closed；happy path 证明 ProjectCharter / AcceptanceContract / PackageContract / ContractGateResult 活跃链路闭合，backend / frontend / persistence / tests / docs / run-manifest source surfaces 覆盖 full-stack package，EvidenceObligation 覆盖所有 blocking criteria 的 evidence_required。验证证据：先运行 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080a-red` 得到预期 RED（缺 `tests.proving.fixtures.tiny_fullstack_contracts`）；实现后 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080a-strengthen` 通过（10 passed）；`PYTHONPATH=src:. python -m pytest tests/contracts/test_tiny_fullstack_contract_fixture.py tests/negative/test_tiny_fullstack_contract_fixture_fail_closed.py tests/proving/test_tiny_contracts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080a-contracts` 通过（16 passed）；`PYTHONPATH=src:. python -m pytest tests/proving -q --tb=short -rf --basetemp=.pytest-tmp-v2080a-proving` 通过（186 passed）。
 
 ### V2-080B: 生成 tiny ticket graph 与 seat assignment
 
-- 状态：TODO
+- 状态：DONE
 - 目标：创建 CEO/Architect/Worker/Checker seat 和 backend/frontend/test/docs ticket graph。
 - 输入文档：V2-020、V2-030 产物。
 - 依赖：V2-080A、V2-020F、V2-030B。
-- 输出文件：`tests/proving/test_tiny_ticket_graph.py`。
-- 必须先写的 negative tests：worker ticket 缺 owner seat、checker 与 worker 不独立、ticket 缺 evidence obligations 必须失败。
+- 输出文件：`tests/proving/fixtures/tiny_ticket_graph.py`、`tests/proving/test_tiny_ticket_graph.py`。
+- 必须先写的 negative tests：worker ticket 缺 seat assignment、checker 与 worker 不独立、ticket 缺 evidence obligations 必须失败。
 - 必须证明的 happy path：ticket graph ready queue 可按依赖推进。
 - 验收口径：agent team 不是隐式 prompt，而是 graph + seat assignment。
+- 完成证据：2026-05-29 新增 `tests/proving/fixtures/tiny_ticket_graph.py` 和 `tests/proving/test_tiny_ticket_graph.py`。Negative tests 覆盖 worker ticket 缺 seat assignment 时从 ready queue 移除并产生 blocker、checker ticket 错分配给 worker seat 时 fail closed、ticket 缺 evidence obligations 时 Pydantic validation fail closed；happy path 证明所有 ticket 均有 active seat assignment，implementation tickets 的 acceptance refs / source surface refs / evidence obligations 均来自 V2-080A active contracts，初始 ready queue 只包含无依赖且已正确派工的 governance / architecture / implementation tickets，checker ticket 被 implementation dependencies 阻塞，完成依赖后可推进 checker ready。验证证据：先运行 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_ticket_graph.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080b-red` 得到预期 RED（缺 `tests.proving.fixtures.tiny_ticket_graph`）；实现后 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_ticket_graph.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080b` 通过（8 passed）；`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_ticket_graph.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080ab` 通过（18 passed）；`PYTHONPATH=src:. python -m pytest tests/reducers/test_ticket_graph_projection.py tests/reducers/test_seat_assignment_projection.py tests/proving/test_tiny_ticket_graph.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080b-graph` 通过（83 passed）。
 
 ### V2-080C: 执行 tiny implementation attempts
 

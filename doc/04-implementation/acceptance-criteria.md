@@ -419,8 +419,8 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 #### AC 检查清单
 
-- [ ] tiny scenario active contracts 完整 — 由 V2-080A `test_tiny_contracts.py` 证明：覆盖 API / UI / persistence / run / test acceptance refs
-- [ ] tiny ticket graph + seat assignment — 由 V2-080B 证明
+- [x] tiny scenario active contracts 完整 — 由 V2-080A `test_tiny_contracts.py` 证明：覆盖 API / UI / persistence / run / test acceptance refs
+- [x] tiny ticket graph + seat assignment — 由 V2-080B `test_tiny_ticket_graph.py` 证明：ticket graph ready queue 可按依赖推进，seat assignment 明确绑定 CEO / Architect / Worker / Checker
 - [ ] tiny provider attempts — 由 V2-080C `test_tiny_provider_attempts.py` 证明：每个 implementation ticket ≥ 1 ProviderAttempt
 - [ ] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：final evidence table complete
 - [ ] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
@@ -446,4 +446,3 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [ ] process audit 可被人类读懂并完成审计
 
 > 仅当上述全部满足时，V2 第一阶段（foundation + minimal end-to-end）才算成立。**workflow completed ≠ V2 完成**。
-
