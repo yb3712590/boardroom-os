@@ -377,7 +377,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 #### AC 检查清单
 
-- [ ] AC-V2-CLOSEOUT-004（事实链单一权威源；新增抽象原则，见本文件第 1 部分）— 分项闭合进度：
+- [x] AC-V2-CLOSEOUT-004（事实链单一权威源；新增抽象原则，见本文件第 1 部分）— 分项闭合进度：
   - [x] V2-071B ReplayBundle（重放包）部分已由 `test_replay_bundle_rereplay.py` / `test_replay_bundle_external_summary_rejected.py` 证明：ReplayBundle 从 events 重新投影，调用方无法通过 builder 输入伪造 ProjectionReplaySummary 内容字段
   - [x] V2-071C ProcessAudit（流程审计）部分已由 `test_process_audit_fact_chain.py` / `test_process_audit_construction_loop_rejected.py` 证明：ProcessAudit 直接复用 ReplayBundle.events，不接受独立 events
 - [x] AC-V2-CLOSEOUT-005（无构造环；新增抽象原则）— 由 V2-071C `test_process_audit_construction_loop_rejected.py` 证明：事件流不含 `CLOSEOUT_COMMITTED` 时 ProcessAuditBundle 必须可成功构造；CloseoutPackage 构造完成后才发出 `CLOSEOUT_COMMITTED` 治理事件
@@ -385,7 +385,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] AC-V2-CLOSEOUT-007（graph_version 边界严格）— 由 V2-071E `test_closeout_package_graph_version_overflow_rejected.py` 证明：`CloseoutPackage.graph_version > ReplayBundle.last_graph_version` 必须 fail closed
 - [x] AC-V2-CLOSEOUT-008（payload 内容绑定）— 由 V2-071E `test_replay_payload_manifest_tampering_rejected.py` 证明：`ReplayPayloadManifest.entries[*].sha256` 与 resolver 重算结果不一致必须 raise
 - [x] AC-V2-CLOSEOUT-009（跨包引用命名空间）— V2-071A 已交付 `boardroom_os.contracts.refs`（引用命名空间 helper）基础设施与 `test_namespaced_refs.py` / `test_namespaced_refs_fail_closed.py`；最终由 V2-071E `test_closeout_package_boundary.py` 证明 `fact_set_id` / `artifact_ref` / `content_ref` / `closeout_package_id` 全面采用 `project_ref` + `content_hash` + 必要时 `run_id` 命名空间，禁止跨 run / 跨 project / 跨 bundle 串包
-- [ ] AC-V2-CLOSEOUT-010（确定性哈希）— 分项闭合进度：
+- [x] AC-V2-CLOSEOUT-010（确定性哈希）— 分项闭合进度：
   - [x] V2-071A 已交付 `canonical_sort_for_hash` 与 `hash_namespaced_payload` helper
   - [x] V2-071B 已由 `test_replay_bundle_rereplay.py` 证明 payload manifest entries / artifact manifest entries 乱序后仍产生稳定 hash
   - [x] V2-071C 已由 `test_process_audit_fact_chain.py` 证明 `checked_refs` 等 ProcessAudit 集合语义输入乱序后仍产生稳定 hash；V2-071D 已由 `test_git_audit_hardening.py` 证明 GitVersionAudit 的 verification_runs / command_evidence_bindings 稳定性
@@ -395,9 +395,9 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] AgentContextIndex 字段路径正确 — 由 V2-071C 证明：从 `entry.snapshot.execution_package_ref` / `entry.snapshot.model_execution_profile` 读取，不再 `getattr(entry, ..., None)` 取顶层平铺字段
 - [x] Git status `--porcelain -z` 解析鲁棒 — 由 V2-071D 证明：含换行 / 引号 / 反斜杠 / 制表符的文件名可被正确解析
 - [x] Git diff stat 锚定 summary footer — 由 V2-071D 证明：含 `12 insertions.md` 等特殊文件名不污染 `GitDiffSummary.insertions`
-- [ ] V2-070-batch-review-report.md 18 项 P0/P1/P2 缺口逐项闭合 — 由 V2-071F `test_v2_070_audit_report_p0_regressions.py` / `test_v2_070_audit_report_p1_regressions.py` / `test_v2_070_audit_report_p2_regressions.py` 证明
-- [ ] V2-071A ~ V2-071F 六个工作包全部 DONE（当前 V2-071A、V2-071B、V2-071C、V2-071D、V2-071E 已 DONE）
-- [ ] `backlog.md` 进度总览 Phase 7.5 显示 6/6
+- [x] V2-070-batch-review-report.md 18 项 P0/P1/P2 缺口逐项闭合 — 由 V2-071F `test_v2_070_audit_report_p0_regressions.py` / `test_v2_070_audit_report_p1_regressions.py` / `test_v2_070_audit_report_p2_regressions.py` 证明
+- [x] V2-071A ~ V2-071F 六个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 7.5 显示 6/6
 
 #### 本批产出
 
@@ -409,11 +409,11 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 #### 进入 Phase 8 前置（更新版）
 
-- [ ] 上述 Phase 7.5 AC checkbox 全部勾选
-- [ ] V2-071A ~ V2-071F 状态全部 DONE
-- [ ] `v2-070-batch-review-report.md` 列出的 18 项缺口全部有独立 negative test 证明已闭合
-- [ ] CloseoutPackage / CloseoutClosure 端到端集成测试通过（不再依赖合成事件）
-- [ ] 全量套件（`tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative`）通过
+- [x] 上述 Phase 7.5 AC checkbox 全部勾选
+- [x] V2-071A ~ V2-071F 状态全部 DONE
+- [x] `v2-070-batch-review-report.md` 列出的 18 项缺口全部有独立 negative test 证明已闭合
+- [x] CloseoutPackage / CloseoutClosure 端到端集成测试通过（不再依赖合成事件）
+- [x] 全量套件（`tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative`）通过
 
 ### Phase 8 验收 — V2-080 Tiny Full-stack Proving Scenario
 
@@ -446,5 +446,4 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [ ] process audit 可被人类读懂并完成审计
 
 > 仅当上述全部满足时，V2 第一阶段（foundation + minimal end-to-end）才算成立。**workflow completed ≠ V2 完成**。
-
 

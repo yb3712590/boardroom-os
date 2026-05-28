@@ -50,6 +50,7 @@
 | `v2-071d-git-audit-hardening-spec.md` | V2-071D GitAuditAdapter（Git 审计适配器）与 GitVersionAudit（Git 版本审计）硬化 spec |
 | `v2-071e-closeout-package-boundary-spec.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定 spec |
 | `v2-071e-closeout-package-boundary-implementation-plan.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定实施计划 |
+| `v2-071f-fact-chain-regression-spec.md` | V2-071F V2-070 fact-chain（事实链）端到端回归与 Phase 7 重锁 spec |
 
 ## AI 启动入口
 
@@ -66,4 +67,3 @@
 ## 更新触发条件
 
 当任务范围、优先级、验收规则、阶段计划或 proving scenario 改变时，必须更新本目录。
-

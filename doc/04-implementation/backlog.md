@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-071F`
+**当前未完成工作包**：`V2-080A`
 
-**当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
+**当前重点**：Phase 7.5 V2-071 V2-070 fact-chain hardening（事实链强化重构）已闭合。V2-071A~F 已把 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）第二事实源、ProcessAudit events 与 ReplayBundle events 内容级一致性、GitAuditAdapter（Git 审计适配器）隐式 fallback、CloseoutPackage graph_version（图版本）边界、payload 内容绑定、跨包引用命名空间和确定性哈希全部纳入 fail-closed 回归。下一步进入 Phase 8 tiny full-stack proving scenario（微型全栈证明场景），从 V2-080A 定义 active contracts（活跃合同）开始。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -159,9 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 5 / 6 | 进行中 |
-| Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
-| **合计** | **V2-000 ~ V2-080** | **52 / 59** | **Phase 7.5 进行中** |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
+| Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始 |
+| **合计** | **V2-000 ~ V2-080** | **53 / 59** | **Phase 8 待开始** |
 
 ## 当前约束摘要
 
@@ -926,7 +926,7 @@ RoleProfile（角色模板）
 
 ### V2-071F: 端到端 fail-closed 回归 + Phase 7 重锁
 
-- 状态：TODO
+- 状态：DONE
 - 目标：构造一个完整的 V2-070 fact-chain 集成测试（从 EventLog 真实跑到 CloseoutClosure），覆盖审计报告所有 18 项缺口的端到端 negative test；在 V2-070A~G 既有 negative tests 之上新增 fact-chain 级别的回归；重新勾选 Phase 7 验收 checkbox 并补齐 Phase 7.5 验收段；解锁 Phase 8。
 - 输入文档：`v2-071a-fact-chain-design-spec.md` ~ `v2-071e-closeout-package-boundary-spec.md`、`acceptance-criteria.md`、`v2-070-batch-review-report.md`。
 - 依赖：V2-071A、V2-071B、V2-071C、V2-071D、V2-071E。
@@ -949,6 +949,7 @@ RoleProfile（角色模板）
   - P2-5：含 "insertions" 关键字的文件名 diff 输出必须不污染统计。
 - 必须证明的 happy path：真实 EventLog（含 work product / provider attempt / command run / verification 等事件，**不含** `closeout_committed`）→ Replay → ProcessAudit → GitAudit → CloseoutGate → CloseoutPackage → `CLOSEOUT_COMMITTED`（governance event）→ CloseoutReducer.terminal_status = SUCCEEDED；CloseoutClosure 闭包校验通过；端到端构造稳定可重复执行 N 次得到字节相同的 readiness 与 hash。
 - 验收口径：Phase 7.5 全部 AC checkbox 勾选；`v2-070-batch-review-report.md` 列出的 18 项 P0/P1/P2 缺口均有独立 negative test 证明已闭合；Phase 8 V2-080A 解锁可启动；本工作包完成后 backlog 顶部 TL;DR 的"当前未完成工作包"指向 `V2-080A`。
+- 完成证据：2026-05-29 新增 `doc/04-implementation/v2-071f-fact-chain-regression-spec.md`、`tests/closeout/test_v2_070_fact_chain_end_to_end.py`、`tests/negative/test_v2_070_audit_report_p0_regressions.py`、`tests/negative/test_v2_070_audit_report_p1_regressions.py`、`tests/negative/test_v2_070_audit_report_p2_regressions.py`。P0/P1/P2 共 18 项回归均有独立测试函数覆盖；P1-2 使用缺字段 `ProcessAuditBuilderInput` 证明不会生成 `unknown` / `ticket` 占位；P2-4/P2-5 证明特殊 Git 输出解析正确且 dirty facts 不能进入 GitVersionAuditBundle。验证证据：`PYTHONPATH=src:. python -m pytest tests/negative/test_v2_070_audit_report_p0_regressions.py tests/negative/test_v2_070_audit_report_p1_regressions.py tests/negative/test_v2_070_audit_report_p2_regressions.py tests/closeout/test_v2_070_fact_chain_end_to_end.py -q --basetemp=.pytest-tmp-v2071f` 通过（20 passed in 1.27s）；`PYTHONPATH=src:. python -m pytest tests/closeout/test_replay_bundle_rereplay.py tests/closeout/test_process_audit_fact_chain.py tests/closeout/test_git_audit_hardening.py tests/closeout/test_closeout_package_boundary.py tests/closeout/test_closeout_reducer.py tests/closeout/test_closeout_closure_hardening.py -q --basetemp=.pytest-tmp-v2071f-history` 通过（69 passed in 1.36s）；`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2071f-all` 通过（1432 passed in 4.74s）。
 
 ---
 
