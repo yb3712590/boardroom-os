@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Any, Literal, Mapping, Protocol, Self
 
 from pydantic import (
     BaseModel,
@@ -74,6 +74,10 @@ class ReplayManifestRef(NonEmptyTextValue):
 
 class ReplayContentRef(NonEmptyTextValue):
     pass
+
+
+class ReplayPayloadResolver(Protocol):
+    def resolve_payload(self, content_ref: ReplayContentRef) -> bytes | str | Mapping[str, Any] | BaseModel | list[Any] | tuple[Any, ...]: ...
 
 
 class ReplayContentHash(NonEmptyTextValue):
@@ -855,12 +859,19 @@ def build_replay_bundle(builder_input: ReplayBundleBuilderInput) -> ReplayBundle
     )
 
 
-def replay_bundle_readiness(bundle: ReplayBundle) -> ReplayBundleReadiness:
+def replay_bundle_readiness(
+    bundle: ReplayBundle,
+    *,
+    payload_resolver: ReplayPayloadResolver | None = None,
+) -> ReplayBundleReadiness:
+    if payload_resolver is None:
+        raise ReplayBundleError("payload resolver is required")
     try:
         validated_bundle = _validate_bundle_instance(bundle)
     except ValidationError as error:
         raise ReplayBundleError(str(error)) from error
     attestation = validated_bundle.attestations[0]
+    _verify_payload_manifest_entries(validated_bundle, payload_resolver)
     _revalidate_hash_manifest(validated_bundle)
     _validate_report_alignment(validated_bundle)
     return ReplayBundleReadiness(
@@ -872,7 +883,47 @@ def replay_bundle_readiness(bundle: ReplayBundle) -> ReplayBundleReadiness:
         ),
         projection_versions=(attestation.projection_version,),
         hash_chain_verified=True,
+        payload_sha256_verified=True,
+        payload_manifest_ref=validated_bundle.payload_manifest.payload_manifest_id.value,
+        payload_manifest_hash=validated_bundle.hash_manifest.payload_manifest_hash.value,
     )
+
+
+def _payload_bytes_for_hash(value: object) -> bytes:
+    if value is None:
+        raise ReplayBundleError("payload content missing for replay manifest entry")
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    try:
+        encoded = json.dumps(
+            _canonical_jsonable(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ReplayBundleError("payload content must be canonical JSON serializable") from error
+    return encoded
+
+
+def _verify_payload_manifest_entries(
+    bundle: ReplayBundle,
+    payload_resolver: ReplayPayloadResolver,
+) -> None:
+    for entry in bundle.payload_manifest.entries:
+        try:
+            payload = payload_resolver.resolve_payload(entry.content_ref)
+        except (KeyError, LookupError, FileNotFoundError) as error:
+            raise ReplayBundleError("payload content missing for replay manifest entry") from error
+        except ReplayBundleError:
+            raise
+        except Exception as error:
+            raise ReplayBundleError("payload resolver failed for replay manifest entry") from error
+        actual_sha256 = hashlib.sha256(_payload_bytes_for_hash(payload)).hexdigest()
+        if actual_sha256 != entry.sha256.value:
+            raise ReplayBundleError("payload manifest sha256 mismatch")
 
 
 def _validate_bundle_instance(bundle: ReplayBundle) -> ReplayBundle:
@@ -1257,8 +1308,23 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _canonical_jsonable(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        field_names = tuple(type(value).model_fields)
+        if field_names == ("value",):
+            return value.value
+        return _canonical_jsonable(value.model_dump(mode="json"))
+    if isinstance(value, StrEnum):
+        return value.value
+    if isinstance(value, tuple | list):
+        return [_canonical_jsonable(item) for item in value]
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_jsonable(item) for key, item in value.items()}
+    return value
+
+
 def _hash_jsonable(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(_canonical_jsonable(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -1283,6 +1349,7 @@ __all__ = [
     "ReplayManifestEntry",
     "ReplayManifestKind",
     "ReplayPayloadManifest",
+    "ReplayPayloadResolver",
     "ReplayReport",
     "build_replay_bundle",
     "replay_bundle_readiness",

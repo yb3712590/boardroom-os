@@ -28,7 +28,8 @@ from boardroom_os.audit.process_audit import (
     ProcessAuditBundleRef,
     process_audit_readiness,
 )
-from boardroom_os.audit.replay_bundle import ReplayBundle, ReplayBundleRef, replay_bundle_readiness
+from boardroom_os.audit.replay_bundle import ReplayBundle, ReplayBundleRef
+from boardroom_os.closeout.closure import assert_checked_refs_cover
 from boardroom_os.closeout.gate import (
     CloseoutGateResult,
     CloseoutGateResultRef,
@@ -37,7 +38,12 @@ from boardroom_os.closeout.gate import (
     ProcessAuditReadiness,
     ReplayBundleReadiness,
 )
-from boardroom_os.closeout.closure import assert_checked_refs_cover
+from boardroom_os.contracts.refs import (
+    NamespacedRefError,
+    assert_namespace_segment,
+    assert_namespaced_ref_binding,
+    namespaced_ref,
+)
 from boardroom_os.contracts.types import NonEmptyTextValue
 from boardroom_os.evidence.table import FinalEvidenceTable, FinalEvidenceTableRef
 from boardroom_os.events.types import ProjectRef
@@ -241,11 +247,49 @@ class CloseoutPackage(BaseModel):
         missing = required_refs - set(_checked_ref_values(self.checked_refs))
         if missing:
             raise CloseoutPackageError("checked_refs must include required closeout refs")
+        try:
+            assert_namespaced_ref_binding(
+                self.closeout_package_id.value,
+                kind="closeout-package",
+                project_ref=self.project_ref.value,
+                content_hash=_closeout_package_payload_hash(self),
+                run_id=_run_id_from_closeout_package_ref(self.closeout_package_id.value),
+                field_name="closeout_package_id",
+            )
+        except NamespacedRefError as error:
+            raise CloseoutPackageError("closeout_package_id namespace binding mismatch") from error
         return self
 
     @field_serializer("verdict")
     def _serialize_verdict(self, value: CloseoutPackageVerdict) -> str:
         return value.value
+
+
+def _run_id_from_closeout_package_ref(value: str) -> str | None:
+    parts = value.split(".")
+    if len(parts) == 4:
+        return parts[3]
+    if len(parts) == 3:
+        return None
+    raise NamespacedRefError("closeout_package_id namespace binding mismatch")
+
+
+def _closeout_package_payload_hash(package: CloseoutPackage) -> str:
+    return _hash_jsonable(
+        {
+            "version": package.version,
+            "project_ref": package.project_ref.value,
+            "graph_version": package.graph_version,
+            "closeout_gate_result_ref": package.closeout_gate_result_ref.value,
+            "source_inventory_ref": package.source_inventory_ref.value,
+            "final_evidence_table_ref": package.final_evidence_table_ref.value,
+            "replay_bundle_ref": package.replay_bundle_ref.value,
+            "process_audit_bundle_ref": package.process_audit_bundle_ref.value,
+            "git_version_audit_bundle_ref": package.git_version_audit_bundle_ref.value,
+            "package_commit_ref": package.package_commit_ref.value,
+            "checked_refs": [ref.value for ref in package.checked_refs],
+        }
+    )
 
 
 class CloseoutPackageBuilderInput(BaseModel):
@@ -262,6 +306,17 @@ class CloseoutPackageBuilderInput(BaseModel):
     git_audit_readiness: SkipValidation[GitAuditReadiness]
     graph_version: int
     generated_at: datetime
+    run_id: str | None = None
+
+    @field_validator("run_id")
+    @classmethod
+    def _validate_run_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return assert_namespace_segment(value, field_name="run_id")
+        except NamespacedRefError as error:
+            raise CloseoutPackageError(str(error)) from error
 
     @field_validator("generated_at")
     @classmethod
@@ -318,10 +373,13 @@ def build_closeout_package(builder_input: CloseoutPackageBuilderInput) -> Closeo
         raise CloseoutPackageError(str(error)) from error
 
     checked_refs = _build_checked_refs(builder_input)
+    package_hash = _closeout_package_hash(builder_input, checked_refs)
     package_id = CloseoutPackageRef(
-        value=(
-            f"closeout-package.{builder_input.replay_bundle.project_ref.value}."
-            f"{_closeout_package_hash(builder_input, checked_refs)[:16]}"
+        value=namespaced_ref(
+            kind="closeout-package",
+            project_ref=builder_input.replay_bundle.project_ref.value,
+            content_hash=package_hash,
+            run_id=builder_input.run_id,
         )
     )
     return CloseoutPackage(
@@ -362,8 +420,8 @@ def _validate_builder_input(builder_input: CloseoutPackageBuilderInput) -> None:
         attestation.event_window.last_graph_version
         for attestation in builder_input.replay_bundle.attestations
     )
-    if builder_input.graph_version < replay_last_graph_version:
-        raise CloseoutPackageError("graph_version must cover replay bundle event window")
+    if builder_input.graph_version != replay_last_graph_version:
+        raise CloseoutPackageError("graph_version must equal replay bundle proof boundary")
 
     if builder_input.source_inventory.source_inventory_id != builder_input.git_version_audit_bundle.report.source_inventory_ref:
         raise CloseoutPackageError("source inventory ref mismatch")
@@ -378,8 +436,7 @@ def _validate_builder_input(builder_input: CloseoutPackageBuilderInput) -> None:
     if builder_input.git_version_audit_bundle.project_ref != project_ref:
         raise CloseoutPackageError("git version audit bundle project_ref mismatch")
 
-    if replay_bundle_readiness(builder_input.replay_bundle) != builder_input.replay_readiness:
-        raise CloseoutPackageError("replay readiness bundle mismatch")
+    _validate_replay_readiness_binding(builder_input)
     if process_audit_readiness(builder_input.process_audit_bundle) != builder_input.process_audit_readiness:
         raise CloseoutPackageError("process audit readiness bundle mismatch")
     if git_version_audit_readiness(builder_input.git_version_audit_bundle) != builder_input.git_audit_readiness:
@@ -387,6 +444,32 @@ def _validate_builder_input(builder_input: CloseoutPackageBuilderInput) -> None:
 
     _validate_gate_checked_refs(builder_input)
     _validate_process_audit_checked_refs(builder_input)
+
+
+def _validate_replay_readiness_binding(builder_input: CloseoutPackageBuilderInput) -> None:
+    if len(builder_input.replay_bundle.attestations) != 1:
+        raise CloseoutPackageError("replay bundle attestation count mismatch")
+    attestation = builder_input.replay_bundle.attestations[0]
+    readiness = builder_input.replay_readiness
+    expected_event_range = (
+        "event-range."
+        f"{builder_input.replay_bundle.project_ref.value}."
+        f"{attestation.event_window.first_graph_version}-{attestation.event_window.last_graph_version}"
+    )
+    if readiness.replay_passed is not True or readiness.hash_chain_verified is not True:
+        raise CloseoutPackageError("replay readiness bundle mismatch")
+    if readiness.payload_sha256_verified is not True:
+        raise CloseoutPackageError("replay readiness payload sha256 mismatch")
+    if readiness.summary_hash != attestation.summary_hash:
+        raise CloseoutPackageError("replay readiness bundle mismatch")
+    if readiness.event_range.value != expected_event_range:
+        raise CloseoutPackageError("replay readiness bundle mismatch")
+    if readiness.projection_versions != (attestation.projection_version,):
+        raise CloseoutPackageError("replay readiness bundle mismatch")
+    if readiness.payload_manifest_ref.value != builder_input.replay_bundle.payload_manifest.payload_manifest_id.value:
+        raise CloseoutPackageError("replay readiness payload manifest mismatch")
+    if readiness.payload_manifest_hash.value != builder_input.replay_bundle.hash_manifest.payload_manifest_hash.value:
+        raise CloseoutPackageError("replay readiness payload manifest mismatch")
 
 
 def _validate_process_audit_checked_refs(builder_input: CloseoutPackageBuilderInput) -> None:
@@ -416,6 +499,8 @@ def _process_audit_required_checked_refs(builder_input: CloseoutPackageBuilderIn
         builder_input.replay_bundle.replay_report.replay_report_id.value,
         builder_input.replay_readiness.summary_hash.value,
         builder_input.replay_readiness.event_range.value,
+        builder_input.replay_readiness.payload_manifest_ref.value,
+        builder_input.replay_readiness.payload_manifest_hash.value,
         builder_input.git_audit_readiness.final_commit_sha.value,
         builder_input.git_audit_readiness.source_inventory_hash.value,
         git_bundle.git_version_audit_bundle_id.value,
@@ -435,6 +520,8 @@ def _validate_gate_checked_refs(builder_input: CloseoutPackageBuilderInput) -> N
         builder_input.final_evidence_table.final_evidence_table_id.value,
         builder_input.replay_readiness.summary_hash.value,
         builder_input.replay_readiness.event_range.value,
+        builder_input.replay_readiness.payload_manifest_ref.value,
+        builder_input.replay_readiness.payload_manifest_hash.value,
         builder_input.git_audit_readiness.final_commit_sha.value,
         builder_input.git_audit_readiness.source_inventory_hash.value,
         *(version.value for version in builder_input.replay_readiness.projection_versions),
@@ -460,6 +547,8 @@ def _build_checked_refs(
         builder_input.git_audit_readiness.source_inventory_hash.value,
         builder_input.replay_readiness.summary_hash.value,
         builder_input.replay_readiness.event_range.value,
+        builder_input.replay_readiness.payload_manifest_ref.value,
+        builder_input.replay_readiness.payload_manifest_hash.value,
         *(version.value for version in builder_input.replay_readiness.projection_versions),
         *(path.value for path in builder_input.process_audit_readiness.artifact_paths),
         builder_input.git_version_audit_bundle.report.git_version_audit_report_id.value,

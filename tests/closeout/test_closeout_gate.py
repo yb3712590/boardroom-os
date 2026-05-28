@@ -333,6 +333,9 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
             event_range="events.0001-0009",
             projection_versions=("completion-gate.v1", "closeout-gate.v1"),
             hash_chain_verified=True,
+            payload_sha256_verified=True,
+            payload_manifest_ref="manifest.payload.closeout-gate",
+            payload_manifest_hash="3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012",
         ),
         git_audit_readiness=GitAuditReadiness(
             git_clean=True,

@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-071E`
+**当前未完成工作包**：`V2-071F`
 
 **当前重点**：Phase 7.5 启动 V2-071 V2-070 fact-chain hardening（事实链强化重构）。2026-05-25 外部独立审计在 V2-070A~G 实施基础上识别出 18 项 P0/P1/P2 缺口（详见 `doc/04-implementation/v2-070-batch-review-report.md` 与 DEC-0016），主要表现为 ProcessAudit（流程审计）与 CloseoutPackage（收尾包）构造环、ReplayBundle（重放包）接受外部 ProjectionReplaySummary（投影回放摘要）形成第二事实源、ProcessAudit events 与 ReplayBundle events 缺少内容级一致性校验、GitAuditAdapter（Git 审计适配器）`base_commit_sha` / `worktree_ref` 隐式 fallback、CloseoutPackage graph_version（图版本）允许超过 ReplayBundle 已证明范围、artifact_ref / content_ref / fact_set_id 命名空间不足、多处 set 语义输入未 canonical sort（规范排序）等。V2-071 不重写 V2-070，而是收紧事实链权威源与跨包绑定，再串行修复外围问题，最终重锁 Phase 7 验收后进入 Phase 8。
 
@@ -159,9 +159,9 @@ RoleProfile（角色模板）
 | Phase 5：Evidence + Checker | V2-050 | 7 / 7 | 完成 |
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
-| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 4 / 6 | 进行中 |
+| Phase 7.5：Closeout fact-chain 重构 | V2-071 | 5 / 6 | 进行中 |
 | Phase 8：Tiny proving scenario | V2-080 | 0 / 6 | 待开始（被 V2-071 阻塞） |
-| **合计** | **V2-000 ~ V2-080** | **51 / 59** | **Phase 7.5 进行中** |
+| **合计** | **V2-000 ~ V2-080** | **52 / 59** | **Phase 7.5 进行中** |
 
 ## 当前约束摘要
 
@@ -909,7 +909,7 @@ RoleProfile（角色模板）
 
 ### V2-071E: CloseoutPackage 边界严格化 + payload 内容绑定
 
-- 状态：TODO
+- 状态：DONE
 - 目标：`CloseoutPackage.graph_version` 严格等于 `ReplayBundle.last_graph_version`（不再允许超过）；引入 `ReplayPayloadResolver` 协议，让 `ReplayBundleReadiness` 在投影时通过 resolver 重新计算 `ReplayPayloadManifest.entries[*].sha256` 并与提供值比较；`artifact_ref` / `content_ref` / `fact_set_id` 全部改用 V2-071A 的 namespace helper；CloseoutPackage / ProcessAudit / ReplayBundle 之间的引用必须经 `assert_namespaced_ref_binding(...)` 校验。
 - 输入文档：`v2-071a-fact-chain-design-spec.md`、`v2-071b-replay-bundle-rereplay-spec.md`、`v2-071c-process-audit-fact-chain-spec.md`、V2-070E 产物。
 - 依赖：V2-071B、V2-071C。
@@ -922,6 +922,7 @@ RoleProfile（角色模板）
   - 同一 `project_ref` 多次构建 CloseoutPackage 应得到不同 `closeout_package_id`（基于 run_id / generated_at 命名空间）。
 - 必须证明的 happy path：`CloseoutPackage.graph_version == replay_last_graph_version` 时可成功构造；payload resolver 提供真实内容时 sha256 重算通过；所有跨包引用通过 namespace 校验。
 - 验收口径：审计报告 P0-5 / P1-1 / P1-5 全部闭合；CloseoutPackage 不再可能声称覆盖超出 Replay 证明边界的状态；artifact 引用不再可能跨 run / 跨 project 串包。
+- 完成证据：2026-05-28 新增 `v2-071e-closeout-package-boundary-spec.md` 与 `v2-071e-closeout-package-boundary-implementation-plan.md`，并收紧 ReplayBundle（重放包）、ProcessAudit（流程审计）、GitVersionAudit（Git 版本审计）与 CloseoutPackage（收尾包）边界：`ReplayPayloadResolver`（重放载荷解析器）在 `replay_bundle_readiness(...)` 中必填，缺 resolver / 缺真实 payload / sha256 篡改均 fail closed；`ReplayBundleReadiness`（重放包就绪摘要）新增 `payload_sha256_verified`、`payload_manifest_ref`、`payload_manifest_hash`；CloseoutPackage `graph_version` 必须严格等于 replay proof boundary；ProcessAudit 与 CloseoutPackage 只消费 typed readiness binding（类型化就绪摘要绑定），不再自行重算或回退；ProcessAudit artifact/content refs、ProcessAudit bundle/report/manifest refs、GitVersionAudit bundle/report/hash-manifest refs、CloseoutPackage id 均采用 project/hash/run namespaced ref（命名空间引用）并拒绝旧式或跨 project/run 串包。Negative tests 覆盖 graph_version 上/下越界、payload manifest 篡改、缺 resolver、缺 payload content、旧式 process audit artifact/content refs、非命名空间 closeout package id、跨 project/run process audit refs。Happy path 覆盖 canonical JSON payload hash、payload manifest readiness 绑定、closeout package boundary 等于 replay boundary、checked_refs 包含 payload manifest ref/hash、run_id 改变后包 id 改变。验证证据：`PYTHONPATH=src:. python -m pytest tests/closeout/test_git_version_audit.py tests/closeout/test_git_audit_hardening.py -q --tb=short -rf --basetemp=.pytest-tmp-v2071e-git` 通过（30 passed in 0.27s）；`PYTHONPATH=src:. python -m pytest tests/closeout/test_process_audit.py tests/closeout/test_process_audit_artifacts.py tests/closeout/test_process_audit_fact_chain.py tests/closeout/test_git_version_audit.py tests/closeout/test_git_audit_hardening.py tests/closeout/test_closeout_package.py tests/closeout/test_closeout_package_boundary.py tests/negative/test_process_audit_construction_loop_rejected.py -q --tb=short -rf --basetemp=.pytest-tmp-v2071e-audit` 通过（187 passed in 2.38s）；`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --basetemp=.pytest-tmp-v2071e-all` 通过（1410 passed in 3.68s）。
 
 ### V2-071F: 端到端 fail-closed 回归 + Phase 7 重锁
 

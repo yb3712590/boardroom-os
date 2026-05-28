@@ -20,6 +20,7 @@ from boardroom_os.audit.process_audit import (
     build_process_audit_bundle,
     process_audit_readiness,
 )
+from boardroom_os.contracts.refs import namespaced_ref
 from boardroom_os.evidence.fallback_registry import FallbackDecisionRecordRef
 from boardroom_os.evidence.verifier import FallbackDecisionRecordedRef, VerifiedEvidenceRef
 from boardroom_os.events.types import EventType
@@ -42,19 +43,72 @@ from tests.closeout.test_process_audit_artifacts import (
 
 
 
+def _with_current_process_audit_refs(bundle, artifact):
+    return artifact.model_copy(
+        update={
+            "artifact_id": type(artifact.artifact_id)(
+                value=namespaced_ref(
+                    kind="process-audit-artifact",
+                    project_ref=bundle.project_ref.value,
+                    content_hash=artifact.sha256.value,
+                    run_id="run-v2-071e",
+                    extra_suffix=artifact.kind.value,
+                )
+            ),
+            "content_ref": type(artifact.content_ref)(
+                value=namespaced_ref(
+                    kind="process-audit-content",
+                    project_ref=bundle.project_ref.value,
+                    content_hash=artifact.sha256.value,
+                    run_id="run-v2-071e",
+                    extra_suffix=artifact.kind.value,
+                )
+            ),
+        }
+    )
+
 
 def _rehashed_process_audit_bundle(bundle, *, artifacts=None, report=None, checked_refs=None):
-    resolved_artifacts = tuple(artifacts if artifacts is not None else bundle.artifacts)
+    resolved_artifacts = tuple(
+        _with_current_process_audit_refs(bundle, artifact)
+        for artifact in tuple(artifacts if artifacts is not None else bundle.artifacts)
+    )
     resolved_report = report or bundle.process_audit_report
     resolved_checked_refs = tuple(checked_refs if checked_refs is not None else bundle.checked_refs)
     artifact_hashes = {
         artifact.path.value: artifact.sha256 for artifact in resolved_artifacts
     }
+    artifacts_by_path = {artifact.path.value: artifact for artifact in resolved_artifacts}
+    artifacts_by_kind = {artifact.kind: artifact for artifact in resolved_artifacts}
+    resolved_report = resolved_report.model_copy(
+        update={
+            "process_audit_ref": artifacts_by_kind[ProcessAuditArtifactKind.PROCESS_AUDIT].artifact_id,
+            "timeline_ref": artifacts_by_kind[ProcessAuditArtifactKind.TIMELINE].artifact_id,
+            "decision_log_ref": artifacts_by_kind[ProcessAuditArtifactKind.DECISION_LOG].artifact_id,
+            "agent_context_index_ref": artifacts_by_kind[
+                ProcessAuditArtifactKind.AGENT_CONTEXT_INDEX
+            ].artifact_id,
+            "ticket_graph_ref": artifacts_by_kind[ProcessAuditArtifactKind.TICKET_GRAPH].artifact_id,
+            "artifact_lineage_ref": artifacts_by_kind[
+                ProcessAuditArtifactKind.ARTIFACT_LINEAGE
+            ].artifact_id,
+            "evidence_map_ref": artifacts_by_kind[ProcessAuditArtifactKind.EVIDENCE_MAP].artifact_id,
+            "git_audit_ref": artifacts_by_kind[ProcessAuditArtifactKind.GIT_VERSION_AUDIT].artifact_id,
+            "closeout_summary_ref": artifacts_by_kind[
+                ProcessAuditArtifactKind.CLOSEOUT_SUMMARY
+            ].artifact_id,
+            "replay_bundle_report_ref": artifacts_by_kind[
+                ProcessAuditArtifactKind.REPLAY_BUNDLE_REPORT
+            ].artifact_id,
+        }
+    )
     artifact_manifest = bundle.artifact_manifest.model_copy(
         update={
             "entries": tuple(
                 entry.model_copy(
                     update={
+                        "artifact_ref": artifacts_by_path[entry.path.value].artifact_id,
+                        "content_ref": artifacts_by_path[entry.path.value].content_ref,
                         "sha256": artifact_hashes[entry.path.value],
                     }
                 )
@@ -111,12 +165,31 @@ def _replace_artifact_content(bundle, *, kind: ProcessAuditArtifactKind, content
     artifacts = []
     for artifact in bundle.artifacts:
         if artifact.kind is kind:
+            sha256 = type(artifact.sha256)(
+                value=_artifact_content_hash(content, artifact.format)
+            )
             artifacts.append(
                 artifact.model_copy(
                     update={
                         "content": content,
-                        "sha256": type(artifact.sha256)(
-                            value=_artifact_content_hash(content, artifact.format)
+                        "sha256": sha256,
+                        "artifact_id": type(artifact.artifact_id)(
+                            value=namespaced_ref(
+                                kind="process-audit-artifact",
+                                project_ref=bundle.project_ref.value,
+                                content_hash=sha256.value,
+                                run_id="run-v2-071e",
+                                extra_suffix=artifact.kind.value,
+                            )
+                        ),
+                        "content_ref": type(artifact.content_ref)(
+                            value=namespaced_ref(
+                                kind="process-audit-content",
+                                project_ref=bundle.project_ref.value,
+                                content_hash=sha256.value,
+                                run_id="run-v2-071e",
+                                extra_suffix=artifact.kind.value,
+                            )
                         ),
                     }
                 )
@@ -770,7 +843,10 @@ def test_artifact_lineage_rejects_fallback_lineages_when_expected_empty() -> Non
             "fallback_decision_record_ref": "fallback-decision.unexpected",
             "fallback_decision_recorded_ref": None,
             "verifier_ref": "runner.local",
-            "evidence_map_ref": "process-audit-artifact.evidence_map",
+            "evidence_map_ref": _artifact_by_kind(
+                bundle,
+                ProcessAuditArtifactKind.EVIDENCE_MAP,
+            ).artifact_id.value,
         },
     )
     broken_bundle = _replace_artifact_content(

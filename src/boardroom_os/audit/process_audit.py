@@ -32,7 +32,13 @@ from boardroom_os.closeout.gate import (
 )
 from boardroom_os.contracts.acceptance import AcceptanceContract
 from boardroom_os.contracts.package import PackageContract
-from boardroom_os.contracts.refs import canonical_sort_for_hash
+from boardroom_os.contracts.refs import (
+    NamespacedRefError,
+    assert_namespace_segment,
+    assert_namespaced_ref_binding,
+    canonical_sort_for_hash,
+    namespaced_ref,
+)
 from boardroom_os.contracts.types import NonEmptyTextValue
 from boardroom_os.evidence.table import FinalEvidenceTable
 from boardroom_os.evidence.verifier import VerifiedEvidence
@@ -48,7 +54,7 @@ from boardroom_os.audit.git_version_audit import (
     git_version_audit_readiness,
     source_inventory_hash,
 )
-from boardroom_os.audit.replay_bundle import ReplayBundle, replay_bundle_readiness
+from boardroom_os.audit.replay_bundle import ReplayBundle
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -807,6 +813,17 @@ class ProcessAuditBuilderInput(BaseModel):
     replay_readiness: SkipValidation[ReplayBundleReadiness]
     git_version_audit_bundle: SkipValidation[GitVersionAuditBundle]
     git_audit_readiness: SkipValidation[GitAuditReadiness]
+    run_id: str | None = None
+
+    @field_validator("run_id")
+    @classmethod
+    def _validate_run_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return assert_namespace_segment(value, field_name="run_id")
+        except NamespacedRefError as error:
+            raise ProcessAuditError(str(error)) from error
 
     @model_validator(mode="before")
     @classmethod
@@ -960,15 +977,39 @@ class ProcessAuditBuilderInput(BaseModel):
         _validate_source_inventory_consumer_ticket_closure(self)
         _validate_evidence_closure(self)
         _validate_git_version_audit_binding(self)
-        derived_replay_readiness = replay_bundle_readiness(self.replay_bundle)
-        if derived_replay_readiness != self.replay_readiness:
-            raise ProcessAuditError("replay readiness mismatch")
+        _validate_replay_readiness_binding(self)
         derived_git_audit_readiness = git_version_audit_readiness(
             self.git_version_audit_bundle
         )
         if derived_git_audit_readiness != self.git_audit_readiness:
             raise ProcessAuditError("git version audit readiness mismatch")
         return self
+
+
+def _validate_replay_readiness_binding(builder_input: ProcessAuditBuilderInput) -> None:
+    if len(builder_input.replay_bundle.attestations) != 1:
+        raise ProcessAuditError("replay bundle attestation count mismatch")
+    attestation = builder_input.replay_bundle.attestations[0]
+    readiness = builder_input.replay_readiness
+    expected_event_range = (
+        "event-range."
+        f"{builder_input.replay_bundle.project_ref.value}."
+        f"{attestation.event_window.first_graph_version}-{attestation.event_window.last_graph_version}"
+    )
+    if readiness.replay_passed is not True or readiness.hash_chain_verified is not True:
+        raise ProcessAuditError("replay readiness mismatch")
+    if readiness.payload_sha256_verified is not True:
+        raise ProcessAuditError("replay readiness payload sha256 mismatch")
+    if readiness.summary_hash != attestation.summary_hash:
+        raise ProcessAuditError("replay readiness mismatch")
+    if readiness.event_range.value != expected_event_range:
+        raise ProcessAuditError("replay readiness mismatch")
+    if readiness.projection_versions != (attestation.projection_version,):
+        raise ProcessAuditError("replay readiness mismatch")
+    if readiness.payload_manifest_ref.value != builder_input.replay_bundle.payload_manifest.payload_manifest_id.value:
+        raise ProcessAuditError("replay readiness payload manifest mismatch")
+    if readiness.payload_manifest_hash.value != builder_input.replay_bundle.hash_manifest.payload_manifest_hash.value:
+        raise ProcessAuditError("replay readiness payload manifest mismatch")
 
 
 def _audit_events(builder_input: ProcessAuditBuilderInput) -> tuple[EventRecord, ...]:
@@ -1193,39 +1234,58 @@ def build_process_audit_bundle(builder_input: ProcessAuditBuilderInput) -> Proce
     artifact_hashes = {
         artifact.path.value: artifact.sha256 for artifact in artifacts
     }
-    partial_hash_manifest = {
-        "hash_manifest_id": ProcessAuditManifestRef(
-            value=f"process-audit-hash-manifest.{builder_input.project_ref.value}"
-        ),
-        "project_ref": builder_input.project_ref,
-        "artifact_hashes": artifact_hashes,
-        "artifact_manifest_hash": ProcessAuditContentHash(
-            value=_hash_model(artifact_manifest)
-        ),
-        "process_audit_report_hash": ProcessAuditContentHash(value=_hash_model(report)),
-    }
+    hash_manifest_without_bundle_hash = _process_audit_hash_manifest_payload(
+        builder_input=builder_input,
+        artifact_hashes=artifact_hashes,
+        artifact_manifest=artifact_manifest,
+        report=report,
+    )
+    bundle_id_placeholder = ProcessAuditBundleRef(
+        value=namespaced_ref(
+            kind="process-audit-bundle",
+            project_ref=builder_input.project_ref.value,
+            content_hash=hash_manifest_without_bundle_hash["artifact_manifest_hash"].value,
+            run_id=builder_input.run_id,
+        )
+    )
     bundle_payload_hash = ProcessAuditContentHash(
         value=_hash_bundle_payload(
-            process_audit_bundle_id=ProcessAuditBundleRef(
-                value=f"process-audit-bundle.{builder_input.project_ref.value}"
-            ),
+            process_audit_bundle_id=bundle_id_placeholder,
             project_ref=builder_input.project_ref,
             generated_at=builder_input.generated_at,
             artifacts=artifacts,
             artifact_manifest=artifact_manifest,
-            hash_manifest_without_bundle_hash=partial_hash_manifest,
+            hash_manifest_without_bundle_hash=hash_manifest_without_bundle_hash,
+            process_audit_report=report,
+            checked_refs=checked_refs,
+        )
+    )
+    bundle_id = ProcessAuditBundleRef(
+        value=namespaced_ref(
+            kind="process-audit-bundle",
+            project_ref=builder_input.project_ref.value,
+            content_hash=bundle_payload_hash.value,
+            run_id=builder_input.run_id,
+        )
+    )
+    bundle_payload_hash = ProcessAuditContentHash(
+        value=_hash_bundle_payload(
+            process_audit_bundle_id=bundle_id,
+            project_ref=builder_input.project_ref,
+            generated_at=builder_input.generated_at,
+            artifacts=artifacts,
+            artifact_manifest=artifact_manifest,
+            hash_manifest_without_bundle_hash=hash_manifest_without_bundle_hash,
             process_audit_report=report,
             checked_refs=checked_refs,
         )
     )
     hash_manifest = ProcessAuditHashManifest(
-        **partial_hash_manifest,
+        **hash_manifest_without_bundle_hash,
         bundle_payload_hash=bundle_payload_hash,
     )
     return ProcessAuditBundle(
-        process_audit_bundle_id=ProcessAuditBundleRef(
-            value=f"process-audit-bundle.{builder_input.project_ref.value}"
-        ),
+        process_audit_bundle_id=bundle_id,
         project_ref=builder_input.project_ref,
         generated_at=builder_input.generated_at,
         artifacts=artifacts,
@@ -1257,6 +1317,11 @@ def _validate_builder_input_instance(
 
 
 def process_audit_readiness(bundle: ProcessAuditBundle) -> ProcessAuditReadiness:
+    if not isinstance(bundle, ProcessAuditBundle):
+        raise ProcessAuditError("bundle must be ProcessAuditBundle")
+    _validate_bundle_shape(bundle)
+    run_id = _validate_artifact_namespaces(bundle)
+    _validate_manifest_entry_namespaces(bundle, run_id)
     try:
         validated_bundle = _validate_bundle_instance(bundle)
     except ValidationError as error:
@@ -1286,6 +1351,39 @@ def process_audit_readiness(bundle: ProcessAuditBundle) -> ProcessAuditReadiness
     )
 
 
+def _process_audit_hash_manifest_payload(
+    *,
+    builder_input: ProcessAuditBuilderInput,
+    artifact_hashes: dict[str, ProcessAuditContentHash],
+    artifact_manifest: ProcessAuditArtifactManifest,
+    report: ProcessAuditReport,
+) -> dict[str, Any]:
+    artifact_manifest_hash = ProcessAuditContentHash(value=_hash_model(artifact_manifest))
+    process_audit_report_hash = ProcessAuditContentHash(value=_hash_model(report))
+    hash_manifest_id = ProcessAuditManifestRef(
+        value=namespaced_ref(
+            kind="process-audit-hash-manifest",
+            project_ref=builder_input.project_ref.value,
+            content_hash=_hash_jsonable(
+                {
+                    "project_ref": builder_input.project_ref.value,
+                    "artifact_hashes": artifact_hashes,
+                    "artifact_manifest_hash": artifact_manifest_hash.value,
+                    "process_audit_report_hash": process_audit_report_hash.value,
+                }
+            ),
+            run_id=builder_input.run_id,
+        )
+    )
+    return {
+        "hash_manifest_id": hash_manifest_id,
+        "project_ref": builder_input.project_ref,
+        "artifact_hashes": artifact_hashes,
+        "artifact_manifest_hash": artifact_manifest_hash,
+        "process_audit_report_hash": process_audit_report_hash,
+    }
+
+
 def _build_artifacts(
     builder_input: ProcessAuditBuilderInput,
     checked_refs: tuple[str, ...],
@@ -1301,23 +1399,51 @@ def _build_artifacts(
         ProcessAuditArtifactKind.CLOSEOUT_SUMMARY: _closeout_summary_markdown(builder_input),
         ProcessAuditArtifactKind.REPLAY_BUNDLE_REPORT: _replay_bundle_report_payload(builder_input),
     }
+    evidence_map_hash = _hash_content(
+        content_by_kind[ProcessAuditArtifactKind.EVIDENCE_MAP],
+        ProcessAuditArtifactFormat.JSON,
+    )
+    evidence_map_ref = _process_audit_ref(
+        kind="process-audit-artifact",
+        project_ref=builder_input.project_ref,
+        content_hash=evidence_map_hash,
+        run_id=builder_input.run_id,
+        artifact_kind=ProcessAuditArtifactKind.EVIDENCE_MAP,
+    )
     content_by_kind[ProcessAuditArtifactKind.ARTIFACT_LINEAGE] = _artifact_lineage_payload(
         builder_input,
-        evidence_map_ref=f"process-audit-artifact.{ProcessAuditArtifactKind.EVIDENCE_MAP.value}",
+        evidence_map_ref=evidence_map_ref,
     )
     artifacts: list[ProcessAuditArtifact] = []
     for path in REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS:
         kind, artifact_format = _PATH_KIND_FORMAT[path]
         content = content_by_kind[kind]
+        content_hash = _hash_content(content, artifact_format)
         artifacts.append(
             ProcessAuditArtifact(
-                artifact_id=ProcessAuditArtifactRef(value=f"process-audit-artifact.{kind.value}"),
+                artifact_id=ProcessAuditArtifactRef(
+                    value=_process_audit_ref(
+                        kind="process-audit-artifact",
+                        project_ref=builder_input.project_ref,
+                        content_hash=content_hash,
+                        run_id=builder_input.run_id,
+                        artifact_kind=kind,
+                    )
+                ),
                 path=ProcessAuditArtifactPath(value=path),
                 kind=kind,
                 format=artifact_format,
-                content_ref=ProcessAuditContentRef(value=f"process-audit-content.{kind.value}"),
+                content_ref=ProcessAuditContentRef(
+                    value=_process_audit_ref(
+                        kind="process-audit-content",
+                        project_ref=builder_input.project_ref,
+                        content_hash=content_hash,
+                        run_id=builder_input.run_id,
+                        artifact_kind=kind,
+                    )
+                ),
                 content=content,
-                sha256=ProcessAuditContentHash(value=_hash_content(content, artifact_format)),
+                sha256=ProcessAuditContentHash(value=content_hash),
                 source_refs=checked_refs,
             )
         )
@@ -1328,10 +1454,28 @@ def _build_artifact_manifest(
     builder_input: ProcessAuditBuilderInput,
     artifacts: tuple[ProcessAuditArtifact, ...],
 ) -> ProcessAuditArtifactManifest:
+    artifact_manifest_id = ProcessAuditManifestRef(
+        value=namespaced_ref(
+            kind="process-audit-artifact-manifest",
+            project_ref=builder_input.project_ref.value,
+            content_hash=_hash_jsonable(
+                [
+                    {
+                        "artifact_ref": artifact.artifact_id.value,
+                        "path": artifact.path.value,
+                        "kind": artifact.kind.value,
+                        "format": artifact.format.value,
+                        "content_ref": artifact.content_ref.value,
+                        "sha256": artifact.sha256.value,
+                    }
+                    for artifact in artifacts
+                ]
+            ),
+            run_id=builder_input.run_id,
+        )
+    )
     return ProcessAuditArtifactManifest(
-        artifact_manifest_id=ProcessAuditManifestRef(
-            value=f"process-audit-artifact-manifest.{builder_input.project_ref.value}"
-        ),
+        artifact_manifest_id=artifact_manifest_id,
         project_ref=builder_input.project_ref,
         entries=tuple(
             ProcessAuditArtifactManifestEntry(
@@ -1353,9 +1497,28 @@ def _build_report(
     checked_refs: tuple[str, ...],
 ) -> ProcessAuditReport:
     by_kind = {artifact.kind: artifact for artifact in artifacts}
+    report_payload_hash = _hash_jsonable(
+        {
+            "project_ref": builder_input.project_ref.value,
+            "generated_at": builder_input.generated_at.isoformat(),
+            "artifact_refs": {
+                kind.value: artifact.artifact_id.value for kind, artifact in by_kind.items()
+            },
+            "checked_refs": checked_refs,
+            "replay_summary_hash": builder_input.replay_readiness.summary_hash.value,
+            "replay_projection_versions": tuple(
+                version.value for version in builder_input.replay_readiness.projection_versions
+            ),
+        }
+    )
     return ProcessAuditReport(
         process_audit_report_id=ProcessAuditReportRef(
-            value=f"process-audit-report.{builder_input.project_ref.value}"
+            value=namespaced_ref(
+                kind="process-audit-report",
+                project_ref=builder_input.project_ref.value,
+                content_hash=report_payload_hash,
+                run_id=builder_input.run_id,
+            )
         ),
         project_ref=builder_input.project_ref,
         generated_at=builder_input.generated_at,
@@ -1835,6 +1998,8 @@ def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
         builder_input.replay_bundle.replay_report.replay_report_id.value,
         builder_input.replay_readiness.summary_hash.value,
         builder_input.replay_readiness.event_range.value,
+        builder_input.replay_readiness.payload_manifest_ref.value,
+        builder_input.replay_readiness.payload_manifest_hash.value,
         *(version.value for version in builder_input.replay_readiness.projection_versions),
         *REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS,
         git_bundle.git_version_audit_bundle_id.value,
@@ -1920,6 +2085,159 @@ def _fallback_decision_refs(builder_input: ProcessAuditBuilderInput) -> tuple[st
         for evidence in builder_input.verified_evidence
         if evidence.fallback_decision_record_ref is not None
     )
+
+
+def _process_audit_ref(
+    *,
+    kind: str,
+    project_ref: ProjectRef,
+    content_hash: str,
+    run_id: str | None,
+    artifact_kind: ProcessAuditArtifactKind | None = None,
+) -> str:
+    return namespaced_ref(
+        kind=kind,
+        project_ref=project_ref.value,
+        content_hash=content_hash,
+        run_id=run_id,
+        extra_suffix=artifact_kind.value if artifact_kind is not None else None,
+    )
+
+
+def _validate_process_audit_ref_binding(
+    value: str,
+    *,
+    kind: str,
+    project_ref: str,
+    content_hashes: tuple[str, ...],
+    run_id: str | None,
+    extra_suffix: str | None,
+    field_name: str,
+) -> None:
+    errors: list[NamespacedRefError] = []
+    for content_hash in tuple(dict.fromkeys(content_hashes)):
+        try:
+            assert_namespaced_ref_binding(
+                value,
+                kind=kind,
+                project_ref=project_ref,
+                content_hash=content_hash,
+                run_id=run_id,
+                extra_suffix=extra_suffix,
+                field_name=field_name,
+            )
+            return
+        except NamespacedRefError as error:
+            errors.append(error)
+    if errors:
+        raise errors[0]
+
+
+def _validate_process_audit_artifact_namespace(
+    artifact: ProcessAuditArtifact,
+    *,
+    project_ref: ProjectRef,
+    run_id: str | None,
+    content_hashes: tuple[str, ...],
+) -> None:
+    try:
+        _validate_process_audit_ref_binding(
+            artifact.artifact_id.value,
+            kind="process-audit-artifact",
+            project_ref=project_ref.value,
+            content_hashes=content_hashes,
+            run_id=run_id,
+            extra_suffix=artifact.kind.value if run_id is not None else None,
+            field_name="process audit artifact ref",
+        )
+        _validate_process_audit_ref_binding(
+            artifact.content_ref.value,
+            kind="process-audit-content",
+            project_ref=project_ref.value,
+            content_hashes=content_hashes,
+            run_id=run_id,
+            extra_suffix=artifact.kind.value if run_id is not None else None,
+            field_name="process audit content ref",
+        )
+    except NamespacedRefError as error:
+        raise ProcessAuditError(str(error)) from error
+
+
+def _run_id_from_process_audit_ref(
+    value: str,
+    *,
+    expected_kind: str,
+    field_name: str,
+) -> str | None:
+    parts = value.split(".")
+    if len(parts) == 3:
+        return None
+    if len(parts) == 5 and parts[0] == expected_kind:
+        return parts[3]
+    raise ProcessAuditError(f"{field_name} namespace binding mismatch")
+
+
+def _namespace_content_hashes(
+    *,
+    bundle: ProcessAuditBundle,
+    artifact: ProcessAuditArtifact,
+) -> tuple[str, ...]:
+    hashes = [artifact.sha256.value]
+    entry = bundle.artifact_manifest.entries_by_path.get(artifact.path.value)
+    if entry is not None:
+        hashes.append(entry.sha256.value)
+    hash_manifest_value = bundle.hash_manifest.artifact_hashes.get(artifact.path.value)
+    if hash_manifest_value is not None:
+        hashes.append(hash_manifest_value.value)
+    return tuple(dict.fromkeys(hashes))
+
+
+def _validate_artifact_namespaces(bundle: ProcessAuditBundle) -> str | None:
+    run_ids: set[str | None] = set()
+    for artifact in bundle.artifacts:
+        run_id = _run_id_from_process_audit_ref(
+            artifact.artifact_id.value,
+            expected_kind="process-audit-artifact",
+            field_name="process audit artifact ref",
+        )
+        run_ids.add(run_id)
+        _validate_process_audit_artifact_namespace(
+            artifact,
+            project_ref=bundle.project_ref,
+            run_id=run_id,
+            content_hashes=_namespace_content_hashes(bundle=bundle, artifact=artifact),
+        )
+    if len(run_ids) != 1:
+        raise ProcessAuditError("process audit artifact ref namespace binding mismatch")
+    return next(iter(run_ids))
+
+
+def _validate_manifest_entry_namespaces(bundle: ProcessAuditBundle, run_id: str | None) -> None:
+    artifacts_by_path = {artifact.path.value: artifact for artifact in bundle.artifacts}
+    for entry in bundle.artifact_manifest.entries:
+        artifact = artifacts_by_path[entry.path.value]
+        content_hashes = tuple(dict.fromkeys((artifact.sha256.value, entry.sha256.value)))
+        try:
+            _validate_process_audit_ref_binding(
+                entry.artifact_ref.value,
+                kind="process-audit-artifact",
+                project_ref=bundle.project_ref.value,
+                content_hashes=content_hashes,
+                run_id=run_id,
+                extra_suffix=artifact.kind.value if run_id is not None else None,
+                field_name="process audit artifact ref",
+            )
+            _validate_process_audit_ref_binding(
+                entry.content_ref.value,
+                kind="process-audit-content",
+                project_ref=bundle.project_ref.value,
+                content_hashes=content_hashes,
+                run_id=run_id,
+                extra_suffix=artifact.kind.value if run_id is not None else None,
+                field_name="process audit content ref",
+            )
+        except NamespacedRefError as error:
+            raise ProcessAuditError(str(error)) from error
 
 
 def _validate_bundle_instance(bundle: ProcessAuditBundle) -> ProcessAuditBundle:

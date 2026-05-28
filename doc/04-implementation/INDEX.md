@@ -48,6 +48,8 @@
 | `v2-071b-replay-bundle-rereplay-spec.md` | V2-071B ReplayBundle（重放包）re-replay（重新投影）spec |
 | `v2-071c-process-audit-fact-chain-spec.md` | V2-071C ProcessAudit（流程审计）fact-chain（事实链）强化 spec |
 | `v2-071d-git-audit-hardening-spec.md` | V2-071D GitAuditAdapter（Git 审计适配器）与 GitVersionAudit（Git 版本审计）硬化 spec |
+| `v2-071e-closeout-package-boundary-spec.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定 spec |
+| `v2-071e-closeout-package-boundary-implementation-plan.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定实施计划 |
 
 ## AI 启动入口
 

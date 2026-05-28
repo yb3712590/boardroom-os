@@ -128,6 +128,7 @@ def _closeout_package_builder_input(**overrides: Any) -> CloseoutPackageBuilderI
         "git_audit_readiness": git_audit_readiness,
         "graph_version": replay_bundle.attestations[0].event_window.last_graph_version,
         "generated_at": _GENERATED_AT,
+        "run_id": "run-v2-071e",
     }
     values.update(overrides)
     return CloseoutPackageBuilderInput(**values)
@@ -182,7 +183,7 @@ def test_closeout_package_id_is_deterministic() -> None:
     first_package = build_closeout_package(builder_input)
     second_package = build_closeout_package(builder_input)
     changed_package = build_closeout_package(
-        builder_input.model_copy(update={"graph_version": builder_input.graph_version + 1})
+        _closeout_package_builder_input(run_id="run-v2-071e-other")
     )
 
     assert first_package.closeout_package_id == second_package.closeout_package_id

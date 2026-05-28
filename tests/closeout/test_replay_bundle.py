@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from boardroom_os.agents.profiles import ModelExecutionProfileId
 from boardroom_os.agents.seat import (
@@ -54,9 +54,21 @@ class InMemoryReplayPayloadResolver:
         *,
         created_payloads: dict[str, TicketCreatedPayload] | None = None,
         assignment_payloads: dict[str, SeatAssignmentPayload] | None = None,
+        fallback_payloads: dict[str, object] | None = None,
     ) -> None:
         self._created_payloads = created_payloads or {}
         self._assignment_payloads = assignment_payloads or {}
+        self._fallback_payloads = fallback_payloads or {}
+
+    def resolve_payload(self, content_ref):
+        ref = content_ref.value
+        if ref in self._created_payloads:
+            return self._created_payloads[ref]
+        if ref in self._assignment_payloads:
+            return self._assignment_payloads[ref]
+        if ref in self._fallback_payloads:
+            return self._fallback_payloads[ref]
+        return _payload_for_ref(ref)
 
     def resolve_ticket_created(self, payload_ref: EventPayloadRef) -> TicketCreatedPayload:
         return self._created_payloads[payload_ref.value]
@@ -212,6 +224,19 @@ def _projector(
 
 
 
+def _payload_for_ref(payload_ref: str) -> object:
+    payloads = {
+        "payload:ticket-backend-api-created": _ticket_payload(),
+        "payload:ticket-backend-api-seat-assigned": _seat_assignment_payload(),
+    }
+    return payloads.get(payload_ref, f"payload.{payload_ref}")
+
+
+def _payload_sha256_for_ref(payload_ref: str) -> str:
+    return _hash_jsonable(_payload_for_ref(payload_ref))
+
+
+
 def _payload_manifest_entries(
     events: tuple[EventRecord, ...],
     *,
@@ -227,7 +252,7 @@ def _payload_manifest_entries(
             manifest_ref=f"manifest-entry.payload.{index + 1}",
             kind=ReplayManifestKind.PAYLOAD_MANIFEST,
             content_ref=payload_ref,
-            sha256=_fixture_hash(f"payload.{payload_ref}"),
+            sha256=_payload_sha256_for_ref(payload_ref),
         )
         for index, payload_ref in enumerate(refs)
     )
@@ -274,15 +299,38 @@ def _artifact_manifest_entries(*, include_hash_manifest: bool = True) -> tuple[R
 
 
 
+def _payload_resolver() -> InMemoryReplayPayloadResolver:
+    return InMemoryReplayPayloadResolver(
+        created_payloads={"payload:ticket-backend-api-created": _ticket_payload()},
+        assignment_payloads={
+            "payload:ticket-backend-api-seat-assigned": _seat_assignment_payload(),
+        },
+    )
+
+
 def _fixture_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+
+def _canonical_jsonable(value: object) -> object:
+    if isinstance(value, BaseModel):
+        field_names = tuple(type(value).model_fields)
+        if field_names == ("value",):
+            return value.value
+        return _canonical_jsonable(value.model_dump(mode="json"))
+    if isinstance(value, tuple | list):
+        return [_canonical_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _canonical_jsonable(item) for key, item in value.items()}
+    return value
 
 
 
 def _hash_jsonable(value: object) -> str:
     import json
 
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(_canonical_jsonable(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -587,7 +635,7 @@ def test_replay_bundle_rejects_artifact_manifest_hash_that_does_not_close() -> N
             break
 
     with pytest.raises(ReplayBundleError, match="artifact manifest hash mismatch|artifact_manifest_hash"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -615,7 +663,7 @@ def test_replay_bundle_rejects_missing_event_hash_chain() -> None:
     broken_manifest = bundle.hash_manifest.model_copy(update={"event_hash_chain": ()})
 
     with pytest.raises(ReplayBundleError, match="event hash chain"):
-        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}))
+        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}), payload_resolver=_payload_resolver())
 
 
 
@@ -678,7 +726,7 @@ def test_replay_bundle_rejects_hash_manifest_mismatch() -> None:
     broken_bundle["hash_manifest"]["replay_report_hash"] = _fixture_hash("wrong.replay.report.manifest.hash")
 
     with pytest.raises(ReplayBundleError, match="hash manifest mismatch"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -790,7 +838,7 @@ def test_replay_bundle_readiness_revalidates_hash_manifest() -> None:
     }
 
     with pytest.raises(ReplayBundleError, match="hash manifest mismatch"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -862,8 +910,8 @@ def test_replay_bundle_readiness_revalidates_payload_manifest_hash() -> None:
     broken_bundle = bundle.model_dump(mode="python", exclude={"bundle_hash"})
     broken_bundle["payload_manifest"]["entries"][0]["content_ref"] = "payload:tampered"
 
-    with pytest.raises(ReplayBundleError, match="payload_manifest_hash"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+    with pytest.raises(ReplayBundleError, match="payload manifest sha256 mismatch"):
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -873,7 +921,7 @@ def test_replay_bundle_readiness_revalidates_artifact_manifest_hash() -> None:
     broken_bundle["artifact_manifest"]["entries"][0]["manifest_ref"] = "artifact.event_window.tampered"
 
     with pytest.raises(ReplayBundleError, match="artifact_manifest_hash|artifact manifest hash"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -885,7 +933,7 @@ def test_replay_bundle_readiness_revalidates_replay_report_hash() -> None:
     )
 
     with pytest.raises(ReplayBundleError, match="replay_report_hash"):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -900,7 +948,7 @@ def test_replay_bundle_readiness_revalidates_attestation_event_window_hash() -> 
         (ReplayBundleError, ValidationError),
         match="event hash chain.*event_window|event_window_hash|attestation hash|events.*event_window",
     ):
-        replay_bundle_readiness(type(bundle).model_validate(broken_bundle))
+        replay_bundle_readiness(type(bundle).model_validate(broken_bundle), payload_resolver=_payload_resolver())
 
 
 
@@ -954,7 +1002,8 @@ def test_replay_bundle_readiness_requires_attestation_event_window_hash_to_match
                     "artifact_manifest": broken_artifact_manifest,
                     "hash_manifest": broken_hash_manifest,
                 }
-            )
+            ),
+            payload_resolver=_payload_resolver(),
         )
 
 
@@ -978,7 +1027,7 @@ def test_replay_bundle_readiness_revalidates_event_previous_hash() -> None:
     )
 
     with pytest.raises(ReplayBundleError, match="event hash chain"):
-        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}))
+        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}), payload_resolver=_payload_resolver())
 
 
 
@@ -1001,7 +1050,7 @@ def test_replay_bundle_readiness_revalidates_event_chain_hash() -> None:
     )
 
     with pytest.raises(ReplayBundleError, match="event hash chain"):
-        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}))
+        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}), payload_resolver=_payload_resolver())
 
 
 
@@ -1087,7 +1136,8 @@ def test_replay_bundle_readiness_rejects_event_hash_rewrite_even_if_chain_and_ma
                     "artifact_manifest": broken_artifact_manifest,
                     "hash_manifest": broken_hash_manifest,
                 }
-            )
+            ),
+            payload_resolver=_payload_resolver(),
         )
 
 
@@ -1103,7 +1153,7 @@ def test_replay_bundle_readiness_revalidates_terminal_event_chain_hash() -> None
     )
 
     with pytest.raises(ReplayBundleError, match="terminal hash"):
-        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}))
+        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": broken_manifest}), payload_resolver=_payload_resolver())
 
 
 
@@ -1134,7 +1184,7 @@ def test_replay_bundle_readiness_rejects_chain_shorter_than_event_window_even_if
     )
 
     with pytest.raises(ReplayBundleError, match="event hash chain.*event_window"):
-        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": short_hash_manifest}))
+        replay_bundle_readiness(bundle.model_copy(update={"hash_manifest": short_hash_manifest}), payload_resolver=_payload_resolver())
 
 
 
@@ -1163,7 +1213,8 @@ def test_replay_bundle_readiness_rejects_missing_artifact_kind_even_if_rehashed(
                     "artifact_manifest": broken_artifact_manifest,
                     "hash_manifest": broken_hash_manifest,
                 }
-            )
+            ),
+            payload_resolver=_payload_resolver(),
         )
 
 
@@ -1214,7 +1265,8 @@ def test_replay_bundle_readiness_rejects_artifact_content_ref_mismatch_even_if_r
                     "artifact_manifest": broken_artifact_manifest,
                     "hash_manifest": broken_hash_manifest,
                 }
-            )
+            ),
+            payload_resolver=_payload_resolver(),
         )
 
 
@@ -1271,7 +1323,8 @@ def test_replay_bundle_readiness_rejects_event_window_content_ref_mismatch_even_
                     "artifact_manifest": broken_artifact_manifest,
                     "hash_manifest": broken_hash_manifest,
                 }
-            )
+            ),
+            payload_resolver=_payload_resolver(),
         )
 
 
@@ -1336,7 +1389,7 @@ def test_replay_bundle_hash_chain_proves_event_window_integrity() -> None:
 
 
 def test_replay_bundle_readiness_matches_closeout_gate_contract() -> None:
-    readiness = replay_bundle_readiness(build_replay_bundle(_builder_input()))
+    readiness = replay_bundle_readiness(build_replay_bundle(_builder_input()), payload_resolver=_payload_resolver())
 
     assert isinstance(readiness, ReplayBundleReadiness)
     assert readiness.replay_passed is True

@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from boardroom_os.closeout.package import (
     CloseoutPackage,
-    CloseoutPackageCheckedRef,
     CloseoutPackageRef,
     CloseoutPackageVerdict,
 )
@@ -32,7 +31,7 @@ _NOW = datetime(2026, 5, 25, 10, 0, tzinfo=UTC)
 
 
 def _passed_package() -> CloseoutPackage:
-    return _build_package(graph_version=10).model_copy(update={"project_ref": _PROJECT_REF})
+    return _build_package().model_copy(update={"project_ref": _PROJECT_REF})
 
 
 class InMemoryCloseoutPayloadResolver(CloseoutReducerPayloadResolver):
@@ -72,7 +71,7 @@ def _event(
     )
 
 
-def _work_product_event(graph_version: int = 9) -> EventRecord:
+def _work_product_event(graph_version: int = 5) -> EventRecord:
     return _event(
         event_id=f"evt.work-product.submitted.{graph_version}",
         event_type=EventType.WORK_PRODUCT_SUBMITTED,
@@ -99,7 +98,7 @@ def _commit_payload(package: CloseoutPackage | None = None, **overrides: Any) ->
     return CloseoutCommitPayload(**fields)
 
 
-def _closeout_event(graph_version: int = 10, actor_ref: str = "seat-closeout") -> EventRecord:
+def _closeout_event(graph_version: int = 6, actor_ref: str = "seat-closeout") -> EventRecord:
     return _event(
         event_id="evt.closeout.committed",
         event_type=EventType.CLOSEOUT_COMMITTED,
@@ -125,7 +124,7 @@ def _base_history(
 ) -> CloseoutHistoryProjection:
     return CloseoutHistoryProjection(
         project_ref=_PROJECT_REF,
-        graph_version=9,
+        graph_version=5,
         work_product_submitted_refs=work_product_refs,
         ticket_completed_refs=(EventPayloadRef(value="payload.ticket.completed"),),
         closeout_package_refs=closeout_package_refs,
@@ -138,7 +137,7 @@ def test_closeout_committed_event_is_accepted_by_event_record_but_not_runtime_bo
         event_id="evt.closeout.committed",
         event_type=EventType.CLOSEOUT_COMMITTED,
         payload_ref="payload.closeout.commit",
-        graph_version=10,
+        graph_version=6,
     )
 
     assert event.event_type is EventType.CLOSEOUT_COMMITTED
@@ -148,21 +147,21 @@ def test_closeout_committed_event_is_accepted_by_event_record_but_not_runtime_bo
 
 def test_closeout_reducer_keeps_projection_open_without_closeout_committed_event() -> None:
     projection = CloseoutReducer(InMemoryCloseoutPayloadResolver()).reduce(
-        (_work_product_event(graph_version=9),)
+        (_work_product_event(),)
     )
 
     assert projection.terminal_status is CloseoutTerminalStatus.OPEN
     assert projection.project_ref == _PROJECT_REF
-    assert projection.graph_version == 9
+    assert projection.graph_version == 5
     assert projection.closeout_package_ref is None
-    assert projection.work_product_history_refs == (EventPayloadRef(value="work-product.submitted.9"),)
+    assert projection.work_product_history_refs == (EventPayloadRef(value="work-product.submitted.5"),)
 
 
 def test_closeout_reducer_projects_terminal_success_from_passed_closeout_package() -> None:
     package = _passed_package()
     projection = CloseoutReducer(_resolver_for_package(package)).reduce(
         (
-            _work_product_event(graph_version=9),
+            _work_product_event(),
             _closeout_event(graph_version=package.graph_version),
         )
     )
@@ -174,7 +173,7 @@ def test_closeout_reducer_projects_terminal_success_from_passed_closeout_package
     assert projection.closeout_gate_result_ref == package.closeout_gate_result_ref
     assert projection.package_commit_ref == package.package_commit_ref
     assert projection.committed_event_ref == EventId(value="evt.closeout.committed")
-    assert projection.work_product_history_refs == (EventPayloadRef(value="work-product.submitted.9"),)
+    assert projection.work_product_history_refs == (EventPayloadRef(value="work-product.submitted.5"),)
     assert package.closeout_package_id.value in projection.checked_refs
     assert package.closeout_gate_result_ref.value in projection.checked_refs
     assert package.replay_bundle_ref.value in projection.checked_refs
@@ -206,7 +205,7 @@ def test_closeout_reducer_rejects_missing_work_product_history_even_if_ticket_co
     package = _passed_package()
     history = CloseoutHistoryProjection(
         project_ref=_PROJECT_REF,
-        graph_version=9,
+        graph_version=5,
         work_product_submitted_refs=(),
         ticket_completed_refs=(EventPayloadRef(value="payload.ticket.completed"),),
     )
@@ -224,7 +223,7 @@ def test_closeout_reducer_rejects_runtime_closeout_event() -> None:
     with pytest.raises(CloseoutReducerError, match="runtime|executor"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
             (
-                _work_product_event(graph_version=9),
+                _work_product_event(),
                 _closeout_event(graph_version=package.graph_version, actor_ref="runtime:executor"),
             )
         )
@@ -243,7 +242,7 @@ def test_closeout_reducer_rejects_duplicate_closeout_commit() -> None:
     with pytest.raises(CloseoutReducerError, match="events after closeout|duplicate|already"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
             (
-                _work_product_event(graph_version=9),
+                _work_product_event(),
                 _closeout_event(graph_version=package.graph_version),
                 duplicate,
             )
@@ -263,7 +262,7 @@ def test_closeout_reducer_rejects_any_event_after_closeout_commit() -> None:
     with pytest.raises(CloseoutReducerError, match="events after closeout commit"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
             (
-                _work_product_event(graph_version=9),
+                _work_product_event(),
                 _closeout_event(graph_version=package.graph_version),
                 _work_product_event(graph_version=package.graph_version + 1),
             )
@@ -295,7 +294,7 @@ def test_closeout_reducer_rejects_out_of_order_or_cross_project_events() -> None
     with pytest.raises(CloseoutReducerError, match="project_ref"):
         reducer.reduce(
             (
-                _work_product_event(graph_version=9),
+                _work_product_event(),
                 _event(
                     event_id="evt.closeout.other-project",
                     event_type=EventType.CLOSEOUT_COMMITTED,
@@ -317,17 +316,10 @@ def test_closeout_reducer_rejects_missing_closeout_gate_or_blocked_package() -> 
 
     with pytest.raises(CloseoutReducerError, match="closeout_gate_result_ref"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package.graph_version))
         )
 
-    package_payload = package.model_dump(mode="python")
-    package_payload["checked_refs"] = tuple(
-        CloseoutPackageCheckedRef(value=value)
-        for value in (*[ref.value for ref in package.checked_refs], "package-commit.override")
-    )
-    package_payload["package_commit_ref"] = "package-commit.override"
-    blocked_package = CloseoutPackage.model_validate(package_payload)
-    blocked_package = blocked_package.model_copy(update={"verdict": CloseoutPackageVerdict.FAILED})
+    blocked_package = package.model_copy(update={"verdict": CloseoutPackageVerdict.FAILED})
     resolver = InMemoryCloseoutPayloadResolver(
         commit_payloads={"payload.closeout.commit": _commit_payload(blocked_package)},
         packages={blocked_package.closeout_package_id.value: blocked_package},
@@ -335,7 +327,7 @@ def test_closeout_reducer_rejects_missing_closeout_gate_or_blocked_package() -> 
 
     with pytest.raises(CloseoutReducerError, match="verdict"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=blocked_package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=blocked_package.graph_version))
         )
 
 
@@ -349,7 +341,7 @@ def test_closeout_reducer_rejects_missing_replay_bundle_binding() -> None:
 
     with pytest.raises(CloseoutReducerError, match="replay_bundle_ref"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package.graph_version))
         )
 
 
@@ -376,7 +368,7 @@ def test_closeout_reducer_rejects_package_payload_ref_mismatch(
 
     with pytest.raises(CloseoutReducerError, match=field_name):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package.graph_version))
         )
 
 
@@ -385,7 +377,10 @@ def test_closeout_reducer_rejects_closeout_before_package_graph_version() -> Non
 
     with pytest.raises(CloseoutReducerError, match="graph_version"):
         CloseoutReducer(_resolver_for_package(package)).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version - 1))
+            (
+                _work_product_event(graph_version=package.graph_version - 2),
+                _closeout_event(graph_version=package.graph_version - 1),
+            )
         )
 
 
@@ -398,7 +393,7 @@ def test_closeout_reducer_rejects_raw_dict_payloads() -> None:
 
     with pytest.raises(CloseoutReducerError, match="CloseoutCommitPayload"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package.graph_version))
         )
 
 
@@ -411,7 +406,7 @@ def test_closeout_reducer_rejects_raw_dict_package() -> None:
 
     with pytest.raises(CloseoutReducerError, match="CloseoutPackage"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package.graph_version))
         )
 
 
@@ -425,14 +420,14 @@ def test_closeout_reducer_rejects_checked_refs_gap() -> None:
 
     with pytest.raises(CloseoutReducerError, match="checked_refs"):
         CloseoutReducer(resolver).reduce(
-            (_work_product_event(graph_version=9), _closeout_event(graph_version=package_with_gap.graph_version))
+            (_work_product_event(), _closeout_event(graph_version=package_with_gap.graph_version))
         )
 
 
 def test_closeout_projection_dump_is_audit_friendly_json() -> None:
     package = _passed_package()
     projection = CloseoutReducer(_resolver_for_package(package)).reduce(
-        (_work_product_event(graph_version=9), _closeout_event(graph_version=package.graph_version))
+        (_work_product_event(), _closeout_event(graph_version=package.graph_version))
     )
     serialized = json.dumps(projection.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
 
@@ -446,7 +441,7 @@ def test_closeout_projection_dump_is_audit_friendly_json() -> None:
 
 def test_closeout_reducer_rejects_workflow_completed_without_closeout_package() -> None:
     projection = CloseoutReducer(InMemoryCloseoutPayloadResolver()).reduce(
-        (_work_product_event(graph_version=9),)
+        (_work_product_event(),)
     )
 
     assert projection.terminal_status is CloseoutTerminalStatus.OPEN

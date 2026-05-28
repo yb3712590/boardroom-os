@@ -451,6 +451,7 @@ def _stable_hash_input_with_order(
         replay_readiness=base_input.replay_readiness,
         git_version_audit_bundle=git_bundle,
         git_audit_readiness=git_version_audit_readiness(git_bundle),
+        run_id=base_input.run_id,
     )
 
 

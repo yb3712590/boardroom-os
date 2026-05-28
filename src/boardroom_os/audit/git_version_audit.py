@@ -21,7 +21,12 @@ from pydantic import (
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.closeout.gate import GitAuditReadiness, GitCommitSha, SourceInventoryHash
 from boardroom_os.contracts.hashes import Sha256Hex
-from boardroom_os.contracts.refs import canonical_sort_for_hash
+from boardroom_os.contracts.refs import (
+    NamespacedRefError,
+    assert_namespace_segment,
+    canonical_sort_for_hash,
+    namespaced_ref,
+)
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
 from boardroom_os.events.types import ProjectRef
@@ -621,6 +626,7 @@ class GitVersionAuditBuilderInput(BaseModel):
     verification_runs: tuple[VerificationRun, ...]
     command_evidence_bindings: tuple[GitCommandEvidenceBinding, ...]
     git_facts: GitVersionAuditFactSet
+    run_id: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -668,6 +674,16 @@ class GitVersionAuditBuilderInput(BaseModel):
             raise GitVersionAuditError("git_facts must be GitVersionAuditFactSet")
         return value
 
+    @field_validator("run_id")
+    @classmethod
+    def _validate_run_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            return assert_namespace_segment(value, field_name="run_id")
+        except NamespacedRefError as error:
+            raise GitVersionAuditError(str(error)) from error
+
 
 def _require_instance_tuple(value: Any, expected_type: type[Any], field_name: str) -> tuple[Any, ...]:
     if not isinstance(value, list | tuple):
@@ -694,7 +710,12 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
     report = _build_report(builder_input, sorted_runs, sorted_bindings)
     checked_refs = _checked_refs(builder_input, sorted_runs, sorted_bindings, report)
     bundle_id_placeholder = GitVersionAuditBundleRef(
-        value=f"git-version-audit-bundle.{builder_input.project_ref.value}.{builder_input.git_facts.final_commit_sha.value}"
+        value=namespaced_ref(
+            kind="git-version-audit-bundle",
+            project_ref=builder_input.project_ref.value,
+            content_hash=builder_input.git_facts.source_inventory_hash.value,
+            run_id=builder_input.run_id,
+        )
     )
     hash_manifest = _build_hash_manifest(
         project_ref=builder_input.project_ref,
@@ -704,9 +725,15 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
         bundle_id=bundle_id_placeholder,
         generated_at=builder_input.generated_at,
         checked_refs=checked_refs,
+        run_id=builder_input.run_id,
     )
     bundle_id = GitVersionAuditBundleRef(
-        value=f"git-version-audit-bundle.{builder_input.project_ref.value}.{hash_manifest.bundle_payload_hash.value[:16]}"
+        value=namespaced_ref(
+            kind="git-version-audit-bundle",
+            project_ref=builder_input.project_ref.value,
+            content_hash=hash_manifest.bundle_payload_hash.value,
+            run_id=builder_input.run_id,
+        )
     )
     hash_manifest = _build_hash_manifest(
         project_ref=builder_input.project_ref,
@@ -716,6 +743,7 @@ def build_git_version_audit_bundle(builder_input: GitVersionAuditBuilderInput) -
         bundle_id=bundle_id,
         generated_at=builder_input.generated_at,
         checked_refs=checked_refs,
+        run_id=builder_input.run_id,
     )
     return GitVersionAuditBundle(
         git_version_audit_bundle_id=bundle_id,
@@ -877,7 +905,24 @@ def _build_report(
     checked_refs = _checked_refs(builder_input, verification_runs, command_evidence_bindings, None)
     return GitVersionAuditReport(
         git_version_audit_report_id=GitVersionAuditReportRef(
-            value=f"git-version-audit-report.{builder_input.project_ref.value}.{builder_input.git_facts.final_commit_sha.value}"
+            value=namespaced_ref(
+                kind="git-version-audit-report",
+                project_ref=builder_input.project_ref.value,
+                content_hash=_hash_jsonable(
+                    {
+                        "project_ref": builder_input.project_ref.value,
+                        "generated_at": builder_input.generated_at.isoformat(),
+                        "fact_set_ref": builder_input.git_facts.fact_set_id.value,
+                        "final_commit_sha": builder_input.git_facts.final_commit_sha.value,
+                        "package_commit_ref": builder_input.source_inventory.package_commit_ref.value,
+                        "source_inventory_ref": builder_input.source_inventory.source_inventory_id.value,
+                        "source_inventory_hash": builder_input.git_facts.source_inventory_hash.value,
+                        "command_evidence_refs": command_refs,
+                        "checked_refs": checked_refs,
+                    }
+                ),
+                run_id=builder_input.run_id,
+            )
         ),
         project_ref=builder_input.project_ref,
         generated_at=builder_input.generated_at,
@@ -924,10 +969,34 @@ def _build_hash_manifest(
     bundle_id: GitVersionAuditBundleRef,
     generated_at: datetime,
     checked_refs: tuple[str, ...],
+    run_id: str | None,
 ) -> GitVersionAuditHashManifest:
     command_binding_hashes = {
         binding.binding_id.value: _content_hash(binding.model_dump(mode="json"))
         for binding in command_evidence_bindings
+    }
+    hash_manifest_without_bundle_hash = {
+        "hash_manifest_id": namespaced_ref(
+            kind="git-version-audit-hash-manifest",
+            project_ref=project_ref.value,
+            content_hash=_hash_jsonable(
+                {
+                    "project_ref": project_ref.value,
+                    "fact_set_hash": _hash_model(fact_set),
+                    "report_hash": _hash_model(report),
+                    "command_binding_hashes": {
+                        key: value.value for key, value in command_binding_hashes.items()
+                    },
+                }
+            ),
+            run_id=run_id,
+        ),
+        "project_ref": project_ref.value,
+        "fact_set_hash": _hash_model(fact_set),
+        "report_hash": _hash_model(report),
+        "command_binding_hashes": {
+            key: value.value for key, value in command_binding_hashes.items()
+        },
     }
     bundle_payload = _bundle_payload_for_hash(
         bundle_id=bundle_id,
@@ -937,19 +1006,11 @@ def _build_hash_manifest(
         command_evidence_bindings=command_evidence_bindings,
         report=report,
         checked_refs=checked_refs,
-        hash_manifest_without_bundle_hash={
-            "hash_manifest_id": f"git-version-audit-hash-manifest.{project_ref.value}.{fact_set.final_commit_sha.value}",
-            "project_ref": project_ref.value,
-            "fact_set_hash": _hash_model(fact_set),
-            "report_hash": _hash_model(report),
-            "command_binding_hashes": {
-                key: value.value for key, value in command_binding_hashes.items()
-            },
-        },
+        hash_manifest_without_bundle_hash=hash_manifest_without_bundle_hash,
     )
     return GitVersionAuditHashManifest(
         hash_manifest_id=GitVersionAuditManifestRef(
-            value=f"git-version-audit-hash-manifest.{project_ref.value}.{fact_set.final_commit_sha.value}"
+            value=hash_manifest_without_bundle_hash["hash_manifest_id"]
         ),
         project_ref=project_ref,
         fact_set_hash=_content_hash(fact_set.model_dump(mode="json")),

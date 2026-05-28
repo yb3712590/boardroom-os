@@ -105,6 +105,7 @@ def _builder_input(**overrides: Any) -> GitVersionAuditBuilderInput:
         "verification_runs": ready.verification_runs,
         "command_evidence_bindings": (_command_binding(),),
         "git_facts": _git_facts(),
+        "run_id": "run-v2-071e",
     }
     values.update(overrides)
     return GitVersionAuditBuilderInput(**values)
@@ -362,7 +363,30 @@ def test_git_version_audit_bundle_is_audit_friendly_json() -> None:
     assert first_bundle.bundle_hash == second_bundle.bundle_hash
 
 
-def test_git_audit_adapter_collects_git_facts_from_transport() -> None:
+def test_git_version_audit_refs_are_namespaced_by_project_hash_and_run() -> None:
+    bundle = _build_bundle()
+
+    assert bundle.git_version_audit_bundle_id.value.startswith(
+        f"git-version-audit-bundle.{bundle.project_ref.value}."
+    )
+    assert bundle.git_version_audit_bundle_id.value.endswith(".run-v2-071e")
+    assert bundle.report.git_version_audit_report_id.value.startswith(
+        f"git-version-audit-report.{bundle.project_ref.value}."
+    )
+    assert bundle.report.git_version_audit_report_id.value.endswith(".run-v2-071e")
+    assert bundle.hash_manifest.hash_manifest_id.value.startswith(
+        f"git-version-audit-hash-manifest.{bundle.project_ref.value}."
+    )
+    assert bundle.hash_manifest.hash_manifest_id.value.endswith(".run-v2-071e")
+
+
+def test_git_version_audit_bundle_id_changes_when_run_id_changes() -> None:
+    first_bundle = _build_bundle(run_id="run-v2-071e-a")
+    second_bundle = _build_bundle(run_id="run-v2-071e-b")
+
+    assert first_bundle.git_version_audit_bundle_id != second_bundle.git_version_audit_bundle_id
+
+
     transport = FakeGitTransport(
         {
             ("git", "rev-parse", "HEAD"): GitCommandResult(

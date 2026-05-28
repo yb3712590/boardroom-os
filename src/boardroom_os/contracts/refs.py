@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 from boardroom_os.contracts.hashes import Sha256Hex
 
 _T = TypeVar("_T")
-_NAMESPACE_SEGMENT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+_NAMESPACE_SEGMENT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
 
 
 class NamespacedRefError(ValueError):
@@ -63,6 +63,28 @@ def namespaced_ref(
     return ".".join(parts)
 
 
+def assert_namespaced_ref_binding(
+    value: str,
+    *,
+    kind: str,
+    project_ref: str,
+    content_hash: str | Sha256Hex,
+    run_id: str | None = None,
+    extra_suffix: str | None = None,
+    field_name: str = "namespaced_ref",
+) -> str:
+    expected = namespaced_ref(
+        kind=kind,
+        project_ref=project_ref,
+        content_hash=content_hash,
+        run_id=run_id,
+        extra_suffix=extra_suffix,
+    )
+    if value != expected:
+        raise NamespacedRefError(f"{field_name} namespace binding mismatch")
+    return value
+
+
 def canonical_sort_for_hash(values: Iterable[_T], *, key: Callable[[_T], str]) -> tuple[_T, ...]:
     keyed: list[tuple[str, _T]] = []
     seen: set[str] = set()
@@ -109,6 +131,7 @@ def hash_namespaced_payload(payload: dict[str, Any]) -> str:
 
 __all__ = [
     "NamespacedRefError",
+    "assert_namespaced_ref_binding",
     "assert_namespace_segment",
     "canonical_sort_for_hash",
     "hash_namespaced_payload",

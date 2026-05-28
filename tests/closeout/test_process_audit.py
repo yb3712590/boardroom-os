@@ -100,7 +100,34 @@ def test_process_audit_bundle_is_audit_friendly_json() -> None:
     assert first_bundle.bundle_hash == second_bundle.bundle_hash
 
 
-def test_process_audit_report_indexes_all_artifacts() -> None:
+def test_process_audit_persistent_refs_are_namespaced_by_project_hash_and_run() -> None:
+    bundle = _build_bundle()
+
+    assert bundle.process_audit_bundle_id.value.startswith(
+        f"process-audit-bundle.{bundle.project_ref.value}."
+    )
+    assert bundle.process_audit_bundle_id.value.endswith(".run-v2-071e")
+    assert bundle.process_audit_report.process_audit_report_id.value.startswith(
+        f"process-audit-report.{bundle.project_ref.value}."
+    )
+    assert bundle.process_audit_report.process_audit_report_id.value.endswith(".run-v2-071e")
+    assert bundle.artifact_manifest.artifact_manifest_id.value.startswith(
+        f"process-audit-artifact-manifest.{bundle.project_ref.value}."
+    )
+    assert bundle.artifact_manifest.artifact_manifest_id.value.endswith(".run-v2-071e")
+    assert bundle.hash_manifest.hash_manifest_id.value.startswith(
+        f"process-audit-hash-manifest.{bundle.project_ref.value}."
+    )
+    assert bundle.hash_manifest.hash_manifest_id.value.endswith(".run-v2-071e")
+
+
+def test_process_audit_bundle_id_changes_when_run_id_changes() -> None:
+    first_bundle = _build_bundle(run_id="run-v2-071e-a")
+    second_bundle = _build_bundle(run_id="run-v2-071e-b")
+
+    assert first_bundle.process_audit_bundle_id != second_bundle.process_audit_bundle_id
+
+
     bundle = _build_bundle()
     report = bundle.process_audit_report
 

@@ -82,6 +82,14 @@ class CloseoutGateBlockerCode(StrEnum):
     REF_MISMATCH = "ref_mismatch"
 
 
+class ReplayPayloadManifestRef(NonEmptyTextValue):
+    pass
+
+
+class ReplayPayloadManifestHash(Sha256Hex):
+    pass
+
+
 class ReplayBundleReadiness(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -90,6 +98,9 @@ class ReplayBundleReadiness(BaseModel):
     event_range: EventRangeRef
     projection_versions: tuple[ProjectionVersionRef, ...]
     hash_chain_verified: StrictBool
+    payload_sha256_verified: StrictBool
+    payload_manifest_ref: ReplayPayloadManifestRef
+    payload_manifest_hash: ReplayPayloadManifestHash
 
     @model_validator(mode="before")
     @classmethod
@@ -103,6 +114,8 @@ class ReplayBundleReadiness(BaseModel):
             {
                 "summary_hash": ReplaySummaryHash,
                 "event_range": EventRangeRef,
+                "payload_manifest_ref": ReplayPayloadManifestRef,
+                "payload_manifest_hash": ReplayPayloadManifestHash,
             },
             {"projection_versions": ProjectionVersionRef},
         )
@@ -764,8 +777,11 @@ def _replay_readiness_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
         readiness is None
         or readiness.replay_passed is not True
         or readiness.hash_chain_verified is not True
+        or readiness.payload_sha256_verified is not True
         or not readiness.summary_hash.value
         or not readiness.event_range.value
+        or not readiness.payload_manifest_ref.value
+        or not readiness.payload_manifest_hash.value
         or not readiness.projection_versions
     ):
         return [
@@ -871,6 +887,8 @@ def _checked_refs(gate_input: CloseoutGateInput) -> tuple[str, ...]:
     if gate_input.replay_readiness is not None:
         refs.append(gate_input.replay_readiness.summary_hash.value)
         refs.append(gate_input.replay_readiness.event_range.value)
+        refs.append(gate_input.replay_readiness.payload_manifest_ref.value)
+        refs.append(gate_input.replay_readiness.payload_manifest_hash.value)
         refs.extend(ref.value for ref in gate_input.replay_readiness.projection_versions)
     if gate_input.git_audit_readiness is not None:
         refs.append(gate_input.git_audit_readiness.final_commit_sha.value)
@@ -898,6 +916,8 @@ __all__ = [
     "ProcessAuditReadiness",
     "ProjectionVersionRef",
     "ReplayBundleReadiness",
+    "ReplayPayloadManifestHash",
+    "ReplayPayloadManifestRef",
     "ReplaySummaryHash",
     "SourceInventoryHash",
 ]

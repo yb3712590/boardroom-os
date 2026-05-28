@@ -24,7 +24,15 @@ from boardroom_os.audit.process_audit import (
     build_process_audit_bundle,
     process_audit_readiness,
 )
-from boardroom_os.audit.replay_bundle import ReplayContentRef, ReplayManifestKind, build_replay_bundle, replay_bundle_readiness
+from boardroom_os.audit.replay_bundle import (
+    ReplayContentHash,
+    ReplayContentRef,
+    ReplayManifestEntry,
+    ReplayManifestKind,
+    _payload_bytes_for_hash,
+    build_replay_bundle,
+    replay_bundle_readiness,
+)
 from boardroom_os.closeout.gate import GitAuditReadiness, ReplayBundleReadiness
 from boardroom_os.contracts.acceptance import (
     AcceptanceContract,
@@ -261,6 +269,19 @@ class ProcessAuditReplayPayloadResolver:
         self._delegate = delegate
         self._extra_payload_refs = set(extra_payload_refs)
 
+    def resolve_payload(self, content_ref):
+        payload_ref = EventPayloadRef(value=content_ref.value)
+        if content_ref.value in self._extra_payload_refs:
+            return f"payload.{content_ref.value}"
+        try:
+            return self._delegate.resolve_payload(content_ref)
+        except AttributeError:
+            if content_ref.value == "payload:ticket-backend-api-created":
+                return self.resolve_ticket_created(payload_ref)
+            if content_ref.value == "payload:ticket-backend-api-seat-assigned":
+                return self.resolve_seat_assignment(payload_ref)
+            raise
+
     def resolve_ticket_created(self, payload_ref: EventPayloadRef):
         return self._delegate.resolve_ticket_created(payload_ref)
 
@@ -298,6 +319,38 @@ class ProcessAuditReplayTicketProjector:
                 nodes=nodes,
             )
         return ticket_graph
+
+
+def _replay_payload_resolver() -> ProcessAuditReplayPayloadResolver:
+    base_projector = _replay_projector()
+    return ProcessAuditReplayPayloadResolver(
+        base_projector._payload_resolver,
+        (
+            "payload:ticket-started",
+            "provider-attempt.app",
+            "source-inventory",
+            "verification-run.app",
+        ),
+    )
+
+
+def _process_audit_payload_manifest_entries(
+    events: tuple[EventRecord, ...],
+    payload_resolver: ProcessAuditReplayPayloadResolver,
+) -> tuple[ReplayManifestEntry, ...]:
+    return tuple(
+        ReplayManifestEntry(
+            manifest_ref=entry.manifest_ref,
+            kind=entry.kind,
+            content_ref=entry.content_ref,
+            sha256=ReplayContentHash(
+                value=hashlib.sha256(
+                    _payload_bytes_for_hash(payload_resolver.resolve_payload(entry.content_ref))
+                ).hexdigest()
+            ),
+        )
+        for entry in _replay_payload_manifest_entries(events)
+    )
 
 
 class ProcessAuditReplaySeatAssignmentProjector(ProcessAuditReplayProjector):
@@ -350,6 +403,7 @@ def _process_audit_events() -> tuple[EventRecord, ...]:
 
 def _build_replay_bundle_for_process_audit(events: tuple[EventRecord, ...]):
     replay_events = events
+    payload_resolver = _replay_payload_resolver()
     event_window_ref = (
         "event-range."
         f"{replay_events[0].project_ref.value}."
@@ -364,7 +418,10 @@ def _build_replay_bundle_for_process_audit(events: tuple[EventRecord, ...]):
     return build_replay_bundle(
         _replay_builder_input(
             events=replay_events,
-            payload_manifest_entries=_replay_payload_manifest_entries(replay_events),
+            payload_manifest_entries=_process_audit_payload_manifest_entries(
+                replay_events,
+                payload_resolver,
+            ),
             artifact_manifest_entries=artifact_manifest_entries,
             projection_version=_REPLAY_PROJECTION_VERSION,
             seat_assignment_projector=ProcessAuditReplaySeatAssignmentProjector(),
@@ -384,11 +441,15 @@ def _process_audit_builder_input(
     source_inventory: Any | None = None,
     final_evidence_table: Any | None = None,
     ticket_graph_summary: BaseModel | None = None,
+    run_id: str | None = "run-v2-071e",
 ) -> ProcessAuditBuilderInput:
     gate_input = _closeout_gate_ready_input()
     resolved_replay_events = replay_events or _process_audit_events()
     replay_bundle = replay_bundle or _build_replay_bundle_for_process_audit(resolved_replay_events)
-    resolved_replay_readiness = replay_readiness or replay_bundle_readiness(replay_bundle)
+    resolved_replay_readiness = replay_readiness or replay_bundle_readiness(
+        replay_bundle,
+        payload_resolver=_replay_payload_resolver(),
+    )
     resolved_git_version_audit_bundle = (
         git_version_audit_bundle or _build_git_version_audit_bundle()
     )
@@ -416,6 +477,7 @@ def _process_audit_builder_input(
         replay_readiness=resolved_replay_readiness,
         git_version_audit_bundle=resolved_git_version_audit_bundle,
         git_audit_readiness=resolved_git_audit_readiness,
+        run_id=run_id,
     )
 
 
