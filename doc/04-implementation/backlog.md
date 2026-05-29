@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080D`
+**当前未完成工作包**：`V2-080E`
 
-**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已启动。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已接入真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）并证明每个 implementation ticket（实施任务）都有真实 ProviderAttempt（模型调用尝试记录）。下一步进入 V2-080D，运行 tiny command evidence（微型命令证据）与 EvidenceVerifier（证据验证器）。
+**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）继续推进。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已接入真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）并证明每个 implementation ticket（实施任务）都有真实 ProviderAttempt（模型调用尝试记录）；V2-080D 已运行 tiny command evidence（微型命令证据）并通过 EvidenceVerifier（证据验证器）与 FinalEvidenceTable（最终证据表）。下一步进入 V2-080E，装配 tiny package（微型项目包）与 SourceInventory（源码清单）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -160,8 +160,8 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 3 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-080** | **56 / 59** | **Phase 8 进行中** |
+| Phase 8：Tiny proving scenario | V2-080 | 4 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-080** | **57 / 59** | **Phase 8 进行中** |
 
 ## 当前约束摘要
 
@@ -997,14 +997,15 @@ RoleProfile（角色模板）
 
 ### V2-080D: 运行 tiny command evidence 与 evidence verifier
 
-- 状态：TODO
+- 状态：DONE
 - 目标：运行 declared commands，生成 VerificationRun，并通过 EvidenceVerifier。
 - 输入文档：V2-040、V2-050 产物。
 - 依赖：V2-080C、V2-050F。
-- 输出文件：`tests/proving/test_tiny_evidence_verification.py`。
+- 输出文件：`tests/proving/test_tiny_evidence_verification.py`；同步修正 `src/boardroom_os/adapters/process_runner.py`。
 - 必须先写的 negative tests：synthetic verification、missing acceptance map、checker notes 覆盖 blocker 必须失败。
 - 必须证明的 happy path：真实 runner evidence 满足 active acceptance contract 的 blocking criteria。
 - 验收口径：final evidence table complete。
+- 完成证据：2026-05-29 新增 `tests/proving/test_tiny_evidence_verification.py`，并修正 `CommandRunnerInput`（命令执行器输入）只接受 typed `ExecutionPackage`（执行包）/ `PackageContract`（包合同）实例，避免对已构造且通过 methodology registry（方法论注册表）校验的 PackageContract 进行丢失上下文的二次校验，同时继续拒绝 raw dict（原始字典）输入。Negative tests 覆盖缺真实 VerificationRun（验证运行）的 synthetic command claim 被 EvidenceVerifier（证据验证器）拒绝、FinalEvidenceTable（最终证据表）缺 acceptance map（验收映射）时 `complete=False` 且 row 为 `MISSING`、CheckerNote（检查备注）不能清除 evidence blocker（证据阻断）。Happy path 在 pytest `tmp_path` 内创建最小 package root（项目包根）并用真实 CommandRunner（命令执行器）运行 declared `test-backend` / `test-integration` commands，生成 passed VerificationRun；通过 EvidenceVerifier 验证 command stdout/stderr artifact hashes（命令输出产物摘要）与 provider-backed WorkProduct（模型支持的工作产物）claims，构造覆盖 active AcceptanceContract（活跃验收合同）全部 blocking criteria（阻塞验收标准）的 FinalEvidenceTable，并由 CheckerService（检查服务）和 CompletionGate（完成门禁）证明 evidence_complete / checker_approved / no blocking_issue_refs。验证证据：先运行 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_evidence_verification.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080d-red` 得到预期 RED（文件不存在，exit code 4）；实现后 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_evidence_verification.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080d-final3-targeted` 通过（4 passed in 1.71s）；`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_ticket_graph.py tests/proving/test_tiny_provider_attempts.py tests/proving/test_tiny_evidence_verification.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080d-final3-proving` 通过（29 passed in 17.51s）；`PYTHONPATH=src:. python -m pytest tests/evidence/test_evidence_verifier.py tests/evidence/test_final_evidence_table.py tests/evidence/test_checker_verdict.py tests/reducers/test_completion_gate_with_evidence.py tests/execution/test_command_runner.py tests/proving/test_tiny_evidence_verification.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080d-final3-regression` 通过（133 passed in 1.83s）。
 
 ### V2-080E: 装配 tiny package 与 source inventory
 

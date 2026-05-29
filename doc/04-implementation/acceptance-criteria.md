@@ -422,7 +422,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] tiny scenario active contracts 完整 — 由 V2-080A `test_tiny_contracts.py` 证明：覆盖 API / UI / persistence / run / test acceptance refs
 - [x] tiny ticket graph + seat assignment — 由 V2-080B `test_tiny_ticket_graph.py` 证明：ticket graph ready queue 可按依赖推进，seat assignment 明确绑定 CEO / Architect / Worker / Checker
 - [x] tiny provider attempts — 由 V2-080C `test_tiny_provider_attempts.py` 证明：每个 implementation ticket ≥ 1 ProviderAttempt
-- [ ] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：final evidence table complete
+- [x] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：final evidence table complete
 - [ ] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
 - [ ] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建
 - [ ] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足

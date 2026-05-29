@@ -3,9 +3,9 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, StrictInt
+from pydantic import BaseModel, ConfigDict, StrictInt, field_validator
 
 from boardroom_os.contracts.package import PackageCommand, PackageContract
 from boardroom_os.contracts.types import ContractId
@@ -76,6 +76,28 @@ class CommandRunnerInput(BaseModel):
     runner_ref: RunnerRef
     environment_profile_ref: EnvironmentProfileRef
     workspace_snapshot_ref: WorkspaceSnapshotRef
+
+    @field_validator("execution_package", mode="wrap")
+    @classmethod
+    def _require_execution_package_instance(
+        cls,
+        value: Any,
+        handler: Any,
+    ) -> ExecutionPackage:
+        if not isinstance(value, ExecutionPackage):
+            raise ValueError("execution_package must be an ExecutionPackage")
+        return value
+
+    @field_validator("package_contract", mode="wrap")
+    @classmethod
+    def _require_package_contract_instance(
+        cls,
+        value: Any,
+        handler: Any,
+    ) -> PackageContract:
+        if not isinstance(value, PackageContract):
+            raise ValueError("package_contract must be a PackageContract")
+        return value
 
 
 class CommandRunnerResult(BaseModel):
