@@ -352,12 +352,12 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.backend", "surface.persistence"),
             acceptance_refs=api_refs + persistence_refs,
-            source_surface_refs=("backend-api", "persistence"),
+            source_surface_refs=("backend-api", "persistence", "tests"),
             evidence_obligations=_obligation_refs_for(
                 contracts,
                 acceptance_refs=api_refs + persistence_refs,
             ),
-            allowed_write_set=("10-project/backend/**",),
+            allowed_write_set=("backend/app.py", "backend/db.py"),
         ),
         TICKET_FRONTEND_UI_ID: _ticket_payload(
             ticket_id=TICKET_FRONTEND_UI_ID,
@@ -365,9 +365,9 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.frontend"),
             acceptance_refs=ui_refs,
-            source_surface_refs=("frontend-ui",),
+            source_surface_refs=("frontend-ui", "tests"),
             evidence_obligations=_obligation_refs_for(contracts, acceptance_refs=ui_refs),
-            allowed_write_set=("10-project/frontend/**",),
+            allowed_write_set=("frontend/index.html", "frontend/app.js"),
         ),
         TICKET_TESTS_ID: _ticket_payload(
             ticket_id=TICKET_TESTS_ID,
@@ -375,12 +375,18 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.tests"),
             acceptance_refs=api_refs + persistence_refs + ui_refs + run_test_refs,
-            source_surface_refs=("tests",),
+            source_surface_refs=(
+                "backend-api",
+                "persistence",
+                "frontend-ui",
+                "tests",
+                "run-manifest",
+            ),
             evidence_obligations=_obligation_refs_for(
                 contracts,
                 acceptance_refs=api_refs + persistence_refs + ui_refs + run_test_refs,
             ),
-            allowed_write_set=("10-project/backend/tests/**", "10-project/tests/**"),
+            allowed_write_set=("backend/tests/test_api.py", "tests/integration/test_frontend_backend.py"),
         ),
         TICKET_DOCS_RUN_MANIFEST_ID: _ticket_payload(
             ticket_id=TICKET_DOCS_RUN_MANIFEST_ID,
@@ -388,12 +394,12 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.docs", "surface.run_manifest"),
             acceptance_refs=run_test_refs,
-            source_surface_refs=("docs", "run-manifest"),
+            source_surface_refs=("docs", "run-manifest", "tests"),
             evidence_obligations=_obligation_refs_for(
                 contracts,
                 acceptance_refs=run_test_refs,
             ),
-            allowed_write_set=("10-project/README.md", "10-project/AGENTS.md", "10-project/run-manifest.json"),
+            allowed_write_set=("README.md", "AGENTS.md", "run-manifest.json"),
         ),
         TICKET_CHECKER_ID: _ticket_payload(
             ticket_id=TICKET_CHECKER_ID,

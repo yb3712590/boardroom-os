@@ -103,10 +103,10 @@ def test_implementation_ticket_contract_fields_come_from_active_contracts() -> N
         TICKET_DOCS_RUN_MANIFEST_ID: {"AC-TINY-RUN-TEST-COMMANDS"},
     }
     expected_source_surface_refs_by_ticket = {
-        TICKET_BACKEND_API_ID: {"backend-api", "persistence"},
-        TICKET_FRONTEND_UI_ID: {"frontend-ui"},
-        TICKET_TESTS_ID: {"tests"},
-        TICKET_DOCS_RUN_MANIFEST_ID: {"docs", "run-manifest"},
+        TICKET_BACKEND_API_ID: {"backend-api", "persistence", "tests"},
+        TICKET_FRONTEND_UI_ID: {"frontend-ui", "tests"},
+        TICKET_TESTS_ID: {"backend-api", "persistence", "frontend-ui", "tests", "run-manifest"},
+        TICKET_DOCS_RUN_MANIFEST_ID: {"docs", "run-manifest", "tests"},
     }
     expected_obligation_refs_by_ticket = {
         ticket_id: {

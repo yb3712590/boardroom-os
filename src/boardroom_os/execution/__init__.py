@@ -34,24 +34,6 @@ from boardroom_os.execution.package import (
     FallbackPolicyRef,
     RequiredOutput,
 )
-from boardroom_os.execution.provider_executor import (
-    ProviderExecutor,
-    ProviderExecutorError,
-    ProviderExecutorInput,
-    ProviderExecutorResult,
-    render_prompt_from_snapshot,
-)
-from boardroom_os.execution.runtime_executor import (
-    RuntimeEventBoundary,
-    RuntimeEventSequencer,
-    RuntimeExecutionInput,
-    RuntimeExecutionResult,
-    RuntimeExecutor,
-    RuntimeExecutorError,
-    build_command_run_recorded_event,
-    build_execution_started_event,
-    build_provider_attempt_recorded_event,
-)
 from boardroom_os.execution.verification_run import (
     CommandOutputRef,
     EnvironmentProfileRef,
@@ -64,6 +46,39 @@ from boardroom_os.execution.verification_run import (
     stderr_ref_for,
     stdout_ref_for,
 )
+
+_PROVIDER_EXECUTOR_EXPORTS = {
+    "ProviderExecutor",
+    "ProviderExecutorError",
+    "ProviderExecutorInput",
+    "ProviderExecutorResult",
+    "render_prompt_from_snapshot",
+}
+
+_RUNTIME_EXECUTOR_EXPORTS = {
+    "RuntimeEventBoundary",
+    "RuntimeEventSequencer",
+    "RuntimeExecutionInput",
+    "RuntimeExecutionResult",
+    "RuntimeExecutor",
+    "RuntimeExecutorError",
+    "build_command_run_recorded_event",
+    "build_execution_started_event",
+    "build_provider_attempt_recorded_event",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _PROVIDER_EXECUTOR_EXPORTS:
+        from boardroom_os.execution import provider_executor
+
+        return getattr(provider_executor, name)
+    if name in _RUNTIME_EXECUTOR_EXPORTS:
+        from boardroom_os.execution import runtime_executor
+
+        return getattr(runtime_executor, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AgentContextIndex",

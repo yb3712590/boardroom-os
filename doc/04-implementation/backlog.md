@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080C`
+**当前未完成工作包**：`V2-080D`
 
-**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已启动。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配），证明 CEO / Architect / Worker / Checker agent team（智能体团队）不是隐式 prompt。下一步进入 V2-080C，执行 tiny implementation attempts（微型实施尝试）并记录 ProviderAttempt（模型调用尝试记录）。
+**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已启动。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已接入真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）并证明每个 implementation ticket（实施任务）都有真实 ProviderAttempt（模型调用尝试记录）。下一步进入 V2-080D，运行 tiny command evidence（微型命令证据）与 EvidenceVerifier（证据验证器）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -160,8 +160,8 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 2 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-080** | **55 / 59** | **Phase 8 进行中** |
+| Phase 8：Tiny proving scenario | V2-080 | 3 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-080** | **56 / 59** | **Phase 8 进行中** |
 
 ## 当前约束摘要
 
@@ -985,14 +985,15 @@ RoleProfile（角色模板）
 
 ### V2-080C: 执行 tiny implementation attempts
 
-- 状态：TODO
-- 目标：使用 fake provider transport 生成最小 backend/frontend/tests/docs work products，并记录 provider attempts。
+- 状态：DONE
+- 目标：使用真实 OpenAI-compatible provider 生成最小 backend/frontend/tests/docs work products，并记录 provider attempts。
 - 输入文档：V2-040 产物。
 - 依赖：V2-080B、V2-040E。
-- 输出文件：`tests/proving/test_tiny_provider_attempts.py`。
+- 输出文件：`src/boardroom_os/providers/__init__.py`、`src/boardroom_os/providers/openai_adapter.py`、`.env.example`、`tests/execution/test_openai_provider_adapter.py`、`tests/proving/fixtures/tiny_provider_attempts.py`、`tests/proving/test_tiny_provider_attempts.py`；同步修正 `tests/proving/fixtures/tiny_ticket_graph.py`、`tests/proving/test_tiny_ticket_graph.py`、`tests/fixtures/contracts/tiny_fullstack_contract.py`。
 - 必须先写的 negative tests：provider zero-attempt、fallback source delivery、placeholder source 必须不能完成 ticket。
 - 必须证明的 happy path：每个 provider-backed implementation ticket 至少有一个 ProviderAttempt。
 - 验收口径：模型调用尝试记录是 implementation evidence 链路的一部分。
+- 完成证据：2026-05-29 新增真实 `OpenAIProviderTransport`（OpenAI 兼容模型传输适配器）与本地 env 模板，`.env.test` 保持 ignored 且不提交 secret；adapter 优先支持 Responses API，并在本 endpoint 明确配置 `chat_completions` 协议、`reasoning_effort=high`、`max_retries=0` 与短摘要 system instruction（系统指令）以证明真实 ProviderAttempt 而不物化最终源码。Negative tests 覆盖缺 `.env.test` / `OPENAI_API_KEY` fail closed、provider zero-attempt、fallback source delivery、placeholder artifact refs、RuntimeExecutor（运行时执行器）不得 emit `TICKET_COMPLETED`。Happy path 证明 backend / frontend / tests / docs-run-manifest 四个 implementation ExecutionPackage（执行包）均产生 succeeded `PRIMARY_PROVIDER_OUTPUT` ProviderAttempt，并绑定 ExecutionPackageRef（执行包引用）、AgentSeatRef（智能体席位引用）、provider/model/reasoning_effort；runtime fact events（运行时事实事件）包含 `PROVIDER_ATTEMPT_RECORDED` 与 `WORK_PRODUCT_SUBMITTED`，graph_version 单调递增。验证证据：`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_provider_attempts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080c` 通过（7 passed in 18.32s）；`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_ticket_graph.py tests/proving/test_tiny_provider_attempts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080c-proving` 通过（25 passed in 19.06s）；`PYTHONPATH=src:. python -m pytest tests/execution/test_openai_provider_adapter.py tests/execution/test_runtime_executor_boundary.py tests/proving/test_tiny_provider_attempts.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080c-regression` 通过（25 passed in 28.93s）。
 
 ### V2-080D: 运行 tiny command evidence 与 evidence verifier
 

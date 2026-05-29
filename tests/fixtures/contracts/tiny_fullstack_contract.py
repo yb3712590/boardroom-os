@@ -279,7 +279,7 @@ def _package_contract(
                 name="Project Documentation",
                 paths=("README.md", "AGENTS.md"),
                 acceptance_refs=("AC-TINY-RUN-TEST-COMMANDS",),
-                required_tests=(),
+                required_tests=("test-integration",),
             ),
             _surface(
                 surface_ref="run-manifest",
