@@ -423,7 +423,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] tiny ticket graph + seat assignment — 由 V2-080B `test_tiny_ticket_graph.py` 证明：ticket graph ready queue 可按依赖推进，seat assignment 明确绑定 CEO / Architect / Worker / Checker
 - [x] tiny provider attempts — 由 V2-080C `test_tiny_provider_attempts.py` 证明：每个 implementation ticket ≥ 1 真实 ProviderAttempt（模型调用尝试记录），provider 配置缺失 fail closed（失败关闭），raw/parsed provider output（模型输出）已物化为带 content hash（内容哈希）的 artifact（产物）
 - [x] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证；缺 source inventory（源码清单）/ run manifest（运行清单）/ SQLite persistence evidence（SQLite 持久化证据）/ package assembly（项目包装配）时 FinalEvidenceTable（最终证据表）保持 incomplete（未完成），CompletionGate（完成门禁）继续阻断
-- [ ] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
+- [x] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
 - [ ] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建
 - [ ] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足
 - [ ] V2-080A ~ V2-080F 六个工作包全部 DONE

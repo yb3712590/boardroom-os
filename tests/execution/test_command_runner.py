@@ -579,3 +579,32 @@ def test_command_runner_records_failed_declared_command(tmp_path: Path) -> None:
     assert result.verification_run.exit_code == 2
     assert result.verification_run.status is VerificationRunStatus.FAILED
     assert result.verification_run.duration_ms == 1000
+
+
+def test_command_runner_rejects_non_utf8_process_output(tmp_path: Path) -> None:
+    process_executor = CapturingProcessExecutor(
+        ProcessResult(exit_code=0, stdout=b"\xff", stderr=b"")
+    )
+
+    with pytest.raises(CommandRunnerError, match="utf-8"):
+        CommandRunner(process_executor=process_executor).run(
+            _runner_input(package_root=tmp_path)
+        )
+
+
+def test_subprocess_executor_rejects_non_utf8_process_output(tmp_path: Path) -> None:
+    command = PackageCommand(
+        command_id=ContractId(value="command.test"),
+        label="Emit non UTF-8 bytes",
+        command=(sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff')"),
+        cwd=".",
+    )
+
+    with pytest.raises(CommandRunnerError, match="utf-8"):
+        CommandRunner().run(
+            _runner_input(
+                execution_package=_execution_package(command),
+                package_contract=_package_contract(command),
+                package_root=tmp_path,
+            )
+        )

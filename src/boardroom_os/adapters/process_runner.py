@@ -45,7 +45,6 @@ class SubprocessExecutor:
                 command,
                 cwd=cwd,
                 capture_output=True,
-                text=True,
                 check=False,
             )
         except OSError as error:
@@ -265,7 +264,10 @@ class CommandRunner:
 
     def _decode_output(self, value: str | bytes) -> str:
         if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
+            try:
+                return value.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as error:
+                raise CommandRunnerError("process output must be valid utf-8") from error
         return value
 
 

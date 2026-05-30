@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080E`
+**当前未完成工作包**：`V2-080F`
 
-**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）继续推进。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已完成 repair（修补）：真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）配置 fail closed（失败关闭）、ProviderAttempt（模型调用尝试记录）产物已物化；V2-080D 已完成 repair：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证，但缺 SourceInventory（源码清单）、run manifest（运行清单）、SQLite persistence evidence（SQLite 持久化证据）和 package assembly（项目包装配）时 FinalEvidenceTable（最终证据表）保持 incomplete（未完成），CompletionGate（完成门禁）继续阻断。下一步进入 V2-080E，装配 tiny package 与 SourceInventory。
+**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）继续推进。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已完成 repair（修补）：真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）配置 fail closed（失败关闭）、ProviderAttempt（模型调用尝试记录）产物已物化；V2-080D 已完成 repair：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证；V2-080E 已完成 tiny package assembly（微型项目包装配），PackageAssembly（项目包装配结果）、RunManifest（运行清单）、SourceInventory（源码清单）、complete FinalEvidenceTable（完整最终证据表）和 WorkspaceEvidenceBundle（工作区证据包）闭合。下一步进入 V2-080F，生成 tiny closeout / replay / process audit（微型收尾 / 重放 / 流程审计）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -160,8 +160,8 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 4 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-080** | **57 / 59** | **Phase 8 进行中** |
+| Phase 8：Tiny proving scenario | V2-080 | 5 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-080** | **58 / 59** | **Phase 8 进行中** |
 
 ## 当前约束摘要
 
@@ -1009,7 +1009,7 @@ RoleProfile（角色模板）
 
 ### V2-080E: 装配 tiny package 与 source inventory
 
-- 状态：TODO
+- 状态：DONE
 - 目标：生成 package root、run manifest、source inventory 和 evidence bundle。
 - 输入文档：V2-060 产物。
 - 依赖：V2-080D、V2-060E。
@@ -1017,6 +1017,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：source inventory 只证明 ref、缺 run manifest、文件在 package root 外必须失败。
 - 必须证明的 happy path：tiny generated project package 可定位源码、测试、文档、run manifest 和 evidence。
 - 验收口径：最终交付物是 package。
+- 完成证据：2026-05-30 新增 `tests/proving/fixtures/tiny_package_assembly.py` 和 `tests/proving/test_tiny_package_assembly.py`；同步强化 `src/boardroom_os/adapters/process_runner.py`，SubprocessExecutor（子进程执行器）以 bytes 捕获 stdout/stderr，CommandRunner（命令运行器）遇到非 UTF-8 输出直接 fail closed（失败关闭），不再经平台默认编码或替换字符静默通过。Negative tests 覆盖 ref-only SourceInventory（只有引用的源码清单）、缺 `run-manifest.json` package artifact（运行清单包产物）、无效 `run-manifest.json` 内容不能匹配 RunManifest（运行清单）模型、artifact path（产物路径）逃逸到 package root（包根）外、非 isolated tmp package root（非隔离临时包根）、package contents（包内容）含 `../escape.txt` 时不得先写出包根外文件、失败 declared pytest command（声明测试命令）不能生成 closeout-ready evidence（可收尾证据）、真实 subprocess 非 UTF-8 输出均 fail closed。Happy path 复用 V2-080C fake ProviderAttempt（模拟模型调用尝试记录，仅避免真实 provider 调用）与真实 CommandRunner / EvidenceVerifier（命令运行器 / 证据验证器），在 pytest `tmp_path` 临时 package root（临时包根）运行 declared `test-backend` / `test-integration` 命令，构造 WorkspaceManifest（工作区清单）、PackageAssembly（项目包装配结果）、RunManifest、SourceInventory、complete FinalEvidenceTable（完整最终证据表）和 closeout-ready WorkspaceEvidenceBundle（可收尾工作区证据包）；物理 `run-manifest.json` 必须反序列化为同一个 RunManifest，SourceInventory hash（源码清单哈希）绑定临时包内文件内容，只覆盖 source/test/doc implementation-bearing artifacts（承载实现的源码/测试/文档产物），不把 `run-manifest.json` 伪装成 provider-backed source artifact（模型产出的源码产物）。验证证据：先运行 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_package_assembly.py -q --tb=short -rf --basetemp=$env:TEMP/boardroom-os-v2080e-red` 得到预期 RED（缺 `tests.proving.fixtures.tiny_package_assembly`）；审查修补阶段新增 3 个负例后运行 `PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_package_assembly.py tests/execution/test_command_runner.py -q --tb=short -rf --basetemp=$env:TEMP/boardroom-os-v2080e-review2-red` 得到预期 RED（未绑定物理 run manifest、越界路径写出、真实 subprocess 非 UTF-8 未稳定 fail closed），实现后同套命令通过（54 passed）。Fresh verification（新鲜验证）：V2-080E targeted 通过（16 passed）；V2-080A~E proving regression（证明回归）通过（48 passed）；Phase 6 workspace/package/source/run/evidence export（工作区/包/源码/运行/证据导出）回归通过（171 passed）；CommandRunner 直接测试通过（38 passed）。
 
 ### V2-080F: tiny closeout/replay/process audit
 
