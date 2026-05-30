@@ -316,3 +316,29 @@ V2-070 大阶段的事实链必须遵循以下权威源原则，由 V2-071 阶�
 - V2-071E：CloseoutPackage 引用绑定经过 V2-071A 命名空间 helper。
 - 测试 fixture：所有依赖 V2-070 旧 builder input 形态的 fixture（包括 V2-070B/C/E/F 已提交的测试）必须同步迁移；本决策接受这部分回归成本。
 - 后续阶段（V2-080 及之后）的 audit / closeout 消费者只能从 readiness summaries 与 CloseoutProjection 读取事实，不得直接读 CloseoutPackage / ReplayBundle 内部字段绕过权威源。
+
+## DEC-0018: FinalEvidenceTable 按 evidence_required 完整覆盖判定完成
+
+- 状态：Accepted
+- 日期：2026-05-30
+
+### 决策
+
+FinalEvidenceTableBuilder（最终证据表构建器）判定 FinalEvidenceRow（最终证据行）为 `satisfied` 时，必须同时满足：
+
+1. VerifiedEvidence（已验证证据）显式绑定该 blocking criterion（阻断性验收项）的 acceptance_ref（验收引用）；
+2. 该 criterion 的每个 `evidence_required`（证据需求）都有对应 VerifiedEvidence.required_artifact_type（已验证证据必需产物类型）覆盖；
+3. 同一 acceptance_ref 没有 FinalEvidenceBlocker（最终证据阻断项）。
+
+若同一 acceptance_ref 只有部分 evidence（证据）覆盖，row 必须保持 `missing`，保留 `verified_evidence_refs`（已验证证据引用）用于 audit（审计），并通过 `missing_required_artifact_types`（缺失必需产物类型）列出尚未满足的 requirements（需求）。`CompletionGate`（完成门禁）和 closeout（收尾）只能消费所有 blocking rows 均 `satisfied` 的 FinalEvidenceTable（最终证据表）。
+
+### 理由
+
+V2-080D 首轮实现把 command evidence（命令证据）和 provider-backed work product claims（模型支持的工作产物声明）合并后提前构造出 complete FinalEvidenceTable，掩盖了 SourceInventory（源码清单）、run manifest（运行清单）、SQLite persistence evidence（SQLite 持久化证据）和 package assembly（项目包装配）仍未完成的事实。只检查 `acceptance_ref` 是否绑定会把“部分证据存在”误判为“阻断性验收项完成”，违反 evidence first（证据优先）和 fail closed（失败关闭）。
+
+### 影响
+
+- `doc/04-implementation/v2-050c-final-evidence-table-spec.md` 修订旧的 satisfied/missing 语义。
+- `src/boardroom_os/evidence/table.py` 新增 `missing_required_artifact_types` 并按 required artifact coverage（必需产物覆盖率）判定 status。
+- `src/boardroom_os/checker/checker.py` 接受 missing row 带有已验证 evidence refs，但要求明确列出缺失 artifact types。
+- V2-080D 的验收口径改为“command evidence 可验证，但 FinalEvidenceTable incomplete 且 CompletionGate blocked”；V2-080E 才负责补齐 package/source/run/persistence evidence。

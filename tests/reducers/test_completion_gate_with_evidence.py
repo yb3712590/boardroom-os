@@ -107,11 +107,12 @@ def _criterion(
     acceptance_ref: str = "AC-BACKEND",
     *,
     statement: str | None = None,
+    required_artifact_type: str = "source_patch",
 ) -> AcceptanceCriterion:
     return AcceptanceCriterion(
         acceptance_ref=_acceptance_ref(acceptance_ref),
         statement=statement or f"{acceptance_ref} must have verified evidence.",
-        evidence_required=(EvidenceRequirement(value="verified evidence"),),
+        evidence_required=(EvidenceRequirement(value=required_artifact_type),),
         blocking=True,
         source_surface_refs=(_source_surface_ref(),),
         verification_strategy=VerificationStrategy(value="aggregate verified evidence"),
@@ -337,6 +338,7 @@ def test_gate_rejects_missing_final_evidence_row() -> None:
         statement="Backend acceptance must have evidence.",
         status=FinalEvidenceStatus.MISSING,
         verified_evidence_refs=(),
+        missing_required_artifact_types=(RequiredArtifactType(value="source_patch"),),
     )
     table = FinalEvidenceTable(
         final_evidence_table_id=FinalEvidenceTableRef(
@@ -521,12 +523,13 @@ def _fallback_verified_evidence(
     )
 
 
-def _fallback_contract() -> AcceptanceContract:
+def _fallback_contract(*, required_artifact_type: str = "hash_manifest") -> AcceptanceContract:
     return _acceptance_contract(
         criteria=(
             _criterion(
                 "AC-HASH-MANIFEST",
                 statement="Hash manifest deterministic evidence is recorded.",
+                required_artifact_type=required_artifact_type,
             ),
         )
     )
@@ -646,7 +649,12 @@ def test_gate_rejects_fallback_decision_record_scope_mismatches(
     evidence = _fallback_verified_evidence(claim=claim, decision_record=record).model_copy(
         update=evidence_update
     )
-    table = _final_evidence_table(contract=_fallback_contract(), verified_evidence=(evidence,))
+    table = _final_evidence_table(
+        contract=_fallback_contract(
+            required_artifact_type=evidence.required_artifact_type.value
+        ),
+        verified_evidence=(evidence,),
+    )
 
     with pytest.raises(CompletionGateError, match=expected_message):
         CompletionGate().build_completion_snapshot(

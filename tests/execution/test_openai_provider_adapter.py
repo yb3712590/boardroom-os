@@ -10,6 +10,7 @@ from boardroom_os.agents.profiles import ModelExecutionProfile
 from boardroom_os.agents.seat import AgentSeatRef
 from boardroom_os.execution.package import ExecutionPackageRef
 from boardroom_os.providers.openai_adapter import (
+    FileProviderOutputStore,
     OpenAIProviderConfigError,
     OpenAIProviderSettings,
     OpenAIProviderTransport,
@@ -152,6 +153,7 @@ def test_openai_provider_settings_loads_local_env_without_exposing_key(
                 "OPENAI_API_KEY=sk-test-secret",
                 "OPENAI_BASE_URL=https://api.truerealbill.com/v1",
                 "BOARDROOM_OPENAI_MODEL=gpt-5.5",
+                "BOARDROOM_OPENAI_API_PROTOCOL=responses",
                 "BOARDROOM_OPENAI_REASONING_EFFORT=high",
                 "BOARDROOM_OPENAI_TEXT_VERBOSITY=low",
                 "BOARDROOM_OPENAI_MAX_OUTPUT_TOKENS=256",
@@ -167,6 +169,7 @@ def test_openai_provider_settings_loads_local_env_without_exposing_key(
 
     assert settings.base_url == "https://api.truerealbill.com/v1"
     assert settings.model == "gpt-5.5"
+    assert settings.api_protocol == "responses"
     assert settings.reasoning_effort == "high"
     assert settings.text_verbosity == "low"
     assert settings.max_output_tokens == 256
@@ -177,6 +180,42 @@ def test_openai_provider_settings_loads_local_env_without_exposing_key(
     assert "sk-test-secret" not in str(settings.model_dump())
 
 
+def test_openai_provider_settings_fail_closed_without_required_deployment_config(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text("OPENAI_API_KEY=sk-test-secret\n", encoding="utf-8")
+
+    with pytest.raises(
+        OpenAIProviderConfigError,
+        match="OPENAI_BASE_URL|BOARDROOM_OPENAI_MODEL|BOARDROOM_OPENAI_API_PROTOCOL",
+    ):
+        OpenAIProviderSettings.from_env_file(env_file)
+
+
+def test_openai_provider_settings_loads_first_available_env_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "OPENAI_API_KEY=sk-test-secret",
+                "OPENAI_BASE_URL=https://api.example.invalid/v1",
+                "BOARDROOM_OPENAI_MODEL=gpt-5.4",
+                "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    settings = OpenAIProviderSettings.from_env_files(
+        (tmp_path / ".env.test", env_file),
+    )
+
+    assert settings.base_url == "https://api.example.invalid/v1"
+    assert settings.model == "gpt-5.4"
+    assert settings.api_protocol == "chat_completions"
+
+
 def test_openai_provider_settings_fail_closed_without_api_key(tmp_path: Path) -> None:
     env_file = tmp_path / ".env.test"
     env_file.write_text(
@@ -184,6 +223,7 @@ def test_openai_provider_settings_fail_closed_without_api_key(tmp_path: Path) ->
             (
                 "OPENAI_BASE_URL=https://api.truerealbill.com/v1",
                 "BOARDROOM_OPENAI_MODEL=gpt-5.5",
+                "BOARDROOM_OPENAI_API_PROTOCOL=responses",
             )
         ),
         encoding="utf-8",
@@ -193,17 +233,22 @@ def test_openai_provider_settings_fail_closed_without_api_key(tmp_path: Path) ->
         OpenAIProviderSettings.from_env_file(env_file)
 
 
-def test_openai_provider_transport_invokes_responses_api_with_reasoning() -> None:
+def test_openai_provider_transport_invokes_responses_api_and_materializes_artifacts(
+    tmp_path: Path,
+) -> None:
     client = _Client()
+    artifact_store = FileProviderOutputStore(root=tmp_path / "provider-artifacts")
     transport = OpenAIProviderTransport(
         settings=OpenAIProviderSettings(
             api_key="sk-unit",
             base_url="https://api.truerealbill.com/v1",
             model="gpt-5.5",
+            api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
         ),
         client=client,
+        artifact_store=artifact_store,
     )
     request = _request(_profile(reasoning_effort="high"))
 
@@ -228,8 +273,42 @@ def test_openai_provider_transport_invokes_responses_api_with_reasoning() -> Non
     assert attempt.seat_ref == request.seat_ref
     assert attempt.status is ProviderAttemptStatus.SUCCEEDED
     assert attempt.outcome is ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT
-    assert attempt.raw_output_ref == ProviderArtifactRef(value="provider-artifact.openai.raw.resp_unit_123")
-    assert attempt.parsed_output_ref == ProviderArtifactRef(value="provider-artifact.openai.text.resp_unit_123")
+    assert attempt.raw_output_ref is not None
+    assert attempt.parsed_output_ref is not None
+    assert attempt.raw_output_ref.value.startswith("provider-artifact.openai.raw.resp_unit_123.")
+    assert attempt.parsed_output_ref.value.startswith(
+        "provider-artifact.openai.parsed.resp_unit_123."
+    )
+    assert "implemented tiny backend" in artifact_store.read_text(attempt.raw_output_ref)
+    assert artifact_store.read_text(attempt.parsed_output_ref) == "implemented tiny backend"
+    assert (
+        artifact_store.get(attempt.raw_output_ref).content_hash.value
+        == attempt.raw_output_ref.value.rsplit(".", 1)[-1]
+    )
+    assert (
+        artifact_store.get(attempt.parsed_output_ref).content_hash.value
+        == attempt.parsed_output_ref.value.rsplit(".", 1)[-1]
+    )
+
+
+def test_provider_output_store_requires_exact_hash_suffix(tmp_path: Path) -> None:
+    artifact_store = FileProviderOutputStore(root=tmp_path / "provider-artifacts")
+    artifact = artifact_store.write_text(
+        response_id="resp_unit_exact_hash",
+        artifact_kind="raw",
+        text="provider output content",
+    )
+    tampered_ref = ProviderArtifactRef(
+        value=(
+            "provider-artifact.openai.raw."
+            f"resp_{artifact.content_hash.value}."
+            f"{'0' * 64}"
+        )
+    )
+    artifact.path.replace(artifact_store._path_for_ref(tampered_ref))
+
+    with pytest.raises(OpenAIProviderConfigError, match="hash does not match ref"):
+        artifact_store.get(tampered_ref)
 
 
 def test_openai_provider_transport_records_failed_attempt_without_secret_leak() -> None:
@@ -238,10 +317,12 @@ def test_openai_provider_transport_records_failed_attempt_without_secret_leak() 
             api_key="sk-unit-secret",
             base_url="https://api.truerealbill.com/v1",
             model="gpt-5.5",
+            api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
         ),
         client=_FailingClient(),
+        artifact_store=FileProviderOutputStore(root=Path(".pytest-tmp-openai-failed-artifacts")),
     )
 
     attempt = transport.invoke(_request())
@@ -254,17 +335,44 @@ def test_openai_provider_transport_records_failed_attempt_without_secret_leak() 
     assert "secret-like details" not in attempt.model_dump_json()
 
 
-def test_openai_provider_transport_uses_chat_completions_when_responses_api_is_blocked() -> None:
+def test_openai_provider_transport_fails_closed_when_explicit_responses_api_is_blocked(
+    tmp_path: Path,
+) -> None:
     client = _ResponsesFailChatSucceedsClient()
     transport = OpenAIProviderTransport(
         settings=OpenAIProviderSettings(
             api_key="sk-unit",
             base_url="https://api.truerealbill.com/v1",
             model="gpt-5.5",
+            api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
         ),
         client=client,
+        artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
+    )
+
+    attempt = transport.invoke(_request(_profile(reasoning_effort="xhigh")))
+
+    assert attempt.status is ProviderAttemptStatus.FAILED
+    assert client.chat.completions.calls == []
+
+
+def test_openai_provider_transport_uses_explicit_chat_completions_protocol(
+    tmp_path: Path,
+) -> None:
+    client = _ResponsesFailChatSucceedsClient()
+    transport = OpenAIProviderTransport(
+        settings=OpenAIProviderSettings(
+            api_key="sk-unit",
+            base_url="https://api.truerealbill.com/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+        ),
+        client=client,
+        artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
     )
     request = _request(_profile(reasoning_effort="xhigh"))
 
@@ -280,37 +388,17 @@ def test_openai_provider_transport_uses_chat_completions_when_responses_api_is_b
             "timeout": 60.0,
         }
     ]
-    assert attempt.provider_attempt_id.value == "provider-attempt.openai.chatcmpl_unit_456"
+    assert attempt.provider_attempt_id.value.startswith("provider-attempt.openai.chatcmpl_unit_456")
     assert attempt.status is ProviderAttemptStatus.SUCCEEDED
     assert attempt.outcome is ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT
     assert attempt.reasoning_effort == "xhigh"
-    assert attempt.raw_output_ref == ProviderArtifactRef(value="provider-artifact.openai.raw.chatcmpl_unit_456")
-    assert attempt.parsed_output_ref == ProviderArtifactRef(value="provider-artifact.openai.text.chatcmpl_unit_456")
+    assert attempt.raw_output_ref is not None
+    assert attempt.parsed_output_ref is not None
 
 
-def test_openai_provider_transport_reuses_chat_protocol_after_responses_api_is_blocked() -> None:
-    client = _CountingResponsesFailChatSucceedsClient()
-    transport = OpenAIProviderTransport(
-        settings=OpenAIProviderSettings(
-            api_key="sk-unit",
-            base_url="https://api.truerealbill.com/v1",
-            model="gpt-5.5",
-            reasoning_effort="high",
-            text_verbosity="low",
-        ),
-        client=client,
-    )
-
-    first_attempt = transport.invoke(_request())
-    second_attempt = transport.invoke(_request())
-
-    assert first_attempt.status is ProviderAttemptStatus.SUCCEEDED
-    assert second_attempt.status is ProviderAttemptStatus.SUCCEEDED
-    assert len(client.responses.calls) == 1
-    assert len(client.chat.completions.calls) == 2
-
-
-def test_openai_provider_transport_passes_system_instructions_to_chat_completions() -> None:
+def test_openai_provider_transport_passes_system_instructions_to_chat_completions(
+    tmp_path: Path,
+) -> None:
     client = _ResponsesFailChatSucceedsClient()
     transport = OpenAIProviderTransport(
         settings=OpenAIProviderSettings(
@@ -323,6 +411,7 @@ def test_openai_provider_transport_passes_system_instructions_to_chat_completion
             system_instructions="Return a short audit summary.",
         ),
         client=client,
+        artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
     )
 
     attempt = transport.invoke(_request())

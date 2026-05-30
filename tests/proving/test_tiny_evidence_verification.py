@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Mapping
 
+import pytest
+
 from boardroom_os.adapters.process_runner import (
     CommandRunner,
     CommandRunnerInput,
@@ -18,7 +20,6 @@ from boardroom_os.contracts.types import ContractId
 from boardroom_os.evidence.claim import (
     EvidenceArtifactRef,
     build_evidence_claim_from_verification_run,
-    build_evidence_claim_from_work_product,
 )
 from boardroom_os.evidence.table import (
     FinalEvidenceBlocker,
@@ -47,17 +48,14 @@ from boardroom_os.execution.verification_run import (
     VerificationRun,
     WorkspaceSnapshotRef,
 )
-from boardroom_os.execution.work_product import WorkProduct, WorkProductSubmission
+from boardroom_os.execution.work_product import WorkProduct
 from boardroom_os.graph.ticket import TicketId
 from boardroom_os.reducers.completion_gate import CompletionGate, CompletionGateInput
 from tests.proving.fixtures.tiny_provider_attempts import (
-    TinyRealProviderAttemptFixture,
-    build_tiny_real_provider_attempt_fixture,
+    TinyProviderAttemptFixture,
+    build_tiny_provider_attempt_fixture,
 )
 from tests.proving.fixtures.tiny_ticket_graph import (
-    TICKET_BACKEND_API_ID,
-    TICKET_DOCS_RUN_MANIFEST_ID,
-    TICKET_FRONTEND_UI_ID,
     TICKET_TESTS_ID,
 )
 
@@ -68,7 +66,7 @@ _VERIFIED_AT = datetime(2026, 5, 29, 12, 5, tzinfo=UTC)
 
 @dataclass(frozen=True)
 class TinyEvidenceBundle:
-    fixture: TinyRealProviderAttemptFixture
+    fixture: TinyProviderAttemptFixture
     command_results_by_id: Mapping[str, CommandRunnerResult]
     verified_evidence: tuple[VerifiedEvidence, ...]
     final_evidence_table: FinalEvidenceTable
@@ -143,11 +141,21 @@ def test_tiny_missing_acceptance_map_blocks_final_evidence_table(tmp_path: Path)
         row for row in table.rows if row.status is FinalEvidenceStatus.MISSING
     )
     assert table.complete is False
-    assert tuple(row.acceptance_ref.value for row in missing_rows) == (
-        omitted_acceptance_ref,
+    assert omitted_acceptance_ref in {
+        row.acceptance_ref.value for row in missing_rows
+    }
+    omitted_row = next(
+        row for row in missing_rows if row.acceptance_ref.value == omitted_acceptance_ref
     )
-    assert missing_rows[0].verified_evidence_refs == ()
-    assert missing_rows[0].blockers == ()
+    assert omitted_row.verified_evidence_refs == ()
+    assert tuple(
+        artifact_type.value
+        for artifact_type in omitted_row.missing_required_artifact_types
+    ) == (
+        "frontend_backend_integration_evidence",
+        "frontend_source_inventory",
+    )
+    assert omitted_row.blockers == ()
 
 
 def test_tiny_checker_notes_cannot_clear_evidence_blocker(tmp_path: Path) -> None:
@@ -198,17 +206,34 @@ def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
     contract = bundle.fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
     table = bundle.final_evidence_table
 
-    assert table.complete is True
+    assert table.complete is False
     assert table.acceptance_contract_ref == contract.acceptance_contract_id
     assert tuple(row.acceptance_ref for row in table.rows) == tuple(
         criterion.acceptance_ref for criterion in contract.blocking_criteria()
     )
-    assert all(row.status is FinalEvidenceStatus.SATISFIED for row in table.rows)
-    assert all(row.verified_evidence_refs for row in table.rows)
+    assert all(row.status is FinalEvidenceStatus.MISSING for row in table.rows)
     assert all(row.blockers == () for row in table.rows)
     assert _command_ids_from_verified_evidence(bundle.verified_evidence) == {
         "test-backend",
         "test-integration",
+    }
+    missing_by_acceptance = {
+        row.acceptance_ref.value: tuple(
+            artifact_type.value
+            for artifact_type in row.missing_required_artifact_types
+        )
+        for row in table.rows
+    }
+    assert missing_by_acceptance == {
+        "AC-TINY-API-BOOK-CREATE": ("backend_source_inventory",),
+        "AC-TINY-API-BOOK-LIST": ("backend_source_inventory",),
+        "AC-TINY-API-CHECKOUT-RETURN": ("backend_source_inventory",),
+        "AC-TINY-PERSISTENCE-SQLITE": (
+            "sqlite_persistence_evidence",
+            "backend_source_inventory",
+        ),
+        "AC-TINY-UI-FETCH-BACKEND": ("frontend_source_inventory",),
+        "AC-TINY-RUN-TEST-COMMANDS": ("run_manifest",),
     }
 
     verdict = CheckerService().review(
@@ -217,35 +242,46 @@ def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
             final_evidence_table=table,
         )
     )
-    gate_result = CompletionGate().build_completion_snapshot(
-        CompletionGateInput(
-            ticket_ref=TICKET_TESTS_ID,
-            final_evidence_table=table,
-            checker_verdict=verdict,
-            verified_evidence=bundle.verified_evidence,
-            provider_attempt_refs=tuple(
-                attempt.provider_attempt_id
-                for attempt in bundle.fixture.provider_attempts_by_ticket_id.values()
-            ),
-            work_product_submitted_refs=tuple(
-                work_product.work_product_id
-                for work_product in bundle.work_products_by_ticket_id.values()
-            ),
-            fallback_decision_records=(),
-        )
+    gate_input = CompletionGateInput(
+        ticket_ref=TICKET_TESTS_ID,
+        final_evidence_table=table,
+        checker_verdict=verdict,
+        verified_evidence=bundle.verified_evidence,
+        provider_attempt_refs=tuple(
+            attempt.provider_attempt_id
+            for attempt in bundle.fixture.provider_attempts_by_ticket_id.values()
+        ),
+        work_product_submitted_refs=tuple(
+            work_product.work_product_id
+            for work_product in bundle.work_products_by_ticket_id.values()
+        ),
+        fallback_decision_records=(),
     )
 
-    assert verdict.status is CheckerVerdictStatus.APPROVED
-    assert gate_result.provider_attempt_count == 4
-    assert gate_result.final_evidence_table_ref == table.final_evidence_table_id
-    assert gate_result.completion_snapshot.ticket_id == TICKET_TESTS_ID
-    assert gate_result.completion_snapshot.evidence_complete is True
-    assert gate_result.completion_snapshot.checker_approved is True
-    assert gate_result.completion_snapshot.blocking_issue_refs == ()
+    assert verdict.status is CheckerVerdictStatus.REWORK_REQUIRED
+    assert tuple(blocker.code.value for blocker in verdict.blockers) == (
+        "final_evidence_missing",
+        "final_evidence_missing",
+        "final_evidence_missing",
+        "final_evidence_missing",
+        "final_evidence_missing",
+        "final_evidence_missing",
+    )
+    with pytest.raises(ValueError, match="final evidence table must be complete"):
+        CompletionGate().build_completion_snapshot(gate_input)
 
 
-def _build_tiny_seed() -> TinyRealProviderAttemptFixture:
-    return build_tiny_real_provider_attempt_fixture(use_fake_results=True)
+def test_tiny_evidence_verification_has_no_synthetic_provider_ref_hash_helper() -> None:
+    source = Path(__file__).read_text(encoding="utf-8")
+    helper_name = "_work_product_" + "artifact_manifest"
+    synthetic_hash_marker = "work_product_id.value}" + ":{artifact_ref.value}"
+
+    assert helper_name not in source
+    assert synthetic_hash_marker not in source
+
+
+def _build_tiny_seed() -> TinyProviderAttemptFixture:
+    return build_tiny_provider_attempt_fixture(use_fake_results=True)
 
 
 def _build_tiny_evidence_bundle(tmp_path: Path) -> TinyEvidenceBundle:
@@ -296,7 +332,7 @@ def _prepare_tiny_package_root(tmp_path: Path) -> Path:
 
 def _run_declared_command(
     *,
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     package_root: Path,
     command_id: str,
 ) -> CommandRunnerResult:
@@ -318,7 +354,7 @@ def _run_declared_command(
 
 def _verify_all_tiny_evidence(
     *,
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     command_results_by_id: Mapping[str, CommandRunnerResult],
     work_products_by_ticket_id: Mapping[TicketId, WorkProduct],
 ) -> tuple[VerifiedEvidence, ...]:
@@ -339,21 +375,12 @@ def _verify_all_tiny_evidence(
                     command_result=command_results_by_id[command_id],
                 )
             )
-        else:
-            ticket_id = _producer_ticket_for_obligation(obligation)
-            verified.append(
-                _verify_work_product_obligation(
-                    fixture=fixture,
-                    obligation=obligation,
-                    work_product=work_products_by_ticket_id[ticket_id],
-                )
-            )
     return tuple(verified)
 
 
 def _verify_command_obligation(
     *,
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     obligation: EvidenceObligation,
     command_result: CommandRunnerResult,
 ) -> VerifiedEvidence:
@@ -381,35 +408,9 @@ def _verify_command_obligation(
     )
 
 
-def _verify_work_product_obligation(
-    *,
-    fixture: TinyRealProviderAttemptFixture,
-    obligation: EvidenceObligation,
-    work_product: WorkProduct,
-) -> VerifiedEvidence:
-    submission = _work_product_submission_by_product_id(fixture, work_product)
-    claim = build_evidence_claim_from_work_product(
-        work_product=work_product,
-        claim_draft=submission.claim_drafts[0],
-        evidence_obligation=obligation,
-        expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        summary="Tiny work product evidence verified from provider-backed output.",
-    )
-    return _verified_evidence_from_claim(
-        fixture=fixture,
-        claim_obligation=obligation,
-        artifact_manifest=_work_product_artifact_manifest(
-            work_product=work_product,
-            artifact_kind=obligation.required_artifact_type.value,
-        ),
-        verification_runs=(),
-        claim=claim,
-    )
-
-
 def _verified_evidence_from_claim(
     *,
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     claim_obligation: EvidenceObligation,
     artifact_manifest: ArtifactManifest,
     verification_runs: tuple[VerificationRun, ...],
@@ -461,25 +462,6 @@ def _command_artifact_manifest(
     )
 
 
-def _work_product_artifact_manifest(
-    *,
-    work_product: WorkProduct,
-    artifact_kind: str,
-) -> ArtifactManifest:
-    return ArtifactManifest(
-        entries=tuple(
-            ArtifactManifestEntry(
-                artifact_ref=EvidenceArtifactRef(value=artifact_ref.value),
-                sha256=_sha256(f"{work_product.work_product_id.value}:{artifact_ref.value}"),
-                producer_attempt_ref=work_product.producer_attempt_ref,
-                source_ref=work_product.work_product_id.value,
-                artifact_kind=artifact_kind,
-            )
-            for artifact_ref in work_product.artifact_refs
-        )
-    )
-
-
 def _purpose_policy(obligation: EvidenceObligation) -> EvidencePurposePolicy:
     return EvidencePurposePolicy(
         rules=(
@@ -493,7 +475,7 @@ def _purpose_policy(obligation: EvidenceObligation) -> EvidencePurposePolicy:
 
 def _build_final_evidence_table(
     *,
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     verified_evidence: tuple[VerifiedEvidence, ...],
     failed_blockers: tuple[FinalEvidenceBlocker, ...] = (),
 ) -> FinalEvidenceTable:
@@ -531,7 +513,7 @@ def _checker_input(
 
 
 def _work_products_by_ticket_id(
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
 ) -> dict[TicketId, WorkProduct]:
     products: dict[TicketId, WorkProduct] = {}
     for result in fixture.runtime_results:
@@ -541,22 +523,8 @@ def _work_products_by_ticket_id(
     return products
 
 
-def _work_product_submission_by_product_id(
-    fixture: TinyRealProviderAttemptFixture,
-    work_product: WorkProduct,
-) -> WorkProductSubmission:
-    for result in fixture.runtime_results:
-        assert result.work_product_submission is not None
-        if (
-            result.work_product_submission.work_product.work_product_id
-            == work_product.work_product_id
-        ):
-            return result.work_product_submission
-    raise AssertionError(f"missing work product submission: {work_product.work_product_id.value}")
-
-
 def _obligation_by_artifact_type(
-    fixture: TinyRealProviderAttemptFixture,
+    fixture: TinyProviderAttemptFixture,
     artifact_type: str,
 ) -> EvidenceObligation:
     for obligation in (
@@ -571,17 +539,6 @@ def _command_id_for_obligation(obligation: EvidenceObligation) -> str:
     if obligation.required_artifact_type.value == "frontend_backend_integration_evidence":
         return "test-integration"
     return "test-backend"
-
-
-def _producer_ticket_for_obligation(obligation: EvidenceObligation) -> TicketId:
-    artifact_type = obligation.required_artifact_type.value
-    if artifact_type in {"backend_source_inventory", "sqlite_persistence_evidence"}:
-        return TICKET_BACKEND_API_ID
-    if artifact_type == "frontend_source_inventory":
-        return TICKET_FRONTEND_UI_ID
-    if artifact_type == "run_manifest":
-        return TICKET_DOCS_RUN_MANIFEST_ID
-    raise AssertionError(f"unexpected work product obligation: {artifact_type}")
 
 
 def _command_ids_from_verified_evidence(

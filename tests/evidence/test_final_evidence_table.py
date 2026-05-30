@@ -58,11 +58,15 @@ def _criterion(
     *,
     statement: str | None = None,
     blocking: bool = True,
+    evidence_required: tuple[str, ...] = ("source_patch",),
 ) -> AcceptanceCriterion:
     return AcceptanceCriterion(
         acceptance_ref=_acceptance_ref(acceptance_ref),
         statement=statement or f"{acceptance_ref} must have verified evidence.",
-        evidence_required=(EvidenceRequirement(value="verified evidence"),),
+        evidence_required=tuple(
+            EvidenceRequirement(value=artifact_type)
+            for artifact_type in evidence_required
+        ),
         blocking=blocking,
         source_surface_refs=(_source_surface_ref(),),
         verification_strategy=VerificationStrategy(value="aggregate verified evidence"),
@@ -107,6 +111,7 @@ def _verified_evidence(
     *,
     verified_evidence_id: str = "verified-evidence.backend",
     acceptance_refs: tuple[AcceptanceRef, ...] | None = None,
+    required_artifact_type: str = "source_patch",
 ) -> VerifiedEvidence:
     return VerifiedEvidence(
         verified_evidence_id=VerifiedEvidenceRef(value=verified_evidence_id),
@@ -116,7 +121,7 @@ def _verified_evidence(
         source_kind=EvidenceClaimSourceKind.WORK_PRODUCT,
         source_ref="work-product.backend",
         expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        required_artifact_type=RequiredArtifactType(value="source_patch"),
+        required_artifact_type=RequiredArtifactType(value=required_artifact_type),
         acceptance_refs=acceptance_refs or (_acceptance_ref(),),
         source_surface_refs=(_source_surface_ref(),),
         verified_artifacts=(
@@ -237,6 +242,65 @@ def test_non_blocking_evidence_does_not_satisfy_blocking_row() -> None:
     assert table.rows[0].verified_evidence_refs == ()
 
 
+def test_missing_required_artifact_type_keeps_blocking_row_missing() -> None:
+    contract = _acceptance_contract(
+        criteria=(
+            _criterion(
+                "AC-BACKEND",
+                evidence_required=("source_patch", "command_evidence"),
+            ),
+        )
+    )
+
+    table = _build_table(
+        contract=contract,
+        verified_evidence=(
+            _verified_evidence(
+                verified_evidence_id="verified-evidence.backend-source",
+                required_artifact_type="source_patch",
+            ),
+        ),
+    )
+
+    assert table.complete is False
+    assert table.rows[0].status is FinalEvidenceStatus.MISSING
+    assert table.rows[0].verified_evidence_refs == (
+        VerifiedEvidenceRef(value="verified-evidence.backend-source"),
+    )
+    assert table.rows[0].missing_required_artifact_types == (
+        RequiredArtifactType(value="command_evidence"),
+    )
+
+
+def test_all_required_artifact_types_satisfy_blocking_row() -> None:
+    contract = _acceptance_contract(
+        criteria=(
+            _criterion(
+                "AC-BACKEND",
+                evidence_required=("source_patch", "command_evidence"),
+            ),
+        )
+    )
+
+    table = _build_table(
+        contract=contract,
+        verified_evidence=(
+            _verified_evidence(
+                verified_evidence_id="verified-evidence.backend-source",
+                required_artifact_type="source_patch",
+            ),
+            _verified_evidence(
+                verified_evidence_id="verified-evidence.backend-command",
+                required_artifact_type="command_evidence",
+            ),
+        ),
+    )
+
+    assert table.complete is True
+    assert table.rows[0].status is FinalEvidenceStatus.SATISFIED
+    assert table.rows[0].missing_required_artifact_types == ()
+
+
 def test_failed_evidence_table_serializes_blocker_audit_shape() -> None:
     table = _build_table(verified_evidence=(), failed_blockers=(_blocker(),))
 
@@ -253,6 +317,7 @@ def test_failed_evidence_table_serializes_blocker_audit_shape() -> None:
                 "statement": "AC-BACKEND must have verified evidence.",
                 "status": "failed",
                 "verified_evidence_refs": [],
+                "missing_required_artifact_types": [{"value": "source_patch"}],
                 "blockers": [
                     {
                         "blocker_id": {
@@ -405,6 +470,7 @@ def test_final_evidence_table_serializes_as_audit_friendly_json() -> None:
                 "statement": "AC-BACKEND must have verified evidence.",
                 "status": "satisfied",
                 "verified_evidence_refs": [{"value": "verified-evidence.backend"}],
+                "missing_required_artifact_types": [],
                 "blockers": [],
             }
         ],

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -17,6 +19,95 @@ from boardroom_os.providers.attempt import (
 
 class OpenAIProviderConfigError(ValueError):
     pass
+
+
+class ProviderOutputContentHash(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _require_sha256(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+            raise ValueError("content_hash must be a 64-character lowercase sha256")
+        return normalized
+
+
+class ProviderOutputArtifact(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact_ref: ProviderArtifactRef
+    content_hash: ProviderOutputContentHash
+    path: Path
+    content_type: Literal["raw_provider_response", "parsed_provider_text"]
+
+
+class FileProviderOutputStore:
+    def __init__(self, *, root: Path) -> None:
+        self._root = root
+
+    def write_text(
+        self,
+        *,
+        response_id: str,
+        artifact_kind: Literal["raw", "parsed"],
+        text: str,
+    ) -> ProviderOutputArtifact:
+        if not text.strip():
+            raise OpenAIProviderConfigError("provider artifact text is required")
+        encoded = text.encode("utf-8")
+        content_hash = hashlib.sha256(encoded).hexdigest()
+        artifact_ref = ProviderArtifactRef(
+            value=f"provider-artifact.openai.{artifact_kind}.{response_id}.{content_hash}"
+        )
+        path = self._path_for_ref(artifact_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(encoded)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != content_hash:
+            raise OpenAIProviderConfigError("provider artifact hash mismatch after write")
+        content_type: Literal["raw_provider_response", "parsed_provider_text"]
+        if artifact_kind == "raw":
+            content_type = "raw_provider_response"
+        else:
+            content_type = "parsed_provider_text"
+        return ProviderOutputArtifact(
+            artifact_ref=artifact_ref,
+            content_hash=ProviderOutputContentHash(value=content_hash),
+            path=path,
+            content_type=content_type,
+        )
+
+    def get(self, artifact_ref: ProviderArtifactRef) -> ProviderOutputArtifact:
+        path = self._path_for_ref(artifact_ref)
+        if not path.exists():
+            raise OpenAIProviderConfigError(f"provider artifact is missing: {artifact_ref.value}")
+        content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        ref_hash = artifact_ref.value.rsplit(".", 1)[-1]
+        if ref_hash != content_hash:
+            raise OpenAIProviderConfigError("provider artifact hash does not match ref")
+        content_type: Literal["raw_provider_response", "parsed_provider_text"]
+        if ".raw." in artifact_ref.value:
+            content_type = "raw_provider_response"
+        elif ".parsed." in artifact_ref.value:
+            content_type = "parsed_provider_text"
+        else:
+            raise OpenAIProviderConfigError("provider artifact ref kind is invalid")
+        return ProviderOutputArtifact(
+            artifact_ref=artifact_ref,
+            content_hash=ProviderOutputContentHash(value=content_hash),
+            path=path,
+            content_type=content_type,
+        )
+
+    def read_text(self, artifact_ref: ProviderArtifactRef) -> str:
+        artifact = self.get(artifact_ref)
+        return artifact.path.read_text(encoding="utf-8")
+
+    def _path_for_ref(self, artifact_ref: ProviderArtifactRef) -> Path:
+        safe_name = artifact_ref.value.replace("/", "_").replace("\\", "_").replace(":", "_")
+        return self._root / f"{safe_name}.txt"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -40,33 +131,60 @@ class OpenAIProviderSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     api_key: SecretStr = Field(exclude=True, repr=False)
-    base_url: str = "https://api.truerealbill.com/v1"
-    model: str = "gpt-5.5"
-    api_protocol: Literal["auto", "responses", "chat_completions"] = "auto"
+    base_url: str
+    model: str
+    api_protocol: Literal["responses", "chat_completions"]
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "high"
     text_verbosity: Literal["low", "medium", "high"] = "low"
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=0, ge=0)
     system_instructions: str = ""
+    artifact_store_root: Path | None = None
 
     @classmethod
     def from_env_file(cls, path: Path) -> Self:
         values = _load_env_file(path)
+        return cls.from_env_values(values)
+
+    @classmethod
+    def from_env_files(cls, paths: tuple[Path, ...]) -> Self:
+        missing_paths: list[str] = []
+        for path in paths:
+            if path.exists():
+                return cls.from_env_file(path)
+            missing_paths.append(str(path))
+        raise OpenAIProviderConfigError(
+            "provider env file is required: " + ", ".join(missing_paths)
+        )
+
+    @classmethod
+    def from_env_values(cls, values: dict[str, str]) -> Self:
         api_key = values.get("OPENAI_API_KEY", "").strip()
         if not api_key:
             raise OpenAIProviderConfigError("OPENAI_API_KEY is required")
+        required_names = (
+            "OPENAI_BASE_URL",
+            "BOARDROOM_OPENAI_MODEL",
+            "BOARDROOM_OPENAI_API_PROTOCOL",
+        )
+        missing_names = tuple(name for name in required_names if not values.get(name, "").strip())
+        if missing_names:
+            raise OpenAIProviderConfigError(
+                "required provider config is missing: " + ", ".join(missing_names)
+            )
         return cls(
             api_key=api_key,
-            base_url=values.get("OPENAI_BASE_URL", "https://api.truerealbill.com/v1"),
-            model=values.get("BOARDROOM_OPENAI_MODEL", "gpt-5.5"),
-            api_protocol=values.get("BOARDROOM_OPENAI_API_PROTOCOL", "auto"),
+            base_url=values["OPENAI_BASE_URL"],
+            model=values["BOARDROOM_OPENAI_MODEL"],
+            api_protocol=values["BOARDROOM_OPENAI_API_PROTOCOL"],
             reasoning_effort=values.get("BOARDROOM_OPENAI_REASONING_EFFORT", "high"),
             text_verbosity=values.get("BOARDROOM_OPENAI_TEXT_VERBOSITY", "low"),
             max_output_tokens=values.get("BOARDROOM_OPENAI_MAX_OUTPUT_TOKENS", "1024"),
             timeout_seconds=values.get("BOARDROOM_OPENAI_TIMEOUT_SECONDS", "60"),
             max_retries=values.get("BOARDROOM_OPENAI_MAX_RETRIES", "0"),
             system_instructions=values.get("BOARDROOM_OPENAI_SYSTEM_INSTRUCTIONS", ""),
+            artifact_store_root=values.get("BOARDROOM_OPENAI_ARTIFACT_STORE_ROOT") or None,
         )
 
     @field_validator("base_url", "model")
@@ -89,10 +207,12 @@ class OpenAIProviderTransport:
         *,
         settings: OpenAIProviderSettings,
         client: Any | None = None,
+        artifact_store: FileProviderOutputStore | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
-        self._use_chat_completions = settings.api_protocol == "chat_completions"
+        store_root = settings.artifact_store_root or Path("20-evidence/provider-artifacts")
+        self._artifact_store = artifact_store or FileProviderOutputStore(root=store_root)
 
     def invoke(self, request: ProviderRequest) -> ProviderAttempt:
         started_at = datetime.now(UTC)
@@ -100,23 +220,27 @@ class OpenAIProviderTransport:
             client = self._client_or_default()
             if self._settings.api_protocol == "responses":
                 response = self._invoke_responses_api(client, request)
-            elif self._use_chat_completions:
-                response = self._invoke_chat_completions(client, request)
             else:
-                try:
-                    response = self._invoke_responses_api(client, request)
-                except Exception as responses_error:
-                    if not self._has_chat_completions(client):
-                        raise responses_error
-                    response = self._invoke_chat_completions(client, request)
-                    self._use_chat_completions = True
+                response = self._invoke_chat_completions(client, request)
 
             response_id = self._response_id(response)
-            _ = self._response_text(response)
+            response_text = self._response_text(response)
+            raw_artifact = self._artifact_store.write_text(
+                response_id=response_id,
+                artifact_kind="raw",
+                text=self._raw_response_text(response=response, response_text=response_text),
+            )
+            parsed_artifact = self._artifact_store.write_text(
+                response_id=response_id,
+                artifact_kind="parsed",
+                text=response_text,
+            )
             return self._succeeded_attempt(
                 request=request,
                 response_id=response_id,
                 started_at=started_at,
+                raw_output_ref=raw_artifact.artifact_ref,
+                parsed_output_ref=parsed_artifact.artifact_ref,
             )
         except Exception as error:
             return ProviderAttempt(
@@ -175,6 +299,8 @@ class OpenAIProviderTransport:
         request: ProviderRequest,
         response_id: str,
         started_at: datetime,
+        raw_output_ref: ProviderArtifactRef,
+        parsed_output_ref: ProviderArtifactRef,
     ) -> ProviderAttempt:
         return ProviderAttempt(
             provider_attempt_id=f"provider-attempt.openai.{response_id}",
@@ -187,12 +313,8 @@ class OpenAIProviderTransport:
             outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
             started_at=started_at,
             finished_at=datetime.now(UTC),
-            raw_output_ref=ProviderArtifactRef(
-                value=f"provider-artifact.openai.raw.{response_id}",
-            ),
-            parsed_output_ref=ProviderArtifactRef(
-                value=f"provider-artifact.openai.text.{response_id}",
-            ),
+            raw_output_ref=raw_output_ref,
+            parsed_output_ref=parsed_output_ref,
         )
 
     def _client_or_default(self) -> Any:
@@ -226,9 +348,29 @@ class OpenAIProviderTransport:
             raise OpenAIProviderConfigError("OpenAI response output_text is required")
         return output_text
 
+    @staticmethod
+    def _raw_response_text(*, response: Any, response_text: str) -> str:
+        model_dump_json = getattr(response, "model_dump_json", None)
+        if callable(model_dump_json):
+            dumped = str(model_dump_json()).strip()
+            if dumped:
+                return dumped
+        response_id = str(getattr(response, "id", "")).strip()
+        return json.dumps(
+            {
+                "id": response_id,
+                "output_text": response_text,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
 
 __all__ = [
+    "FileProviderOutputStore",
     "OpenAIProviderConfigError",
     "OpenAIProviderSettings",
     "OpenAIProviderTransport",
+    "ProviderOutputArtifact",
+    "ProviderOutputContentHash",
 ]

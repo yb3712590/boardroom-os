@@ -71,11 +71,12 @@ def _criterion(
     *,
     statement: str | None = None,
     blocking: bool = True,
+    required_artifact_type: str = "source_patch",
 ) -> AcceptanceCriterion:
     return AcceptanceCriterion(
         acceptance_ref=_acceptance_ref(acceptance_ref),
         statement=statement or f"{acceptance_ref} must have verified evidence.",
-        evidence_required=(EvidenceRequirement(value="verified evidence"),),
+        evidence_required=(EvidenceRequirement(value=required_artifact_type),),
         blocking=blocking,
         source_surface_refs=(_source_surface_ref(),),
         verification_strategy=VerificationStrategy(value="aggregate verified evidence"),

@@ -14,6 +14,8 @@ from boardroom_os.agents.profiles import (
     RoleProfile,
 )
 from boardroom_os.agents.team import AgentTeamProjection
+from boardroom_os.contracts.methodology import MethodologyProfileRegistry
+from boardroom_os.contracts.project import ProjectCharterRegistry
 from boardroom_os.contracts.types import ContractId
 from boardroom_os.events.types import ActorRef, EventType
 from boardroom_os.execution.compiler import (
@@ -36,6 +38,7 @@ from boardroom_os.graph.ticket import TicketId
 from boardroom_os.providers.adapter import FakeProviderTransport, ProviderResponse
 from boardroom_os.providers.attempt import ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptStatus
 from boardroom_os.providers.openai_adapter import (
+    FileProviderOutputStore,
     OpenAIProviderConfigError,
     OpenAIProviderSettings,
     OpenAIProviderTransport,
@@ -62,7 +65,7 @@ class TinyCompiledImplementationPackages:
 
 
 @dataclass(frozen=True)
-class TinyRealProviderAttemptFixture:
+class TinyProviderAttemptFixture:
     compiled: TinyCompiledImplementationPackages
     execution_packages: Mapping[TicketId, ExecutionPackage]
     runtime_results: tuple[RuntimeExecutionResult, ...]
@@ -71,9 +74,31 @@ class TinyRealProviderAttemptFixture:
 
 def openai_settings_from_test_env(path: Path = Path(".env.test")) -> OpenAIProviderSettings:
     try:
-        return OpenAIProviderSettings.from_env_file(path)
+        candidate_paths = _provider_env_candidate_paths(path)
+        return OpenAIProviderSettings.from_env_files(candidate_paths)
     except OpenAIProviderConfigError as error:
         raise TinyProviderAttemptValidationError(str(error)) from error
+
+
+def _provider_env_candidate_paths(path: Path) -> tuple[Path, ...]:
+    if path.name != ".env.test":
+        return (path,)
+    if path.parent != Path("."):
+        return (path, path.with_name(".env"))
+
+    candidates: list[Path] = []
+    cwd = Path.cwd()
+    for directory in (cwd, *cwd.parents):
+        candidates.extend((directory / ".env.test", directory / ".env"))
+    seen: set[Path] = set()
+    unique_candidates: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_candidates.append(candidate)
+    return tuple(unique_candidates)
 
 
 def compile_tiny_implementation_execution_packages(
@@ -112,15 +137,27 @@ def compile_tiny_implementation_execution_packages(
     )
     execution_packages = {
         ticket_id: compiler.compile(
-            ExecutionPackageCompilerInput.model_construct(
-                ticket_ref=ticket_id,
-                seat_assignment_graph=graph_fixture.seat_assignment_graph,
-                agent_team_projection=agent_team_projection,
-                acceptance_contract=graph_fixture.contracts.acceptance_contract,
-                package_contract=graph_fixture.contracts.package_contract,
-                evidence_obligations=graph_fixture.contracts.contract_gate.evidence_obligations,
-                model_execution_profiles=model_execution_profiles,
-                workspace_context=workspace_context,
+            ExecutionPackageCompilerInput.model_validate(
+                {
+                    "ticket_ref": ticket_id,
+                    "seat_assignment_graph": graph_fixture.seat_assignment_graph,
+                    "agent_team_projection": agent_team_projection,
+                    "acceptance_contract": graph_fixture.contracts.acceptance_contract,
+                    "package_contract": graph_fixture.contracts.package_contract,
+                    "evidence_obligations": (
+                        graph_fixture.contracts.contract_gate.evidence_obligations
+                    ),
+                    "model_execution_profiles": model_execution_profiles,
+                    "workspace_context": workspace_context,
+                },
+                context={
+                    "project_charter_registry": ProjectCharterRegistry.from_charters(
+                        graph_fixture.contracts.project_charter,
+                    ),
+                    "methodology_registry": MethodologyProfileRegistry.from_profiles(
+                        graph_fixture.contracts.methodology_profile,
+                    ),
+                },
             )
         )
         for ticket_id in graph_fixture.implementation_ticket_ids
@@ -135,17 +172,23 @@ def compile_tiny_implementation_execution_packages(
     )
 
 
-def build_tiny_real_provider_attempt_fixture(
+def build_tiny_provider_attempt_fixture(
     *,
     settings: OpenAIProviderSettings | None = None,
     use_fake_results: bool = False,
-) -> TinyRealProviderAttemptFixture:
+) -> TinyProviderAttemptFixture:
+    if settings is None and not use_fake_results:
+        raise TinyProviderAttemptValidationError(
+            "real provider fixture requires explicit OpenAIProviderSettings"
+        )
     resolved_settings = settings or OpenAIProviderSettings(
         api_key="sk-unit",
-        base_url="https://api.truerealbill.com/v1",
-        model="gpt-5.5",
+        base_url="https://unit.invalid/v1",
+        model="unit-fake-model",
+        api_protocol="chat_completions",
         reasoning_effort="high",
         text_verbosity="low",
+        artifact_store_root=Path(".pytest-tmp-provider-artifacts"),
     )
     compiled = compile_tiny_implementation_execution_packages(model=resolved_settings.model)
     base_graph_version = compiled.ticket_graph_fixture.seat_assignment_graph.graph_version
@@ -169,7 +212,7 @@ def build_tiny_real_provider_attempt_fixture(
         execution_packages=compiled.execution_packages,
         runtime_results=runtime_results,
     )
-    return TinyRealProviderAttemptFixture(
+    return TinyProviderAttemptFixture(
         compiled=compiled,
         execution_packages=compiled.execution_packages,
         runtime_results=runtime_results,
@@ -192,23 +235,40 @@ def _execute_tiny_runtime_package(
     provider_adapter = (
         _fake_provider_transport(ticket_id)
         if use_fake_results
-        else OpenAIProviderTransport(settings=resolved_settings)
+        else OpenAIProviderTransport(
+            settings=resolved_settings,
+            artifact_store=FileProviderOutputStore(
+                root=resolved_settings.artifact_store_root
+                or Path("20-evidence/provider-artifacts")
+            ),
+        )
     )
     return RuntimeExecutor().execute_package(
-        RuntimeExecutionInput.model_construct(
-            execution_package=execution_package,
-            package_contract=compiled.ticket_graph_fixture.contracts.package_contract,
-            agent_team_projection=compiled.agent_team_projection,
-            provider_adapter=provider_adapter,
-            project_ref=PROJECT_REF,
-            runtime_actor_ref=ActorRef(value="actor.runtime.tiny-provider-attempts"),
-            first_fact_graph_version=first_fact_graph_version,
-            package_root=Path("10-project"),
-            runner_ref=RunnerRef(value="runner.tiny-provider-attempts"),
-            environment_profile_ref=EnvironmentProfileRef(value="env.tiny-provider-attempts"),
-            workspace_snapshot_ref=WorkspaceSnapshotRef(value="workspace.snapshot.tiny-provider-attempts"),
-            command_ids=(),
-            timestamp=datetime(2026, 5, 29, 10, 0, tzinfo=UTC),
+        RuntimeExecutionInput.model_validate(
+            {
+                "execution_package": execution_package,
+                "package_contract": compiled.ticket_graph_fixture.contracts.package_contract,
+                "agent_team_projection": compiled.agent_team_projection,
+                "provider_adapter": provider_adapter,
+                "project_ref": PROJECT_REF,
+                "runtime_actor_ref": ActorRef(value="actor.runtime.tiny-provider-attempts"),
+                "first_fact_graph_version": first_fact_graph_version,
+                "package_root": Path("10-project"),
+                "runner_ref": RunnerRef(value="runner.tiny-provider-attempts"),
+                "environment_profile_ref": EnvironmentProfileRef(
+                    value="env.tiny-provider-attempts"
+                ),
+                "workspace_snapshot_ref": WorkspaceSnapshotRef(
+                    value="workspace.snapshot.tiny-provider-attempts"
+                ),
+                "command_ids": (),
+                "timestamp": datetime(2026, 5, 29, 10, 0, tzinfo=UTC),
+            },
+            context={
+                "methodology_registry": MethodologyProfileRegistry.from_profiles(
+                    compiled.ticket_graph_fixture.contracts.methodology_profile,
+                ),
+            },
         )
     )
 
@@ -339,8 +399,8 @@ def _ref_value(value: object) -> str:
 __all__ = [
     "TinyCompiledImplementationPackages",
     "TinyProviderAttemptValidationError",
-    "TinyRealProviderAttemptFixture",
-    "build_tiny_real_provider_attempt_fixture",
+    "TinyProviderAttemptFixture",
+    "build_tiny_provider_attempt_fixture",
     "compile_tiny_implementation_execution_packages",
     "openai_settings_from_test_env",
     "validate_tiny_provider_attempt_results",

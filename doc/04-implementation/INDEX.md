@@ -51,6 +51,7 @@
 | `v2-071e-closeout-package-boundary-spec.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定 spec |
 | `v2-071e-closeout-package-boundary-implementation-plan.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定实施计划 |
 | `v2-071f-fact-chain-regression-spec.md` | V2-071F V2-070 fact-chain（事实链）端到端回归与 Phase 7 重锁 spec |
+| `v2-080cd-provider-evidence-repair-spec.md` | V2-080C/D ProviderAttempt（模型调用尝试记录）与 EvidenceVerifier（证据验证器）修补 spec |
 
 ## AI 启动入口
 

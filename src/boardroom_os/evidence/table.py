@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.acceptance import AcceptanceContract
+from boardroom_os.contracts.evidence_obligation import RequiredArtifactType
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, NonEmptyTextValue
 from boardroom_os.evidence.verifier import VerifiedEvidence, VerifiedEvidenceRef
 
@@ -87,6 +88,7 @@ class FinalEvidenceRow(BaseModel):
     statement: str
     status: FinalEvidenceStatus
     verified_evidence_refs: tuple[VerifiedEvidenceRef, ...]
+    missing_required_artifact_types: tuple[RequiredArtifactType, ...] = ()
     blockers: tuple[FinalEvidenceBlocker, ...] = ()
 
     @model_validator(mode="before")
@@ -103,7 +105,10 @@ class FinalEvidenceRow(BaseModel):
         return _normalize_ref_fields(
             data,
             {"acceptance_ref": AcceptanceRef},
-            {"verified_evidence_refs": VerifiedEvidenceRef},
+            {
+                "verified_evidence_refs": VerifiedEvidenceRef,
+                "missing_required_artifact_types": RequiredArtifactType,
+            },
         )
 
     @field_validator("statement")
@@ -122,11 +127,15 @@ class FinalEvidenceRow(BaseModel):
         if self.status is FinalEvidenceStatus.SATISFIED:
             if not self.verified_evidence_refs:
                 raise ValueError("satisfied row requires verified_evidence_refs")
+            if self.missing_required_artifact_types:
+                raise ValueError("satisfied row must not include missing required artifact types")
             if self.blockers:
                 raise ValueError("satisfied row must not include blockers")
         if self.status is FinalEvidenceStatus.MISSING:
-            if self.verified_evidence_refs or self.blockers:
-                raise ValueError("missing row must not include evidence refs or blockers")
+            if self.blockers:
+                raise ValueError("missing row must not include blockers")
+            if not self.missing_required_artifact_types:
+                raise ValueError("missing row requires missing required artifact types")
         if self.status is FinalEvidenceStatus.FAILED and not self.blockers:
             raise ValueError("failed row requires blockers")
         return self
@@ -270,6 +279,9 @@ class FinalEvidenceTableBuilder:
         evidence_refs_by_acceptance: dict[str, list[VerifiedEvidenceRef]] = {
             acceptance_ref: [] for acceptance_ref in blocking_acceptance_refs
         }
+        artifact_types_by_acceptance: dict[str, set[str]] = {
+            acceptance_ref: set() for acceptance_ref in blocking_acceptance_refs
+        }
         for evidence in table_input.verified_evidence:
             for acceptance_ref in evidence.acceptance_refs:
                 if acceptance_ref.value not in active_acceptance_refs:
@@ -279,6 +291,9 @@ class FinalEvidenceTableBuilder:
                 if acceptance_ref.value in blocking_acceptance_refs:
                     evidence_refs_by_acceptance[acceptance_ref.value].append(
                         evidence.verified_evidence_id
+                    )
+                    artifact_types_by_acceptance[acceptance_ref.value].add(
+                        evidence.required_artifact_type.value
                     )
 
         blockers_by_acceptance: dict[str, list[FinalEvidenceBlocker]] = {
@@ -296,10 +311,15 @@ class FinalEvidenceTableBuilder:
         for criterion in blocking_criteria:
             acceptance_ref_value = criterion.acceptance_ref.value
             verified_refs = tuple(evidence_refs_by_acceptance[acceptance_ref_value])
+            missing_artifact_types = tuple(
+                RequiredArtifactType(value=requirement.value)
+                for requirement in criterion.evidence_required
+                if requirement.value not in artifact_types_by_acceptance[acceptance_ref_value]
+            )
             blockers = tuple(blockers_by_acceptance[acceptance_ref_value])
             if blockers:
                 status = FinalEvidenceStatus.FAILED
-            elif verified_refs:
+            elif verified_refs and not missing_artifact_types:
                 status = FinalEvidenceStatus.SATISFIED
             else:
                 status = FinalEvidenceStatus.MISSING
@@ -309,6 +329,7 @@ class FinalEvidenceTableBuilder:
                     statement=criterion.statement,
                     status=status,
                     verified_evidence_refs=verified_refs,
+                    missing_required_artifact_types=missing_artifact_types,
                     blockers=blockers,
                 )
             )

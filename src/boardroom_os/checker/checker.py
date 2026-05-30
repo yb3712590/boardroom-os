@@ -151,14 +151,22 @@ class CheckerServiceInput(BaseModel):
                     raise CheckerVerdictError(
                         "satisfied final_evidence_table row requires verified_evidence_refs"
                     )
+                if row.missing_required_artifact_types:
+                    raise CheckerVerdictError(
+                        "satisfied final_evidence_table row must not include missing artifact types"
+                    )
                 if row.blockers:
                     raise CheckerVerdictError(
                         "satisfied final_evidence_table row must not include blockers"
                     )
             if row.status is FinalEvidenceStatus.MISSING:
-                if row.verified_evidence_refs or row.blockers:
+                if row.blockers:
                     raise CheckerVerdictError(
-                        "missing final_evidence_table row must not include evidence refs or blockers"
+                        "missing final_evidence_table row must not include blockers"
+                    )
+                if not row.missing_required_artifact_types:
+                    raise CheckerVerdictError(
+                        "missing final_evidence_table row requires missing artifact types"
                     )
             if row.status is FinalEvidenceStatus.FAILED and not row.blockers:
                 raise CheckerVerdictError("failed final_evidence_table row requires blockers")

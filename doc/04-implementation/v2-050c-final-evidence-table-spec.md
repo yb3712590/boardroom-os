@@ -14,7 +14,7 @@
 2. 汇总 VerifiedEvidence（已验证证据）对 acceptance_ref 的覆盖关系。
 3. 显式表达 `satisfied`、`missing`、`failed` 三种 FinalEvidenceStatus（最终证据状态）。
 4. 拒绝空 acceptance map（验收映射，即 rows 为空）。
-5. 拒绝 blocking criterion（阻塞验收项）缺 evidence row（证据行）或缺 verified_evidence_refs（已验证证据引用）。
+5. 拒绝 blocking criterion（阻塞验收项）缺 evidence row（证据行）、缺 verified_evidence_refs（已验证证据引用）或缺任一 `evidence_required`（证据需求）对应 required artifact type（必需产物类型）。
 6. 拒绝 notes（备注）字段进入 FinalEvidenceTable（最终证据表）或 FinalEvidenceRow（最终证据行），避免 V2-050C 出现备注覆盖失败的语义。
 7. 产出 closeout（收尾）和 checker（检查者）可消费的 complete/incomplete 判定。
 8. 保持 V2-050C 只做 evidence aggregation（证据聚合），不替代 EvidenceVerifier（证据验证器）、CheckerVerdict（检查结论）或 CloseoutGate（收尾门禁）。
@@ -43,14 +43,14 @@ V2-050C 不做以下事情：
 
 FinalEvidenceTableBuilder（最终证据表构建器）消费 active AcceptanceContract（活跃验收合同）、VerifiedEvidence（已验证证据）集合和显式 FinalEvidenceBlocker（最终证据阻断项），按 blocking criterion（阻塞验收项）生成 coverage rows（覆盖行）：
 
-- 有足够 VerifiedEvidence（已验证证据）且无 failed blocker（失败阻断项）时为 `satisfied`。
+- 有足够 VerifiedEvidence（已验证证据）、已覆盖该 criterion（验收项）的全部 `evidence_required`（证据需求）且无 failed blocker（失败阻断项）时为 `satisfied`。
 - 没有任何可用 VerifiedEvidence（已验证证据）时为 `missing`。
 - 存在 failed blocker（失败阻断项）时为 `failed`，即使同一 acceptance_ref 也有 VerifiedEvidence（已验证证据）。
 
 优点：
 
 - 精确覆盖 backlog（待办）要求的“acceptance map 为空、blocking criterion missing、failed evidence 被 notes 覆盖必须失败”。其中 notes 覆盖失败通过“V2-050C 无 notes 字段、额外字段 fail closed（失败关闭）”证明。
-- 与 `doc/03-architecture/contract-and-evidence-model.md` 中 FinalEvidenceTable（最终证据表）的官方字段保持一致：`acceptance_ref / status / verified_evidence_refs / blockers`。
+- 与 `doc/03-architecture/contract-and-evidence-model.md` 中 FinalEvidenceTable（最终证据表）的官方字段保持一致：`acceptance_ref / status / verified_evidence_refs / blockers`；V2-080C/D 修补新增 `missing_required_artifact_types`（缺失必需产物类型）作为审计字段，不改变 failed/missing/satisfied 主状态语义。
 - 与 fail closed（失败关闭）原则一致。
 - 为 V2-050D CheckerVerdict（检查结论）提供明确输入：checker 只能消费 failed/missing row（失败 / 缺失行），不能在 V2-050C 层写备注清除它们。
 - 为 V2-070 CloseoutGate（收尾门禁）提供稳定 `complete` 判定。
@@ -77,20 +77,21 @@ FinalEvidenceTable（最终证据表）同时接收成功和失败的 EvidenceVe
 1. FinalEvidenceTable（最终证据表）只覆盖 active AcceptanceContract（活跃验收合同）的 blocking criteria（阻塞验收项）。非 blocking criteria（非阻塞验收项）保留在 AcceptanceContract（验收合同）中供 audit（审计）读取，但不生成 V2-050C row（行），也不影响 `complete`。
 2. AcceptanceContract.status（验收合同状态）必须为 active；inactive/draft contract（非活跃 / 草稿合同）不能构建 complete table（完成表）。
 3. acceptance map（验收映射）在 V2-050C 中专指 FinalEvidenceTable.rows（最终证据表行集合）。rows 为空与 blocking_criteria() 为空属于同一失败路径：无法构建可收尾的验收映射。
-4. VerifiedEvidence（已验证证据）是 satisfied（满足）的唯一正向来源；EvidenceClaim（证据声明）不能进入 FinalEvidenceTable（最终证据表）。
+4. VerifiedEvidence（已验证证据）是 satisfied（满足）的唯一正向来源；EvidenceClaim（证据声明）不能进入 FinalEvidenceTable（最终证据表）。但单条或多条 VerifiedEvidence 必须共同覆盖该 criterion 的全部 `evidence_required` required artifact type（必需产物类型），否则只能形成 missing row（缺失行）。
 5. Failed evidence（失败证据）通过显式 FinalEvidenceBlocker（最终证据阻断项）表达。FinalEvidenceTableBuilder（最终证据表构建器）只接受 typed blocker（类型化阻断项），不接受 EvidenceVerificationResult（证据验证结果）。
 6. 调用方负责把 EvidenceVerificationResult.blockers（证据验证结果阻断项）结合 claim/obligation context（声明 / 义务上下文）转换成 FinalEvidenceBlocker（最终证据阻断项）。转换时必须提供 acceptance_ref、related_ref 和 source；builder 不推断失败 blocker 来源。
 7. 同一个 acceptance_ref（验收引用）只要存在 FinalEvidenceBlocker（最终证据阻断项），该 row（行）状态就是 `failed`，不能被 VerifiedEvidence（已验证证据）覆盖。
-8. blocking criterion（阻塞验收项）没有 VerifiedEvidenceRef（已验证证据引用）且没有 failed blocker（失败阻断项）时，状态为 `missing`。
-9. 只有所有 blocking rows（阻塞行）状态都是 `satisfied` 时，FinalEvidenceTable.complete（最终证据表完成标记）才为 true。
+8. blocking criterion（阻塞验收项）没有任何 VerifiedEvidenceRef（已验证证据引用）、或已有 VerifiedEvidenceRef 但缺少任一 required artifact type，且没有 failed blocker（失败阻断项）时，状态为 `missing`。
+9. missing row 可以保留已经验证的 `verified_evidence_refs`，并通过 `missing_required_artifact_types`（缺失必需产物类型）表达尚未覆盖的 evidence_required；这些已验证引用只用于审计，不能让 row satisfied。
+10. 只有所有 blocking rows（阻塞行）状态都是 `satisfied` 时，FinalEvidenceTable.complete（最终证据表完成标记）才为 true。
 10. V2-050C 不定义 FinalEvidenceNote（最终证据备注）、row.notes（行备注）或 table.notes（表备注）。Pydantic extra fields（额外字段）必须 forbid（禁止）；任何 notes 字段尝试进入 table/input/row 都必须 fail closed（失败关闭）。
 11. VerifiedEvidence（已验证证据）的 acceptance_refs（验收引用）可以覆盖多个 acceptance_ref；builder（构建器）按每个 acceptance_ref 拆分映射，但不拆分 VerifiedEvidence 本身。
 12. VerifiedEvidence.acceptance_refs 中任一 ref 不属于 active contract（活跃合同）必须 fail closed（失败关闭），避免把外部证据混入当前合同。
 13. VerifiedEvidence.acceptance_refs 只覆盖 non-blocking criteria（非阻塞验收项）时，不能满足任何 blocking row（阻塞行）。
-14. VerifiedEvidence.required_artifact_type（已验证证据必需产物类型）不在该 criterion.evidence_required（验收项必需证据）派生范围内时，本工作包不重新解释文本语义；是否引入 evidence requirement mapping（证据需求映射）留给后续合同增强。V2-050C 首版只要求 evidence 与 acceptance_ref 显式绑定。
-15. FinalEvidenceTable（最终证据表）不证明 SourceInventory lineage（源码清单来源链）；它只保留 VerifiedEvidenceRef（已验证证据引用）和 blocker refs（阻断引用）供后续 V2-060C/V2-070 消费。
-16. FinalEvidenceTable（最终证据表）必须可 audit-friendly JSON（审计友好 JSON）序列化，便于 V2-070C process audit（流程审计）生成 evidence-map.json（证据映射 JSON）。
-17. FinalEvidenceTableRef（最终证据表引用）必须使用 deterministic id（确定性 ID）：`final-evidence-table.<acceptance_contract_id>`。调用方传入不同 ID 或构造出不匹配 ID 必须 fail closed（失败关闭）。
+15. VerifiedEvidence.required_artifact_type（已验证证据必需产物类型）必须与该 criterion.evidence_required（验收项必需证据）中的 value 形成覆盖关系；未覆盖的 requirement 进入 `missing_required_artifact_types`，row 保持 `missing`。
+16. FinalEvidenceTable（最终证据表）不证明 SourceInventory lineage（源码清单来源链）；它只保留 VerifiedEvidenceRef（已验证证据引用）、missing required artifact types（缺失必需产物类型）和 blocker refs（阻断引用）供后续 V2-060C/V2-070 消费。
+17. FinalEvidenceTable（最终证据表）必须可 audit-friendly JSON（审计友好 JSON）序列化，便于 V2-070C process audit（流程审计）生成 evidence-map.json（证据映射 JSON）。
+18. FinalEvidenceTableRef（最终证据表引用）必须使用 deterministic id（确定性 ID）：`final-evidence-table.<acceptance_contract_id>`。调用方传入不同 ID 或构造出不匹配 ID 必须 fail closed（失败关闭）。
 
 ## 6. 模块设计
 
@@ -120,8 +121,8 @@ failed
 
 语义：
 
-- `satisfied`：该 acceptance_ref（验收引用）有至少一条 VerifiedEvidenceRef（已验证证据引用），且无 blocker（阻断项）。
-- `missing`：该 acceptance_ref 没有 VerifiedEvidenceRef，也没有 failed blocker；代表还缺 evidence（证据）。
+- `satisfied`：该 acceptance_ref（验收引用）有至少一条 VerifiedEvidenceRef（已验证证据引用），这些 evidence 的 required artifact type（必需产物类型）覆盖该 criterion 的全部 `evidence_required`（证据需求），且无 blocker（阻断项）。
+- `missing`：该 acceptance_ref 没有 VerifiedEvidenceRef，或已有部分 VerifiedEvidenceRef 但缺任一 required artifact type，且没有 failed blocker；代表还缺 evidence（证据）。
 - `failed`：该 acceptance_ref 有一个或多个 blocker；代表已有失败事实或失败证据，不能被 VerifiedEvidence 覆盖。
 
 ### 6.3 FinalEvidenceBlocker
@@ -185,6 +186,7 @@ acceptance_ref:
 statement:
 status:
 verified_evidence_refs:
+missing_required_artifact_types:
 blockers:
 ```
 
@@ -194,12 +196,13 @@ blockers:
 - `statement`：AcceptanceCriterion.statement（验收项陈述）的快照，用于 audit（审计）。
 - `status`：FinalEvidenceStatus（最终证据状态）。
 - `verified_evidence_refs`：tuple[VerifiedEvidenceRef, ...]。
+- `missing_required_artifact_types`：tuple[RequiredArtifactType, ...]，仅在缺少 `evidence_required` 覆盖时记录未满足的 required artifact type，用于 audit（审计）和 rework（返工）。
 - `blockers`：tuple[FinalEvidenceBlocker, ...]。
 
 不变量：
 
-1. `status == satisfied` 时，verified_evidence_refs 非空且 blockers 为空。
-2. `status == missing` 时，verified_evidence_refs 为空且 blockers 为空。
+1. `status == satisfied` 时，verified_evidence_refs 非空，missing_required_artifact_types 为空，且 blockers 为空。
+2. `status == missing` 时，missing_required_artifact_types 非空且 blockers 为空；verified_evidence_refs 可以非空，但只能作为部分覆盖的 audit refs，不能让 row satisfied。
 3. `status == failed` 时，blockers 非空；verified_evidence_refs 可以为空或非空，但不能改变 failed 状态。
 4. Row 不含 notes 字段；任何 extra notes 字段必须被 Pydantic extra forbid 拒绝。
 
@@ -261,11 +264,11 @@ FinalEvidenceTableBuilder.build(input)（最终证据表构建函数）执行以
 3. 建立 blocking_acceptance_refs（阻塞验收引用集合）。
 4. 校验每条 VerifiedEvidence.acceptance_refs 全部属于 active contract criteria（活跃合同条目）。若出现未知 ref，失败。
 5. 校验每条 failed blocker.acceptance_ref 属于 blocking_acceptance_refs。若出现未知 ref，失败。
-6. 按 acceptance_ref 聚合 verified_evidence_refs，只聚合属于 blocking_acceptance_refs 的 refs。
+6. 按 acceptance_ref 聚合 verified_evidence_refs 与 VerifiedEvidence.required_artifact_type，只聚合属于 blocking_acceptance_refs 的 refs。
 7. 按 acceptance_ref 聚合 failed_blockers。
-8. 为每个 blocking criterion 生成 FinalEvidenceRow。
+8. 为每个 blocking criterion 计算 missing_required_artifact_types：criterion.evidence_required 中未被 VerifiedEvidence.required_artifact_type 覆盖的类型必须全部记录。
 9. 若某 acceptance_ref 有 blockers，则 row.status = failed。
-10. 否则若某 acceptance_ref 有 verified_evidence_refs，则 row.status = satisfied。
+10. 否则若某 acceptance_ref 有 verified_evidence_refs 且 missing_required_artifact_types 为空，则 row.status = satisfied。
 11. 否则 row.status = missing。
 12. 若任何 row.status != satisfied，则 complete = false。
 13. 若所有 row.status == satisfied，则 complete = true。
@@ -310,8 +313,8 @@ FinalEvidenceTableBuilder（最终证据表构建器）
 9. VerifiedEvidence.acceptance_refs 只覆盖 non-blocking criterion（非阻塞验收项），却被用来满足 blocking row。
 10. failed blocker.acceptance_ref 不属于 active blocking criteria。
 11. row.status == satisfied 但 verified_evidence_refs 为空。
-12. row.status == satisfied 但 blockers 非空。
-13. row.status == missing 但 verified_evidence_refs 非空或 blockers 非空。
+12. row.status == satisfied 但 missing_required_artifact_types 非空或 blockers 非空。
+13. row.status == missing 但 missing_required_artifact_types 为空或 blockers 非空。
 14. row.status == failed 但 blockers 为空。
 15. complete == true 但存在 missing row。
 16. complete == true 但存在 failed row。
@@ -326,7 +329,7 @@ FinalEvidenceTableBuilder（最终证据表构建器）
 ### 10.1 单个 blocking criterion satisfied
 
 1. active AcceptanceContract（活跃验收合同）包含一个 blocking criterion（阻塞验收项）。
-2. 输入一条 VerifiedEvidence（已验证证据），其 acceptance_refs 包含该 acceptance_ref。
+2. 输入一条或多条 VerifiedEvidence（已验证证据），其 acceptance_refs 包含该 acceptance_ref，且 required_artifact_type 覆盖该 criterion 的全部 `evidence_required`。
 3. failed_blockers 为空。
 4. FinalEvidenceTableBuilder 返回一行 `satisfied`。
 5. complete 为 true。
@@ -335,16 +338,16 @@ FinalEvidenceTableBuilder（最终证据表构建器）
 ### 10.2 多个 blocking criteria 全部 satisfied
 
 1. active AcceptanceContract 包含 backend、frontend、command 三个 blocking acceptance_ref。
-2. 输入多条 VerifiedEvidence，分别覆盖这些 acceptance_ref。
+2. 输入多条 VerifiedEvidence，分别覆盖这些 acceptance_ref 及其全部 required artifact type。
 3. builder 为每个 blocking criterion 生成一行。
-4. 每行都有 verified_evidence_refs。
+4. 每行都有 verified_evidence_refs，且 missing_required_artifact_types 为空。
 5. complete 为 true。
 
 ### 10.3 missing criterion blocks closeout
 
 1. active AcceptanceContract 包含两个 blocking criteria。
-2. VerifiedEvidence 只覆盖其中一个。
-3. 未覆盖的 row 状态为 `missing`。
+2. VerifiedEvidence 只覆盖其中一个，或只覆盖某 criterion 的部分 required artifact type。
+3. 未覆盖或部分覆盖的 row 状态为 `missing`，部分覆盖 row 保留 verified_evidence_refs 并记录 missing_required_artifact_types。
 4. complete 为 false。
 5. table 可被 checker（检查者）用于生成 rework（返工）输入。
 
@@ -404,6 +407,7 @@ FinalEvidenceTableBuilder（最终证据表构建器）
 7. `test_final_evidence_table_serializes_as_audit_friendly_json`
 8. `test_complete_is_derived_from_rows`
 9. `test_final_evidence_table_uses_deterministic_contract_id`
+10. `test_partial_required_artifact_coverage_keeps_row_missing`
 
 ### 11.3 Regression scope
 
@@ -436,7 +440,7 @@ PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/executi
 - acceptance map（验收映射，即 rows）为空必须失败。
 - blocking criterion missing（阻塞验收项缺证据）必须失败。
 - failed evidence（失败证据）被 notes（备注）覆盖必须失败：V2-050C 通过拒绝 notes 字段和保持 failed row 优先级证明表格层无覆盖路径；V2-050D 再闭合 checker notes（检查者备注）语义。
-- 所有 blocking criteria 都有 verified_evidence_refs（已验证证据引用）且无 blockers（阻断项）时 table complete（表完成）。
+- 所有 blocking criteria 的 `evidence_required` 均被 VerifiedEvidence.required_artifact_type 完整覆盖，且无 blockers（阻断项）时 table complete（表完成）。
 - closeout（收尾）只能消费 complete FinalEvidenceTable（最终证据表）。
 
 覆盖 `acceptance-criteria.md`：
@@ -468,5 +472,5 @@ PYTHONPATH="src:." python -m pytest tests/contracts tests/reducers tests/executi
 4. `failed` 是一等状态，不能被 VerifiedEvidence（已验证证据）覆盖。
 5. V2-050C 没有 notes 字段；任何 notes extra field（备注额外字段）都必须 fail closed（失败关闭）。
 6. `missing` 表示 blocking criterion（阻塞验收项）还没有 verified evidence（已验证证据）或 failed blocker（失败阻断项）。
-7. `complete=True` 只能在所有 blocking rows（阻塞行）均为 `satisfied` 时出现。
+7. `complete=True` 只能在所有 blocking rows（阻塞行）均为 `satisfied`，且每个 blocking criterion 的 `evidence_required` 全部覆盖时出现。
 8. FinalEvidenceTable（最终证据表）是 V2-050D CheckerVerdict（检查结论）、V2-050F CompletionGate（完成门禁）和 V2-070A CloseoutGate（收尾门禁）的输入，不是最终收尾判定本身。

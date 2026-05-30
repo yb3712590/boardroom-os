@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.proving.fixtures import tiny_provider_attempts
 from boardroom_os.events.types import EventType
 from boardroom_os.execution.fallback import FallbackKind
 from boardroom_os.providers.attempt import (
@@ -12,7 +13,7 @@ from boardroom_os.providers.attempt import (
 )
 from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptValidationError,
-    build_tiny_real_provider_attempt_fixture,
+    build_tiny_provider_attempt_fixture,
     compile_tiny_implementation_execution_packages,
     openai_settings_from_test_env,
     validate_tiny_provider_attempt_results,
@@ -28,6 +29,34 @@ def test_tiny_openai_settings_fail_closed_without_test_env(tmp_path: Path) -> No
 
     with pytest.raises(TinyProviderAttemptValidationError, match="OPENAI_API_KEY|env"):
         openai_settings_from_test_env(missing_env)
+
+
+def test_tiny_openai_settings_reads_ignored_env_fallback(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "OPENAI_API_KEY=sk-test-secret",
+                "OPENAI_BASE_URL=https://api.example.invalid/v1",
+                "BOARDROOM_OPENAI_MODEL=gpt-5.4",
+                "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    settings = openai_settings_from_test_env(tmp_path / ".env.test")
+
+    assert settings.base_url == "https://api.example.invalid/v1"
+    assert settings.model == "gpt-5.4"
+    assert settings.api_protocol == "chat_completions"
+
+
+def test_tiny_fixture_does_not_bypass_runtime_or_compiler_validation() -> None:
+    source = Path(tiny_provider_attempts.__file__).read_text(encoding="utf-8")
+
+    assert ".model_construct(" not in source
+    assert "build_tiny_real_provider_attempt_fixture" not in source
 
 
 def test_tiny_execution_packages_compile_from_ticket_graph_contracts() -> None:
@@ -62,7 +91,7 @@ def test_provider_zero_attempt_rejected() -> None:
 
 
 def test_fallback_source_delivery_rejected() -> None:
-    fixture = build_tiny_real_provider_attempt_fixture(use_fake_results=True)
+    fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
     first_result = fixture.runtime_results[0]
     fallback_attempt = first_result.provider_attempt.model_copy(
         update={
@@ -80,7 +109,7 @@ def test_fallback_source_delivery_rejected() -> None:
 
 
 def test_placeholder_artifact_refs_rejected() -> None:
-    fixture = build_tiny_real_provider_attempt_fixture(use_fake_results=True)
+    fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
     first_result = fixture.runtime_results[0]
     placeholder_attempt = first_result.provider_attempt.model_copy(
         update={
@@ -98,7 +127,7 @@ def test_placeholder_artifact_refs_rejected() -> None:
 
 
 def test_fake_fixture_still_proves_runtime_never_emits_ticket_completed() -> None:
-    fixture = build_tiny_real_provider_attempt_fixture(use_fake_results=True)
+    fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
 
     for result in fixture.runtime_results:
         assert EventType.PROVIDER_ATTEMPT_RECORDED in tuple(event.event_type for event in result.events)
@@ -107,9 +136,9 @@ def test_fake_fixture_still_proves_runtime_never_emits_ticket_completed() -> Non
 
 
 def test_real_provider_records_attempts_for_every_tiny_implementation_ticket() -> None:
-    settings = openai_settings_from_test_env(Path(".env.test"))
+    settings = openai_settings_from_test_env()
 
-    fixture = build_tiny_real_provider_attempt_fixture(
+    fixture = build_tiny_provider_attempt_fixture(
         settings=settings,
         use_fake_results=False,
     )
@@ -127,3 +156,5 @@ def test_real_provider_records_attempts_for_every_tiny_implementation_ticket() -
         assert attempt.seat_ref == execution_package.seat_ref
         assert attempt.raw_output_ref is not None
         assert attempt.parsed_output_ref is not None
+        assert len(attempt.raw_output_ref.value.rsplit(".", 1)[-1]) == 64
+        assert len(attempt.parsed_output_ref.value.rsplit(".", 1)[-1]) == 64

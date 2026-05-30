@@ -319,6 +319,7 @@ def test_missing_final_evidence_row_blocks_export() -> None:
                 statement="Missing evidence should block closeout.",
                 status=FinalEvidenceStatus.MISSING,
                 verified_evidence_refs=(),
+                missing_required_artifact_types=(RequiredArtifactType(value="source"),),
             ),
         )
     )

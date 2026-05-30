@@ -6,6 +6,7 @@ from boardroom_os.contracts.gates import (
     ContractGateResult,
     compile_evidence_obligations,
 )
+from boardroom_os.contracts.methodology import MethodologyProfile
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.project import ProjectCharter
 from tests.fixtures.contracts.tiny_fullstack_contract import (
@@ -27,6 +28,7 @@ REQUIRED_ACCEPTANCE_REFS_BY_CATEGORY: Mapping[str, tuple[str, ...]] = {
 @dataclass(frozen=True)
 class TinyScenarioActiveContracts:
     project_charter: ProjectCharter
+    methodology_profile: MethodologyProfile
     acceptance_contract: AcceptanceContract
     package_contract: PackageContract
     contract_gate: ContractGateResult
@@ -37,6 +39,7 @@ def build_tiny_scenario_active_contracts() -> TinyScenarioActiveContracts:
     fixture = build_tiny_fullstack_contract_fixture()
     contracts = TinyScenarioActiveContracts(
         project_charter=fixture.project_charter,
+        methodology_profile=fixture.methodology_profile,
         acceptance_contract=fixture.acceptance_contract,
         package_contract=fixture.package_contract,
         contract_gate=fixture.contract_gate,

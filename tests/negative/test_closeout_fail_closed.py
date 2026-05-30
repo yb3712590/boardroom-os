@@ -426,6 +426,7 @@ def test_closeout_gate_blocks_when_replay_readiness_fails_core_checks(field_name
                     statement="App acceptance is still missing verified evidence.",
                     status=FinalEvidenceStatus.MISSING,
                     verified_evidence_refs=(),
+                    missing_required_artifact_types=(RequiredArtifactType(value="source"),),
                 ),
             ),
         ),

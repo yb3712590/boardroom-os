@@ -52,11 +52,15 @@ def _criterion(
     acceptance_ref: str = "AC-BACKEND",
     *,
     blocking: bool = True,
+    evidence_required: tuple[str, ...] = ("source_patch",),
 ) -> AcceptanceCriterion:
     return AcceptanceCriterion(
         acceptance_ref=_acceptance_ref(acceptance_ref),
         statement=f"{acceptance_ref} must have verified evidence.",
-        evidence_required=(EvidenceRequirement(value="verified evidence"),),
+        evidence_required=tuple(
+            EvidenceRequirement(value=artifact_type)
+            for artifact_type in evidence_required
+        ),
         blocking=blocking,
         source_surface_refs=(_source_surface_ref(),),
         verification_strategy=VerificationStrategy(value="aggregate verified evidence"),
@@ -103,6 +107,7 @@ def _verified_evidence(
     *,
     verified_evidence_id: str = "verified-evidence.backend",
     acceptance_refs: tuple[AcceptanceRef, ...] | None = None,
+    required_artifact_type: str = "source_patch",
 ) -> VerifiedEvidence:
     return VerifiedEvidence(
         verified_evidence_id=VerifiedEvidenceRef(value=verified_evidence_id),
@@ -112,7 +117,7 @@ def _verified_evidence(
         source_kind=EvidenceClaimSourceKind.WORK_PRODUCT,
         source_ref="work-product.backend",
         expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        required_artifact_type=RequiredArtifactType(value="source_patch"),
+        required_artifact_type=RequiredArtifactType(value=required_artifact_type),
         acceptance_refs=acceptance_refs or (_acceptance_ref(),),
         source_surface_refs=(_source_surface_ref(),),
         verified_artifacts=(
@@ -190,7 +195,40 @@ def test_final_evidence_table_marks_blocking_criterion_missing() -> None:
     assert len(table.rows) == 1
     assert table.rows[0].status.value == "missing"
     assert table.rows[0].verified_evidence_refs == ()
+    assert table.rows[0].missing_required_artifact_types == (
+        RequiredArtifactType(value="source_patch"),
+    )
     assert table.rows[0].blockers == ()
+
+
+def test_final_evidence_table_keeps_row_missing_until_all_required_artifact_types_exist() -> None:
+    contract = _acceptance_contract(
+        criteria=(
+            _criterion(
+                "AC-BACKEND",
+                evidence_required=("source_patch", "command_evidence"),
+            ),
+        )
+    )
+
+    table = _build_table(
+        active_acceptance_contract=contract,
+        verified_evidence=(
+            _verified_evidence(
+                verified_evidence_id="verified-evidence.backend-source",
+                required_artifact_type="source_patch",
+            ),
+        ),
+    )
+
+    assert table.complete is False
+    assert table.rows[0].status.value == "missing"
+    assert table.rows[0].verified_evidence_refs == (
+        VerifiedEvidenceRef(value="verified-evidence.backend-source"),
+    )
+    assert table.rows[0].missing_required_artifact_types == (
+        RequiredArtifactType(value="command_evidence"),
+    )
 
 
 def test_final_evidence_table_rejects_unknown_verified_evidence_acceptance_ref() -> None:
@@ -239,6 +277,7 @@ def test_complete_table_cannot_contain_missing_rows() -> None:
         statement="AC-BACKEND must have verified evidence.",
         status=FinalEvidenceStatus.MISSING,
         verified_evidence_refs=(),
+        missing_required_artifact_types=(RequiredArtifactType(value="source_patch"),),
         blockers=(),
     )
     with pytest.raises(_VERIFY_ERRORS, match="complete"):
