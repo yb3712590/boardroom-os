@@ -1,0 +1,318 @@
+{
+  "entries": [
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-API-BOOK-CREATE"
+        },
+        {
+          "value": "AC-TINY-API-BOOK-DELETE"
+        },
+        {
+          "value": "AC-TINY-API-BOOK-LIST"
+        },
+        {
+          "value": "AC-TINY-API-CHECKOUT-RETURN"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-backend-api"
+        },
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-backend_source_inventory"
+        }
+      ],
+      "path": {
+        "value": "backend/app.py"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-backend-api"
+      },
+      "sha256": {
+        "value": "ccf30e309afbf7aa22813449d67d523bf7f118707b760fbcb910892beb3f3d87"
+      },
+      "source_surface_ref": {
+        "value": "backend-api"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-PERSISTENCE-SQLITE"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-backend-api"
+        },
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-backend_source_inventory"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-backend_source_inventory"
+        }
+      ],
+      "path": {
+        "value": "backend/db.py"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-backend-api"
+      },
+      "sha256": {
+        "value": "6114084f7a5682d2b6f5afb2e33845dd524d4c1225a9f66ad6db850f71ce9038"
+      },
+      "source_surface_ref": {
+        "value": "persistence"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-API-BOOK-CREATE"
+        },
+        {
+          "value": "AC-TINY-API-BOOK-DELETE"
+        },
+        {
+          "value": "AC-TINY-API-BOOK-LIST"
+        },
+        {
+          "value": "AC-TINY-API-CHECKOUT-RETURN"
+        },
+        {
+          "value": "AC-TINY-PERSISTENCE-SQLITE"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-sqlite_persistence_evidence"
+        }
+      ],
+      "path": {
+        "value": "backend/tests/test_api.py"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-tests"
+      },
+      "sha256": {
+        "value": "ee24cb96a0834abb720984742bcf845289979c8aaa170f545a74808d14ae1a96"
+      },
+      "source_surface_ref": {
+        "value": "tests"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-RUN-TEST-COMMANDS"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-docs-run-manifest"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-run_manifest"
+        }
+      ],
+      "path": {
+        "value": "docs/usage.md"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-docs-run-manifest"
+      },
+      "sha256": {
+        "value": "8495cec2a72cba3b5fb40a863c946071310509ab30f25ff83e163b7f5625086d"
+      },
+      "source_surface_ref": {
+        "value": "docs"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-UI-FETCH-BACKEND"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-frontend-ui"
+        },
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_source_inventory"
+        }
+      ],
+      "path": {
+        "value": "frontend/app.js"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-frontend-ui"
+      },
+      "sha256": {
+        "value": "b31fc37f79168059e2d25d3042135021b47523abcf5c233f73e9c81154e139ed"
+      },
+      "source_surface_ref": {
+        "value": "frontend-ui"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-UI-FETCH-BACKEND"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-frontend-ui"
+        },
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_source_inventory"
+        }
+      ],
+      "path": {
+        "value": "frontend/index.html"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-frontend-ui"
+      },
+      "sha256": {
+        "value": "ce9161c71c5f671d4cb6e0f5b0edc8a40fedcd7f65da8114b4fac615e93cb877"
+      },
+      "source_surface_ref": {
+        "value": "frontend-ui"
+      }
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "AC-TINY-RUN-TEST-COMMANDS"
+        },
+        {
+          "value": "AC-TINY-UI-FETCH-BACKEND"
+        }
+      ],
+      "consumer_ticket_refs": [
+        {
+          "value": "ticket-tiny-tests"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-command_evidence"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_backend_integration_evidence"
+        }
+      ],
+      "path": {
+        "value": "tests/integration/test_frontend_backend.py"
+      },
+      "producer_attempt_ref": {
+        "value": "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+      },
+      "producer_ticket_ref": {
+        "value": "ticket-tiny-tests"
+      },
+      "sha256": {
+        "value": "d245ddf304e476295a9662cda92b87926f9268a36e2e412c0e62eb95d80220c0"
+      },
+      "source_surface_ref": {
+        "value": "tests"
+      }
+    }
+  ],
+  "package_assembly_ref": {
+    "value": "package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack"
+  },
+  "package_commit_ref": {
+    "value": "package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+  },
+  "package_contract_ref": {
+    "value": "package-contract-tiny-fullstack"
+  },
+  "package_root": {
+    "value": "10-project"
+  },
+  "source_inventory_id": {
+    "value": "source-inventory.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+  }
+}

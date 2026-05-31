@@ -424,10 +424,10 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] tiny provider attempts — 由 V2-080C `test_tiny_provider_attempts.py` 证明：每个 implementation ticket ≥ 1 真实 ProviderAttempt（模型调用尝试记录），provider 配置缺失 fail closed（失败关闭），raw/parsed provider output（模型输出）已物化为带 content hash（内容哈希）的 artifact（产物）
 - [x] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证；缺 source inventory（源码清单）/ run manifest（运行清单）/ SQLite persistence evidence（SQLite 持久化证据）/ package assembly（项目包装配）时 FinalEvidenceTable（最终证据表）保持 incomplete（未完成），CompletionGate（完成门禁）继续阻断
 - [x] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
-- [ ] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建
-- [ ] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足
-- [ ] V2-080A ~ V2-080F 六个工作包全部 DONE
-- [ ] `backlog.md` 进度总览 Phase 8 显示 6/6
+- [x] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建；GitVersionAudit（Git 版本审计）消费真实 GitAuditAdapter（Git 审计适配器）事实，dirty facts（脏事实）/ 缺 base commit（基准提交）/ fake ProviderAttempt（模拟模型调用尝试记录）均 fail closed
+- [x] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足
+- [x] V2-080A ~ V2-080F 六个工作包全部 DONE
+- [x] `backlog.md` 进度总览 Phase 8 显示 6/6
 
 #### 本批产出
 
@@ -439,10 +439,10 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 #### V2 端到端能力成立的判定
 
-- [ ] 所有 AC checkbox 全部勾选
-- [ ] V2-080A ~ V2-080F 状态全部 DONE
-- [ ] tiny package 可以本地运行 declared run commands
-- [ ] tiny closeout 产生 CloseoutPackage（verdict: passed）
-- [ ] process audit 可被人类读懂并完成审计
+- [x] 所有 AC checkbox 全部勾选
+- [x] V2-080A ~ V2-080F 状态全部 DONE
+- [x] tiny package 可以本地运行 declared run commands
+- [x] tiny closeout 产生 CloseoutPackage（verdict: passed）
+- [x] process audit 可被人类读懂并完成审计
 
 > 仅当上述全部满足时，V2 第一阶段（foundation + minimal end-to-end）才算成立。**workflow completed ≠ V2 完成**。

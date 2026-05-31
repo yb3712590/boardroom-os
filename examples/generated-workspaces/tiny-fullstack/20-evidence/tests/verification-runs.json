@@ -1,0 +1,92 @@
+[
+  {
+    "command": [
+      "python",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "backend/tests",
+      "--basetemp=.pytest-tmp-backend"
+    ],
+    "command_id": {
+      "value": "test-backend"
+    },
+    "cwd": ".",
+    "duration_ms": 1000,
+    "environment_profile_ref": {
+      "value": "env.tiny-package-assembly"
+    },
+    "execution_package_ref": {
+      "value": "exec.ticket-tiny-tests.graph-14"
+    },
+    "exit_code": 0,
+    "finished_at": "2026-05-30T09:10:01Z",
+    "runner_ref": {
+      "value": "runner.tiny-package-assembly"
+    },
+    "started_at": "2026-05-30T09:10:00Z",
+    "status": "passed",
+    "stderr_ref": {
+      "value": "command-output.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.stderr"
+    },
+    "stdout_ref": {
+      "value": "command-output.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.stdout"
+    },
+    "ticket_ref": {
+      "value": "ticket-tiny-tests"
+    },
+    "verification_run_id": {
+      "value": "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+    },
+    "version": 1,
+    "workspace_snapshot_ref": {
+      "value": "workspace-snapshot.tiny-package-assembly"
+    }
+  },
+  {
+    "command": [
+      "python",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "tests/integration",
+      "--basetemp=.pytest-tmp-integration"
+    ],
+    "command_id": {
+      "value": "test-integration"
+    },
+    "cwd": ".",
+    "duration_ms": 1000,
+    "environment_profile_ref": {
+      "value": "env.tiny-package-assembly"
+    },
+    "execution_package_ref": {
+      "value": "exec.ticket-tiny-tests.graph-14"
+    },
+    "exit_code": 0,
+    "finished_at": "2026-05-30T09:10:01Z",
+    "runner_ref": {
+      "value": "runner.tiny-package-assembly"
+    },
+    "started_at": "2026-05-30T09:10:00Z",
+    "status": "passed",
+    "stderr_ref": {
+      "value": "command-output.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.stderr"
+    },
+    "stdout_ref": {
+      "value": "command-output.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.stdout"
+    },
+    "ticket_ref": {
+      "value": "ticket-tiny-tests"
+    },
+    "verification_run_id": {
+      "value": "verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+    },
+    "version": 1,
+    "workspace_snapshot_ref": {
+      "value": "workspace-snapshot.tiny-package-assembly"
+    }
+  }
+]

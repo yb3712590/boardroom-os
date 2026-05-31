@@ -1,0 +1,6 @@
+{
+  "final_evidence_table_ref": "final-evidence-table.acceptance-contract-tiny-fullstack",
+  "run_manifest_ref": "run-manifest.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack",
+  "source_inventory_ref": "source-inventory.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e",
+  "workspace_evidence_bundle_ref": "workspace-evidence-bundle.workspace-manifest.workflow-tiny-package-assembly.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.final-evidence-table.acceptance-contract-tiny-fullstack"
+}

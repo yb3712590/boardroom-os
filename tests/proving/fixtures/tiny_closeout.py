@@ -373,6 +373,8 @@ def build_tiny_closeout_fixture(
         process_readiness=process_readiness,
     )
     gate_result = CloseoutGate().evaluate(gate_input)
+    if gate_result.verdict.value == "passed":
+        _reject_fake_provider_passed_closeout(package_fixture)
     package_input = CloseoutPackageBuilderInput(
         closeout_gate_result=gate_result,
         source_inventory=source_inventory,
@@ -949,13 +951,31 @@ def _reject_fake_provider_attempts(
     *,
     allow_fake_provider_for_negative_tests: bool,
 ) -> None:
+    fake_attempt_refs = _fake_provider_attempt_refs(package_fixture)
+    if fake_attempt_refs and not allow_fake_provider_for_negative_tests:
+        raise ValueError("fake provider attempts cannot satisfy tiny closeout")
+
+
+def _reject_fake_provider_passed_closeout(
+    package_fixture: TinyPackageAssemblyFixture,
+) -> None:
+    fake_attempt_refs = _fake_provider_attempt_refs(package_fixture)
+    if fake_attempt_refs:
+        raise ValueError(
+            "fake provider attempts are only allowed for negative tests and "
+            "cannot produce passed closeout"
+        )
+
+
+def _fake_provider_attempt_refs(
+    package_fixture: TinyPackageAssemblyFixture,
+) -> tuple[str, ...]:
     fake_attempt_refs = tuple(
         attempt.provider_attempt_id.value
         for attempt in package_fixture.provider_attempts_by_ticket_id.values()
         if ".fake." in attempt.provider_attempt_id.value
     )
-    if fake_attempt_refs and not allow_fake_provider_for_negative_tests:
-        raise ValueError("fake provider attempts cannot satisfy tiny closeout")
+    return fake_attempt_refs
 
 
 def _prepare_package_git_worktree(

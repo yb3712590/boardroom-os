@@ -21,6 +21,8 @@ scripts/build_tiny_closeout_sample.py
 - 默认输出：`examples/generated-workspaces/tiny-fullstack/`
 - `--check`：在临时目录重新生成样例并与当前样例逐字节比较，不修改当前样例
 - 生成逻辑复用 `tests/proving/fixtures/tiny_closeout.py`，不复制测试内部拼装逻辑
+- 默认调用真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）和真实 GitAuditAdapter（Git 审计适配器）；没有 provider 配置、provider attempt（模型调用尝试记录）失败、dirty worktree（脏工作树）或证据不完整都会 fail closed（失败关闭）
+- 样例内的 provider artifact lock（模型产物锁）用于稳定重放，不是 mock success path（模拟成功路径）
 
 PowerShell 示例：
 

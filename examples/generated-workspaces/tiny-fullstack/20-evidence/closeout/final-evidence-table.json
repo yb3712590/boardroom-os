@@ -1,0 +1,132 @@
+{
+  "acceptance_contract_ref": {
+    "value": "acceptance-contract-tiny-fullstack"
+  },
+  "complete": true,
+  "final_evidence_table_id": {
+    "value": "final-evidence-table.acceptance-contract-tiny-fullstack"
+  },
+  "generated_at": "2026-05-30T09:00:00Z",
+  "rows": [
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-API-BOOK-CREATE"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Backend API can create books.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-backend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-API-BOOK-LIST"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Backend API can list books.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-backend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-API-CHECKOUT-RETURN"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Backend API supports checkout and return state transitions.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-backend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-API-BOOK-DELETE"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Backend API can delete books.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-api_test_run"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-backend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-PERSISTENCE-SQLITE"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "SQLite persistence records book state.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-sqlite_persistence_evidence"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-backend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-UI-FETCH-BACKEND"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Frontend fetches the backend API instead of serving static placeholder data.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_backend_integration_evidence"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_source_inventory"
+        }
+      ]
+    },
+    {
+      "acceptance_ref": {
+        "value": "AC-TINY-RUN-TEST-COMMANDS"
+      },
+      "blockers": [],
+      "missing_required_artifact_types": [],
+      "statement": "Package declares local run and test commands.",
+      "status": "satisfied",
+      "verified_evidence_refs": [
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-run_manifest"
+        },
+        {
+          "value": "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-command_evidence"
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

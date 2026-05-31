@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-080F`
+**当前未完成工作包**：`CHORE-REF-001`
 
-**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）继续推进。V2-080A 已定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 已生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C 已完成 repair（修补）：真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）配置 fail closed（失败关闭）、ProviderAttempt（模型调用尝试记录）产物已物化；V2-080D 已完成 repair：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证；V2-080E 已完成 tiny package assembly（微型项目包装配），PackageAssembly（项目包装配结果）、RunManifest（运行清单）、SourceInventory（源码清单）、complete FinalEvidenceTable（完整最终证据表）和 WorkspaceEvidenceBundle（工作区证据包）闭合。下一步进入 V2-080F，生成 tiny closeout / replay / process audit（微型收尾 / 重放 / 流程审计）。
+**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已闭合。V2-080A 定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C/D repair（修补）把真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）、ProviderAttempt（模型调用尝试记录）、CommandRunner（命令运行器）和 EvidenceVerifier（证据验证器）接入 fail-closed（失败关闭）证据链；V2-080E 完成 tiny package assembly（微型项目包装配）；V2-080F 生成真实 evidence-backed CloseoutPackage（收尾包）、ReplayBundle（重放包）、GitVersionAuditBundle（Git 版本审计包）、ProcessAuditBundle（流程审计包）和可重生成 golden sample（黄金样例）。下一步进入非阶段技术债 `CHORE-REF-001`。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -160,8 +160,8 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 5 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-080** | **58 / 59** | **Phase 8 进行中** |
+| Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 完成 |
+| **合计** | **V2-000 ~ V2-080** | **59 / 59** | **Phase 8 完成** |
 
 ## 当前约束摘要
 
@@ -1021,14 +1021,15 @@ RoleProfile（角色模板）
 
 ### V2-080F: tiny closeout/replay/process audit
 
-- 状态：TODO
+- 状态：DONE
 - 目标：对 tiny scenario 产生 CloseoutPackage、ReplayBundle 和 ProcessAuditReport。
 - 输入文档：V2-070 产物。
 - 依赖：V2-080E、V2-070F。
-- 输出文件：`tests/proving/test_tiny_closeout.py`。
+- 输出文件：`tests/proving/fixtures/tiny_closeout.py`、`tests/proving/test_tiny_closeout.py`、`scripts/build_tiny_closeout_sample.py`、`examples/generated-workspaces/tiny-fullstack/`。
 - 必须先写的 negative tests：缺 replay bundle、缺 process audit、缺 git audit、workflow completed 替代 closeout 必须失败。
 - 必须证明的 happy path：closeout passed，audit 可回答 timeline、agent decisions、context、artifacts、git history、evidence map。
 - 验收口径：V2 的最小端到端能力成立。
+- 完成证据：2026-05-31 返工后闭合。新增 tiny closeout fixture（微型收尾夹具）复用 V2-080E package assembly（项目包装配）和 V2-070/071 closeout/replay/audit 类型，构造 ReplayBundle（重放包）、GitVersionAuditBundle（Git 版本审计包）、ProcessAuditBundle（流程审计包）、CloseoutGateResult（收尾门禁结果）、CloseoutPackage（收尾包）和 CloseoutReducer（收尾归约器）终态投影。GitVersionAudit（Git 版本审计）改为通过 GitAuditAdapter（Git 审计适配器）消费真实 Git facts（Git 事实），dirty package worktree（脏包工作树）和缺 `base_commit_sha`（基准提交）均 fail closed；临时 package repo（项目包仓库）创建真实 baseline commit（基线提交）与 final package commit（最终包提交），`SourceInventory.package_commit_ref` 与 `GitVersionAuditFactSet.final_commit_sha` 必须一致。ProviderAttempt（模型调用尝试记录）默认读取 ignored `.env` 并调用真实 provider（模型供应商），fake provider（模拟供应商）只允许显式负例；provider artifact lock（模型产物锁）用于 golden sample（黄金样例）稳定重放。tiny generated package（微型生成项目包）覆盖 add/list/checkout/return/delete、SQLite persistence（SQLite 持久化）、frontend fetch backend API（前端调用后端接口）和 declared tests（声明测试）。Negative tests 覆盖缺 replay/process/git audit、dirty Git facts、缺 base commit、fake provider attempt、workflow completed / WORK_PRODUCT_SUBMITTED 不能替代 `CLOSEOUT_COMMITTED`、30-audit 10 项产物缺一不可、篡改 provider artifact lock、unsafe sample output roots（不安全样例输出路径）、缺 delete/SQLite/真实 frontend integration evidence（前端集成证据）等。验证证据：`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_provider_attempts.py tests/proving/test_tiny_package_assembly.py tests/proving/test_tiny_closeout.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-targeted-final` 通过（75 passed in 861.68s）；`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_ticket_graph.py tests/proving/test_tiny_provider_attempts.py tests/proving/test_tiny_evidence_verification.py tests/proving/test_tiny_package_assembly.py tests/proving/test_tiny_closeout.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-proving-final` 通过（98 passed in 759.38s）；`PYTHONPATH=src:. python -m pytest tests/closeout tests/negative -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-closeout-final` 通过（657 passed in 6.08s）；`PYTHONPATH=.; python -m pytest backend/tests/test_api.py tests/integration/test_frontend_backend.py -q --tb=short -rf --basetemp=.pytest-tmp-sample-declared` 在样例 `10-project/` 内通过（6 passed in 0.12s）；底层 sample materializer（样例物化函数）用 provider artifact lock 连续两次重放一致（file_count=39、actual_file_count=40、provider_artifact_files=8、total_bytes=278796、sha256=`9a907a8cd4969ddf03fb84b70dc8fb8e5d6745072925ab820e2f56a87f6aa542`）。`scripts/build_tiny_closeout_sample.py --check` 在当前 dirty worktree（脏工作树）按设计失败并提示先提交或清理，未作为通过证据。
 
 ---
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -12,7 +13,7 @@ from boardroom_os.audit.process_audit import (
     process_audit_readiness,
 )
 from boardroom_os.audit.replay_bundle import replay_bundle_readiness
-from boardroom_os.adapters.git_audit import GitCommandResult
+from boardroom_os.adapters.git_audit import GitAuditAdapter, GitCommandResult
 from boardroom_os.closeout.gate import (
     CloseoutGate,
     CloseoutGateBlockerCode,
@@ -187,31 +188,42 @@ def test_tiny_closeout_rejects_dirty_git_adapter_facts_before_closeout(
     assert ("git", "status", "--porcelain=v1", "-z") in transport.commands
 
 
-def test_tiny_closeout_uses_git_audit_adapter_transport_for_final_commit(
+def test_tiny_git_audit_adapter_uses_transport_for_final_commit_without_closeout(
     tmp_path: Path,
 ) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
-
     transport = _FakeGitTransport()
-    package_fixture = _build_negative_package_fixture(tmp_path)
 
-    fixture = build_tiny_closeout_fixture(
-        package_root=package_fixture.package_root_path,
-        package_fixture=package_fixture,
-        git_transport=transport,
+    facts = GitAuditAdapter(transport=transport).collect(
+        package_root="10-project",
+        project_ref="project-tiny-book-tracker",
+        cwd=str(tmp_path),
+        source_inventory_hash=hashlib.sha256(b"tiny-source-inventory").hexdigest(),
         base_commit_sha=_BASE_COMMIT_SHA,
-        allow_fake_provider_for_negative_tests=True,
+        worktree_ref="worktree.test",
     )
 
     assert ("git", "rev-parse", "HEAD") in transport.commands
     assert ("git", "status", "--porcelain=v1", "-z") in transport.commands
-    assert fixture.git_audit_readiness.final_commit_sha.value == _FINAL_COMMIT_SHA
-    assert fixture.source_inventory.package_commit_ref.value == (
-        f"package-commit.{_FINAL_COMMIT_SHA}"
-    )
-    assert fixture.git_version_audit_bundle.fact_set.base_commit_sha.value == (
-        _BASE_COMMIT_SHA
-    )
+    assert facts.final_commit_sha.value == _FINAL_COMMIT_SHA
+    assert facts.base_commit_sha.value == _BASE_COMMIT_SHA
+    assert facts.git_clean is True
+
+
+def test_tiny_closeout_rejects_fake_provider_even_with_clean_injected_git_facts(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+
+    package_fixture = _build_negative_package_fixture(tmp_path)
+
+    with pytest.raises(_VERIFY_ERRORS, match="fake provider|passed closeout|real provider"):
+        build_tiny_closeout_fixture(
+            package_root=package_fixture.package_root_path,
+            package_fixture=package_fixture,
+            git_transport=_FakeGitTransport(),
+            base_commit_sha=_BASE_COMMIT_SHA,
+            allow_fake_provider_for_negative_tests=True,
+        )
 
 
 def test_tiny_closeout_rejects_missing_base_commit_for_injected_git_audit(

@@ -1,0 +1,110 @@
+[
+  {
+    "failure_kind": null,
+    "fallback_kind": null,
+    "finished_at": "2026-05-31T04:04:31.589041Z",
+    "input_package_ref": {
+      "value": "exec.ticket-tiny-backend-api.graph-14"
+    },
+    "model": "gpt-5.5",
+    "outcome": "primary_provider_output",
+    "parsed_output_ref": {
+      "value": "provider-artifact.openai.parsed.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.01534aa2e257793525042521ee644582404a51ad3ea9938c90223cdd5bcd95e8"
+    },
+    "provider": "openai-compatible",
+    "provider_attempt_id": {
+      "value": "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+    },
+    "raw_output_ref": {
+      "value": "provider-artifact.openai.raw.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.e008820a19542b2983229fef34595735e750220333b10919e23615cc00b76007"
+    },
+    "reasoning_effort": "high",
+    "seat_ref": {
+      "value": "seat-tiny-worker-backend"
+    },
+    "started_at": "2026-05-31T04:01:10.629197Z",
+    "status": "succeeded",
+    "version": 1
+  },
+  {
+    "failure_kind": null,
+    "fallback_kind": null,
+    "finished_at": "2026-05-31T04:13:26.377113Z",
+    "input_package_ref": {
+      "value": "exec.ticket-tiny-docs-run-manifest.graph-14"
+    },
+    "model": "gpt-5.5",
+    "outcome": "primary_provider_output",
+    "parsed_output_ref": {
+      "value": "provider-artifact.openai.parsed.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.d1969e2435962207054dc3f3d328a4766e216d31a64870f5fd82c121a674dc7b"
+    },
+    "provider": "openai-compatible",
+    "provider_attempt_id": {
+      "value": "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+    },
+    "raw_output_ref": {
+      "value": "provider-artifact.openai.raw.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.f8adbbd2323fb67ee0de33ed4f60d534e602651533b7650f6c81feb24dc5cf79"
+    },
+    "reasoning_effort": "high",
+    "seat_ref": {
+      "value": "seat-tiny-worker-docs"
+    },
+    "started_at": "2026-05-31T04:12:53.212236Z",
+    "status": "succeeded",
+    "version": 1
+  },
+  {
+    "failure_kind": null,
+    "fallback_kind": null,
+    "finished_at": "2026-05-31T04:05:16.678681Z",
+    "input_package_ref": {
+      "value": "exec.ticket-tiny-frontend-ui.graph-14"
+    },
+    "model": "gpt-5.5",
+    "outcome": "primary_provider_output",
+    "parsed_output_ref": {
+      "value": "provider-artifact.openai.parsed.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.b1aee43acd2c578bd4ca1c504e14c071e576628b09b68100972d81361e531dde"
+    },
+    "provider": "openai-compatible",
+    "provider_attempt_id": {
+      "value": "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+    },
+    "raw_output_ref": {
+      "value": "provider-artifact.openai.raw.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.4896068d216df3d6c4cd06e97a48cbaf9ae8637101dd7afb5abc7154e361a2cb"
+    },
+    "reasoning_effort": "high",
+    "seat_ref": {
+      "value": "seat-tiny-worker-frontend"
+    },
+    "started_at": "2026-05-31T04:04:31.591984Z",
+    "status": "succeeded",
+    "version": 1
+  },
+  {
+    "failure_kind": null,
+    "fallback_kind": null,
+    "finished_at": "2026-05-31T04:12:53.211165Z",
+    "input_package_ref": {
+      "value": "exec.ticket-tiny-tests.graph-14"
+    },
+    "model": "gpt-5.5",
+    "outcome": "primary_provider_output",
+    "parsed_output_ref": {
+      "value": "provider-artifact.openai.parsed.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.b864ba60318bd6fec4eae359f2e4c97fb73dd5e2273fe8b9e9df162f7ed21d18"
+    },
+    "provider": "openai-compatible",
+    "provider_attempt_id": {
+      "value": "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+    },
+    "raw_output_ref": {
+      "value": "provider-artifact.openai.raw.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.6fd652c87b0fc9ef742e7c33976ab83cb4da2ba6faf31a0b90058e4b416f906d"
+    },
+    "reasoning_effort": "high",
+    "seat_ref": {
+      "value": "seat-tiny-worker-tests"
+    },
+    "started_at": "2026-05-31T04:05:16.680227Z",
+    "status": "succeeded",
+    "version": 1
+  }
+]
