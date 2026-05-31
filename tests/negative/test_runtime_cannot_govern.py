@@ -35,6 +35,7 @@ from boardroom_os.execution.runtime_executor import (
     RuntimeExecutorError,
 )
 from boardroom_os.graph.ticket import TicketId
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 @pytest.fixture
@@ -118,6 +119,7 @@ def _execution_package(
         graph_version=7,
         seat_ref=seat_ref,
         model_execution_profile=model_execution_profile,
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Execute the assigned worker package.",
         context_refs=(ContextRef(value="context.runtime.boundary"),),
         constraints=("Stay inside the assigned execution seat.",),

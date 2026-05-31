@@ -29,6 +29,10 @@ from boardroom_os.agents.skills import (
     TicketTypeRef,
 )
 from boardroom_os.contracts.types import ContractId
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields,
+    baseline_role_prompt_hook_registry,
+)
 
 
 def _capability_registry() -> CapabilityRegistry:
@@ -76,6 +80,7 @@ def _worker_role(**overrides: object) -> RoleProfile:
             "write outside allowed_write_set",
             "mark ticket completed",
         ),
+        **baseline_role_prompt_hook_fields(),
     }
     values.update(overrides)
     return RoleProfile(**values)
@@ -83,7 +88,9 @@ def _worker_role(**overrides: object) -> RoleProfile:
 
 def _role_registry() -> RoleProfileRegistry:
     return RoleProfileRegistry.from_profiles(
-        _worker_role(), capability_registry=_capability_registry()
+        _worker_role(),
+        capability_registry=_capability_registry(),
+        hook_registry=baseline_role_prompt_hook_registry(),
     )
 
 
@@ -206,6 +213,7 @@ def test_role_profile_rejects_provider_fields() -> None:
                 "input_contracts": [{"value": "contract.execution_package"}],
                 "output_contracts": [{"value": "contract.work_product"}],
                 "forbidden_actions": ["mark ticket completed"],
+                **baseline_role_prompt_hook_fields(),
                 "provider": "anthropic",
             }
         )
@@ -220,7 +228,11 @@ def test_role_registry_rejects_unknown_capability_tag() -> None:
     )
 
     with pytest.raises(ValueError, match="unknown capability_tag: task.unknown"):
-        RoleProfileRegistry.from_profiles(role, capability_registry=_capability_registry())
+        RoleProfileRegistry.from_profiles(
+            role,
+            capability_registry=_capability_registry(),
+            hook_registry=baseline_role_prompt_hook_registry(),
+        )
 
 
 def test_skill_registry_rejects_unknown_allowed_role() -> None:
@@ -355,10 +367,13 @@ def test_yaml_shaped_agent_configs_compile_to_registries() -> None:
                 "write outside allowed_write_set",
                 "mark ticket completed",
             ],
+            **baseline_role_prompt_hook_fields(),
         }
     )
     role_registry = RoleProfileRegistry.from_profiles(
-        role, capability_registry=capability_registry
+        role,
+        capability_registry=capability_registry,
+        hook_registry=baseline_role_prompt_hook_registry(),
     )
     prompt_registry = PromptSourceRegistry.model_validate(
         {
@@ -502,6 +517,7 @@ def test_agent_config_rejects_unknown_schema_version() -> None:
                 "input_contracts": ["contract.execution_package"],
                 "output_contracts": ["contract.work_product"],
                 "forbidden_actions": ["mark ticket completed"],
+                **baseline_role_prompt_hook_fields(),
             }
         )
 
@@ -541,7 +557,9 @@ def test_agent_config_rejects_unknown_schema_version() -> None:
 def test_layered_agent_config_templates_compile_to_registries() -> None:
     capability_registry = _capability_registry()
     role_registry = RoleProfileRegistry.from_profiles(
-        _worker_role(), capability_registry=capability_registry
+        _worker_role(),
+        capability_registry=capability_registry,
+        hook_registry=baseline_role_prompt_hook_registry(),
     )
     prompt_registry = _prompt_registry()
     skill_file_registry = _skill_file_registry()

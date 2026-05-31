@@ -5,6 +5,7 @@ import re
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from boardroom_os.agents.profiles import ModelExecutionProfile, ModelExecutionProfileRegistry, RoleProfile
+from boardroom_os.agents.role_prompt_hooks import RolePromptHookRegistry
 from boardroom_os.agents.seat import AgentSeat, seat_demand_blockers
 from boardroom_os.agents.team import AgentTeamProjection
 from boardroom_os.contracts.acceptance import AcceptanceContract, AcceptanceCriterion
@@ -67,6 +68,7 @@ class ExecutionPackageCompilerInput(BaseModel):
     package_contract: PackageContract
     evidence_obligations: tuple[EvidenceObligation, ...]
     model_execution_profiles: ModelExecutionProfileRegistry
+    role_prompt_hook_registry: RolePromptHookRegistry
     workspace_context: ExecutionWorkspaceContext
 
 
@@ -76,6 +78,7 @@ class ExecutionPackageCompiler:
         self._validate_graph_version(input)
         assigned_seat = self._resolve_assigned_seat(input, ticket)
         role_profile = self._resolve_role_profile(input, assigned_seat)
+        role_prompt_hook = self._resolve_role_prompt_hook(input, role_profile)
         model_execution_profile = self._resolve_model_execution_profile(input, assigned_seat)
         self._validate_active_acceptance_contract(input.acceptance_contract)
         self._validate_package_root(input)
@@ -121,6 +124,7 @@ class ExecutionPackageCompiler:
             graph_version=input.seat_assignment_graph.graph_version,
             seat_ref=assigned_seat.seat_ref,
             model_execution_profile=model_execution_profile,
+            role_prompt_hook=role_prompt_hook,
             objective=ticket.purpose,
             context_refs=self._build_context_refs(input, ticket),
             constraints=self._build_constraints(role_profile),
@@ -198,6 +202,28 @@ class ExecutionPackageCompiler:
         raise ExecutionPackageCompilerError(
             f"unknown role_profile_ref: {seat.role_profile_ref.value}"
         )
+
+    def _resolve_role_prompt_hook(
+        self,
+        input: ExecutionPackageCompilerInput,
+        role_profile: RoleProfile,
+    ):
+        try:
+            hook = input.role_prompt_hook_registry.require(
+                role_profile.role_prompt_hook_ref
+            )
+        except Exception as error:
+            raise ExecutionPackageCompilerError(
+                "role prompt hook registry could not resolve profile hook: "
+                f"{role_profile.role_prompt_hook_ref.value}"
+            ) from error
+        if hook.hook_version != role_profile.role_prompt_hook_version:
+            raise ExecutionPackageCompilerError("role prompt hook version mismatch")
+        if hook.content_sha256 != role_profile.role_prompt_hook_sha256:
+            raise ExecutionPackageCompilerError("role prompt hook hash mismatch")
+        if hook.role_category is not role_profile.role_category:
+            raise ExecutionPackageCompilerError("role prompt hook category mismatch")
+        return hook
 
     def _resolve_model_execution_profile(
         self,

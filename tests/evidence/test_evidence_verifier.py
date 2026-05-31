@@ -52,9 +52,11 @@ from boardroom_os.evidence.verifier import (
     FallbackDecisionRecordedRef,
     VerifiedEvidence,
 )
+from boardroom_os.agents.profiles import ModelExecutionProfile
+from boardroom_os.contracts.package import PackageCommand
 from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import EvidencePurpose, FallbackKind, FallbackPolicy
-from boardroom_os.execution.package import FallbackPolicyRef
+from boardroom_os.execution.package import ExecutionPackage, FallbackPolicyRef
 from boardroom_os.execution.verification_run import (
     CommandOutputRef,
     VerificationRun,
@@ -65,6 +67,11 @@ from boardroom_os.providers.attempt import (
     ProviderAttempt,
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
+)
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook,
+    baseline_role_prompt_hook_fields,
+    baseline_role_prompt_hook_registry,
 )
 
 _VALID_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -170,6 +177,7 @@ def _provider_attempt(
         "reasoning_effort": "medium",
         "input_package_ref": "exec.backend.1",
         "seat_ref": "seat.worker.backend",
+        **baseline_role_prompt_hook_fields(),
         "status": status,
         "outcome": outcome,
         "started_at": datetime(2026, 5, 20, 9, 0, tzinfo=UTC),
@@ -189,6 +197,48 @@ def _provider_attempt(
     else:
         fields["failure_kind"] = "provider_error"
     return ProviderAttempt(**fields)
+
+
+def _execution_package(
+    *,
+    execution_package_id: str = "exec.backend.1",
+    hook_ref: str = "role-prompt-hook.baseline.worker.v1",
+) -> ExecutionPackage:
+    return ExecutionPackage(
+        execution_package_id=execution_package_id,
+        ticket_ref="ticket.backend.1",
+        graph_version=7,
+        seat_ref="seat.worker.backend",
+        model_execution_profile=ModelExecutionProfile(
+            model_execution_profile_id="model.worker.backend",
+            provider="anthropic",
+            model="claude-opus-4-7",
+            reasoning_effort="medium",
+            context_window=200000,
+            temperature=0.2,
+            tool_permissions=("filesystem.write",),
+            fallback_policy_ref=ContractId(value="fallback.worker.record_failure"),
+        ),
+        role_prompt_hook=baseline_role_prompt_hook(hook_ref),
+        objective="Verify backend evidence.",
+        context_refs=("context.backend",),
+        constraints=("Evidence must be bound to the execution package.",),
+        acceptance_refs=(_acceptance_ref(),),
+        source_surface_refs=(_source_surface_ref(),),
+        allowed_write_set=("src/backend/app.py",),
+        required_outputs=("work-product.backend",),
+        commands=(
+            PackageCommand(
+                command_id=ContractId(value="test.backend"),
+                label="Run backend tests",
+                command=("python", "-m", "pytest"),
+                cwd=".",
+            ),
+        ),
+        evidence_obligations=(_evidence_obligation(),),
+        fallback_policy_ref="fallback.worker.record_failure",
+        audit_requirements=("provider_attempt_hook_snapshot_binding",),
+    )
 
 
 def _claim(
@@ -391,6 +441,7 @@ def _input(
     artifact_manifest: ArtifactManifest | None = None,
     purpose_policy: EvidencePurposePolicy | None = None,
     provider_attempts: tuple[ProviderAttempt, ...] | None = None,
+    execution_packages: tuple[ExecutionPackage, ...] | None = None,
     verification_runs: tuple[VerificationRun, ...] | None = None,
     fallback_policy_registry: FallbackPolicyRegistry | None = None,
     fallback_decision_recorded_ref: FallbackDecisionRecordedRef | None = None,
@@ -405,6 +456,9 @@ def _input(
         provider_attempts=provider_attempts
         if provider_attempts is not None
         else (_provider_attempt(),),
+        execution_packages=execution_packages
+        if execution_packages is not None
+        else (_execution_package(),),
         verification_runs=verification_runs if verification_runs is not None else (),
         fallback_policy_registry=fallback_policy_registry,
         fallback_decision_record=(
@@ -417,6 +471,7 @@ def _input(
             else None
         ),
         fallback_decision_recorded_ref=fallback_decision_recorded_ref,
+        role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
         verified_at=_VERIFIED_AT,
     )
 
@@ -487,6 +542,142 @@ def test_primary_work_product_claim_becomes_verified_evidence() -> None:
     assert result.verified_evidence.verified_artifacts[0].artifact_ref == _artifact_ref()
     assert result.verified_evidence.fallback_decision_record_ref is None
     assert result.verified_evidence.fallback_decision_recorded_ref is None
+
+
+def test_evidence_verification_input_requires_role_prompt_hook_registry() -> None:
+    with pytest.raises(ValidationError, match="role_prompt_hook_registry"):
+        EvidenceVerificationInput(
+            claim=_claim(),
+            evidence_obligation=_evidence_obligation(),
+            active_acceptance_contract=_acceptance_contract(),
+            artifact_manifest=_artifact_manifest(),
+            purpose_policy=_purpose_policy(),
+            provider_attempts=(_provider_attempt(),),
+            execution_packages=(_execution_package(),),
+            verified_at=_VERIFIED_AT,
+        )
+
+
+def test_evidence_verification_input_requires_execution_packages() -> None:
+    with pytest.raises(ValidationError, match="execution_packages"):
+        EvidenceVerificationInput(
+            claim=_claim(),
+            evidence_obligation=_evidence_obligation(),
+            active_acceptance_contract=_acceptance_contract(),
+            artifact_manifest=_artifact_manifest(),
+            purpose_policy=_purpose_policy(),
+            provider_attempts=(_provider_attempt(),),
+            role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
+            verified_at=_VERIFIED_AT,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    (
+        ("role_prompt_hook_ref", "role-prompt-hook.fake.worker.v9"),
+        ("role_prompt_hook_version", "v9"),
+        ("role_prompt_hook_sha256", {"value": "0" * 64}),
+    ),
+)
+def test_verifier_blocks_provider_attempt_with_unregistered_hook_lineage(
+    field_name: str,
+    field_value: object,
+) -> None:
+    attempt = _provider_attempt().model_copy(update={field_name: field_value})
+
+    result = EvidenceVerifier().verify(
+        _input(provider_attempts=(attempt,))
+    )
+
+    assert result.verified_evidence is None
+    assert any(
+        blocker.code
+        is EvidenceVerificationBlockerCode.PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+        for blocker in result.blockers
+    )
+
+
+def test_verifier_blocks_provider_attempt_hook_mismatch_with_execution_package_snapshot() -> None:
+    attempt = _provider_attempt().model_copy(
+        update=baseline_role_prompt_hook_fields("role-prompt-hook.baseline.tester.v1")
+    )
+
+    result = EvidenceVerifier().verify(_input(provider_attempts=(attempt,)))
+
+    assert result.verified_evidence is None
+    assert (
+        EvidenceVerificationBlocker(
+            code=EvidenceVerificationBlockerCode.PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID,
+            message=(
+                "provider attempt role prompt hook does not match execution package snapshot"
+            ),
+            related_ref=attempt.provider_attempt_id.value,
+        )
+        in result.blockers
+    )
+
+
+def test_verifier_blocks_provider_attempt_without_execution_package_binding() -> None:
+    result = EvidenceVerifier().verify(_input(execution_packages=()))
+
+    assert result.verified_evidence is None
+    assert (
+        EvidenceVerificationBlocker(
+            code=EvidenceVerificationBlockerCode.PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID,
+            message="provider attempt input_package_ref is missing from execution_packages",
+            related_ref="exec.backend.1",
+        )
+        in result.blockers
+    )
+
+
+def test_verifier_blocks_execution_package_hook_snapshot_not_matching_registry() -> None:
+    package = _execution_package()
+    tampered_hook = package.role_prompt_hook.model_copy(
+        update={
+            "required_responsibilities": (
+                "Tampered responsibility outside governed registry.",
+            ),
+        }
+    )
+
+    result = EvidenceVerifier().verify(
+        _input(
+            execution_packages=(
+                package.model_copy(update={"role_prompt_hook": tampered_hook}),
+            ),
+        )
+    )
+
+    assert result.verified_evidence is None
+    assert (
+        EvidenceVerificationBlocker(
+            code=EvidenceVerificationBlockerCode.PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID,
+            message="execution package role prompt hook snapshot is not registered",
+            related_ref="exec.backend.1",
+        )
+        in result.blockers
+    )
+
+
+def test_verifier_accepts_registered_verification_hook_when_bound_to_execution_package_snapshot() -> None:
+    attempt = _provider_attempt().model_copy(
+        update=baseline_role_prompt_hook_fields("role-prompt-hook.baseline.tester.v1")
+    )
+
+    result = EvidenceVerifier().verify(
+        _input(
+            provider_attempts=(attempt,),
+            execution_packages=(
+                _execution_package(hook_ref="role-prompt-hook.baseline.tester.v1"),
+            ),
+        )
+    )
+
+    assert result.success is True
+    assert result.blockers == ()
+    assert result.verified_evidence is not None
 
 
 def test_command_verification_run_claim_becomes_verified_evidence() -> None:

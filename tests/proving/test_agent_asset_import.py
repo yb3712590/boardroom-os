@@ -34,6 +34,10 @@ from boardroom_os.workspace.manifest import (
     WorkspaceSection,
     WorkspaceSectionPath,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields,
+    baseline_role_prompt_hook_registry,
+)
 
 _VERIFY_ERRORS = (ValueError, ValidationError)
 _NOW = datetime(2026, 5, 23, 9, 41, tzinfo=UTC)
@@ -66,8 +70,10 @@ def _role_registry(*, role_ref: str = "role.worker.v1") -> RoleProfileRegistry:
             input_contracts=(ContractId(value="contract.execution-package"),),
             output_contracts=(ContractId(value="contract.work-product"),),
             forbidden_actions=("complete tickets directly",),
+            **baseline_role_prompt_hook_fields(),
         ),
         capability_registry=_capability_registry(),
+        hook_registry=baseline_role_prompt_hook_registry(),
     )
 
 

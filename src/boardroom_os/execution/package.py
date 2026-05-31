@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from boardroom_os.agents.profiles import ModelExecutionProfile
+from boardroom_os.agents.role_prompt_hooks import RolePromptHook
 from boardroom_os.agents.seat import AgentSeatRef
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.evidence_obligation import EvidenceObligation
@@ -58,6 +59,7 @@ class ExecutionPackage(BaseModel):
     graph_version: int = Field(gt=0)
     seat_ref: AgentSeatRef
     model_execution_profile: ModelExecutionProfile
+    role_prompt_hook: RolePromptHook
     objective: str
     context_refs: tuple[ContextRef, ...]
     constraints: tuple[str, ...]

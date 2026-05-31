@@ -40,6 +40,7 @@ from boardroom_os.execution.verification_run import (
     WorkspaceSnapshotRef,
 )
 from boardroom_os.graph.ticket import TicketId
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 def _started_at() -> datetime:
@@ -291,6 +292,7 @@ def _execution_package(*commands: PackageCommand) -> ExecutionPackage:
         graph_version=11,
         seat_ref=AgentSeatRef(value="seat.worker.command"),
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Run declared verification command.",
         context_refs=(ContextRef(value="context.contracts"),),
         constraints=("Only run declared package commands.",),

@@ -18,6 +18,7 @@ class ProviderExecutorError(ValueError):
 
 # 只渲染 agent 需阅读的任务内容；provenance 和模型配置由 ProviderRequest 字段承载。
 _PROMPT_FIELDS = (
+    "role_prompt_hook",
     "objective",
     "context_refs",
     "constraints",
@@ -63,6 +64,9 @@ class ProviderExecutor:
             execution_package_ref=context_snapshot.execution_package_ref,
             seat_ref=context_snapshot.seat_ref,
             model_execution_profile=context_snapshot.model_execution_profile,
+            role_prompt_hook_ref=context_snapshot.role_prompt_hook.hook_ref,
+            role_prompt_hook_version=context_snapshot.role_prompt_hook.hook_version,
+            role_prompt_hook_sha256=context_snapshot.role_prompt_hook.content_sha256,
             prompt=prompt,
         )
         provider_attempt = provider_input.provider_adapter.invoke(request)
@@ -90,6 +94,12 @@ class ProviderExecutor:
             mismatches.append("model")
         if provider_attempt.reasoning_effort != profile.reasoning_effort:
             mismatches.append("reasoning_effort")
+        if provider_attempt.role_prompt_hook_ref != context_snapshot.role_prompt_hook.hook_ref:
+            mismatches.append("role_prompt_hook_ref")
+        if provider_attempt.role_prompt_hook_version != context_snapshot.role_prompt_hook.hook_version:
+            mismatches.append("role_prompt_hook_version")
+        if provider_attempt.role_prompt_hook_sha256 != context_snapshot.role_prompt_hook.content_sha256:
+            mismatches.append("role_prompt_hook_sha256")
         if mismatches:
             joined_fields = ", ".join(mismatches)
             raise ProviderExecutorError(
@@ -123,11 +133,19 @@ def render_prompt_from_snapshot(snapshot: AgentContextSnapshot) -> str:
         field_name: _canonicalize_prompt_value(getattr(snapshot, field_name))
         for field_name in _PROMPT_FIELDS
     }
-    return json.dumps(
+    facts_json = json.dumps(
         payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+    )
+    return "\n".join(
+        (
+            "# RolePromptHook",
+            snapshot.role_prompt_hook.prompt_text.rstrip(),
+            "# ExecutionPackageFacts",
+            facts_json,
+        )
     )
 
 

@@ -381,3 +381,29 @@ RolePromptHook（角色提示词钩子）作为第一批整改进入 RoleProfile
 - `doc/04-implementation/acceptance-criteria.md`：Phase 8 端到端成立判定撤回；新增 Phase 9 验收段；新增 AC-V2-AGENT、AC-V2-EVIDENCE-004、AC-V2-PACKAGE-003、AC-V2-CLOSEOUT-011。
 - `doc/04-implementation/INDEX.md`：登记两份复审报告和 V2-090 整改计划。
 - V2-090 完成前，不得恢复“V2 最小端到端能力成立”结论。
+
+## DEC-0020: Active RolePromptHook 必须哈希绑定并进入执行审计链
+
+- 状态：Accepted
+- 日期：2026-05-31
+
+### 决策
+
+CEO / Architect / Worker / Tester / Checker / Closeout 的 active RolePromptHook（角色提示词钩子）必须作为 governed asset（治理资产）管理。每个 active hook 必须具备唯一 `hook_ref`（钩子引用）、非空 `prompt_text`（提示词文本）、`hook_version`（钩子版本）、真实 `content_sha256`（内容哈希）、`policy_refs`（策略引用）和对应角色的 `required_responsibilities`（必备职责）。
+
+RoleProfile（角色模板）必须显式引用 RolePromptHook 的 ref/version/hash；ExecutionPackage（执行包）必须携带 RolePromptHook snapshot（钩子快照）；ProviderRequest（模型请求）和 ProviderAttempt（模型调用尝试记录）必须携带同一组 hook 审计字段。ExecutionPackageCompiler（执行包编译器）只能消费已构造的 RolePromptHookRegistry（角色提示词钩子注册表），不得在编译时临时读取外部提示词文件。
+
+CEO / Architect / Worker / Tester / Checker / Closeout 都是 provider-backed agent role（模型支撑的智能体角色）。任何 agent role 参与工作流时都应经 ExecutionPackage 接收上下文、接入 LLM（大模型）、记录 ProviderAttempt，并让返回结果进入后续治理或证据链。工具、validator（校验器）、reducer（归约器）和 gate（门禁）不代表 agent role。
+
+RolePromptHook 不能替代 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）或 CloseoutGate（收尾门禁）。任何声称绕过、替代或取代这些程序化门禁的 active hook 必须 fail closed（失败关闭）。
+
+### 理由
+
+V2-080 失败复审显示，系统虽然记录了真实证据，但 agent 角色缺少可审计的基础提示词职责边界，尤其是 Architect（架构师）未被明确要求检查 run command（运行命令）、service boundary（服务边界）、integration boundary（集成边界）和 evidence obligations（证据义务）的一致性。把基础提示词做成哈希绑定资产，可以让治理约束随 RoleProfile、ExecutionPackage 和 ProviderAttempt 进入审计链，同时仍保持程序化门禁为最终权威。
+
+### 影响
+
+- `src/boardroom_os/agents/role_prompt_hooks.py` 成为 active baseline hook registry（基准钩子注册表）的权威实现。
+- `RoleProfileRegistry.from_profiles(...)` 必须接收 hook registry 并校验 ref/version/hash/category。
+- `ExecutionPackageCompiler` 继续保持 0 外部文件输入，只消费 typed registry（类型化注册表）。
+- `EvidenceVerifier` 对 provider-backed evidence（模型支撑证据）必须拒绝缺 hook 审计字段、hook ref/version/hash 无法由 RolePromptHookRegistry（角色提示词钩子注册表）验真，或 ProviderAttempt（模型调用尝试记录）与其 `input_package_ref` 对应 ExecutionPackage（执行包）RolePromptHook snapshot（角色提示词快照）不一致的记录。Verifier 不得按 RoleCategory（角色类别）推断 evidence（证据）权限。

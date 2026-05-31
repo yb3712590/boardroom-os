@@ -16,6 +16,7 @@ from boardroom_os.providers.attempt import (
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
 )
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_fields
 
 
 def _model_execution_profile() -> ModelExecutionProfile:
@@ -47,6 +48,7 @@ def _attempt_fields() -> dict[str, object]:
         "reasoning_effort": "medium",
         "input_package_ref": "exec.ticket.backend.1",
         "seat_ref": "seat.worker.backend",
+        **baseline_role_prompt_hook_fields(),
         "status": ProviderAttemptStatus.SUCCEEDED,
         "outcome": ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
         "started_at": _started_at(),
@@ -64,6 +66,9 @@ def _attempt_fields() -> dict[str, object]:
         "reasoning_effort",
         "input_package_ref",
         "seat_ref",
+        "role_prompt_hook_ref",
+        "role_prompt_hook_version",
+        "role_prompt_hook_sha256",
         "status",
         "outcome",
     ),
@@ -182,6 +187,7 @@ def test_provider_request_rejects_empty_prompt() -> None:
             execution_package_ref="exec.ticket.backend.1",
             seat_ref="seat.worker.backend",
             model_execution_profile=_model_execution_profile(),
+            **baseline_role_prompt_hook_fields(),
             prompt="   ",
         )
 
@@ -191,6 +197,7 @@ def test_fake_provider_transport_builds_succeeded_attempt_from_request() -> None
         execution_package_ref="exec.ticket.backend.1",
         seat_ref="seat.worker.backend",
         model_execution_profile=_model_execution_profile(),
+        **baseline_role_prompt_hook_fields(),
         prompt="Implement backend API",
     )
     transport = FakeProviderTransport(
@@ -212,6 +219,9 @@ def test_fake_provider_transport_builds_succeeded_attempt_from_request() -> None
     assert attempt.reasoning_effort == "medium"
     assert attempt.input_package_ref.value == "exec.ticket.backend.1"
     assert attempt.seat_ref.value == "seat.worker.backend"
+    assert attempt.role_prompt_hook_ref == request.role_prompt_hook_ref
+    assert attempt.role_prompt_hook_version == request.role_prompt_hook_version
+    assert attempt.role_prompt_hook_sha256 == request.role_prompt_hook_sha256
     assert attempt.status is ProviderAttemptStatus.SUCCEEDED
     assert attempt.outcome is ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT
     assert attempt.fallback_kind is None

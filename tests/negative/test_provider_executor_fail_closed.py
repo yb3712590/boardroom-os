@@ -47,6 +47,10 @@ from boardroom_os.providers.attempt import (
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook,
+    baseline_role_prompt_hook_fields_for_category,
+)
 
 
 def _model_execution_profile() -> ModelExecutionProfile:
@@ -89,6 +93,7 @@ def _execution_package() -> ExecutionPackage:
         graph_version=7,
         seat_ref=AgentSeatRef(value="seat.worker.backend"),
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Implement backend API",
         context_refs=(
             ContextRef(value="contract.acceptance.active"),
@@ -148,6 +153,9 @@ class MisbindingFakeProviderTransport:
             "reasoning_effort": profile.reasoning_effort,
             "input_package_ref": request.execution_package_ref,
             "seat_ref": request.seat_ref,
+            "role_prompt_hook_ref": request.role_prompt_hook_ref,
+            "role_prompt_hook_version": request.role_prompt_hook_version,
+            "role_prompt_hook_sha256": request.role_prompt_hook_sha256,
             "status": ProviderAttemptStatus.SUCCEEDED,
             "outcome": ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
             "started_at": _started_at(),
@@ -174,6 +182,7 @@ def test_provider_executor_input_rejects_extra_role_or_ticket_fields() -> None:
         input_contracts=(ContractId(value="contract.acceptance"),),
         output_contracts=(ContractId(value="contract.source"),),
         forbidden_actions=("complete tickets",),
+        **baseline_role_prompt_hook_fields_for_category(RoleCategory.IMPLEMENTATION),
     )
 
     with pytest.raises(ValidationError):

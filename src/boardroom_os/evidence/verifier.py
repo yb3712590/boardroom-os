@@ -7,6 +7,11 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from boardroom_os.agents.role_prompt_hooks import (
+    RolePromptHookRef,
+    RolePromptHookRegistry,
+    RolePromptHookSha256,
+)
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.acceptance import AcceptanceContract
 from boardroom_os.contracts.evidence_obligation import (
@@ -34,6 +39,7 @@ from boardroom_os.evidence.fallback_registry import (
 )
 from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import EvidencePurpose
+from boardroom_os.execution.package import ExecutionPackage
 from boardroom_os.execution.verification_run import (
     VerificationRun,
     VerificationRunRef,
@@ -256,6 +262,7 @@ class EvidenceVerificationBlockerCode(StrEnum):
     MISSING_FALLBACK_DECISION_RECORDED_REF = "missing_fallback_decision_recorded_ref"
     FALLBACK_DECISION_RECORD_MISMATCH = "fallback_decision_record_mismatch"
     FALLBACK_DECISION_NOT_ALLOWED = "fallback_decision_not_allowed"
+    PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID = "provider_attempt_role_prompt_hook_invalid"
 
 
 class EvidenceVerificationBlocker(BaseModel):
@@ -374,6 +381,8 @@ class EvidenceVerificationInput(BaseModel):
     artifact_manifest: ArtifactManifest
     purpose_policy: EvidencePurposePolicy
     provider_attempts: tuple[ProviderAttempt, ...]
+    execution_packages: tuple[ExecutionPackage, ...]
+    role_prompt_hook_registry: RolePromptHookRegistry
     verification_runs: tuple[VerificationRun, ...] = ()
     fallback_policy_registry: FallbackPolicyRegistry | None = None
     fallback_decision_record: FallbackDecisionRecord | None = None
@@ -389,6 +398,17 @@ class EvidenceVerificationInput(BaseModel):
     ) -> AcceptanceContract:
         if not isinstance(value, AcceptanceContract):
             raise ValueError("active_acceptance_contract must be an AcceptanceContract")
+        return value
+
+    @field_validator("role_prompt_hook_registry", mode="wrap")
+    @classmethod
+    def _require_role_prompt_hook_registry_instance(
+        cls,
+        value: Any,
+        handler: Any,
+    ) -> RolePromptHookRegistry:
+        if not isinstance(value, RolePromptHookRegistry):
+            raise ValueError("role_prompt_hook_registry must be a RolePromptHookRegistry")
         return value
 
     @field_validator("verified_at")
@@ -645,6 +665,132 @@ class EvidenceVerifier:
                 )
             )
         if (
+            provider_attempt.role_prompt_hook_ref is None
+            or provider_attempt.role_prompt_hook_version is None
+            or provider_attempt.role_prompt_hook_sha256 is None
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="provider attempt role prompt hook audit fields are required",
+                    related_ref=provider_attempt.provider_attempt_id.value,
+                )
+            )
+            return
+        if not isinstance(provider_attempt.role_prompt_hook_ref, RolePromptHookRef) or not isinstance(
+            provider_attempt.role_prompt_hook_sha256,
+            RolePromptHookSha256,
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="provider attempt role prompt hook audit fields must be typed",
+                    related_ref=provider_attempt.provider_attempt_id.value,
+                )
+            )
+            return
+        try:
+            hook = verification_input.role_prompt_hook_registry.require(
+                provider_attempt.role_prompt_hook_ref
+            )
+        except ValueError:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="provider attempt role prompt hook ref is not registered",
+                    related_ref=provider_attempt.role_prompt_hook_ref.value,
+                )
+            )
+            return
+        if (
+            provider_attempt.role_prompt_hook_version != hook.hook_version
+            or provider_attempt.role_prompt_hook_sha256 != hook.content_sha256
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="provider attempt role prompt hook version or hash mismatch",
+                    related_ref=provider_attempt.provider_attempt_id.value,
+                )
+            )
+            return
+        execution_package = self._execution_package_by_ref(
+            verification_input.execution_packages,
+            provider_attempt.input_package_ref,
+        )
+        if execution_package is None:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="provider attempt input_package_ref is missing from execution_packages",
+                    related_ref=provider_attempt.input_package_ref.value,
+                )
+            )
+            return
+        package_hook = execution_package.role_prompt_hook
+        try:
+            registered_package_hook = verification_input.role_prompt_hook_registry.require(
+                package_hook.hook_ref
+            )
+        except ValueError:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="execution package role prompt hook snapshot is not registered",
+                    related_ref=execution_package.execution_package_id.value,
+                )
+            )
+            return
+        if package_hook != registered_package_hook:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message="execution package role prompt hook snapshot is not registered",
+                    related_ref=execution_package.execution_package_id.value,
+                )
+            )
+            return
+        if (
+            provider_attempt.role_prompt_hook_ref != package_hook.hook_ref
+            or provider_attempt.role_prompt_hook_version != package_hook.hook_version
+            or provider_attempt.role_prompt_hook_sha256 != package_hook.content_sha256
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=(
+                        EvidenceVerificationBlockerCode
+                        .PROVIDER_ATTEMPT_ROLE_PROMPT_HOOK_INVALID
+                    ),
+                    message=(
+                        "provider attempt role prompt hook does not match "
+                        "execution package snapshot"
+                    ),
+                    related_ref=provider_attempt.provider_attempt_id.value,
+                )
+            )
+            return
+        if (
             provider_attempt.outcome is ProviderAttemptOutcome.FALLBACK_ARTIFACT
             and claim.fallback_marker is None
         ):
@@ -834,6 +980,20 @@ class EvidenceVerifier:
         for provider_attempt in provider_attempts:
             if provider_attempt.provider_attempt_id == provider_attempt_ref:
                 return provider_attempt
+        return None
+
+    def _execution_package_by_ref(
+        self,
+        execution_packages: tuple[ExecutionPackage, ...],
+        execution_package_ref,
+    ) -> ExecutionPackage | None:
+        matches = tuple(
+            execution_package
+            for execution_package in execution_packages
+            if execution_package.execution_package_id.value == execution_package_ref.value
+        )
+        if len(matches) == 1:
+            return matches[0]
         return None
 
     def _verified_artifact_from_entry(

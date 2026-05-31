@@ -55,6 +55,10 @@ from boardroom_os.providers.attempt import (
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook,
+    baseline_role_prompt_hook_fields,
+)
 
 
 def _claim_fields(**overrides: object) -> dict[str, object]:
@@ -121,6 +125,7 @@ def _execution_package() -> ExecutionPackage:
             tool_permissions=("provider.invoke",),
             fallback_policy_ref="fallback-policy.default",
         ),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Implement the backend API.",
         context_refs=("context.project-charter",),
         constraints=("Stay inside allowed write set.",),
@@ -151,6 +156,7 @@ def _provider_attempt(**overrides: object) -> ProviderAttempt:
         "reasoning_effort": "medium",
         "input_package_ref": ExecutionPackageRef(value="execution-package.backend-api"),
         "seat_ref": "seat.worker.backend",
+        **baseline_role_prompt_hook_fields(),
         "status": ProviderAttemptStatus.SUCCEEDED,
         "outcome": ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
         "started_at": datetime(2026, 5, 18, 9, 0, tzinfo=UTC),

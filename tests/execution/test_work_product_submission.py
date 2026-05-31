@@ -42,6 +42,10 @@ from boardroom_os.reducers.ticket_reducer import (
     TicketReducer,
     TicketRefPayload,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook,
+    baseline_role_prompt_hook_fields,
+)
 
 
 def _work_product_fields() -> dict[str, object]:
@@ -109,6 +113,7 @@ def _execution_package() -> ExecutionPackage:
         graph_version=7,
         seat_ref="seat.worker.backend",
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Implement the backend API.",
         context_refs=("context.project-charter",),
         constraints=("Stay inside allowed write set.",),
@@ -141,6 +146,9 @@ def _fake_provider_attempt() -> ProviderAttempt:
             execution_package_ref=execution_package.execution_package_id.value,
             seat_ref=execution_package.seat_ref,
             model_execution_profile=execution_package.model_execution_profile,
+            role_prompt_hook_ref=execution_package.role_prompt_hook.hook_ref,
+            role_prompt_hook_version=execution_package.role_prompt_hook.hook_version,
+            role_prompt_hook_sha256=execution_package.role_prompt_hook.content_sha256,
             prompt="Implement the backend API.",
         )
     )
@@ -155,6 +163,7 @@ def _provider_attempt(**overrides: object) -> ProviderAttempt:
         "reasoning_effort": "medium",
         "input_package_ref": "execution-package.backend-api",
         "seat_ref": "seat.worker.backend",
+        **baseline_role_prompt_hook_fields(),
         "status": ProviderAttemptStatus.SUCCEEDED,
         "outcome": ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
         "started_at": datetime(2026, 5, 18, 9, 0, tzinfo=UTC),

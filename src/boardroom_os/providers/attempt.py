@@ -6,6 +6,10 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from boardroom_os.agents.role_prompt_hooks import (
+    RolePromptHookRef,
+    RolePromptHookSha256,
+)
 from boardroom_os.agents.seat import AgentSeatRef
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.types import NonEmptyTextValue
@@ -38,6 +42,9 @@ class ProviderAttempt(BaseModel):
     reasoning_effort: str
     input_package_ref: ExecutionPackageRef
     seat_ref: AgentSeatRef
+    role_prompt_hook_ref: RolePromptHookRef
+    role_prompt_hook_version: str
+    role_prompt_hook_sha256: RolePromptHookSha256
     status: ProviderAttemptStatus
     outcome: ProviderAttemptOutcome
     fallback_kind: FallbackKind | None = None
@@ -56,12 +63,14 @@ class ProviderAttempt(BaseModel):
                 "provider_attempt_id": ProviderAttemptRef,
                 "input_package_ref": ExecutionPackageRef,
                 "seat_ref": AgentSeatRef,
+                "role_prompt_hook_ref": RolePromptHookRef,
+                "role_prompt_hook_sha256": RolePromptHookSha256,
                 "raw_output_ref": ProviderArtifactRef,
                 "parsed_output_ref": ProviderArtifactRef,
             },
         )
 
-    @field_validator("provider", "model", "reasoning_effort")
+    @field_validator("provider", "model", "reasoning_effort", "role_prompt_hook_version")
     @classmethod
     def _reject_empty_text(cls, value: str) -> str:
         normalized = value.strip()

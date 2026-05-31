@@ -463,6 +463,41 @@ def test_tiny_closeout_sample_materializer_rejects_tampered_provider_artifact_lo
         )
 
 
+def test_tiny_closeout_sample_materializer_rejects_tampered_provider_hook_lineage(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import (
+        _PROVIDER_ATTEMPTS_SAMPLE_PATH,
+        _PROVIDER_ARTIFACTS_SAMPLE_DIR,
+        _locked_provider_fixture_from_sample,
+    )
+    from tests.proving.fixtures.tiny_provider_attempts import (
+        build_tiny_provider_attempt_fixture,
+    )
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.mkdir(parents=True)
+    fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
+    attempts = [
+        attempt.model_dump(mode="json")
+        for _ticket_id, attempt in sorted(
+            fixture.provider_attempts_by_ticket_id.items(),
+            key=lambda item: item[0].value,
+        )
+    ]
+    attempts[0]["role_prompt_hook_sha256"]["value"] = "0" * 64
+    attempts_path = output_root / _PROVIDER_ATTEMPTS_SAMPLE_PATH
+    attempts_path.parent.mkdir(parents=True)
+    attempts_path.write_text(
+        json.dumps(attempts, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (output_root / _PROVIDER_ARTIFACTS_SAMPLE_DIR).mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="role prompt hook lineage"):
+        _locked_provider_fixture_from_sample(output_root)
+
+
 @pytest.mark.parametrize(
     "unsafe_output",
     [

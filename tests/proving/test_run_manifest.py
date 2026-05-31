@@ -25,6 +25,7 @@ from boardroom_os.contracts.package import (
 from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef, SourceSurface
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
 from boardroom_os.workspace.manifest import WorkflowRef, WorkspacePath, WorkspaceSection, build_workspace_manifest
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 _VERIFY_ERRORS = (ValueError, ValidationError)
 
@@ -574,6 +575,7 @@ def test_binding_allows_declared_command_to_run_through_command_runner() -> None
             tool_permissions=("process.run",),
             fallback_policy_ref="fallback-policy.default",
         ),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Run declared command through the run manifest binding.",
         context_refs=(ContextRef(value="context.run-manifest"),),
         constraints=("Use only the declared run manifest command.",),

@@ -30,6 +30,9 @@ from boardroom_os.events.types import (
     EventType,
     ProjectRef,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields_for_category,
+)
 
 BASE_TIMESTAMP = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
 
@@ -85,6 +88,9 @@ def _role_profile(**overrides: object) -> RoleProfile:
         ),
     }
     values.update(overrides)
+    values.update(
+        baseline_role_prompt_hook_fields_for_category(values["role_category"])
+    )
     return RoleProfile(**values)
 
 

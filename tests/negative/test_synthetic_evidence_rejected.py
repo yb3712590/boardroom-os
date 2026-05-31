@@ -51,6 +51,8 @@ from boardroom_os.evidence.verifier import (
     FallbackDecisionRecordedRef,
     VerifiedEvidence,
 )
+from boardroom_os.agents.profiles import ModelExecutionProfile
+from boardroom_os.contracts.package import PackageCommand
 from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import (
     EvidencePurpose,
@@ -58,7 +60,7 @@ from boardroom_os.execution.fallback import (
     FallbackKind,
     FallbackPolicy,
 )
-from boardroom_os.execution.package import FallbackPolicyRef
+from boardroom_os.execution.package import ExecutionPackage, FallbackPolicyRef
 from boardroom_os.execution.verification_run import (
     CommandOutputRef,
     VerificationRun,
@@ -69,6 +71,11 @@ from boardroom_os.providers.attempt import (
     ProviderAttempt,
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
+)
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook,
+    baseline_role_prompt_hook_fields,
+    baseline_role_prompt_hook_registry,
 )
 
 _VALID_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -213,6 +220,7 @@ def _provider_attempt(
         "reasoning_effort": "medium",
         "input_package_ref": "exec.backend.1",
         "seat_ref": "seat.worker.backend",
+        **baseline_role_prompt_hook_fields(),
         "status": status,
         "outcome": outcome,
         "started_at": datetime(2026, 5, 20, 9, 0, tzinfo=UTC),
@@ -230,6 +238,48 @@ def _provider_attempt(
     else:
         fields["failure_kind"] = "provider_error"
     return ProviderAttempt(**fields)
+
+
+def _execution_package(
+    *,
+    execution_package_id: str = "exec.backend.1",
+    hook_ref: str = "role-prompt-hook.baseline.worker.v1",
+) -> ExecutionPackage:
+    return ExecutionPackage(
+        execution_package_id=execution_package_id,
+        ticket_ref="ticket.backend.1",
+        graph_version=7,
+        seat_ref="seat.worker.backend",
+        model_execution_profile=ModelExecutionProfile(
+            model_execution_profile_id="model.worker.backend",
+            provider="anthropic",
+            model="claude-opus-4-7",
+            reasoning_effort="medium",
+            context_window=200000,
+            temperature=0.2,
+            tool_permissions=("filesystem.write",),
+            fallback_policy_ref=ContractId(value="fallback.worker.record_failure"),
+        ),
+        role_prompt_hook=baseline_role_prompt_hook(hook_ref),
+        objective="Verify backend evidence.",
+        context_refs=("context.backend",),
+        constraints=("Evidence must be bound to the execution package.",),
+        acceptance_refs=(_acceptance_ref(),),
+        source_surface_refs=(_source_surface_ref(),),
+        allowed_write_set=("src/backend/app.py",),
+        required_outputs=("work-product.backend",),
+        commands=(
+            PackageCommand(
+                command_id=ContractId(value="test.backend"),
+                label="Run backend tests",
+                command=("python", "-m", "pytest"),
+                cwd=".",
+            ),
+        ),
+        evidence_obligations=(_evidence_obligation(),),
+        fallback_policy_ref="fallback.worker.record_failure",
+        audit_requirements=("provider_attempt_hook_snapshot_binding",),
+    )
 
 
 def _manifest_entry(
@@ -341,6 +391,7 @@ def _input(
     artifact_manifest: ArtifactManifest | None = None,
     purpose_policy: EvidencePurposePolicy | None = None,
     provider_attempts: tuple[ProviderAttempt, ...] | None = None,
+    execution_packages: tuple[ExecutionPackage, ...] | None = None,
     verification_runs: tuple[Any, ...] | None = None,
     verified_at: datetime | None = None,
     fallback_policy_registry: FallbackPolicyRegistry | None = None,
@@ -356,10 +407,14 @@ def _input(
         provider_attempts=(
             provider_attempts if provider_attempts is not None else (_provider_attempt(),)
         ),
+        execution_packages=(
+            execution_packages if execution_packages is not None else (_execution_package(),)
+        ),
         verification_runs=verification_runs if verification_runs is not None else (),
         fallback_policy_registry=fallback_policy_registry,
         fallback_decision_record=fallback_decision_record,
         fallback_decision_recorded_ref=fallback_decision_recorded_ref,
+        role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
         verified_at=verified_at or datetime(2026, 5, 20, 9, 2, tzinfo=UTC),
     )
 
@@ -520,6 +575,8 @@ def test_evidence_verification_input_rejects_invalid_acceptance_contract() -> No
             artifact_manifest=_artifact_manifest(),
             purpose_policy=_purpose_policy(),
             provider_attempts=(_provider_attempt(),),
+            execution_packages=(_execution_package(),),
+            role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
             verified_at=datetime(2026, 5, 20, 9, 2, tzinfo=UTC),
         )
 

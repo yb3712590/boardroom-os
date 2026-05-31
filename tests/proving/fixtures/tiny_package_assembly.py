@@ -72,6 +72,7 @@ from boardroom_os.workspace.source_inventory import (
     SourceLineageRecord,
     build_source_inventory,
 )
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_registry
 from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptFixture,
     build_tiny_provider_attempt_fixture,
@@ -1204,6 +1205,8 @@ def _verified_evidence(
                     )
                 ),
                 provider_attempts=tuple(provider_fixture.provider_attempts_by_ticket_id.values()),
+                execution_packages=tuple(provider_fixture.execution_packages.values()),
+                role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
                 verification_runs=(command_result.verification_run,),
                 verified_at=VERIFIED_AT,
             )

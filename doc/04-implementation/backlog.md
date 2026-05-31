@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090A`
+**当前未完成工作包**：`V2-090B`
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前进入 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改），第一批工作包为 `V2-090A RolePromptHook`（角色提示词钩子）。
 
@@ -131,7 +131,7 @@ V2-001 Phase 0 audit
   -> V2-090 Tiny Fullstack Blackbox Recovery（黑盒整改）
 ```
 
-关键接入链必须显式实现，不能靠散文约定：
+关键接入链必须显式实现，不能靠散文约定。CEO / Architect / Worker / Tester / Checker / Closeout 都是 provider-backed agent role（模型支撑的智能体角色），均应通过 ExecutionPackage（执行包）接收上下文，通过 LLM（大模型）返回影响工作流的产物或判断；工具、validator（校验器）、reducer（归约器）和 gate（门禁）不代表 agent role。
 
 ```text
 RoleProfile（角色模板）
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 0 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **59 / 65** | **V2-090 整改启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 1 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **60 / 65** | **V2-090A 完成，V2-090B 待启动** |
 
 ## 当前约束摘要
 
@@ -740,7 +740,7 @@ RoleProfile（角色模板）
 
 ## V2-070: Closeout + Replay + Process Audit（收尾、重放与流程审计）
 
-- 状态：TODO
+- 状态：IN_PROGRESS
 - 目标：实现 closeout gate、replay bundle、process audit 和 git audit。
 - 输入文档：`process-audit-and-replay.md`、`contract-and-evidence-model.md`。
 - 输出目录：`src/boardroom_os/closeout/`、`src/boardroom_os/audit/`、`tests/closeout/`、`tests/negative/`。
@@ -1047,14 +1047,15 @@ RoleProfile（角色模板）
 
 ### V2-090A: RolePromptHook
 
-- 状态：TODO
+- 状态：DONE
 - 目标：定义 CEO / Architect / Worker / Tester / Checker / Closeout 的基础提示词职责边界，并将 RolePromptHook（角色提示词钩子）版本化纳入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链。
 - 输入文档：`doc/04-implementation/v2-090-tiny-fullstack-blackbox-recovery-plan.md`、`doc/03-architecture/domain-model.md`、`doc/03-architecture/contract-and-evidence-model.md`、`doc/03-architecture/execution-and-runtime-boundary.md`、`doc/03-architecture/agent-team-model.md`。
 - 依赖：V2-030A、V2-030C、V2-040A。
-- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/agents/role_prompt_hooks.py`、`tests/execution/test_role_prompt_hooks.py`，必要时更新 `doc/03-architecture/agent-team-model.md`。
-- 必须先写的 negative tests：RoleProfile 缺 role prompt hook version 不得编译 ExecutionPackage；ProviderAttempt 缺 role prompt hook ref 不得作为 implementation evidence；Prompt hook 不能声明绕过 AcceptanceContract / PackageContract / EvidenceVerifier / CloseoutGate；Architect prompt 缺 run command 与 service boundary 一致性检查职责时 tiny contract compilation 必须失败。
+- 输出文件：`src/boardroom_os/agents/role_prompt_hooks.py`、`src/boardroom_os/agents/prompt_templates/baseline/v1/{ceo,architect,worker,tester,checker,closeout}.md`、`src/boardroom_os/agents/profiles.py`、`src/boardroom_os/execution/{package,compiler,context_index,provider_executor}.py`、`src/boardroom_os/providers/{adapter,attempt,openai_adapter}.py`、`src/boardroom_os/evidence/verifier.py`、`tests/execution/test_role_prompt_hooks.py`、`tests/fixtures/execution/role_prompt_hooks.py`、必要测试同步、`doc/03-architecture/agent-team-model.md`。
+- 必须先写的 negative tests：RoleProfile 缺 role prompt hook version 不得编译 ExecutionPackage；ProviderAttempt 缺 role prompt hook ref 不得作为 implementation evidence；Prompt hook 不能声明绕过 AcceptanceContract / PackageContract / reducer / EvidenceVerifier / CloseoutGate；Architect prompt 缺 run command 与 service boundary 一致性检查职责时 tiny contract compilation 必须失败。
 - 必须证明的 happy path：各角色提示词职责边界可版本化、可引用、可审计，并随 ExecutionPackage / ProviderAttempt 留档。
 - 验收口径：提示词 hook 约束 agent 行为，但不得替代程序化门禁。
+- 完成证据：2026-05-31 新增 RolePromptHook（角色提示词钩子）与 RolePromptHookRegistry（角色提示词钩子注册表），六类 baseline prompt templates（基准提示词模板）均从源码配置路径读取真实内容并绑定 sha256；RoleProfile（角色模板）必填 hook ref/version/hash，ExecutionPackage（执行包）携带 hook snapshot（快照），ProviderRequest（模型请求）与 ProviderAttempt（模型调用尝试记录）携带 hook 审计字段，ProviderExecutor（模型执行器）渲染 prompt 时包含 hook 内容并校验 attempt 绑定，EvidenceVerifier（证据验证器）必须通过 RolePromptHookRegistry 验真 ProviderAttempt hook ref/version/hash，并校验 ProviderAttempt.input_package_ref（模型调用输入包引用）对应的 ExecutionPackage RolePromptHook snapshot 与 attempt 审计字段完全一致；Verifier 不按 RoleCategory（角色类别）推断证据权限。Negative tests 覆盖缺 hook 字段、hook 声称绕过/替代 AcceptanceContract / PackageContract / reducer / EvidenceVerifier / CloseoutGate、Architect 缺 run command/service boundary 职责、compiler hook 解析/版本/hash/category mismatch、ProviderAttempt 缺 hook 审计字段或伪造 hook lineage（来源链）、ProviderAttempt 与 ExecutionPackage hook snapshot mismatch（快照不一致）、缺 execution package binding（执行包绑定缺失）、ExecutionPackage hook snapshot 不等于 registry active asset（注册表活跃资产）、locked provider attempt（锁定模型调用记录）篡改 hook lineage；happy path 覆盖 baseline registry、ExecutionPackage hook snapshot、prompt 渲染、Tester/verification hook（测试者/验证钩子）绑定自身执行包快照后可进入 evidence verification。验证证据：`$env:PYTHONPATH='src;.'; python -m pytest tests/execution/test_role_prompt_hooks.py -q --tb=short --basetemp .pytest-tmp-v2090a-role2` 通过（10 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/execution/test_agent_profiles.py tests/execution/test_execution_package_schema.py tests/execution/test_execution_package_compiler.py tests/execution/test_provider_attempt.py tests/execution/test_provider_executor.py -q --tb=short --basetemp .pytest-tmp-v2090a-execution2` 通过（46 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/evidence/test_evidence_verifier.py tests/negative/test_synthetic_evidence_rejected.py tests/negative/test_execution_package_compiler_fail_closed.py -q --tb=short --basetemp .pytest-tmp-v2090a-evidence4` 通过（77 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/proving tests/closeout tests/negative -q --tb=short --basetemp .pytest-tmp-v2090a-full3` 通过（1572 passed, 2 skipped in 478.05s）。
 
 ### V2-090B: Closeout all-command coverage
 

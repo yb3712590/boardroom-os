@@ -36,6 +36,7 @@ from boardroom_os.execution.package import (
     RequiredOutput,
 )
 from boardroom_os.graph.ticket import TicketId
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 def _model_execution_profile() -> ModelExecutionProfile:
@@ -78,6 +79,7 @@ def _execution_package() -> ExecutionPackage:
         graph_version=7,
         seat_ref=AgentSeatRef(value="seat.worker.backend"),
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Implement backend API",
         context_refs=(
             ContextRef(value="contract.acceptance.active"),
@@ -130,6 +132,7 @@ def _entry(
         "seat_ref",
         "objective",
         "model_execution_profile",
+        "role_prompt_hook",
         "context_refs",
         "constraints",
         "acceptance_refs",
@@ -217,6 +220,7 @@ def test_build_agent_context_snapshot_preserves_complete_input_boundary() -> Non
     assert snapshot.seat_ref == package.seat_ref
     assert snapshot.objective == package.objective
     assert snapshot.model_execution_profile == package.model_execution_profile
+    assert snapshot.role_prompt_hook == package.role_prompt_hook
     assert snapshot.context_refs == package.context_refs
     assert snapshot.constraints == package.constraints
     assert snapshot.acceptance_refs == package.acceptance_refs

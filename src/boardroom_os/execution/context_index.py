@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from boardroom_os.agents.profiles import ModelExecutionProfile
+from boardroom_os.agents.role_prompt_hooks import RolePromptHook
 from boardroom_os.agents.seat import AgentSeatRef
 from boardroom_os.contracts.evidence_obligation import EvidenceObligation
 from boardroom_os.contracts.package import PackageCommand
@@ -49,6 +50,7 @@ _SNAPSHOT_FINGERPRINT_FIELDS = (
     "seat_ref",
     "objective",
     "model_execution_profile",
+    "role_prompt_hook",
     "context_refs",
     "constraints",
     "acceptance_refs",
@@ -119,6 +121,7 @@ class AgentContextSnapshot(BaseModel):
     seat_ref: AgentSeatRef
     objective: str
     model_execution_profile: ModelExecutionProfile
+    role_prompt_hook: RolePromptHook
     context_refs: tuple[ContextRef, ...]
     constraints: tuple[str, ...]
     acceptance_refs: tuple[AcceptanceRef, ...]
@@ -252,6 +255,7 @@ def build_agent_context_snapshot(execution_package: ExecutionPackage) -> AgentCo
         "seat_ref": execution_package.seat_ref,
         "objective": execution_package.objective,
         "model_execution_profile": execution_package.model_execution_profile,
+        "role_prompt_hook": execution_package.role_prompt_hook,
         "context_refs": execution_package.context_refs,
         "constraints": execution_package.constraints,
         "acceptance_refs": execution_package.acceptance_refs,

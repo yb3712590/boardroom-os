@@ -71,6 +71,7 @@ from boardroom_os.providers.attempt import (
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
 )
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 def test_runtime_executor_public_api_is_exported_from_execution_package() -> None:
@@ -133,7 +134,7 @@ def _agent_team_projection() -> AgentTeamProjection:
 
 
 def _package_command(command_id: str = "command.runtime.test", exit_code: int = 0) -> PackageCommand:
-    code = "print('ok')" if exit_code == 0 else "import sys; print('bad'); sys.exit(2)"
+    code = "import sys; sys.stdout.buffer.write(b'ok\\n')" if exit_code == 0 else "import sys; print('bad'); sys.exit(2)"
     return PackageCommand(
         command_id=ContractId(value=command_id),
         label="Run runtime test command",
@@ -161,6 +162,7 @@ def _execution_package(*commands: PackageCommand) -> ExecutionPackage:
         graph_version=7,
         seat_ref=WORKER_SEAT_REF,
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Execute runtime boundary package.",
         context_refs=(ContextRef(value="context.runtime"),),
         constraints=("Stay inside runtime boundary.",),
@@ -213,6 +215,9 @@ class FailedProviderTransport:
             reasoning_effort=profile.reasoning_effort,
             input_package_ref=request.execution_package_ref,
             seat_ref=request.seat_ref,
+            role_prompt_hook_ref=request.role_prompt_hook_ref,
+            role_prompt_hook_version=request.role_prompt_hook_version,
+            role_prompt_hook_sha256=request.role_prompt_hook_sha256,
             status=ProviderAttemptStatus.FAILED,
             outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
             started_at=BASE_TIMESTAMP,

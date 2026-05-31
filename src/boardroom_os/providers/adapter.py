@@ -6,6 +6,10 @@ from typing import Any, Protocol, Self
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from boardroom_os.agents.profiles import ModelExecutionProfile
+from boardroom_os.agents.role_prompt_hooks import (
+    RolePromptHookRef,
+    RolePromptHookSha256,
+)
 from boardroom_os.agents.seat import AgentSeatRef
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.execution.package import ExecutionPackageRef
@@ -23,6 +27,9 @@ class ProviderRequest(BaseModel):
     execution_package_ref: ExecutionPackageRef
     seat_ref: AgentSeatRef
     model_execution_profile: ModelExecutionProfile
+    role_prompt_hook_ref: RolePromptHookRef
+    role_prompt_hook_version: str
+    role_prompt_hook_sha256: RolePromptHookSha256
     prompt: str
 
     @model_validator(mode="before")
@@ -33,10 +40,12 @@ class ProviderRequest(BaseModel):
             {
                 "execution_package_ref": ExecutionPackageRef,
                 "seat_ref": AgentSeatRef,
+                "role_prompt_hook_ref": RolePromptHookRef,
+                "role_prompt_hook_sha256": RolePromptHookSha256,
             },
         )
 
-    @field_validator("prompt")
+    @field_validator("role_prompt_hook_version", "prompt")
     @classmethod
     def _reject_empty_prompt(cls, value: str) -> str:
         normalized = value.strip()
@@ -101,6 +110,9 @@ class FakeProviderTransport:
             reasoning_effort=profile.reasoning_effort,
             input_package_ref=request.execution_package_ref,
             seat_ref=request.seat_ref,
+            role_prompt_hook_ref=request.role_prompt_hook_ref,
+            role_prompt_hook_version=request.role_prompt_hook_version,
+            role_prompt_hook_sha256=request.role_prompt_hook_sha256,
             status=ProviderAttemptStatus.SUCCEEDED,
             outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
             started_at=started_at,

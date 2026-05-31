@@ -3,6 +3,11 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, field_validator, model_validator
 
 from boardroom_os.agents.categories import RoleCategory
+from boardroom_os.agents.role_prompt_hooks import (
+    RolePromptHookRef,
+    RolePromptHookRegistry,
+    RolePromptHookSha256,
+)
 from boardroom_os.agents.skills import (
     CapabilityRegistry,
     CapabilityTag,
@@ -29,13 +34,20 @@ class RoleProfile(BaseModel):
     input_contracts: tuple[ContractId, ...]
     output_contracts: tuple[ContractId, ...]
     forbidden_actions: tuple[str, ...]
+    role_prompt_hook_ref: RolePromptHookRef
+    role_prompt_hook_version: str
+    role_prompt_hook_sha256: RolePromptHookSha256
 
     @model_validator(mode="before")
     @classmethod
     def _normalize_yaml_refs(cls, data: Any) -> Any:
         return _normalize_ref_fields(
             data,
-            {"role_profile_id": RoleProfileId},
+            {
+                "role_profile_id": RoleProfileId,
+                "role_prompt_hook_ref": RolePromptHookRef,
+                "role_prompt_hook_sha256": RolePromptHookSha256,
+            },
             {
                 "capability_tags": CapabilityTag,
                 "input_contracts": ContractId,
@@ -80,6 +92,14 @@ class RoleProfile(BaseModel):
             raise ValueError("contract refs must not be empty")
         return values
 
+    @field_validator("role_prompt_hook_version")
+    @classmethod
+    def _reject_empty_role_prompt_hook_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("role_prompt_hook_version must not be empty")
+        return normalized
+
     def capability_tag_values(self) -> tuple[str, ...]:
         return tuple(capability_tag.value for capability_tag in self.capability_tags)
 
@@ -95,11 +115,19 @@ class RoleProfileRegistry(BaseModel):
         cls,
         *profiles: RoleProfile,
         capability_registry: CapabilityRegistry,
+        hook_registry: RolePromptHookRegistry,
     ) -> Self:
         if not profiles:
             raise ValueError("profiles must not be empty")
         for profile in profiles:
             capability_registry.require_all(profile.capability_tags)
+            hook = hook_registry.require(profile.role_prompt_hook_ref)
+            if hook.hook_version != profile.role_prompt_hook_version:
+                raise ValueError("role prompt hook version mismatch")
+            if hook.content_sha256 != profile.role_prompt_hook_sha256:
+                raise ValueError("role prompt hook hash mismatch")
+            if hook.role_category is not profile.role_category:
+                raise ValueError("role prompt hook category mismatch")
         return cls(profiles=profiles)
 
     @model_validator(mode="after")

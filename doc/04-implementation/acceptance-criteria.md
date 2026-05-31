@@ -55,6 +55,8 @@ Ticket graph 是流程状态源。runtime 不得直接推进 project completed�
 
 CEO / Architect / Worker / Tester / Checker / Closeout 的基础 RolePromptHook（角色提示词钩子）必须是 governed asset（治理资产），具备版本、hash、role category（角色类别）和 policy refs（策略引用），并进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链。
 
+所有 agent role（智能体角色）都必须通过 ExecutionPackage（执行包）接收上下文并接入 LLM（大模型）；Tester（测试者）、Checker（检查者）等非 implementation category（非实施类别）角色也必须接收自身 RolePromptHook（角色提示词钩子）并在 ProviderAttempt（模型调用尝试记录）中留痕。EvidenceVerifier（证据验证器）校验 ProviderAttempt 与对应 ExecutionPackage hook snapshot（执行包钩子快照）一致，不按 RoleCategory（角色类别）推断证据权限。
+
 ### AC-V2-AGENT-002: prompt constraints do not replace gates
 
 RolePromptHook（角色提示词钩子）只能约束 agent behavior（智能体行为）和派生提示词边界，不能替代 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）或 CloseoutGate（收尾门禁）的程序化校验。
@@ -478,7 +480,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 
 #### AC 检查清单
 
-- [ ] AC-V2-AGENT-001 / AC-V2-AGENT-002（RolePromptHook 版本化且不替代门禁）— 由 V2-090A 证明：CEO / Architect / Worker / Tester / Checker / Closeout 基础提示词职责边界进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链
+- [x] AC-V2-AGENT-001 / AC-V2-AGENT-002（RolePromptHook 版本化且不替代门禁）— 由 V2-090A 证明：CEO / Architect / Worker / Tester / Checker / Closeout 基础提示词职责边界进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链
 - [ ] AC-V2-PACKAGE-003 / AC-V2-CLOSEOUT-011（所有 declared commands 有最终证据，closeout 验证行为命题）— 由 V2-090B 证明：RunManifest（运行清单）中每个 run/test command（运行/测试命令）缺 evidence 均阻断 CloseoutGate（收尾门禁）
 - [ ] AC-V2-EVIDENCE-001 / AC-V2-EVIDENCE-004（真实 runner 与 live integration 证据）— 由 V2-090C 证明：ServiceRunEvidence（服务运行证据）区分长运行 service startup/readiness（服务启动/就绪）与一次性 test command（测试命令）
 - [ ] AC-V2-CONTRACT-001 / AC-V2-CONTRACT-002（动态验收与包合同一致）— 由 V2-090D 证明：tiny-fullstack contract（微型全栈合同）不再同时声明 uvicorn ASGI（ASGI 服务器）和 standard-library-only（仅标准库）函数式后端
@@ -496,7 +498,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 
 #### 进入下一阶段前置
 
-- [ ] V2-090A ~ V2-090F 全部 DONE
+- [ ] V2-090A ~ V2-090F 全部 DONE（当前 V2-090A 已完成）
 - [ ] 当前 V2-080 failure package（失败包）作为 regression negative（回归负例）被 CloseoutGate 阻断
 - [ ] 每个 declared run/test command 均有 final evidence
 - [ ] backend/frontend 均有 startup/readiness evidence

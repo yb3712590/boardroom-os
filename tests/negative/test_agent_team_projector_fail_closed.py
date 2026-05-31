@@ -32,6 +32,9 @@ from boardroom_os.events.types import (
     EventType,
     ProjectRef,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields_for_category,
+)
 
 BASE_TIMESTAMP = datetime(2026, 5, 17, 18, 0, tzinfo=UTC)
 PROJECT_REF = ProjectRef(value="project.boardroom-os")
@@ -113,6 +116,7 @@ def _role_profile(
         input_contracts=(ContractId(value="contract.execution_package"),),
         output_contracts=(ContractId(value="contract.work_product"),),
         forbidden_actions=("skip governance",),
+        **baseline_role_prompt_hook_fields_for_category(role_category),
     )
 
 

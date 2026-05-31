@@ -96,6 +96,7 @@ from tests.proving.fixtures.tiny_package_assembly import (
     TinyPackageAssemblyFixture,
     build_tiny_package_assembly_fixture,
 )
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_registry
 from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptFixture,
     build_tiny_provider_attempt_fixture,
@@ -630,7 +631,16 @@ def _locked_provider_fixture_from_sample(
     if not isinstance(data, list) or not data:
         raise ValueError("provider attempt lock must contain attempts")
     attempts = tuple(ProviderAttempt.model_validate(item) for item in data)
+    hook_registry = baseline_role_prompt_hook_registry()
     for attempt in attempts:
+        hook = hook_registry.require(attempt.role_prompt_hook_ref)
+        if (
+            attempt.role_prompt_hook_version != hook.hook_version
+            or attempt.role_prompt_hook_sha256 != hook.content_sha256
+        ):
+            raise ValueError(
+                "provider attempt lock role prompt hook lineage does not match registry"
+            )
         _validate_locked_provider_attempt_artifacts(
             output_root=output_root,
             attempt=attempt,

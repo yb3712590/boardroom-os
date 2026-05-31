@@ -52,6 +52,10 @@ from tests.proving.fixtures.tiny_ticket_graph import (
     TinyTicketGraphFixture,
     build_tiny_ticket_graph_fixture,
 )
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields_for_category,
+    baseline_role_prompt_hook_registry,
+)
 
 
 class TinyProviderAttemptValidationError(ValueError):
@@ -157,6 +161,7 @@ def compile_tiny_implementation_execution_packages(
                         graph_fixture.contracts.contract_gate.evidence_obligations
                     ),
                     "model_execution_profiles": model_execution_profiles,
+                    "role_prompt_hook_registry": baseline_role_prompt_hook_registry(),
                     "workspace_context": workspace_context,
                 },
                 context={
@@ -708,6 +713,7 @@ def _role_profile_for_seat(seat: object) -> RoleProfile:
         input_contracts=(ContractId(value="contract.execution.package"),),
         output_contracts=(ContractId(value="contract.work.product"),),
         forbidden_actions=("Do not bypass provider attempt evidence.",),
+        **baseline_role_prompt_hook_fields_for_category(seat.role_category),
     )
 
 

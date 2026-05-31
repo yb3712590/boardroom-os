@@ -51,6 +51,7 @@ from boardroom_os.execution.verification_run import (
 from boardroom_os.execution.work_product import WorkProduct
 from boardroom_os.graph.ticket import TicketId
 from boardroom_os.reducers.completion_gate import CompletionGate, CompletionGateInput
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_registry
 from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptFixture,
     build_tiny_provider_attempt_fixture,
@@ -110,6 +111,8 @@ def test_tiny_synthetic_verification_without_runner_record_is_rejected(
             ),
             purpose_policy=_purpose_policy(obligation),
             provider_attempts=tuple(bundle_seed.provider_attempts_by_ticket_id.values()),
+            execution_packages=tuple(bundle_seed.execution_packages.values()),
+            role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
             verification_runs=(),
             verified_at=_VERIFIED_AT,
         )
@@ -422,6 +425,8 @@ def _verified_evidence_from_claim(
             artifact_manifest=artifact_manifest,
             purpose_policy=_purpose_policy(claim_obligation),
             provider_attempts=tuple(fixture.provider_attempts_by_ticket_id.values()),
+            execution_packages=tuple(fixture.execution_packages.values()),
+            role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
             verification_runs=verification_runs,
             verified_at=_VERIFIED_AT,
         )

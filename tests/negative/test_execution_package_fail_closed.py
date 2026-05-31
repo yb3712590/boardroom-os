@@ -25,6 +25,7 @@ from boardroom_os.execution.package import (
     RequiredOutput,
 )
 from boardroom_os.graph.ticket import TicketId
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 def _model_execution_profile() -> ModelExecutionProfile:
@@ -67,6 +68,7 @@ def _package_fields() -> dict[str, object]:
         "graph_version": 7,
         "seat_ref": AgentSeatRef(value="seat.worker.backend"),
         "model_execution_profile": _model_execution_profile(),
+        "role_prompt_hook": baseline_role_prompt_hook(),
         "objective": "Implement backend API",
         "context_refs": (ContextRef(value="context.contracts.active"),),
         "constraints": ("Only write backend files",),
@@ -89,6 +91,7 @@ def _package_fields() -> dict[str, object]:
         "graph_version",
         "seat_ref",
         "model_execution_profile",
+        "role_prompt_hook",
         "acceptance_refs",
         "allowed_write_set",
         "evidence_obligations",

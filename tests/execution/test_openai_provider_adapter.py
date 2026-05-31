@@ -21,6 +21,7 @@ from boardroom_os.providers.attempt import (
     ProviderAttemptOutcome,
     ProviderAttemptStatus,
 )
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_fields
 
 
 def test_openai_provider_adapter_imports_in_fresh_interpreter() -> None:
@@ -173,6 +174,7 @@ def _request(profile: ModelExecutionProfile | None = None) -> ProviderRequest:
         execution_package_ref=ExecutionPackageRef(value="exec.ticket.real-provider"),
         seat_ref=AgentSeatRef(value="seat.worker.real-provider"),
         model_execution_profile=profile or _profile(),
+        **baseline_role_prompt_hook_fields(),
         prompt="Implement the tiny provider attempt.",
     )
 

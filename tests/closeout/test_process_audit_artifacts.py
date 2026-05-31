@@ -91,6 +91,7 @@ from tests.closeout.test_replay_bundle import _payload_manifest_entries as _repl
 from tests.closeout.test_replay_bundle import _projector as _replay_projector
 from tests.closeout.test_replay_bundle import PROJECTION_VERSION as _REPLAY_PROJECTION_VERSION
 from tests.closeout.test_closeout_gate import _NOW, _ready_input as _closeout_gate_ready_input
+from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook
 
 
 class MinimalTicketGraphNode(BaseModel):
@@ -195,6 +196,7 @@ def _agent_context_execution_package() -> ExecutionPackage:
         graph_version=7,
         seat_ref="seat-worker-backend",
         model_execution_profile=_model_execution_profile(),
+        role_prompt_hook=baseline_role_prompt_hook(),
         objective="Implement app acceptance evidence.",
         context_refs=(ContextRef(value="context.package-contract.closeout-gate"),),
         constraints=("Use only the declared package contract and evidence refs.",),

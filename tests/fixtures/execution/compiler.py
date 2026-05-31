@@ -45,6 +45,10 @@ from boardroom_os.execution.compiler import (
 from boardroom_os.execution.package import ContextRef
 from boardroom_os.graph.seat_assignment import SeatAssignmentGraph
 from boardroom_os.graph.ticket import TicketId, TicketNode, TicketStatus
+from tests.fixtures.execution.role_prompt_hooks import (
+    baseline_role_prompt_hook_fields,
+    baseline_role_prompt_hook_registry,
+)
 
 PROJECT_REF = ProjectRef(value="project.boardroom-os")
 DEFAULT_TICKET_ID = TicketId(value="ticket.backend")
@@ -53,6 +57,7 @@ DEFAULT_SOURCE_SURFACE_REF = SourceSurfaceRef(value="surface.backend")
 DEFAULT_EVIDENCE_OBLIGATION_REF = EvidenceObligationRef(value="evidence.backend.patch")
 DEFAULT_REQUIRED_TEST_REF = RequiredTestRef(value="test.pytest.backend")
 DEFAULT_SEAT_CAPABILITY = CapabilityTag(value="task.implementation")
+_UNSET = object()
 
 
 def _role_profile(
@@ -60,6 +65,7 @@ def _role_profile(
     role_profile_id: str = "role.worker.backend",
     capability_tags: tuple[CapabilityTag, ...] = (DEFAULT_SEAT_CAPABILITY,),
     forbidden_actions: tuple[str, ...] = ("Do not bypass required tests.",),
+    role_prompt_hook_ref: str = "role-prompt-hook.baseline.worker.v1",
 ) -> RoleProfile:
     return RoleProfile(
         role_profile_id=role_profile_id,
@@ -70,6 +76,7 @@ def _role_profile(
         input_contracts=(ContractId(value="contract.execution.package"),),
         output_contracts=(ContractId(value="contract.work.product"),),
         forbidden_actions=forbidden_actions,
+        **baseline_role_prompt_hook_fields(role_prompt_hook_ref),
     )
 
 
@@ -305,6 +312,7 @@ def _compiler_input(
     package_contract: PackageContract | None = None,
     evidence_obligations: tuple[EvidenceObligation, ...] | None = None,
     model_execution_profiles: ModelExecutionProfileRegistry | None = None,
+    role_prompt_hook_registry: object = _UNSET,
     workspace_context: ExecutionWorkspaceContext | None = None,
 ) -> ExecutionPackageCompilerInput:
     return ExecutionPackageCompilerInput.model_construct(
@@ -316,6 +324,11 @@ def _compiler_input(
         evidence_obligations=evidence_obligations or (_evidence_obligation(),),
         model_execution_profiles=model_execution_profiles
         or ModelExecutionProfileRegistry.from_profiles(_model_profile()),
+        role_prompt_hook_registry=(
+            baseline_role_prompt_hook_registry()
+            if role_prompt_hook_registry is _UNSET
+            else role_prompt_hook_registry
+        ),
         workspace_context=workspace_context
         or ExecutionWorkspaceContext(
             workspace_ref=ContextRef(value="context.workspace.backend"),
