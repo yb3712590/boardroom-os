@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,6 +21,11 @@ from tests.proving.fixtures.tiny_provider_attempts import (
     openai_settings_from_test_env,
     validate_tiny_provider_attempt_results,
 )
+from boardroom_os.providers.openai_adapter import OpenAIProviderSettings
+from boardroom_os.execution.runtime_executor import RuntimeExecutionResult
+from boardroom_os.execution.context_index import ProviderAttemptRef
+from boardroom_os.execution.package import ExecutionPackageRef
+from boardroom_os.providers.attempt import ProviderArtifactRef, ProviderAttempt
 from tests.proving.fixtures.tiny_ticket_graph import (
     TICKET_ARCHITECTURE_ID,
     build_tiny_ticket_graph_fixture,
@@ -50,6 +58,35 @@ def test_tiny_openai_settings_reads_ignored_env_fallback(tmp_path: Path) -> None
     assert settings.base_url == "https://api.example.invalid/v1"
     assert settings.model == "gpt-5.4"
     assert settings.api_protocol == "chat_completions"
+
+
+def test_tiny_source_delivery_settings_force_json_object_response_format(
+    tmp_path: Path,
+) -> None:
+    settings = OpenAIProviderSettings(
+        api_key="sk-test-secret",
+        base_url="https://api.example.invalid/v1",
+        model="gpt-5.5",
+        api_protocol="chat_completions",
+        reasoning_effort="high",
+        text_verbosity="low",
+        response_format="text",
+        max_output_tokens=128,
+        timeout_seconds=30,
+        max_retries=0,
+        system_instructions=(
+            "Return a short audit summary. Do not generate full source files."
+        ),
+        artifact_store_root=tmp_path / "provider-artifacts",
+    )
+
+    tuned = tiny_provider_attempts._settings_for_tiny_source_delivery(settings)
+
+    assert tuned.response_format == "json_object"
+    assert tuned.max_output_tokens >= 8192
+    assert tuned.timeout_seconds >= 240
+    assert "Do not generate full source files" not in tuned.system_instructions
+    assert "Return only valid minified JSON" in tuned.system_instructions
 
 
 def test_tiny_fixture_does_not_bypass_runtime_or_compiler_validation() -> None:
@@ -133,6 +170,438 @@ def test_fake_fixture_still_proves_runtime_never_emits_ticket_completed() -> Non
         assert EventType.PROVIDER_ATTEMPT_RECORDED in tuple(event.event_type for event in result.events)
         assert EventType.WORK_PRODUCT_SUBMITTED in tuple(event.event_type for event in result.events)
         assert EventType.TICKET_COMPLETED not in tuple(event.event_type for event in result.events)
+
+
+def test_real_provider_retry_reexecutes_failed_ticket_with_real_attempt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    compiled = compile_tiny_implementation_execution_packages(
+        build_tiny_ticket_graph_fixture(),
+        model="gpt-5.5",
+    )
+    ticket_id, execution_package = next(iter(compiled.execution_packages.items()))
+    artifact_root = tmp_path / "provider-artifacts"
+    calls: list[int] = []
+
+    def write_artifact(ref_prefix: str, text: str) -> ProviderArtifactRef:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        ref = ProviderArtifactRef(value=f"{ref_prefix}.{digest}")
+        safe_name = ref.value.replace("/", "_").replace("\\", "_").replace(":", "_")
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        (artifact_root / f"{safe_name}.txt").write_text(text, encoding="utf-8")
+        return ref
+
+    def fake_execute(**kwargs):
+        calls.append(kwargs["first_fact_graph_version"])
+        attempt_id = (
+            "provider-attempt.openai.failed.retry-once"
+            if len(calls) == 1
+            else "provider-attempt.openai.real.retry-success"
+        )
+        status = (
+            ProviderAttemptStatus.FAILED
+            if len(calls) == 1
+            else ProviderAttemptStatus.SUCCEEDED
+        )
+        attempt = ProviderAttempt(
+            provider_attempt_id=ProviderAttemptRef(value=attempt_id),
+            provider=execution_package.model_execution_profile.provider,
+            model=execution_package.model_execution_profile.model,
+            reasoning_effort=execution_package.model_execution_profile.reasoning_effort,
+            input_package_ref=ExecutionPackageRef(
+                value=execution_package.execution_package_id.value
+            ),
+            seat_ref=execution_package.seat_ref,
+            status=status,
+            outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
+            started_at=datetime(2026, 5, 30, 12, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 5, 30, 12, 0, 1, tzinfo=UTC),
+            raw_output_ref=(
+                None
+                if status is ProviderAttemptStatus.FAILED
+                else write_artifact("provider-artifact.openai.raw.retry", "raw retry success")
+            ),
+            parsed_output_ref=(
+                None
+                if status is ProviderAttemptStatus.FAILED
+                else write_artifact(
+                    "provider-artifact.openai.parsed.retry",
+                    json.dumps(
+                        {
+                            "files": {
+                                path.value: _valid_source_file_for_retry(path.value)
+                                for path in execution_package.allowed_write_set
+                                if path.value
+                                not in {"package-contract.json", "run-manifest.json"}
+                            }
+                        }
+                    ),
+                )
+            ),
+            failure_kind=(
+                "provider_error.InternalServerError"
+                if status is ProviderAttemptStatus.FAILED
+                else None
+            ),
+        )
+        if len(calls) == 1:
+            return RuntimeExecutionResult(
+                provider_attempt=attempt,
+                work_product_submission=None,
+                verification_runs=(),
+                events=(),
+                stdout_by_verification_run={},
+                stderr_by_verification_run={},
+            )
+        return RuntimeExecutionResult(
+            provider_attempt=attempt,
+            work_product_submission=None,
+            verification_runs=(),
+            events=(),
+            stdout_by_verification_run={},
+            stderr_by_verification_run={},
+        )
+
+    monkeypatch.setattr(tiny_provider_attempts, "_execute_tiny_runtime_package", fake_execute)
+
+    result = tiny_provider_attempts._execute_tiny_runtime_package_with_real_retries(
+        ticket_id=ticket_id,
+        execution_package=execution_package,
+        compiled=compiled,
+        resolved_settings=OpenAIProviderSettings(
+            api_key="sk-test-secret",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+        ),
+        artifact_root=artifact_root,
+        use_fake_results=False,
+        first_fact_graph_version=100,
+    )
+
+    assert result.provider_attempt.status is ProviderAttemptStatus.SUCCEEDED
+    assert calls == [100, 1100]
+
+
+def test_real_provider_retry_reexecutes_invalid_source_delivery_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    compiled = compile_tiny_implementation_execution_packages(
+        build_tiny_ticket_graph_fixture(),
+        model="gpt-5.5",
+    )
+    ticket_id, execution_package = next(iter(compiled.execution_packages.items()))
+    artifact_root = tmp_path / "provider-artifacts"
+    calls: list[int] = []
+
+    def write_artifact(ref_prefix: str, text: str) -> ProviderArtifactRef:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        ref = ProviderArtifactRef(value=f"{ref_prefix}.{digest}")
+        safe_name = ref.value.replace("/", "_").replace("\\", "_").replace(":", "_")
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        (artifact_root / f"{safe_name}.txt").write_text(text, encoding="utf-8")
+        return ref
+
+    def fake_execute(**kwargs):
+        calls.append(kwargs["first_fact_graph_version"])
+        attempt_number = len(calls)
+        raw_ref = write_artifact(
+            f"provider-artifact.openai.raw.retry-json-{attempt_number}",
+            f"raw response {attempt_number}",
+        )
+        parsed_ref = write_artifact(
+            f"provider-artifact.openai.parsed.retry-json-{attempt_number}",
+            (
+                '{"files":{"backend/app.py":"unterminated"'
+                if attempt_number == 1
+                else json.dumps(
+                    {
+                        "files": {
+                            path.value: _valid_source_file_for_retry(path.value)
+                            for path in execution_package.allowed_write_set
+                            if path.value
+                            not in {"package-contract.json", "run-manifest.json"}
+                        }
+                    }
+                )
+            ),
+        )
+        attempt = ProviderAttempt(
+            provider_attempt_id=ProviderAttemptRef(
+                value=f"provider-attempt.openai.real.retry-json-{attempt_number}"
+            ),
+            provider=execution_package.model_execution_profile.provider,
+            model=execution_package.model_execution_profile.model,
+            reasoning_effort=execution_package.model_execution_profile.reasoning_effort,
+            input_package_ref=ExecutionPackageRef(
+                value=execution_package.execution_package_id.value
+            ),
+            seat_ref=execution_package.seat_ref,
+            status=ProviderAttemptStatus.SUCCEEDED,
+            outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
+            started_at=datetime(2026, 5, 30, 12, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 5, 30, 12, 0, 1, tzinfo=UTC),
+            raw_output_ref=raw_ref,
+            parsed_output_ref=parsed_ref,
+        )
+        return RuntimeExecutionResult(
+            provider_attempt=attempt,
+            work_product_submission=None,
+            verification_runs=(),
+            events=(),
+            stdout_by_verification_run={},
+            stderr_by_verification_run={},
+        )
+
+    monkeypatch.setattr(tiny_provider_attempts, "_execute_tiny_runtime_package", fake_execute)
+
+    result = tiny_provider_attempts._execute_tiny_runtime_package_with_real_retries(
+        ticket_id=ticket_id,
+        execution_package=execution_package,
+        compiled=compiled,
+        resolved_settings=OpenAIProviderSettings(
+            api_key="sk-test-secret",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+            max_retries=1,
+        ),
+        artifact_root=artifact_root,
+        use_fake_results=False,
+        first_fact_graph_version=100,
+    )
+
+    assert result.provider_attempt.parsed_output_ref is not None
+    assert result.provider_attempt.parsed_output_ref.value.startswith(
+        "provider-artifact.openai.parsed.retry-json-2"
+    )
+    assert calls == [100, 1100]
+
+
+def _valid_source_file_for_retry(path: str) -> str:
+    if path == "backend/app.py":
+        return (
+            "from backend.db import BookStore\n\n"
+            "def create_store(db_path):\n"
+            "    return BookStore(db_path)\n\n"
+            "def create_book(title, store=None):\n"
+            "    return (store or create_store('books.sqlite3')).add_book(title)\n\n"
+            "def list_books(store=None):\n"
+            "    return (store or create_store('books.sqlite3')).list_books()\n\n"
+            "def checkout_book(book_id, store=None):\n"
+            "    return (store or create_store('books.sqlite3')).set_book_state(book_id, 'CHECKED_OUT')\n\n"
+            "def return_book(book_id, store=None):\n"
+            "    return (store or create_store('books.sqlite3')).set_book_state(book_id, 'IN_LIBRARY')\n\n"
+            "def delete_book(book_id, store=None):\n"
+            "    return (store or create_store('books.sqlite3')).delete_book(book_id)\n"
+        )
+    if path == "backend/db.py":
+        return (
+            "import sqlite3\n\n"
+            "SCHEMA = \"\"\"\n"
+            "CREATE TABLE IF NOT EXISTS books (\n"
+            "    id INTEGER PRIMARY KEY,\n"
+            "    title TEXT NOT NULL,\n"
+            "    state TEXT NOT NULL\n"
+            ")\n"
+            "\"\"\"\n\n"
+            "class BookStore:\n"
+            "    def __init__(self, db_path):\n"
+            "        self.db_path = str(db_path)\n"
+            "    def add_book(self, title):\n"
+            "        with sqlite3.connect(self.db_path) as connection:\n"
+            "            connection.execute(SCHEMA)\n"
+            "            connection.execute('INSERT INTO books(title, state) VALUES (?, ?)', (title, 'IN_LIBRARY'))\n"
+            "        return {'id': 1, 'title': title, 'state': 'IN_LIBRARY'}\n"
+            "    def list_books(self):\n"
+            "        return []\n"
+            "    def set_book_state(self, book_id, state):\n"
+            "        with sqlite3.connect(self.db_path) as connection:\n"
+            "            connection.execute(SCHEMA)\n"
+            "            connection.execute('UPDATE books SET state = ? WHERE id = ?', (state, book_id))\n"
+            "        return {'id': book_id, 'state': state}\n"
+            "    def delete_book(self, book_id):\n"
+            "        with sqlite3.connect(self.db_path) as connection:\n"
+            "            connection.execute(SCHEMA)\n"
+            "            connection.execute('DELETE FROM books WHERE id = ?', (book_id,))\n"
+            "        return {'id': book_id, 'deleted': True}\n"
+        )
+    if path == "frontend/app.js":
+        return (
+            "export async function loadBooks(fetchImpl) { return fetchImpl('/books'); }\n"
+            "export async function deleteBook(fetchImpl, bookId) { "
+            "return fetchImpl(`/books/${bookId}`, { method: 'DELETE' }); }\n"
+        )
+    if path == "tests/integration/test_frontend_backend.py":
+        return (
+            "import subprocess\n\n"
+            "def test_frontend_fetches_backend():\n"
+            "    script = \"\"\"\n"
+            "import { loadBooks, deleteBook } from './frontend/app.js';\n"
+            "const calls = [];\n"
+            "const fakeFetch = async (url, options = {}) => { calls.push({ url, options }); return { json: async () => [] }; };\n"
+            "await loadBooks(fakeFetch);\n"
+            "await deleteBook(fakeFetch, 7);\n"
+            "console.log(JSON.stringify(calls));\n"
+            "\"\"\"\n"
+            "    result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True)\n"
+            "    assert result.returncode == 0\n"
+            "    assert '/books' in result.stdout\n"
+            "    assert 'DELETE' in result.stdout\n"
+        )
+    return f"# generated for {path}\n"
+
+
+def test_provider_source_delivery_rejects_varargs_only_backend_api() -> None:
+    files = {
+        "backend/app.py": (
+            "from backend.db import BookStore\n\n"
+            "def create_store(db_path):\n"
+            "    return BookStore(db_path)\n\n"
+            "def create_book(*args, **kwargs):\n"
+            "    raise TypeError('title is required')\n\n"
+            "def list_books(*args, **kwargs):\n"
+            "    return []\n\n"
+            "def checkout_book(*args, **kwargs):\n"
+            "    return {}\n\n"
+            "def return_book(*args, **kwargs):\n"
+            "    return {}\n\n"
+            "def delete_book(*args, **kwargs):\n"
+            "    return True\n"
+        ),
+        "backend/db.py": (
+            "import sqlite3\n\n"
+            "SCHEMA = \"\"\"CREATE TABLE IF NOT EXISTS books ("
+            "id INTEGER PRIMARY KEY, title TEXT NOT NULL)\"\"\"\n"
+        ),
+        "frontend/app.js": (
+            "export async function loadBooks(fetchImpl) { return fetchImpl('/books'); }\n"
+            "export async function deleteBook(fetchImpl, bookId) { "
+            "return fetchImpl(`/books/${bookId}`, { method: 'DELETE' }); }\n"
+        ),
+        "tests/integration/test_frontend_backend.py": (
+            "import subprocess\n\n"
+            "def test_frontend_fetches_backend():\n"
+            "    calls = []\n"
+            "    assert '/books' and 'DELETE'\n"
+            "    assert 'loadBooks(' and 'deleteBook('\n"
+        ),
+    }
+
+    assert tiny_provider_attempts._provider_source_delivery_files_are_functionally_valid(
+        files
+    ) is False
+
+
+def test_real_provider_retry_graph_versions_stay_globally_monotonic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    artifact_root = tmp_path / "provider-artifacts"
+    calls_by_input_ref: dict[str, int] = {}
+    first_versions_by_input_ref: dict[str, list[int]] = {}
+
+    def write_artifact(ref_prefix: str, text: str) -> ProviderArtifactRef:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        ref = ProviderArtifactRef(value=f"{ref_prefix}.{digest}")
+        safe_name = ref.value.replace("/", "_").replace("\\", "_").replace(":", "_")
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        (artifact_root / f"{safe_name}.txt").write_text(text, encoding="utf-8")
+        return ref
+
+    def fake_execute(**kwargs):
+        execution_package = kwargs["execution_package"]
+        input_ref = execution_package.execution_package_id.value
+        first_versions_by_input_ref.setdefault(input_ref, []).append(
+            kwargs["first_fact_graph_version"]
+        )
+        calls_by_input_ref[input_ref] = calls_by_input_ref.get(input_ref, 0) + 1
+        attempt_number = calls_by_input_ref[input_ref]
+        raw_ref = write_artifact(
+            f"provider-artifact.openai.raw.retry-version-{input_ref}-{attempt_number}",
+            f"raw response {input_ref} {attempt_number}",
+        )
+        parsed_ref = write_artifact(
+            f"provider-artifact.openai.parsed.retry-version-{input_ref}-{attempt_number}",
+            '{"files":{}}',
+        )
+        attempt = ProviderAttempt(
+            provider_attempt_id=ProviderAttemptRef(
+                value=f"provider-attempt.openai.real.retry-version-{input_ref}-{attempt_number}"
+            ),
+            provider=execution_package.model_execution_profile.provider,
+            model=execution_package.model_execution_profile.model,
+            reasoning_effort=execution_package.model_execution_profile.reasoning_effort,
+            input_package_ref=ExecutionPackageRef(value=input_ref),
+            seat_ref=execution_package.seat_ref,
+            status=ProviderAttemptStatus.SUCCEEDED,
+            outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
+            started_at=datetime(2026, 5, 30, 12, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 5, 30, 12, 0, 1, tzinfo=UTC),
+            raw_output_ref=raw_ref,
+            parsed_output_ref=parsed_ref,
+        )
+        return RuntimeExecutionResult(
+            provider_attempt=attempt,
+            work_product_submission=None,
+            verification_runs=(),
+            events=(),
+            stdout_by_verification_run={},
+            stderr_by_verification_run={},
+        )
+
+    monkeypatch.setattr(tiny_provider_attempts, "_execute_tiny_runtime_package", fake_execute)
+    first_seen_input_ref: list[str] = []
+
+    def fake_source_delivery_valid(**kwargs):
+        input_ref = kwargs["execution_package"].execution_package_id.value
+        if input_ref not in first_seen_input_ref:
+            first_seen_input_ref.append(input_ref)
+        return not (input_ref == first_seen_input_ref[0] and calls_by_input_ref[input_ref] == 1)
+
+    monkeypatch.setattr(
+        tiny_provider_attempts,
+        "_provider_source_delivery_artifact_is_valid",
+        fake_source_delivery_valid,
+    )
+    monkeypatch.setattr(
+        tiny_provider_attempts,
+        "validate_tiny_provider_attempt_results",
+        lambda **_kwargs: None,
+    )
+
+    fixture = build_tiny_provider_attempt_fixture(
+        settings=OpenAIProviderSettings(
+            api_key="sk-test-secret",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+            artifact_store_root=artifact_root,
+        ),
+        use_fake_results=False,
+    )
+
+    ordered_input_refs = [
+        execution_package.execution_package_id.value
+        for execution_package in fixture.execution_packages.values()
+    ]
+    first_ticket_versions = first_versions_by_input_ref[ordered_input_refs[0]]
+    second_ticket_versions = first_versions_by_input_ref[ordered_input_refs[1]]
+    assert first_ticket_versions == [
+        second_ticket_versions[0] - tiny_provider_attempts._PROVIDER_RETRY_GRAPH_VERSION_STRIDE,
+        second_ticket_versions[0]
+        - tiny_provider_attempts._PROVIDER_RETRY_GRAPH_VERSION_STRIDE
+        + 1000,
+    ]
+    assert first_ticket_versions[-1] < second_ticket_versions[0]
 
 
 def test_real_provider_records_attempts_for_every_tiny_implementation_ticket() -> None:

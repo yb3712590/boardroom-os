@@ -136,6 +136,7 @@ class OpenAIProviderSettings(BaseModel):
     api_protocol: Literal["responses", "chat_completions"]
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "high"
     text_verbosity: Literal["low", "medium", "high"] = "low"
+    response_format: Literal["text", "json_object"] = "text"
     max_output_tokens: int = Field(default=1024, gt=0)
     timeout_seconds: float = Field(default=60.0, gt=0)
     max_retries: int = Field(default=0, ge=0)
@@ -180,6 +181,7 @@ class OpenAIProviderSettings(BaseModel):
             api_protocol=values["BOARDROOM_OPENAI_API_PROTOCOL"],
             reasoning_effort=values.get("BOARDROOM_OPENAI_REASONING_EFFORT", "high"),
             text_verbosity=values.get("BOARDROOM_OPENAI_TEXT_VERBOSITY", "low"),
+            response_format=values.get("BOARDROOM_OPENAI_RESPONSE_FORMAT", "text"),
             max_output_tokens=values.get("BOARDROOM_OPENAI_MAX_OUTPUT_TOKENS", "1024"),
             timeout_seconds=values.get("BOARDROOM_OPENAI_TIMEOUT_SECONDS", "60"),
             max_retries=values.get("BOARDROOM_OPENAI_MAX_RETRIES", "0"),
@@ -216,49 +218,54 @@ class OpenAIProviderTransport:
 
     def invoke(self, request: ProviderRequest) -> ProviderAttempt:
         started_at = datetime.now(UTC)
-        try:
-            client = self._client_or_default()
-            if self._settings.api_protocol == "responses":
-                response = self._invoke_responses_api(client, request)
-            else:
-                response = self._invoke_chat_completions(client, request)
+        last_error: Exception | None = None
+        for _attempt_index in range(self._settings.max_retries + 1):
+            try:
+                client = self._client_or_default()
+                if self._settings.api_protocol == "responses":
+                    response = self._invoke_responses_api(client, request)
+                else:
+                    response = self._invoke_chat_completions(client, request)
 
-            response_id = self._response_id(response)
-            response_text = self._response_text(response)
-            raw_artifact = self._artifact_store.write_text(
-                response_id=response_id,
-                artifact_kind="raw",
-                text=self._raw_response_text(response=response, response_text=response_text),
-            )
-            parsed_artifact = self._artifact_store.write_text(
-                response_id=response_id,
-                artifact_kind="parsed",
-                text=response_text,
-            )
-            return self._succeeded_attempt(
-                request=request,
-                response_id=response_id,
-                started_at=started_at,
-                raw_output_ref=raw_artifact.artifact_ref,
-                parsed_output_ref=parsed_artifact.artifact_ref,
-            )
-        except Exception as error:
-            return ProviderAttempt(
-                provider_attempt_id=(
-                    "provider-attempt.openai.failed."
-                    f"{request.execution_package_ref.value}.{int(started_at.timestamp() * 1_000_000)}"
-                ),
-                provider=request.model_execution_profile.provider,
-                model=request.model_execution_profile.model,
-                reasoning_effort=request.model_execution_profile.reasoning_effort,
-                input_package_ref=request.execution_package_ref,
-                seat_ref=request.seat_ref,
-                status=ProviderAttemptStatus.FAILED,
-                outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
-                started_at=started_at,
-                finished_at=datetime.now(UTC),
-                failure_kind=f"provider_error.{type(error).__name__}",
-            )
+                response_id = self._response_id(response)
+                response_text = self._response_text(response)
+                raw_artifact = self._artifact_store.write_text(
+                    response_id=response_id,
+                    artifact_kind="raw",
+                    text=self._raw_response_text(response=response, response_text=response_text),
+                )
+                parsed_artifact = self._artifact_store.write_text(
+                    response_id=response_id,
+                    artifact_kind="parsed",
+                    text=response_text,
+                )
+                return self._succeeded_attempt(
+                    request=request,
+                    response_id=response_id,
+                    started_at=started_at,
+                    raw_output_ref=raw_artifact.artifact_ref,
+                    parsed_output_ref=parsed_artifact.artifact_ref,
+                )
+            except Exception as error:
+                last_error = error
+
+        assert last_error is not None
+        return ProviderAttempt(
+            provider_attempt_id=(
+                "provider-attempt.openai.failed."
+                f"{request.execution_package_ref.value}.{int(started_at.timestamp() * 1_000_000)}"
+            ),
+            provider=request.model_execution_profile.provider,
+            model=request.model_execution_profile.model,
+            reasoning_effort=request.model_execution_profile.reasoning_effort,
+            input_package_ref=request.execution_package_ref,
+            seat_ref=request.seat_ref,
+            status=ProviderAttemptStatus.FAILED,
+            outcome=ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            failure_kind=f"provider_error.{type(last_error).__name__}",
+        )
 
     def _invoke_responses_api(self, client: Any, request: ProviderRequest) -> Any:
         return client.responses.create(
@@ -278,14 +285,17 @@ class OpenAIProviderTransport:
                 {"role": "system", "content": self._settings.system_instructions},
                 *messages,
             ]
-        return client.chat.completions.create(
-            model=request.model_execution_profile.model,
-            messages=messages,
-            reasoning_effort=request.model_execution_profile.reasoning_effort,
-            max_completion_tokens=self._settings.max_output_tokens,
-            verbosity=self._settings.text_verbosity,
-            timeout=self._settings.timeout_seconds,
-        )
+        kwargs = {
+            "model": request.model_execution_profile.model,
+            "messages": messages,
+            "reasoning_effort": request.model_execution_profile.reasoning_effort,
+            "max_completion_tokens": self._settings.max_output_tokens,
+            "verbosity": self._settings.text_verbosity,
+            "timeout": self._settings.timeout_seconds,
+        }
+        if self._settings.response_format == "json_object":
+            kwargs["response_format"] = {"type": "json_object"}
+        return client.chat.completions.create(**kwargs)
 
     @staticmethod
     def _has_chat_completions(client: Any) -> bool:
@@ -339,11 +349,17 @@ class OpenAIProviderTransport:
 
     @staticmethod
     def _response_text(response: Any) -> str:
-        output_text = str(getattr(response, "output_text", "")).strip()
+        raw_output_text = getattr(response, "output_text", "")
+        output_text = "" if raw_output_text is None else str(raw_output_text).strip()
         if not output_text and getattr(response, "choices", None):
             first_choice = response.choices[0]
             message = getattr(first_choice, "message", None)
-            output_text = str(getattr(message, "content", "")).strip()
+            raw_message_content = getattr(message, "content", "")
+            output_text = (
+                ""
+                if raw_message_content is None
+                else str(raw_message_content).strip()
+            )
         if not output_text:
             raise OpenAIProviderConfigError("OpenAI response output_text is required")
         return output_text

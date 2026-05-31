@@ -1,0 +1,1812 @@
+{
+  "artifact_manifest": {
+    "artifact_manifest_id": {
+      "value": "replay-artifact-manifest.project-tiny-fullstack.v2-080f"
+    },
+    "entries": [
+      {
+        "content_ref": {
+          "value": "replay-artifact-manifest.project-tiny-fullstack.v2-080f"
+        },
+        "kind": "artifact_manifest",
+        "manifest_ref": {
+          "value": "replay-artifact-entry.artifact-manifest.v2-080f"
+        },
+        "sha256": {
+          "value": "0d9c84ae186ee4822ff74d4c1aa9c2dd28186ca49c5b9eaaa1700706d9901c7b"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "event-range.project-tiny-fullstack.1-32"
+        },
+        "kind": "event_window",
+        "manifest_ref": {
+          "value": "replay-artifact-entry.event-window.v2-080f"
+        },
+        "sha256": {
+          "value": "656fb51d3e77dd0362ce7038d81bd37cc2e3a260436f3eb3b1df637eee2cf0ed"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "replay-hash-manifest.project-tiny-fullstack.v2-080f"
+        },
+        "kind": "hash_manifest",
+        "manifest_ref": {
+          "value": "replay-artifact-entry.hash-manifest.v2-080f"
+        },
+        "sha256": {
+          "value": "d9b89585c5c52826bf923972ef158cad5a18a45349040cae7ccc21d878cc7170"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "replay-payload-manifest.project-tiny-fullstack.v2-080f"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-artifact-entry.payload-manifest.v2-080f"
+        },
+        "sha256": {
+          "value": "7cef8c7dab53dde35da7a315480455c0ef4309967a97a0cd3a4b0f695f3769ce"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "replay-report.project-tiny-fullstack.v2-080f"
+        },
+        "kind": "replay_report",
+        "manifest_ref": {
+          "value": "replay-artifact-entry.replay-report.v2-080f"
+        },
+        "sha256": {
+          "value": "563d7ccfd3cda558458f3c84971b394565a27840fc28939c6a879282477ae267"
+        }
+      }
+    ],
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    }
+  },
+  "attestations": [
+    {
+      "artifact_manifest_ref": {
+        "value": "replay-artifact-manifest.project-tiny-fullstack.v2-080f"
+      },
+      "attestation_id": {
+        "value": "attestation.project-tiny-fullstack.06632b9dcff5"
+      },
+      "event_window": {
+        "event_count": 32,
+        "first_event_id": {
+          "value": "evt:ticket-tiny-governance:created"
+        },
+        "first_graph_version": 1,
+        "last_event_id": {
+          "value": "evt.tiny.command-run-recorded.2"
+        },
+        "last_graph_version": 32,
+        "project_ref": {
+          "value": "project-tiny-fullstack"
+        }
+      },
+      "event_window_hash": {
+        "value": "0f96e5be0b44da519f39eeae0e3f4a232a4adfd4e8b966dddeb7dfa389f9f9c7"
+      },
+      "hash_manifest_ref": {
+        "value": "replay-hash-manifest.project-tiny-fullstack.v2-080f"
+      },
+      "kind": "seat_assignment_graph",
+      "payload_manifest_ref": {
+        "value": "replay-payload-manifest.project-tiny-fullstack.v2-080f"
+      },
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "projection_kind": "seat_assignment_graph",
+      "projection_version": {
+        "value": "projection.seat_assignment_graph.v1"
+      },
+      "replay_passed": true,
+      "replay_report_ref": {
+        "value": "replay-report.project-tiny-fullstack.v2-080f"
+      },
+      "summary_hash": {
+        "value": "06632b9dcff5eacc7b592ac3edfc04b15e209e7a297d84c92f0cb49ec67e8f53"
+      }
+    }
+  ],
+  "bundle_hash": "69aaddf65b489b8a431ff3208930251916cc866e97e4056a6d85bb64dd524d68",
+  "checked_refs": [
+    "evt:ticket-tiny-governance:created",
+    "evt:ticket-tiny-architecture:created",
+    "evt:ticket-tiny-backend-api:created",
+    "evt:ticket-tiny-frontend-ui:created",
+    "evt:ticket-tiny-tests:created",
+    "evt:ticket-tiny-docs-run-manifest:created",
+    "evt:ticket-tiny-checker:created",
+    "evt:ticket-tiny-governance:seat-assigned",
+    "evt:ticket-tiny-architecture:seat-assigned",
+    "evt:ticket-tiny-backend-api:seat-assigned",
+    "evt:ticket-tiny-frontend-ui:seat-assigned",
+    "evt:ticket-tiny-tests:seat-assigned",
+    "evt:ticket-tiny-docs-run-manifest:seat-assigned",
+    "evt:ticket-tiny-checker:seat-assigned",
+    "event.execution-started.exec.ticket-tiny-backend-api.graph-14.15",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.16",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.17",
+    "evt:ticket-tiny-backend-api:ticket-leased",
+    "evt:ticket-tiny-frontend-ui:ticket-leased",
+    "evt:ticket-tiny-tests:ticket-leased",
+    "event.execution-started.exec.ticket-tiny-frontend-ui.graph-14.25",
+    "evt:ticket-tiny-docs-run-manifest:ticket-leased",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.26",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.27",
+    "event.execution-started.exec.ticket-tiny-tests.graph-14.35",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.36",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.37",
+    "event.execution-started.exec.ticket-tiny-docs-run-manifest.graph-14.45",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.46",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.47",
+    "evt.tiny.command-run-recorded.1",
+    "evt.tiny.command-run-recorded.2",
+    "payload:ticket-tiny-governance:created",
+    "payload:ticket-tiny-architecture:created",
+    "payload:ticket-tiny-backend-api:created",
+    "payload:ticket-tiny-frontend-ui:created",
+    "payload:ticket-tiny-tests:created",
+    "payload:ticket-tiny-docs-run-manifest:created",
+    "payload:ticket-tiny-checker:created",
+    "payload:ticket-tiny-governance:seat-assigned",
+    "payload:ticket-tiny-architecture:seat-assigned",
+    "payload:ticket-tiny-backend-api:seat-assigned",
+    "payload:ticket-tiny-frontend-ui:seat-assigned",
+    "payload:ticket-tiny-tests:seat-assigned",
+    "payload:ticket-tiny-docs-run-manifest:seat-assigned",
+    "payload:ticket-tiny-checker:seat-assigned",
+    "exec.ticket-tiny-backend-api.graph-14",
+    "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538",
+    "work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538",
+    "payload:ticket-tiny-backend-api:ticket-leased",
+    "payload:ticket-tiny-frontend-ui:ticket-leased",
+    "payload:ticket-tiny-tests:ticket-leased",
+    "exec.ticket-tiny-frontend-ui.graph-14",
+    "payload:ticket-tiny-docs-run-manifest:ticket-leased",
+    "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d",
+    "work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d",
+    "exec.ticket-tiny-tests.graph-14",
+    "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9",
+    "work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9",
+    "exec.ticket-tiny-docs-run-manifest.graph-14",
+    "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600",
+    "work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600",
+    "payload:command-run:test-backend",
+    "payload:command-run:test-integration",
+    "event-range.project-tiny-fullstack.1-32",
+    "replay-payload-manifest.project-tiny-fullstack.v2-080f",
+    "replay-artifact-manifest.project-tiny-fullstack.v2-080f",
+    "replay-hash-manifest.project-tiny-fullstack.v2-080f",
+    "replay-report.project-tiny-fullstack.v2-080f",
+    "06632b9dcff5eacc7b592ac3edfc04b15e209e7a297d84c92f0cb49ec67e8f53"
+  ],
+  "events": [
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-governance:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 1,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-governance:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-architecture:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 2,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-architecture:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-backend-api:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 3,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-backend-api:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-frontend-ui:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 4,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-frontend-ui:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-tests:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 5,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-tests:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-docs-run-manifest:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 6,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-docs-run-manifest:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-architect"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-checker:created"
+      },
+      "event_type": "ticket_created",
+      "graph_version": 7,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-checker:created"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-governance:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 8,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-governance:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-architecture:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 9,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-architecture:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-backend-api:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 10,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-backend-api:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-frontend-ui:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 11,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-frontend-ui:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-tests:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 12,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-tests:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-docs-run-manifest:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 13,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-docs-run-manifest:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-ceo"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-checker:seat-assigned"
+      },
+      "event_type": "seat_assigned",
+      "graph_version": 14,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-checker:seat-assigned"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.execution-started.exec.ticket-tiny-backend-api.graph-14.15"
+      },
+      "event_type": "execution_started",
+      "graph_version": 15,
+      "payload_refs": [
+        {
+          "value": "exec.ticket-tiny-backend-api.graph-14"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.16"
+      },
+      "event_type": "provider_attempt_recorded",
+      "graph_version": 16,
+      "payload_refs": [
+        {
+          "value": "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.17"
+      },
+      "event_type": "work_product_submitted",
+      "graph_version": 17,
+      "payload_refs": [
+        {
+          "value": "work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-worker-backend"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-backend-api:ticket-leased"
+      },
+      "event_type": "ticket_leased",
+      "graph_version": 18,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-backend-api:ticket-leased"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:22+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-worker-frontend"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-frontend-ui:ticket-leased"
+      },
+      "event_type": "ticket_leased",
+      "graph_version": 19,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-frontend-ui:ticket-leased"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:23+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-worker-tests"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-tests:ticket-leased"
+      },
+      "event_type": "ticket_leased",
+      "graph_version": 20,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-tests:ticket-leased"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:24+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.execution-started.exec.ticket-tiny-frontend-ui.graph-14.25"
+      },
+      "event_type": "execution_started",
+      "graph_version": 21,
+      "payload_refs": [
+        {
+          "value": "exec.ticket-tiny-frontend-ui.graph-14"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "seat-tiny-worker-docs"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt:ticket-tiny-docs-run-manifest:ticket-leased"
+      },
+      "event_type": "ticket_leased",
+      "graph_version": 22,
+      "payload_refs": [
+        {
+          "value": "payload:ticket-tiny-docs-run-manifest:ticket-leased"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:25+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.26"
+      },
+      "event_type": "provider_attempt_recorded",
+      "graph_version": 23,
+      "payload_refs": [
+        {
+          "value": "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.27"
+      },
+      "event_type": "work_product_submitted",
+      "graph_version": 24,
+      "payload_refs": [
+        {
+          "value": "work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.execution-started.exec.ticket-tiny-tests.graph-14.35"
+      },
+      "event_type": "execution_started",
+      "graph_version": 25,
+      "payload_refs": [
+        {
+          "value": "exec.ticket-tiny-tests.graph-14"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.36"
+      },
+      "event_type": "provider_attempt_recorded",
+      "graph_version": 26,
+      "payload_refs": [
+        {
+          "value": "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.37"
+      },
+      "event_type": "work_product_submitted",
+      "graph_version": 27,
+      "payload_refs": [
+        {
+          "value": "work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.execution-started.exec.ticket-tiny-docs-run-manifest.graph-14.45"
+      },
+      "event_type": "execution_started",
+      "graph_version": 28,
+      "payload_refs": [
+        {
+          "value": "exec.ticket-tiny-docs-run-manifest.graph-14"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.46"
+      },
+      "event_type": "provider_attempt_recorded",
+      "graph_version": 29,
+      "payload_refs": [
+        {
+          "value": "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "actor.runtime.tiny-provider-attempts"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.47"
+      },
+      "event_type": "work_product_submitted",
+      "graph_version": 30,
+      "payload_refs": [
+        {
+          "value": "work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "runner.tiny-closeout"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt.tiny.command-run-recorded.1"
+      },
+      "event_type": "command_run_recorded",
+      "graph_version": 31,
+      "payload_refs": [
+        {
+          "value": "payload:command-run:test-backend"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:48+00:00"
+    },
+    {
+      "actor_ref": {
+        "value": "runner.tiny-closeout"
+      },
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_id": {
+        "value": "evt.tiny.command-run-recorded.2"
+      },
+      "event_type": "command_run_recorded",
+      "graph_version": 32,
+      "payload_refs": [
+        {
+          "value": "payload:command-run:test-integration"
+        }
+      ],
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      },
+      "timestamp": "2026-05-30T10:00:49+00:00"
+    }
+  ],
+  "generated_at": "2026-05-30T10:00:00Z",
+  "hash_manifest": {
+    "artifact_manifest_hash": {
+      "value": "3e30588c3af3ccf0264dd8574d3f6cfdc82e3c1bdac35d6f94ecdd18afb71f9d"
+    },
+    "attestation_hashes": {
+      "attestation.project-tiny-fullstack.06632b9dcff5": {
+        "value": "86fdb00b5bc16164c27d0d7d0421c097870751da1f3d34427fc3da92397860cb"
+      }
+    },
+    "event_hash_chain": [
+      {
+        "chain_hash": {
+          "value": "0a8b4186bc0900c75d406031fe18c5257575e926bdee66fd7950ccb80d301eb6"
+        },
+        "event_hash": {
+          "value": "945b09a2ced1841ab443269b13f42ee41eba84746ea0592dd8bb2e44c78e70b3"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-governance:created"
+        },
+        "graph_version": 1,
+        "previous_hash": {
+          "value": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "2d904f785854abc64cf4617106cba47844425b8e496fa628fcf263657b2b8d2b"
+        },
+        "event_hash": {
+          "value": "ee4a6464b0e40aebe5b1d4cd0d60b91c673bf2c88b35125fbd1c18feac7c4ddc"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-architecture:created"
+        },
+        "graph_version": 2,
+        "previous_hash": {
+          "value": "0a8b4186bc0900c75d406031fe18c5257575e926bdee66fd7950ccb80d301eb6"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "474852e18b1ff3760d4cece292eeb5196072a2d9f0304c47dcc0b7f281c94083"
+        },
+        "event_hash": {
+          "value": "44d1e0cb1f0b4996bbd43b4014f8731a5da9c78f3b7efd576d0220f0c88a1305"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-backend-api:created"
+        },
+        "graph_version": 3,
+        "previous_hash": {
+          "value": "2d904f785854abc64cf4617106cba47844425b8e496fa628fcf263657b2b8d2b"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "77b3b7813a2c6daa968d3d802a0525d5b6f1c0c88758ade18d4f3af7bd2b98ab"
+        },
+        "event_hash": {
+          "value": "eb2b613271f86f5a43c4fc8edf171f75592188803ff66630a1baebc14e2d26d5"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-frontend-ui:created"
+        },
+        "graph_version": 4,
+        "previous_hash": {
+          "value": "474852e18b1ff3760d4cece292eeb5196072a2d9f0304c47dcc0b7f281c94083"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "ee185ce2b0b87ae13f68e931e1a6d778ae9807d897cd72845733bdc8eaa99679"
+        },
+        "event_hash": {
+          "value": "d39bfd1fdbbc2ecd5f0d70f3827b3cf808b707f3349ec5bf7fe803cb8d538b00"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-tests:created"
+        },
+        "graph_version": 5,
+        "previous_hash": {
+          "value": "77b3b7813a2c6daa968d3d802a0525d5b6f1c0c88758ade18d4f3af7bd2b98ab"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "144831ea75f49742dfe9e84c24a25a1413c30bbccc7b1238c4129330f8ad3276"
+        },
+        "event_hash": {
+          "value": "9fef8c63e434b33e10718f0e58e285d078bf736ab8ab29034f857e449f241c6c"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-docs-run-manifest:created"
+        },
+        "graph_version": 6,
+        "previous_hash": {
+          "value": "ee185ce2b0b87ae13f68e931e1a6d778ae9807d897cd72845733bdc8eaa99679"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "4ecb2b0f444583a63b043e8cf32b353ca234bc96617651b848d9d13f8009598b"
+        },
+        "event_hash": {
+          "value": "e24ebfdd49afd164f6cac04fbc66c64b34b240380c31ab27e50b1e7c81ecb5c0"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-checker:created"
+        },
+        "graph_version": 7,
+        "previous_hash": {
+          "value": "144831ea75f49742dfe9e84c24a25a1413c30bbccc7b1238c4129330f8ad3276"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "6897600bcbc3c40395992d3e1f9825f284fcebc32b8bf83ed3e294b076a795c7"
+        },
+        "event_hash": {
+          "value": "523d94561a7105b294044b755314637c3065fd392fe12050f9b1807db3bec3fb"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-governance:seat-assigned"
+        },
+        "graph_version": 8,
+        "previous_hash": {
+          "value": "4ecb2b0f444583a63b043e8cf32b353ca234bc96617651b848d9d13f8009598b"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "867c892b526d905b5fa8564f6a20eb5d74021261c8a3d768f93039e08ec28484"
+        },
+        "event_hash": {
+          "value": "038e66c58b33b2ad85adc39c0f5b19b541bce52dc21e6084c0061955797a42af"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-architecture:seat-assigned"
+        },
+        "graph_version": 9,
+        "previous_hash": {
+          "value": "6897600bcbc3c40395992d3e1f9825f284fcebc32b8bf83ed3e294b076a795c7"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "9f4e7516f5ea8009ff73f1e17db986d436c010e3919a18704c48e913c0c26cd4"
+        },
+        "event_hash": {
+          "value": "9055de1831e8b8688a9d45e66f7bc4e205b8ad95e0402893991c98a0129ddbbc"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-backend-api:seat-assigned"
+        },
+        "graph_version": 10,
+        "previous_hash": {
+          "value": "867c892b526d905b5fa8564f6a20eb5d74021261c8a3d768f93039e08ec28484"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "7832d27600c7f61338cae2a3413a25d72af642c41c870575ede2bf822d3e5a97"
+        },
+        "event_hash": {
+          "value": "149bf77e3910156b376d6e3bd81101775791a97ea5bc9fbb9eefe15c1d5304f5"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-frontend-ui:seat-assigned"
+        },
+        "graph_version": 11,
+        "previous_hash": {
+          "value": "9f4e7516f5ea8009ff73f1e17db986d436c010e3919a18704c48e913c0c26cd4"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "84e1fdf77395e4b6e60b32efaa8e0984011f9a187c21df089908be58c093c588"
+        },
+        "event_hash": {
+          "value": "a15515a4c9713c123c5157c643da6f2b040eb1988114ab8af13a95cdfd602dfc"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-tests:seat-assigned"
+        },
+        "graph_version": 12,
+        "previous_hash": {
+          "value": "7832d27600c7f61338cae2a3413a25d72af642c41c870575ede2bf822d3e5a97"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "5a51bb115657fac85551d8291adcb2c34dfb4a5b66ff3dafe962284e65309f39"
+        },
+        "event_hash": {
+          "value": "e3aebfbe535bc42af64fda8b65e7f1df727bb8e0962f24c05141303292861700"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-docs-run-manifest:seat-assigned"
+        },
+        "graph_version": 13,
+        "previous_hash": {
+          "value": "84e1fdf77395e4b6e60b32efaa8e0984011f9a187c21df089908be58c093c588"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "5f06cc3160da409f714f65b7b6d9a48867a129c02d9ca8f2b2c0ceac36a95d3f"
+        },
+        "event_hash": {
+          "value": "ddbf4b8063a7f7d1c04ff0dd5a303f5084c12f58bd91ecd740fa7bba3fb73a04"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-checker:seat-assigned"
+        },
+        "graph_version": 14,
+        "previous_hash": {
+          "value": "5a51bb115657fac85551d8291adcb2c34dfb4a5b66ff3dafe962284e65309f39"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "bd6d6fb579bbc48d1ca43a14f67d4b5d6e3a92156f43c437af86afb7e600e0a1"
+        },
+        "event_hash": {
+          "value": "8f0e4d716554eea5d8c8a602d7615704e7b274435b86bd9856a180b0f81600f0"
+        },
+        "event_id": {
+          "value": "event.execution-started.exec.ticket-tiny-backend-api.graph-14.15"
+        },
+        "graph_version": 15,
+        "previous_hash": {
+          "value": "5f06cc3160da409f714f65b7b6d9a48867a129c02d9ca8f2b2c0ceac36a95d3f"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "8332bfe3d52b3c0d96c14cabc72af5c3e7557eb344eaf62475e6a32e7138b26b"
+        },
+        "event_hash": {
+          "value": "e85a77cd1849787cd53ba475918adb21a8dc08be0defa244782068e8fb6881d6"
+        },
+        "event_id": {
+          "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.16"
+        },
+        "graph_version": 16,
+        "previous_hash": {
+          "value": "bd6d6fb579bbc48d1ca43a14f67d4b5d6e3a92156f43c437af86afb7e600e0a1"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "612966ed38f396a3995f020db9bb3224703dbde6b79c39786e4d0e7995c93d64"
+        },
+        "event_hash": {
+          "value": "745028386586cae9c7acfe7e031d91cf682b9e5ded4a5f77fe963c32fdf1b56e"
+        },
+        "event_id": {
+          "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.17"
+        },
+        "graph_version": 17,
+        "previous_hash": {
+          "value": "8332bfe3d52b3c0d96c14cabc72af5c3e7557eb344eaf62475e6a32e7138b26b"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "189c11e5a38a1d5b2730bceeb0e7d1ee5420bb82d814c0850187abc5b9cdb1eb"
+        },
+        "event_hash": {
+          "value": "947b4ddfd6b10c85a98d313ec47dc2a9762622af083777d5285131b808d5771e"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-backend-api:ticket-leased"
+        },
+        "graph_version": 18,
+        "previous_hash": {
+          "value": "612966ed38f396a3995f020db9bb3224703dbde6b79c39786e4d0e7995c93d64"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "0b5377971a6579030d519d1006f8f6087084022b5f9e60fae5a13805328ace92"
+        },
+        "event_hash": {
+          "value": "85c75c7618121b60396d66708da0f22aeceb9946b086a7287c8d6a13966573ae"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-frontend-ui:ticket-leased"
+        },
+        "graph_version": 19,
+        "previous_hash": {
+          "value": "189c11e5a38a1d5b2730bceeb0e7d1ee5420bb82d814c0850187abc5b9cdb1eb"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "bba575196b5808eccf15f70867b4b91af07448f626c45f20b5ac48a51ff87c09"
+        },
+        "event_hash": {
+          "value": "84d93dbae707c71a4dadbbdb9157481ceb8ce8f8b473eff094f56801325beec1"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-tests:ticket-leased"
+        },
+        "graph_version": 20,
+        "previous_hash": {
+          "value": "0b5377971a6579030d519d1006f8f6087084022b5f9e60fae5a13805328ace92"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "2acf0b9b9fcce447949be03b5c0f399f9d18ec556cd18989f18c2dc1df10a3b7"
+        },
+        "event_hash": {
+          "value": "71e0de2ef39f2a8bec8a09fc0cac1ac852e5ec22617543fb6de6daffdf058ab5"
+        },
+        "event_id": {
+          "value": "event.execution-started.exec.ticket-tiny-frontend-ui.graph-14.25"
+        },
+        "graph_version": 21,
+        "previous_hash": {
+          "value": "bba575196b5808eccf15f70867b4b91af07448f626c45f20b5ac48a51ff87c09"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "1cf157e8e2c624933cbba6d5ad297b9e0e1503d1219ceacdf20002c6ad5b7be5"
+        },
+        "event_hash": {
+          "value": "42f224ea0a48e6ac2f23afda59030fd55f23716648d7a87ed1f0d189bde5a3b2"
+        },
+        "event_id": {
+          "value": "evt:ticket-tiny-docs-run-manifest:ticket-leased"
+        },
+        "graph_version": 22,
+        "previous_hash": {
+          "value": "2acf0b9b9fcce447949be03b5c0f399f9d18ec556cd18989f18c2dc1df10a3b7"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "bca10b38fe2dcbd7ebfa2e091608ae16016d85198967d2420b5f1d2fa8e63808"
+        },
+        "event_hash": {
+          "value": "b3e4fe5afc499f4803ab58dfa869b373e89b3b1e41e923c679e6a6089ce35360"
+        },
+        "event_id": {
+          "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.26"
+        },
+        "graph_version": 23,
+        "previous_hash": {
+          "value": "1cf157e8e2c624933cbba6d5ad297b9e0e1503d1219ceacdf20002c6ad5b7be5"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "9e35031c47f3ba64179eda3adfc866b9c7f8aa2a842550edf0cc25fc2bc9e718"
+        },
+        "event_hash": {
+          "value": "5ee8a8c0790ea1d0d4b0a4ac48990e05b17a988156b189b84dded33958e1c413"
+        },
+        "event_id": {
+          "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.27"
+        },
+        "graph_version": 24,
+        "previous_hash": {
+          "value": "bca10b38fe2dcbd7ebfa2e091608ae16016d85198967d2420b5f1d2fa8e63808"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "a06dfa420f34ac9a714483449bcc9d8c051db0a2bcdc90b52f453b94a2e2460d"
+        },
+        "event_hash": {
+          "value": "c9fb2c14dcee323a944e15af4c3fa7dd9e9efff4c4fec2845b22e1566185eabb"
+        },
+        "event_id": {
+          "value": "event.execution-started.exec.ticket-tiny-tests.graph-14.35"
+        },
+        "graph_version": 25,
+        "previous_hash": {
+          "value": "9e35031c47f3ba64179eda3adfc866b9c7f8aa2a842550edf0cc25fc2bc9e718"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "25e3fe58b4b807a65d7bc63976c0dbaaadf5e27381dd6e99fad48dc7825712db"
+        },
+        "event_hash": {
+          "value": "eeaf8bfe6b51cb8f2a5a63f446fdebe47aa84c61a8f456e62f8428773ad952a5"
+        },
+        "event_id": {
+          "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.36"
+        },
+        "graph_version": 26,
+        "previous_hash": {
+          "value": "a06dfa420f34ac9a714483449bcc9d8c051db0a2bcdc90b52f453b94a2e2460d"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "89e830b361db5cef6f1166a3fc1266e294310f49b6074f426e16390e5313c98d"
+        },
+        "event_hash": {
+          "value": "20c0f6a1359051facf4376978b540731c42d8b91da6eb0e72f14998b896955ed"
+        },
+        "event_id": {
+          "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.37"
+        },
+        "graph_version": 27,
+        "previous_hash": {
+          "value": "25e3fe58b4b807a65d7bc63976c0dbaaadf5e27381dd6e99fad48dc7825712db"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "bbb201a0966ca620e7fdc7fd60e9c37e9fa3c23b9499a744f0c45fe75c8b05e9"
+        },
+        "event_hash": {
+          "value": "05b51d79b14e2b1d4d82a2aaf00e717eca1c26e20d80592952629a4f63596094"
+        },
+        "event_id": {
+          "value": "event.execution-started.exec.ticket-tiny-docs-run-manifest.graph-14.45"
+        },
+        "graph_version": 28,
+        "previous_hash": {
+          "value": "89e830b361db5cef6f1166a3fc1266e294310f49b6074f426e16390e5313c98d"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "6f95787cedfcff0a0be9ca6ac9b99f6745037f0ab4aa46850738b6103167ec25"
+        },
+        "event_hash": {
+          "value": "3667acf1cf2bb986f0533d97ce8806f5b173a4da1b6861a3af68516246b5dab7"
+        },
+        "event_id": {
+          "value": "event.provider-attempt-recorded.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.46"
+        },
+        "graph_version": 29,
+        "previous_hash": {
+          "value": "bbb201a0966ca620e7fdc7fd60e9c37e9fa3c23b9499a744f0c45fe75c8b05e9"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "bd76ee54f398bda662423a50b92d25bd8e6db32506eb8862bb589cecd49a69e4"
+        },
+        "event_hash": {
+          "value": "10233e0e8d52d8586d8bd38f90deba3fcb4e491e0a3f832991d7448a6bedfc4a"
+        },
+        "event_id": {
+          "value": "event.work-product-submitted.work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.47"
+        },
+        "graph_version": 30,
+        "previous_hash": {
+          "value": "6f95787cedfcff0a0be9ca6ac9b99f6745037f0ab4aa46850738b6103167ec25"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "ce432026454c911eb40892e349ff5a271272f9ffc7c207e5853c21dfdb539421"
+        },
+        "event_hash": {
+          "value": "510c70768787c869a2cb5dc518b9d1a36f56c66e5cfe38c598003ea4ca7f5c0d"
+        },
+        "event_id": {
+          "value": "evt.tiny.command-run-recorded.1"
+        },
+        "graph_version": 31,
+        "previous_hash": {
+          "value": "bd76ee54f398bda662423a50b92d25bd8e6db32506eb8862bb589cecd49a69e4"
+        }
+      },
+      {
+        "chain_hash": {
+          "value": "77c130210584f6c5c8705f8a08143960680901ab1475ffaadd3ad5c650748e1e"
+        },
+        "event_hash": {
+          "value": "e31bcbe3545d3c2dd7b7f26516355a7d4dee2a2360a0eb9e0088ad522d3975d4"
+        },
+        "event_id": {
+          "value": "evt.tiny.command-run-recorded.2"
+        },
+        "graph_version": 32,
+        "previous_hash": {
+          "value": "ce432026454c911eb40892e349ff5a271272f9ffc7c207e5853c21dfdb539421"
+        }
+      }
+    ],
+    "event_window_hash": {
+      "value": "0f96e5be0b44da519f39eeae0e3f4a232a4adfd4e8b966dddeb7dfa389f9f9c7"
+    },
+    "hash_manifest_id": {
+      "value": "replay-hash-manifest.project-tiny-fullstack.v2-080f"
+    },
+    "payload_manifest_hash": {
+      "value": "7cef8c7dab53dde35da7a315480455c0ef4309967a97a0cd3a4b0f695f3769ce"
+    },
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    },
+    "replay_report_hash": {
+      "value": "563d7ccfd3cda558458f3c84971b394565a27840fc28939c6a879282477ae267"
+    },
+    "terminal_event_chain_hash": {
+      "value": "77c130210584f6c5c8705f8a08143960680901ab1475ffaadd3ad5c650748e1e"
+    }
+  },
+  "payload_manifest": {
+    "entries": [
+      {
+        "content_ref": {
+          "value": "exec.ticket-tiny-backend-api.graph-14"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.1"
+        },
+        "sha256": {
+          "value": "20e366cabf97d8da4bcf19c7cf2286775ec4876cb1e2c4e1cfdaf5c3bd766ff7"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "exec.ticket-tiny-docs-run-manifest.graph-14"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.2"
+        },
+        "sha256": {
+          "value": "79a9764d8af3cd0d9af385aea734514325c96ad957cc70b84fefb07ecd6dbf89"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "exec.ticket-tiny-frontend-ui.graph-14"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.3"
+        },
+        "sha256": {
+          "value": "2ffe922831215e1681d27602cae605b12665ee3a26824b8923fc5deaf9764cf3"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "exec.ticket-tiny-tests.graph-14"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.4"
+        },
+        "sha256": {
+          "value": "2160bb4a547460cf97cc7d21bf0c56e6f99ef850f6ccf402d4f304dfa67d2ae5"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:command-run:test-backend"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.5"
+        },
+        "sha256": {
+          "value": "ec193d129c72f00e686670358d217cb7f1c071981e52c6575c97de6586753ad8"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:command-run:test-integration"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.6"
+        },
+        "sha256": {
+          "value": "a72ed465d5b736ed495dcd331ed4e660337f27e244bdc26d5af14f4eb09be1a6"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-architecture:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.7"
+        },
+        "sha256": {
+          "value": "3ddb2c4b580fbdba9f7f32def1b772ce6d355afeddcb65b9cef1dc8aabd8522a"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-architecture:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.8"
+        },
+        "sha256": {
+          "value": "96b0115f005aceab7e87f31fb93da94c9ce4d7d210e6d8bb845651ff0870c42d"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-backend-api:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.9"
+        },
+        "sha256": {
+          "value": "18ff87138013a741ee66f76ed96375511a3b37054f8f994c07d3ed71570c2e61"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-backend-api:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.10"
+        },
+        "sha256": {
+          "value": "d57ad6ed35735711f2e9f9296ab4af13256ac8a7aa892090421cd0394cb08d29"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-backend-api:ticket-leased"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.11"
+        },
+        "sha256": {
+          "value": "ee2b6e401ddc41fd224788433fd835de49e38be67ea8f4bd7175a6f32a0062d4"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-checker:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.12"
+        },
+        "sha256": {
+          "value": "42d5e4a5fcf3b8a0b2947d4a078eb934a9b2c90a1228a974dae64d2d49f9dc07"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-checker:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.13"
+        },
+        "sha256": {
+          "value": "26a47bbbf4e007f433132e421717ffaaf36651c82bb31bd468c452881ae940c0"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-docs-run-manifest:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.14"
+        },
+        "sha256": {
+          "value": "ae1044f774c928392ee9d9f9706f0172622a174b17137c896a739f1420e2ae18"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-docs-run-manifest:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.15"
+        },
+        "sha256": {
+          "value": "96e24e936ffd33c9c783f421b3cac7f436fcc55f157fd3a79f28238061768e1e"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-docs-run-manifest:ticket-leased"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.16"
+        },
+        "sha256": {
+          "value": "110ef805e63b23a8d08cc7558cb8e21a3365bc06ddac8cbeb8b99d7e52919f4e"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-frontend-ui:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.17"
+        },
+        "sha256": {
+          "value": "cde66c5eb2607b43d89a3e5ff8d9282252dbcb4097c2e2b5228302b65171cdb1"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-frontend-ui:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.18"
+        },
+        "sha256": {
+          "value": "a95d016d8ade55ac83c0286bc8e0128ec352f0c01e9a5fabb8b256b094db625a"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-frontend-ui:ticket-leased"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.19"
+        },
+        "sha256": {
+          "value": "998061406e9ffc3bb7ce8f5588d985329558858fc3026b002315740a1f59cd24"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-governance:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.20"
+        },
+        "sha256": {
+          "value": "2b81ee121d51d775306ae48c30bd09b89fb063a1d3b1ae7c1dcfeedfbbcd8ccc"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-governance:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.21"
+        },
+        "sha256": {
+          "value": "c4d83829d6d36579a1226017b29ad5c6db1514ef06b39af4eb0e1bfbc27c7cc1"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-tests:created"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.22"
+        },
+        "sha256": {
+          "value": "1ac33dc64fa6684a63ba3a7e6d5d9a3f2a63dad0505a904385aa687c6f8b7e6c"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-tests:seat-assigned"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.23"
+        },
+        "sha256": {
+          "value": "fbb6b98de8ae7681f29fcd71409c6584cbd014631c6fe79a92746831c93a0761"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "payload:ticket-tiny-tests:ticket-leased"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.24"
+        },
+        "sha256": {
+          "value": "4bcf62f8475b14a3ae0b3412fa10475cbcc72547cf66bc36e7e934abc8a5893a"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.25"
+        },
+        "sha256": {
+          "value": "cda6972cb88a8a7e8a2ffaa8abee1766f18f46271e71c1370a1619e6726515db"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.26"
+        },
+        "sha256": {
+          "value": "8f96cbae60d2915a521938383bfa46a6e6daa6c9f317739576dfe3dc2ecc21b6"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.27"
+        },
+        "sha256": {
+          "value": "17eef84f96940b65ec67d979a4b7ded8d438639cd84a5d2031a519aaaab1c248"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.28"
+        },
+        "sha256": {
+          "value": "bd58cbea60e339626bcb777b578427a68df9661e1b4179d4dc7e1e95a180fcf6"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.29"
+        },
+        "sha256": {
+          "value": "85a0f61512ed2308a5901265e34bfdf09ce1a856867beb4cf95a8b6cb5c2902b"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.30"
+        },
+        "sha256": {
+          "value": "0626904a25ee44bb5b5123a1ebf616c4a9265ef1ac15866003aea72b6690f855"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.31"
+        },
+        "sha256": {
+          "value": "af389af8dea21cd37e07752abaf2145bb42e601e91d68f676abaf100942c42af"
+        }
+      },
+      {
+        "content_ref": {
+          "value": "work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+        },
+        "kind": "payload_manifest",
+        "manifest_ref": {
+          "value": "replay-payload-entry.32"
+        },
+        "sha256": {
+          "value": "2f9bb84cf559463ace6362614fa322d64b5c25c93b3ae80a55c14b20c4bad19a"
+        }
+      }
+    ],
+    "payload_manifest_id": {
+      "value": "replay-payload-manifest.project-tiny-fullstack.v2-080f"
+    },
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    }
+  },
+  "project_ref": {
+    "value": "project-tiny-fullstack"
+  },
+  "replay_bundle_id": {
+    "value": "replay-bundle.project-tiny-fullstack.06632b9dcff5.run-v2-080f"
+  },
+  "replay_report": {
+    "blockers": [],
+    "event_count": 32,
+    "event_range": {
+      "event_count": 32,
+      "first_event_id": {
+        "value": "evt:ticket-tiny-governance:created"
+      },
+      "first_graph_version": 1,
+      "last_event_id": {
+        "value": "evt.tiny.command-run-recorded.2"
+      },
+      "last_graph_version": 32,
+      "project_ref": {
+        "value": "project-tiny-fullstack"
+      }
+    },
+    "generated_at": "2026-05-30T10:00:00Z",
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    },
+    "projection_kind": "seat_assignment_graph",
+    "projection_version": {
+      "value": "projection.seat_assignment_graph.v1"
+    },
+    "replay_passed": true,
+    "replay_report_id": {
+      "value": "replay-report.project-tiny-fullstack.v2-080f"
+    },
+    "summary_hash": {
+      "value": "06632b9dcff5eacc7b592ac3edfc04b15e209e7a297d84c92f0cb49ec67e8f53"
+    }
+  },
+  "version": 1
+}

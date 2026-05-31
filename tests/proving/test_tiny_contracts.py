@@ -133,6 +133,10 @@ def test_contract_gate_missing_evidence_obligation_rejected() -> None:
 
 def test_fixture_builds_active_project_acceptance_and_package_contracts() -> None:
     contracts = build_tiny_scenario_active_contracts()
+    active_refs = {
+        criterion.acceptance_ref.value
+        for criterion in contracts.acceptance_contract.blocking_criteria()
+    }
 
     assert contracts.project_charter.delivery_type == "generated_project_package"
     assert contracts.acceptance_contract.status.value == "active"
@@ -140,6 +144,7 @@ def test_fixture_builds_active_project_acceptance_and_package_contracts() -> Non
     assert contracts.contract_gate.acceptance_contract_ref == contracts.acceptance_contract.acceptance_contract_id
     assert contracts.contract_gate.package_contract_ref == contracts.package_contract.package_contract_id
     assert contracts.required_acceptance_refs_by_category == REQUIRED_ACCEPTANCE_REFS_BY_CATEGORY
+    assert "AC-TINY-API-BOOK-DELETE" in active_refs
 
 
 def test_source_surfaces_cover_full_stack_package() -> None:

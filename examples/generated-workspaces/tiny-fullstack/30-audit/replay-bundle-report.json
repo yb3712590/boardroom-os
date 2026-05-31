@@ -1,0 +1,12 @@
+{
+  "event_range": "event-range.project-tiny-fullstack.1-32",
+  "hash_chain_verified": true,
+  "projection_kind": "seat_assignment_graph",
+  "projection_versions": [
+    "projection.seat_assignment_graph.v1"
+  ],
+  "replay_bundle_ref": "replay-bundle.project-tiny-fullstack.06632b9dcff5.run-v2-080f",
+  "replay_passed": true,
+  "replay_report_ref": "replay-report.project-tiny-fullstack.v2-080f",
+  "summary_hash": "06632b9dcff5eacc7b592ac3edfc04b15e209e7a297d84c92f0cb49ec67e8f53"
+}

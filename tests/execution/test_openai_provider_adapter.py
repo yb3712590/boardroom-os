@@ -72,13 +72,27 @@ class _ChatCompletionMessage:
     content = "implemented tiny fallback-compatible output"
 
 
+class _EmptyChatCompletionMessage:
+    content = None
+
+
 class _ChatCompletionChoice:
     message = _ChatCompletionMessage()
+
+
+class _EmptyChatCompletionChoice:
+    message = _EmptyChatCompletionMessage()
 
 
 class _ChatCompletionResponse:
     id = "chatcmpl_unit_456"
     choices = (_ChatCompletionChoice(),)
+
+
+class _EmptyChatCompletionResponse:
+    id = "chatcmpl_empty_789"
+    output_text = None
+    choices = (_EmptyChatCompletionChoice(),)
 
 
 class _ChatCompletions:
@@ -90,15 +104,35 @@ class _ChatCompletions:
         return _ChatCompletionResponse()
 
 
+class _EmptyChatCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> _EmptyChatCompletionResponse:
+        self.calls.append(kwargs)
+        return _EmptyChatCompletionResponse()
+
+
 class _Chat:
     def __init__(self) -> None:
         self.completions = _ChatCompletions()
+
+
+class _EmptyChat:
+    def __init__(self) -> None:
+        self.completions = _EmptyChatCompletions()
 
 
 class _ResponsesFailChatSucceedsClient:
     def __init__(self) -> None:
         self.responses = _FailingResponses()
         self.chat = _Chat()
+
+
+class _ResponsesFailChatEmptyClient:
+    def __init__(self) -> None:
+        self.responses = _FailingResponses()
+        self.chat = _EmptyChat()
 
 
 class _CountingFailingResponses:
@@ -396,6 +430,32 @@ def test_openai_provider_transport_uses_explicit_chat_completions_protocol(
     assert attempt.parsed_output_ref is not None
 
 
+def test_openai_provider_transport_passes_json_object_response_format(
+    tmp_path: Path,
+) -> None:
+    client = _ResponsesFailChatSucceedsClient()
+    transport = OpenAIProviderTransport(
+        settings=OpenAIProviderSettings(
+            api_key="sk-unit",
+            base_url="https://api.truerealbill.com/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+            response_format="json_object",
+        ),
+        client=client,
+        artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
+    )
+
+    attempt = transport.invoke(_request())
+
+    assert client.chat.completions.calls[0]["response_format"] == {
+        "type": "json_object",
+    }
+    assert attempt.status is ProviderAttemptStatus.SUCCEEDED
+
+
 def test_openai_provider_transport_passes_system_instructions_to_chat_completions(
     tmp_path: Path,
 ) -> None:
@@ -421,3 +481,29 @@ def test_openai_provider_transport_passes_system_instructions_to_chat_completion
         {"role": "user", "content": "Implement the tiny provider attempt."},
     ]
     assert attempt.status is ProviderAttemptStatus.SUCCEEDED
+
+
+def test_openai_provider_transport_rejects_empty_chat_completion_content(
+    tmp_path: Path,
+) -> None:
+    client = _ResponsesFailChatEmptyClient()
+    transport = OpenAIProviderTransport(
+        settings=OpenAIProviderSettings(
+            api_key="sk-unit",
+            base_url="https://api.truerealbill.com/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+        ),
+        client=client,
+        artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
+    )
+
+    attempt = transport.invoke(_request())
+
+    assert attempt.status is ProviderAttemptStatus.FAILED
+    assert attempt.raw_output_ref is None
+    assert attempt.parsed_output_ref is None
+    assert attempt.failure_kind == "provider_error.OpenAIProviderConfigError"
+    assert not list((tmp_path / "provider-artifacts").glob("*"))

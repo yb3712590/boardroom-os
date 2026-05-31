@@ -18,6 +18,7 @@ REQUIRED_ACCEPTANCE_REFS_BY_CATEGORY: Mapping[str, tuple[str, ...]] = {
         "AC-TINY-API-BOOK-CREATE",
         "AC-TINY-API-BOOK-LIST",
         "AC-TINY-API-CHECKOUT-RETURN",
+        "AC-TINY-API-BOOK-DELETE",
     ),
     "ui": ("AC-TINY-UI-FETCH-BACKEND",),
     "persistence": ("AC-TINY-PERSISTENCE-SQLITE",),

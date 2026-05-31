@@ -1,0 +1,204 @@
+{
+  "bundle_hash": "05f91cc41201683a6707409703545b23553faa635ef18211bfb2e20ef3c5459b",
+  "checked_refs": [
+    "package-contract-tiny-fullstack",
+    "source-inventory.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e",
+    "run-manifest.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack",
+    "0e98b0b61aa3a55ee78e6222d307c1dae07c486e",
+    "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301",
+    "git-version-audit-facts.project-tiny-fullstack.e655b03bba29",
+    "verification-run.exec.ticket-tiny-tests.graph-14.test-backend",
+    "verification-run.exec.ticket-tiny-tests.graph-14.test-integration",
+    "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-backend",
+    "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-integration",
+    "git-version-audit-report.project-tiny-fullstack.ee1ba718e5cc.run-v2-080f"
+  ],
+  "command_evidence_bindings": [
+    {
+      "binding_id": {
+        "value": "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      },
+      "command": [
+        "python",
+        "-X",
+        "utf8",
+        "-m",
+        "pytest",
+        "backend/tests",
+        "--basetemp=.pytest-tmp-backend"
+      ],
+      "command_id": {
+        "value": "test-backend"
+      },
+      "commit_sha": {
+        "value": "0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+      },
+      "cwd": ".",
+      "package_contract_ref": {
+        "value": "package-contract-tiny-fullstack"
+      },
+      "run_manifest_ref": {
+        "value": "run-manifest.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack"
+      },
+      "source_inventory_hash": {
+        "value": "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301"
+      },
+      "verification_run_ref": {
+        "value": "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      },
+      "workspace_snapshot_ref": {
+        "value": "workspace-snapshot.tiny-package-assembly"
+      }
+    },
+    {
+      "binding_id": {
+        "value": "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+      },
+      "command": [
+        "python",
+        "-X",
+        "utf8",
+        "-m",
+        "pytest",
+        "tests/integration",
+        "--basetemp=.pytest-tmp-integration"
+      ],
+      "command_id": {
+        "value": "test-integration"
+      },
+      "commit_sha": {
+        "value": "0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+      },
+      "cwd": ".",
+      "package_contract_ref": {
+        "value": "package-contract-tiny-fullstack"
+      },
+      "run_manifest_ref": {
+        "value": "run-manifest.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack"
+      },
+      "source_inventory_hash": {
+        "value": "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301"
+      },
+      "verification_run_ref": {
+        "value": "verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+      },
+      "workspace_snapshot_ref": {
+        "value": "workspace-snapshot.tiny-package-assembly"
+      }
+    }
+  ],
+  "fact_set": {
+    "base_commit_sha": {
+      "value": "2c877f58f9d74e1dc6236256ae9854c1265a0933"
+    },
+    "branch_ref": {
+      "value": "branch.master"
+    },
+    "changed_files": [],
+    "diff_summary": {
+      "changed_file_count": 0,
+      "deletions": 0,
+      "diff_summary_id": {
+        "value": "git-diff-summary.clean"
+      },
+      "insertions": 0,
+      "summary_text": "clean working tree"
+    },
+    "dirty_status": "clean",
+    "fact_set_id": {
+      "value": "git-version-audit-facts.project-tiny-fullstack.e655b03bba29"
+    },
+    "final_commit_sha": {
+      "value": "0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+    },
+    "generated_at": "2026-05-30T10:00:00Z",
+    "git_clean": true,
+    "optional_tag_ref": null,
+    "package_root": "10-project",
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    },
+    "source_inventory_hash": {
+      "value": "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301"
+    },
+    "worktree_ref": {
+      "value": "worktree.run-v2-080f"
+    }
+  },
+  "generated_at": "2026-05-30T10:00:00Z",
+  "git_version_audit_bundle_id": {
+    "value": "git-version-audit-bundle.project-tiny-fullstack.e72b2ef280f0.run-v2-080f"
+  },
+  "hash_manifest": {
+    "bundle_payload_hash": {
+      "value": "05f91cc41201683a6707409703545b23553faa635ef18211bfb2e20ef3c5459b"
+    },
+    "command_binding_hashes": {
+      "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-backend": {
+        "value": "2e336508f9591a45cbe2d2da4dd06d9d04930c7db241fb1f7a1a6b997fc03859"
+      },
+      "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-integration": {
+        "value": "8d11154b92322d6a6819aa6a241db2b08b21cbc76a6c88060a24980333c46e5d"
+      }
+    },
+    "fact_set_hash": {
+      "value": "adbbf05236b6d9fd38d6143a2b629ee581f8592bae2f06dd92d4c23bedc82382"
+    },
+    "hash_manifest_id": {
+      "value": "git-version-audit-hash-manifest.project-tiny-fullstack.81708d4d8026.run-v2-080f"
+    },
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    },
+    "report_hash": {
+      "value": "14a5676e68875467b565e43dda9a6d9ec9387a691fc46550be776e9e7278b855"
+    }
+  },
+  "project_ref": {
+    "value": "project-tiny-fullstack"
+  },
+  "report": {
+    "checked_refs": [
+      "package-contract-tiny-fullstack",
+      "source-inventory.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e",
+      "run-manifest.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack",
+      "0e98b0b61aa3a55ee78e6222d307c1dae07c486e",
+      "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301",
+      "git-version-audit-facts.project-tiny-fullstack.e655b03bba29",
+      "verification-run.exec.ticket-tiny-tests.graph-14.test-backend",
+      "verification-run.exec.ticket-tiny-tests.graph-14.test-integration",
+      "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-backend",
+      "git-command-evidence-binding.verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+    ],
+    "command_evidence_refs": [
+      "verification-run.exec.ticket-tiny-tests.graph-14.test-backend",
+      "verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+    ],
+    "fact_set_ref": {
+      "value": "git-version-audit-facts.project-tiny-fullstack.e655b03bba29"
+    },
+    "final_command_evidence_at_final_commit": true,
+    "final_commit_sha": {
+      "value": "0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+    },
+    "generated_at": "2026-05-30T10:00:00Z",
+    "git_clean": true,
+    "git_version_audit_report_id": {
+      "value": "git-version-audit-report.project-tiny-fullstack.ee1ba718e5cc.run-v2-080f"
+    },
+    "package_commit_ref": {
+      "value": "package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+    },
+    "project_ref": {
+      "value": "project-tiny-fullstack"
+    },
+    "source_inventory_hash": {
+      "value": "7a34727aafb4c1103fa5b285a096423a5d98f02d6679252c28a5795698467301"
+    },
+    "source_inventory_hash_matches": true,
+    "source_inventory_ref": {
+      "value": "source-inventory.package-assembly.workspace-manifest.workflow-tiny-package-assembly.package-contract-tiny-fullstack.package-commit.0e98b0b61aa3a55ee78e6222d307c1dae07c486e"
+    }
+  },
+  "version": 1
+}

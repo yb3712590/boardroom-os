@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +75,7 @@ from boardroom_os.workspace.source_inventory import (
 from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptFixture,
     build_tiny_provider_attempt_fixture,
+    openai_settings_from_test_env,
 )
 from tests.proving.fixtures.tiny_ticket_graph import (
     TICKET_BACKEND_API_ID,
@@ -106,23 +110,93 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
     "AGENTS.md": "Run declared commands from the package root.\n",
     "package-contract.json": '{"package_root":"10-project"}\n',
     "backend/app.py": (
-        "BOOKS = []\n\n"
-        "def create_book(title):\n"
-        "    book = {'title': title, 'state': 'IN_LIBRARY'}\n"
-        "    BOOKS.append(book)\n"
-        "    return book\n\n"
-        "def list_books():\n"
-        "    return list(BOOKS)\n\n"
-        "def checkout(book):\n"
-        "    book['state'] = 'CHECKED_OUT'\n"
-        "    return book\n\n"
-        "def return_book(book):\n"
-        "    book['state'] = 'IN_LIBRARY'\n"
-        "    return book\n"
+        "from backend.db import BookStore\n\n"
+        "DEFAULT_DB_PATH = 'books.sqlite3'\n\n"
+        "def create_store(db_path=DEFAULT_DB_PATH):\n"
+        "    return BookStore(db_path)\n\n"
+        "def create_book(title, *, store=None):\n"
+        "    active_store = store or create_store()\n"
+        "    return active_store.add_book(title)\n\n"
+        "def list_books(*, store=None):\n"
+        "    active_store = store or create_store()\n"
+        "    return active_store.list_books()\n\n"
+        "def checkout_book(book_id, *, store=None):\n"
+        "    active_store = store or create_store()\n"
+        "    return active_store.set_book_state(book_id, 'CHECKED_OUT')\n\n"
+        "def return_book(book_id, *, store=None):\n"
+        "    active_store = store or create_store()\n"
+        "    return active_store.set_book_state(book_id, 'IN_LIBRARY')\n\n"
+        "def delete_book(book_id, *, store=None):\n"
+        "    active_store = store or create_store()\n"
+        "    return active_store.delete_book(book_id)\n"
     ),
     "backend/db.py": (
-        "def persist_state(book):\n"
-        "    return {'title': book['title'], 'state': book['state']}\n"
+        "import sqlite3\n\n"
+        "VALID_STATES = {'IN_LIBRARY', 'CHECKED_OUT'}\n\n"
+        "class BookStore:\n"
+        "    def __init__(self, db_path):\n"
+        "        self.db_path = str(db_path)\n"
+        "        self._ensure_schema()\n\n"
+        "    def _connect(self):\n"
+        "        return sqlite3.connect(self.db_path)\n\n"
+        "    def _ensure_schema(self):\n"
+        "        with self._connect() as connection:\n"
+        "            connection.execute(\n"
+        "                'CREATE TABLE IF NOT EXISTS books ('\n"
+        "                'id INTEGER PRIMARY KEY AUTOINCREMENT, '\n"
+        "                'title TEXT NOT NULL, '\n"
+        "                \"state TEXT NOT NULL CHECK(state IN ('IN_LIBRARY', 'CHECKED_OUT'))\"\n"
+        "                ')'\n"
+        "            )\n"
+        "            connection.commit()\n\n"
+        "    def add_book(self, title):\n"
+        "        normalized_title = title.strip()\n"
+        "        if not normalized_title:\n"
+        "            raise ValueError('title is required')\n"
+        "        with self._connect() as connection:\n"
+        "            cursor = connection.execute(\n"
+        "                'INSERT INTO books(title, state) VALUES (?, ?)',\n"
+        "                (normalized_title, 'IN_LIBRARY'),\n"
+        "            )\n"
+        "            connection.commit()\n"
+        "            return self.get_book(cursor.lastrowid)\n\n"
+        "    def list_books(self):\n"
+        "        with self._connect() as connection:\n"
+        "            rows = connection.execute(\n"
+        "                'SELECT id, title, state FROM books ORDER BY id'\n"
+        "            ).fetchall()\n"
+        "        return [self._book_from_row(row) for row in rows]\n\n"
+        "    def get_book(self, book_id):\n"
+        "        with self._connect() as connection:\n"
+        "            row = connection.execute(\n"
+        "                'SELECT id, title, state FROM books WHERE id = ?',\n"
+        "                (book_id,),\n"
+        "            ).fetchone()\n"
+        "        if row is None:\n"
+        "            raise KeyError(f'book not found: {book_id}')\n"
+        "        return self._book_from_row(row)\n\n"
+        "    def set_book_state(self, book_id, state):\n"
+        "        if state not in VALID_STATES:\n"
+        "            raise ValueError('invalid book state')\n"
+        "        with self._connect() as connection:\n"
+        "            cursor = connection.execute(\n"
+        "                'UPDATE books SET state = ? WHERE id = ?',\n"
+        "                (state, book_id),\n"
+        "            )\n"
+        "            if cursor.rowcount != 1:\n"
+        "                raise KeyError(f'book not found: {book_id}')\n"
+        "            connection.commit()\n"
+        "        return self.get_book(book_id)\n\n"
+        "    def delete_book(self, book_id):\n"
+        "        with self._connect() as connection:\n"
+        "            cursor = connection.execute('DELETE FROM books WHERE id = ?', (book_id,))\n"
+        "            if cursor.rowcount != 1:\n"
+        "                raise KeyError(f'book not found: {book_id}')\n"
+        "            connection.commit()\n"
+        "        return {'id': book_id, 'deleted': True}\n\n"
+        "    @staticmethod\n"
+        "    def _book_from_row(row):\n"
+        "        return {'id': row[0], 'title': row[1], 'state': row[2]}\n"
     ),
     "frontend/index.html": (
         "<!doctype html>\n"
@@ -132,24 +206,67 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
         "export async function loadBooks(fetchImpl) {\n"
         "  const response = await fetchImpl('/books');\n"
         "  return response.json();\n"
+        "}\n\n"
+        "export async function deleteBook(fetchImpl, bookId) {\n"
+        "  const response = await fetchImpl(`/books/${bookId}`, { method: 'DELETE' });\n"
+        "  return response.json();\n"
         "}\n"
     ),
     "backend/tests/test_api.py": (
-        "from backend.app import checkout, create_book, list_books, return_book\n"
-        "from backend.db import persist_state\n\n"
-        "def test_backend_api_and_sqlite_persistence_contract():\n"
-        "    book = create_book('Dune')\n"
-        "    checkout(book)\n"
-        "    persisted = persist_state(book)\n"
-        "    assert persisted['state'] == 'CHECKED_OUT'\n"
-        "    return_book(book)\n"
-        "    assert list_books()[0]['state'] == 'IN_LIBRARY'\n"
+        "from contextlib import closing\n"
+        "import sqlite3\n\n"
+        "from backend.app import checkout_book, create_book, delete_book, list_books, return_book\n"
+        "from backend.db import BookStore\n\n"
+        "def test_backend_api_delete_and_sqlite_persistence_contract(tmp_path):\n"
+        "    db_path = tmp_path / 'books.sqlite3'\n"
+        "    store = BookStore(db_path)\n"
+        "    book = create_book('Dune', store=store)\n"
+        "    assert book['state'] == 'IN_LIBRARY'\n"
+        "    checked_out = checkout_book(book['id'], store=store)\n"
+        "    assert checked_out['state'] == 'CHECKED_OUT'\n"
+        "    reopened = BookStore(db_path)\n"
+        "    assert reopened.get_book(book['id'])['state'] == 'CHECKED_OUT'\n"
+        "    returned = return_book(book['id'], store=reopened)\n"
+        "    assert returned['state'] == 'IN_LIBRARY'\n"
+        "    assert list_books(store=reopened)[0]['title'] == 'Dune'\n"
+        "    deleted = delete_book(book['id'], store=reopened)\n"
+        "    assert deleted == {'id': book['id'], 'deleted': True}\n"
+        "    assert list_books(store=BookStore(db_path)) == []\n"
+        "    with closing(sqlite3.connect(db_path)) as connection:\n"
+        "        table_names = {\n"
+        "            row[0]\n"
+        "            for row in connection.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")\n"
+        "        }\n"
+        "    assert 'books' in table_names\n"
     ),
     "tests/integration/test_frontend_backend.py": (
+        "import json\n"
+        "import subprocess\n"
         "from pathlib import Path\n\n"
         "def test_frontend_fetches_backend_and_run_manifest_exists():\n"
-        "    app_js = Path('frontend/app.js').read_text(encoding='utf-8')\n"
-        "    assert \"fetchImpl('/books')\" in app_js\n"
+        "    script = \"\"\"\n"
+        "import { loadBooks, deleteBook } from './frontend/app.js';\n"
+        "const calls = [];\n"
+        "const fakeFetch = async (url, options = {}) => {\n"
+        "  calls.push({ url, options });\n"
+        "  return { ok: true, status: 200, json: async () => [] };\n"
+        "};\n"
+        "await loadBooks(fakeFetch);\n"
+        "await deleteBook(fakeFetch, 7);\n"
+        "console.log(JSON.stringify(calls));\n"
+        "\"\"\"\n"
+        "    result = subprocess.run(\n"
+        "        ['node', '--input-type=module', '-e', script],\n"
+        "        cwd=Path.cwd(),\n"
+        "        capture_output=True,\n"
+        "        text=True,\n"
+        "        check=False,\n"
+        "    )\n"
+        "    assert result.returncode == 0, result.stderr\n"
+        "    calls = json.loads(result.stdout)\n"
+        "    assert calls[0]['url'] == '/books'\n"
+        "    assert calls[1]['url'] == '/books/7'\n"
+        "    assert calls[1]['options']['method'] == 'DELETE'\n"
         "    assert Path('run-manifest.json').exists()\n"
     ),
     "docs/usage.md": "Use pytest backend/tests and pytest tests/integration.\n",
@@ -213,9 +330,23 @@ class TinyPackageAssemblyFixture:
 def build_tiny_package_assembly_fixture(
     *,
     package_root: Path,
-    package_contents: Mapping[str, str] = TINY_PACKAGE_CONTENTS,
+    package_contents: Mapping[str, str] | None = None,
+    provider_fixture: TinyProviderAttemptFixture | None = None,
+    allow_fake_provider_for_negative_tests: bool = False,
 ) -> TinyPackageAssemblyFixture:
-    provider_fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
+    _validate_package_content_override_paths(package_contents)
+    _validate_source_override_usage(
+        package_contents=package_contents,
+        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+    )
+    provider_fixture = provider_fixture or build_tiny_provider_attempt_fixture(
+        settings=openai_settings_from_test_env(),
+        use_fake_results=False,
+    )
+    _validate_real_provider_fixture(
+        provider_fixture,
+        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+    )
     package_contract = provider_fixture.compiled.ticket_graph_fixture.contracts.package_contract
     workspace_manifest = build_workspace_manifest(
         workflow_ref=WorkflowRef(value="workflow-tiny-package-assembly"),
@@ -232,10 +363,16 @@ def build_tiny_package_assembly_fixture(
         workspace_manifest=workspace_manifest,
         package_contract=package_contract,
     )
-    contents = _package_contents_with_run_manifest(
-        package_contents=package_contents,
+    provider_contents = _source_delivery_files_from_provider(
+        provider_fixture,
+        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+    )
+    contents = _package_contents_with_generated_files(
+        provider_contents=provider_contents,
+        override_contents=package_contents,
         run_manifest=run_manifest,
     )
+    _validate_tiny_package_functional_scope(contents)
     _write_ephemeral_tiny_package_for_command_evidence(
         package_root=package_root,
         package_contents=contents,
@@ -333,6 +470,7 @@ def _package_artifacts() -> tuple[PackageArtifact, ...]:
                 "AC-TINY-API-BOOK-CREATE",
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
+                "AC-TINY-API-BOOK-DELETE",
             ),
         ),
         _artifact(
@@ -361,6 +499,7 @@ def _package_artifacts() -> tuple[PackageArtifact, ...]:
                 "AC-TINY-API-BOOK-CREATE",
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
+                "AC-TINY-API-BOOK-DELETE",
                 "AC-TINY-PERSISTENCE-SQLITE",
             ),
         ),
@@ -447,6 +586,7 @@ def _source_lineage_records(
                 "AC-TINY-API-BOOK-CREATE",
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
+                "AC-TINY-API-BOOK-DELETE",
             ),
             evidence_refs=evidence_refs_by_type["backend_source_inventory"],
         ),
@@ -495,6 +635,7 @@ def _source_lineage_records(
                 "AC-TINY-API-BOOK-CREATE",
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
+                "AC-TINY-API-BOOK-DELETE",
                 "AC-TINY-PERSISTENCE-SQLITE",
             ),
             evidence_refs=(
@@ -587,6 +728,426 @@ def _command_results_by_id(
             )
         )
     return results
+
+
+def _validate_real_provider_fixture(
+    provider_fixture: TinyProviderAttemptFixture,
+    *,
+    allow_fake_provider_for_negative_tests: bool,
+) -> None:
+    fake_attempt_refs = tuple(
+        attempt.provider_attempt_id.value
+        for attempt in provider_fixture.provider_attempts_by_ticket_id.values()
+        if ".fake." in attempt.provider_attempt_id.value
+    )
+    if fake_attempt_refs and not allow_fake_provider_for_negative_tests:
+        raise ValueError("fake provider attempts cannot build tiny package assembly")
+    if not provider_fixture.provider_attempts_by_ticket_id:
+        raise ValueError("ProviderAttempt records are required for tiny package assembly")
+
+
+def _source_delivery_files_from_provider(
+    provider_fixture: TinyProviderAttemptFixture,
+    *,
+    allow_fake_provider_for_negative_tests: bool,
+) -> dict[str, str]:
+    if _provider_fixture_uses_fake_attempts(provider_fixture):
+        if allow_fake_provider_for_negative_tests:
+            return {}
+        raise ValueError("fake provider attempts cannot deliver source files")
+    files: dict[str, str] = {}
+    artifact_root = _provider_artifact_root(provider_fixture)
+    for result in provider_fixture.runtime_results:
+        attempt = result.provider_attempt
+        if attempt.parsed_output_ref is None:
+            raise ValueError("ProviderAttempt parsed artifact is required")
+        execution_package = _execution_package_for_attempt(
+            provider_fixture=provider_fixture,
+            attempt=attempt,
+        )
+        parsed_text = _read_provider_artifact_text(
+            artifact_root=artifact_root,
+            artifact_ref=attempt.parsed_output_ref.value,
+        )
+        extracted = _extract_source_delivery_payload(
+            parsed_text=parsed_text,
+            allowed_paths=tuple(path.value for path in execution_package.allowed_write_set),
+        )
+        overlap = set(files) & set(extracted)
+        if overlap:
+            raise ValueError("provider source delivery contains duplicate file paths")
+        files.update(extracted)
+    expected_paths = _expected_provider_source_paths(provider_fixture)
+    if set(files) != expected_paths:
+        raise ValueError("provider source delivery must cover every implementation file")
+    return files
+
+
+def _provider_fixture_uses_fake_attempts(
+    provider_fixture: TinyProviderAttemptFixture,
+) -> bool:
+    return any(
+        ".fake." in attempt.provider_attempt_id.value
+        for attempt in provider_fixture.provider_attempts_by_ticket_id.values()
+    )
+
+
+def _provider_artifact_root(provider_fixture: TinyProviderAttemptFixture) -> Path:
+    return provider_fixture.provider_artifact_root
+
+
+def _execution_package_for_attempt(
+    *,
+    provider_fixture: TinyProviderAttemptFixture,
+    attempt: ProviderAttempt,
+):
+    for execution_package in provider_fixture.execution_packages.values():
+        if execution_package.execution_package_id.value == attempt.input_package_ref.value:
+            return execution_package
+    raise ValueError("ProviderAttempt input package must resolve to an ExecutionPackage")
+
+
+def _read_provider_artifact_text(*, artifact_root: Path, artifact_ref: str) -> str:
+    safe_name = artifact_ref.replace("/", "_").replace("\\", "_").replace(":", "_")
+    path = artifact_root / f"{safe_name}.txt"
+    if not path.exists():
+        raise ValueError(f"provider artifact is missing: {artifact_ref}")
+    return path.read_text(encoding="utf-8")
+
+
+def _extract_source_delivery_payload(
+    *,
+    parsed_text: str,
+    allowed_paths: tuple[str, ...],
+) -> dict[str, str]:
+    data = _parse_json_payload(parsed_text)
+    files = data.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("provider source delivery must include a files object")
+    ignored_typed_paths = {"package-contract.json", "run-manifest.json"}
+    allowed_path_set = set(allowed_paths) - ignored_typed_paths
+    extracted: dict[str, str] = {}
+    for path, content in files.items():
+        if path in ignored_typed_paths:
+            continue
+        if path not in allowed_path_set:
+            raise ValueError("provider source delivery wrote outside allowed_write_set")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("provider source delivery file content is required")
+        extracted[path] = content
+    if allowed_path_set and set(extracted) != allowed_path_set:
+        raise ValueError("provider source delivery must cover allowed_write_set")
+    return extracted
+
+
+def _expected_provider_source_paths(
+    provider_fixture: TinyProviderAttemptFixture,
+) -> set[str]:
+    return {
+        path.value
+        for execution_package in provider_fixture.execution_packages.values()
+        for path in execution_package.allowed_write_set
+        if path.value not in {"package-contract.json", "run-manifest.json"}
+    }
+
+
+def _parse_json_payload(parsed_text: str) -> dict[str, object]:
+    text = parsed_text.strip()
+    if text.startswith("```"):
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+        if match is None:
+            raise ValueError("provider source delivery fenced JSON is invalid")
+        text = match.group(1)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError("provider source delivery must be JSON") from error
+    if not isinstance(payload, dict):
+        raise ValueError("provider source delivery must be a JSON object")
+    return payload
+
+
+def _validate_tiny_package_functional_scope(package_contents: Mapping[str, str]) -> None:
+    backend_app = package_contents.get("backend/app.py", "")
+    backend_db = package_contents.get("backend/db.py", "")
+    backend_tests = package_contents.get("backend/tests/test_api.py", "")
+    frontend_app = package_contents.get("frontend/app.js", "")
+    integration_tests = package_contents.get("tests/integration/test_frontend_backend.py", "")
+    if "def delete_book" not in backend_app or "delete_book" not in backend_tests:
+        raise ValueError("AC-TINY-API-BOOK-DELETE requires delete_book source and tests")
+    _validate_backend_public_api_signatures(backend_app)
+    _reject_delete_test_that_refetches_deleted_book(backend_tests)
+    sqlite_markers = (
+        "import sqlite3",
+        "sqlite3.connect",
+        "CREATE TABLE",
+        "INSERT INTO books",
+        "UPDATE books",
+        "DELETE FROM books",
+    )
+    if any(marker not in backend_db for marker in sqlite_markers):
+        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires real sqlite3 persistence")
+    _validate_sqlite_schema_literals(backend_db)
+    persistent_connection_markers = (
+        "self._conn = sqlite3.connect",
+        "self.connection = sqlite3.connect",
+        "self.conn = sqlite3.connect",
+    )
+    if any(marker in backend_db for marker in persistent_connection_markers):
+        raise ValueError(
+            "SQLite connection must not be kept open on BookStore instances; "
+            "Windows file cleanup requires short-lived connections"
+        )
+    if "import sqlite3" not in backend_tests:
+        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires SQLite verification evidence")
+    if "with sqlite3.connect" in backend_tests and "closing(sqlite3.connect" not in backend_tests:
+        raise ValueError(
+            "SQLite test connection must be explicitly closed for Windows cleanup"
+        )
+    sqlite_evidence_markers = (
+        "sqlite3.connect",
+        "sqlite_master",
+        "sqlite3.Connection",
+        ".exists()",
+        "os.path.exists",
+        "os.remove",
+    )
+    if not any(marker in backend_tests for marker in sqlite_evidence_markers):
+        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires SQLite verification evidence")
+    if not _frontend_has_exact_function_signature(
+        frontend_app,
+        function_name="loadBooks",
+        parameters=("fetchImpl",),
+    ):
+        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires loadBooks(fetchImpl)")
+    if not _frontend_has_exact_function_signature(
+        frontend_app,
+        function_name="deleteBook",
+        parameters=("fetchImpl", "bookId"),
+    ):
+        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires deleteBook(fetchImpl, bookId)")
+    if "/books" not in frontend_app or "DELETE" not in frontend_app:
+        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires backend fetch paths")
+    if not _frontend_module_is_node_import_safe(frontend_app):
+        raise ValueError(
+            "frontend module must guard window.addEventListener before Node integration import"
+        )
+    _validate_frontend_integration_behavior_evidence(integration_tests)
+
+
+def _reject_delete_test_that_refetches_deleted_book(backend_tests: str) -> None:
+    try:
+        tree = ast.parse(backend_tests)
+    except SyntaxError as error:
+        raise ValueError("backend tests must be valid Python") from error
+    helper_names = _helpers_that_refetch_bool_like_mutations(tree)
+    if not helper_names:
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called_name = _callable_name(node.func)
+        if called_name not in helper_names:
+            continue
+        if any(_is_delete_book_ref(argument) for argument in node.args):
+            raise ValueError(
+                "delete_book tests must not refetch a deleted book after a "
+                "bool/int/str mutation result"
+            )
+
+
+def _validate_backend_public_api_signatures(backend_app: str) -> None:
+    try:
+        tree = ast.parse(backend_app)
+    except SyntaxError as error:
+        raise ValueError("backend app source must be valid Python") from error
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    required = {
+        "create_store": ("db_path",),
+        "create_book": ("title",),
+        "list_books": (),
+        "checkout_book": ("book_id",),
+        "return_book": ("book_id",),
+        "delete_book": ("book_id",),
+    }
+    for function_name, required_names in required.items():
+        node = functions.get(function_name)
+        if node is None:
+            raise ValueError(f"backend app must expose {function_name}")
+        if node.args.vararg is not None or node.args.kwarg is not None:
+            raise ValueError(
+                "backend public API functions must use explicit parameters, not *args or **kwargs"
+            )
+        positional = tuple(argument.arg for argument in node.args.args)
+        keyword_only = tuple(argument.arg for argument in node.args.kwonlyargs)
+        available = (*positional, *keyword_only)
+        for required_name in required_names:
+            if required_name not in available:
+                raise ValueError(
+                    f"backend app {function_name} must include explicit {required_name} parameter"
+                )
+
+
+def _helpers_that_refetch_bool_like_mutations(tree: ast.AST) -> set[str]:
+    helper_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_bool_like_branch = any(
+            isinstance(inner, ast.Call)
+            and _callable_name(inner.func) == "isinstance"
+            and len(inner.args) >= 2
+            and _node_mentions_name(inner.args[0], "result")
+            and _node_mentions_any_name(inner.args[1], {"bool", "int", "str"})
+            for inner in ast.walk(node)
+        )
+        returns_finder = any(
+            isinstance(inner, ast.Return)
+            and isinstance(inner.value, ast.Call)
+            and _callable_name(inner.value.func).endswith("find_book")
+            for inner in ast.walk(node)
+        )
+        if has_bool_like_branch and returns_finder:
+            helper_names.add(node.name)
+    return helper_names
+
+
+def _is_delete_book_ref(node: ast.AST) -> bool:
+    return _callable_name(node).endswith("delete_book")
+
+
+def _callable_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _callable_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
+def _node_mentions_name(node: ast.AST, name: str) -> bool:
+    return any(isinstance(inner, ast.Name) and inner.id == name for inner in ast.walk(node))
+
+
+def _node_mentions_any_name(node: ast.AST, names: set[str]) -> bool:
+    return any(isinstance(inner, ast.Name) and inner.id in names for inner in ast.walk(node))
+
+
+def _validate_sqlite_schema_literals(backend_db: str) -> None:
+    try:
+        tree = ast.parse(backend_db)
+    except SyntaxError as error:
+        raise ValueError("backend db source must be valid Python") from error
+    create_table_sql = tuple(
+        value
+        for value in _string_literals(tree)
+        if "CREATE TABLE" in value.upper()
+    )
+    if not create_table_sql:
+        raise ValueError("SQLite schema must include executable CREATE TABLE SQL")
+    for sql in create_table_sql:
+        try:
+            connection = sqlite3.connect(":memory:")
+            try:
+                connection.execute(sql)
+            finally:
+                connection.close()
+        except sqlite3.Error as error:
+            raise ValueError("SQLite CREATE TABLE schema must be executable") from error
+
+
+def _string_literals(tree: ast.AST) -> tuple[str, ...]:
+    values: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            values.append(node.value)
+    return tuple(values)
+
+
+def _frontend_has_exact_function_signature(
+    frontend_app: str,
+    *,
+    function_name: str,
+    parameters: tuple[str, ...],
+) -> bool:
+    parameter_pattern = r"\s*,\s*".join(re.escape(parameter) for parameter in parameters)
+    patterns = (
+        rf"(?:export\s+)?async\s+function\s+{re.escape(function_name)}\s*\(\s*{parameter_pattern}\s*\)",
+        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*async\s*\(\s*{parameter_pattern}\s*\)",
+        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*\(\s*{parameter_pattern}\s*\)\s*=>",
+    )
+    if not any(re.search(pattern, frontend_app) for pattern in patterns):
+        return False
+    default_pattern = rf"{re.escape(function_name)}\s*\([^)]*="
+    return re.search(default_pattern, frontend_app) is None
+
+
+def _frontend_module_is_node_import_safe(frontend_app: str) -> bool:
+    if "window.addEventListener" not in frontend_app:
+        return True
+    guard_markers = (
+        "typeof window.addEventListener === 'function'",
+        'typeof window.addEventListener === "function"',
+        "'addEventListener' in window",
+        '"addEventListener" in window',
+    )
+    return any(marker in frontend_app for marker in guard_markers)
+
+
+def _validate_frontend_integration_behavior_evidence(integration_tests: str) -> None:
+    if not integration_tests.strip():
+        raise ValueError("frontend integration behavior evidence is required")
+    try:
+        tree = ast.parse(integration_tests)
+    except SyntaxError as error:
+        raise ValueError("frontend integration tests must be valid Python") from error
+    called_names = {_callable_name(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    if not any(name.endswith("loadBooks") for name in called_names) and "loadBooks(" not in integration_tests:
+        raise ValueError("integration behavior evidence must call loadBooks")
+    if not any(name.endswith("deleteBook") for name in called_names) and "deleteBook(" not in integration_tests:
+        raise ValueError("integration behavior evidence must call deleteBook")
+    capture_markers = (
+        "calls.append",
+        "calls.push",
+        "requests.append",
+        "requests.push",
+        "recorded.append",
+        "recorded.push",
+        "captured.append",
+        "captured.push",
+        "fetch_calls.append",
+        "fetchCalls.push",
+        "call_log.append",
+        "url",
+        "options",
+    )
+    if not any(marker in integration_tests for marker in capture_markers):
+        raise ValueError("integration behavior evidence must capture fetch url/options")
+    runner_markers = ("subprocess.run", "asyncio.run", "pytest.mark.asyncio", "node")
+    if not any(marker in integration_tests for marker in runner_markers):
+        raise ValueError("integration behavior evidence must execute frontend functions")
+    if "/books" not in integration_tests or "DELETE" not in integration_tests:
+        raise ValueError("integration behavior evidence must assert backend API paths")
+    reset_markers = (".length = 0", ".splice(0")
+    if any(marker in integration_tests for marker in reset_markers):
+        raise ValueError(
+            "integration behavior evidence must preserve loadBooks and deleteBook fetch calls"
+        )
+    pytest_tmp_filter_markers = (
+        "part.startswith(\".pytest-tmp\")",
+        "part.startswith('.pytest-tmp')",
+        "startswith(\".pytest-tmp\")",
+        "startswith('.pytest-tmp')",
+    )
+    if any(marker in integration_tests for marker in pytest_tmp_filter_markers):
+        raise ValueError(
+            "integration behavior evidence must not exclude frontend modules "
+            "because the package root is under a pytest-tmp directory"
+        )
 
 
 class SequenceClock:
@@ -739,19 +1300,60 @@ def _write_ephemeral_tiny_package_for_command_evidence(
         target.write_text(content, encoding="utf-8")
 
 
-def _package_contents_with_run_manifest(
+def _package_contents_with_generated_files(
     *,
-    package_contents: Mapping[str, str],
+    provider_contents: Mapping[str, str],
+    override_contents: Mapping[str, str] | None,
     run_manifest: RunManifest,
 ) -> Mapping[str, str]:
-    if "run-manifest.json" in package_contents:
-        return package_contents
+    if not provider_contents and override_contents is None:
+        raise ValueError("provider source delivery files are required")
+    contents = dict(provider_contents)
+    contents["package-contract.json"] = (
+        json.dumps({"package_root": "10-project"}, sort_keys=True)
+        + "\n"
+    )
+    contents["run-manifest.json"] = (
+        json.dumps(run_manifest.model_dump(mode="json"), sort_keys=True) + "\n"
+    )
+    if override_contents is not None:
+        unknown_paths = set(override_contents) - set(EXPECTED_TINY_PACKAGE_PATHS)
+        if unknown_paths:
+            for unknown_path in unknown_paths:
+                PackageArtifactPath(value=unknown_path)
+            raise ValueError("package override contains paths outside package artifacts")
+        contents.update(override_contents)
+    missing_paths = set(EXPECTED_TINY_PACKAGE_PATHS) - set(contents)
+    if missing_paths:
+        raise ValueError("provider source delivery is missing package paths")
     return {
-        **package_contents,
-        "run-manifest.json": (
-            json.dumps(run_manifest.model_dump(mode="json"), sort_keys=True) + "\n"
-        ),
+        path: contents[path]
+        for path in EXPECTED_TINY_PACKAGE_PATHS
     }
+
+
+def _validate_package_content_override_paths(
+    override_contents: Mapping[str, str] | None,
+) -> None:
+    if override_contents is None:
+        return
+    unknown_paths = set(override_contents) - set(EXPECTED_TINY_PACKAGE_PATHS)
+    if not unknown_paths:
+        return
+    for unknown_path in sorted(unknown_paths):
+        PackageArtifactPath(value=unknown_path)
+    raise ValueError("package override contains paths outside package artifacts")
+
+
+def _validate_source_override_usage(
+    *,
+    package_contents: Mapping[str, str] | None,
+    allow_fake_provider_for_negative_tests: bool,
+) -> None:
+    if package_contents is not None and not allow_fake_provider_for_negative_tests:
+        raise ValueError(
+            "package source override is only allowed for explicit negative tests"
+        )
 
 
 def _validate_physical_run_manifest(

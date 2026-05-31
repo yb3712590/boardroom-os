@@ -1,0 +1,455 @@
+{
+  "archived_event_refs": [
+    "evt:ticket-tiny-governance:created",
+    "evt:ticket-tiny-architecture:created",
+    "evt:ticket-tiny-backend-api:created",
+    "evt:ticket-tiny-frontend-ui:created",
+    "evt:ticket-tiny-tests:created",
+    "evt:ticket-tiny-docs-run-manifest:created",
+    "evt:ticket-tiny-checker:created",
+    "evt:ticket-tiny-governance:seat-assigned",
+    "evt:ticket-tiny-architecture:seat-assigned",
+    "evt:ticket-tiny-backend-api:seat-assigned",
+    "evt:ticket-tiny-frontend-ui:seat-assigned",
+    "evt:ticket-tiny-tests:seat-assigned",
+    "evt:ticket-tiny-docs-run-manifest:seat-assigned",
+    "evt:ticket-tiny-checker:seat-assigned",
+    "event.execution-started.exec.ticket-tiny-backend-api.graph-14.15",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.16",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.17",
+    "evt:ticket-tiny-backend-api:ticket-leased",
+    "evt:ticket-tiny-frontend-ui:ticket-leased",
+    "evt:ticket-tiny-tests:ticket-leased",
+    "event.execution-started.exec.ticket-tiny-frontend-ui.graph-14.25",
+    "evt:ticket-tiny-docs-run-manifest:ticket-leased",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.26",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.27",
+    "event.execution-started.exec.ticket-tiny-tests.graph-14.35",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.36",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.37",
+    "event.execution-started.exec.ticket-tiny-docs-run-manifest.graph-14.45",
+    "event.provider-attempt-recorded.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.46",
+    "event.work-product-submitted.work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.47",
+    "evt.tiny.command-run-recorded.1",
+    "evt.tiny.command-run-recorded.2"
+  ],
+  "events": [
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-governance:created",
+      "graph_version": 1,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-governance:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-architecture:created",
+      "graph_version": 2,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-architecture:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-backend-api:created",
+      "graph_version": 3,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-backend-api:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-frontend-ui:created",
+      "graph_version": 4,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-frontend-ui:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-tests:created",
+      "graph_version": 5,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-tests:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-docs-run-manifest:created",
+      "graph_version": 6,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-docs-run-manifest:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-architect",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-checker:created",
+      "graph_version": 7,
+      "kind": "ticket_created",
+      "payload_refs": [
+        "payload:ticket-tiny-checker:created"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-governance:seat-assigned",
+      "graph_version": 8,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-governance:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-architecture:seat-assigned",
+      "graph_version": 9,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-architecture:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-backend-api:seat-assigned",
+      "graph_version": 10,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-backend-api:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-frontend-ui:seat-assigned",
+      "graph_version": 11,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-frontend-ui:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-tests:seat-assigned",
+      "graph_version": 12,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-tests:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-docs-run-manifest:seat-assigned",
+      "graph_version": 13,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-docs-run-manifest:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-ceo",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-checker:seat-assigned",
+      "graph_version": 14,
+      "kind": "seat_assigned",
+      "payload_refs": [
+        "payload:ticket-tiny-checker:seat-assigned"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T09:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.execution-started.exec.ticket-tiny-backend-api.graph-14.15",
+      "graph_version": 15,
+      "kind": "execution_started",
+      "payload_refs": [
+        "exec.ticket-tiny-backend-api.graph-14"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.provider-attempt-recorded.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.16",
+      "graph_version": 16,
+      "kind": "provider_attempt_recorded",
+      "payload_refs": [
+        "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.work-product-submitted.work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538.17",
+      "graph_version": 17,
+      "kind": "work_product_submitted",
+      "payload_refs": [
+        "work-product.provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-worker-backend",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-backend-api:ticket-leased",
+      "graph_version": 18,
+      "kind": "ticket_started",
+      "payload_refs": [
+        "payload:ticket-tiny-backend-api:ticket-leased"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:22+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-worker-frontend",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-frontend-ui:ticket-leased",
+      "graph_version": 19,
+      "kind": "ticket_started",
+      "payload_refs": [
+        "payload:ticket-tiny-frontend-ui:ticket-leased"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:23+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-worker-tests",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-tests:ticket-leased",
+      "graph_version": 20,
+      "kind": "ticket_started",
+      "payload_refs": [
+        "payload:ticket-tiny-tests:ticket-leased"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:24+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.execution-started.exec.ticket-tiny-frontend-ui.graph-14.25",
+      "graph_version": 21,
+      "kind": "execution_started",
+      "payload_refs": [
+        "exec.ticket-tiny-frontend-ui.graph-14"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "seat-tiny-worker-docs",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt:ticket-tiny-docs-run-manifest:ticket-leased",
+      "graph_version": 22,
+      "kind": "ticket_started",
+      "payload_refs": [
+        "payload:ticket-tiny-docs-run-manifest:ticket-leased"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:25+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.provider-attempt-recorded.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.26",
+      "graph_version": 23,
+      "kind": "provider_attempt_recorded",
+      "payload_refs": [
+        "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.work-product-submitted.work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d.27",
+      "graph_version": 24,
+      "kind": "work_product_submitted",
+      "payload_refs": [
+        "work-product.provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.execution-started.exec.ticket-tiny-tests.graph-14.35",
+      "graph_version": 25,
+      "kind": "execution_started",
+      "payload_refs": [
+        "exec.ticket-tiny-tests.graph-14"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.provider-attempt-recorded.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.36",
+      "graph_version": 26,
+      "kind": "provider_attempt_recorded",
+      "payload_refs": [
+        "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.work-product-submitted.work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9.37",
+      "graph_version": 27,
+      "kind": "work_product_submitted",
+      "payload_refs": [
+        "work-product.provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.execution-started.exec.ticket-tiny-docs-run-manifest.graph-14.45",
+      "graph_version": 28,
+      "kind": "execution_started",
+      "payload_refs": [
+        "exec.ticket-tiny-docs-run-manifest.graph-14"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.provider-attempt-recorded.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.46",
+      "graph_version": 29,
+      "kind": "provider_attempt_recorded",
+      "payload_refs": [
+        "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "actor.runtime.tiny-provider-attempts",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "event.work-product-submitted.work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600.47",
+      "graph_version": 30,
+      "kind": "work_product_submitted",
+      "payload_refs": [
+        "work-product.provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-29T10:00:00+00:00"
+    },
+    {
+      "actor_ref": "runner.tiny-closeout",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt.tiny.command-run-recorded.1",
+      "graph_version": 31,
+      "kind": "command_run_recorded",
+      "payload_refs": [
+        "payload:command-run:test-backend"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:48+00:00"
+    },
+    {
+      "actor_ref": "runner.tiny-closeout",
+      "causation_refs": [],
+      "correlation_refs": [],
+      "event_ref": "evt.tiny.command-run-recorded.2",
+      "graph_version": 32,
+      "kind": "command_run_recorded",
+      "payload_refs": [
+        "payload:command-run:test-integration"
+      ],
+      "source": "event_log",
+      "timestamp": "2026-05-30T10:00:49+00:00"
+    }
+  ],
+  "project_ref": "project-tiny-fullstack"
+}

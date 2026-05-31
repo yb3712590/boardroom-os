@@ -1,0 +1,108 @@
+{
+  "entries": [
+    {
+      "entry_id": "agent-context-entry.ticket-tiny-backend-api",
+      "execution_package_ref": "exec.ticket-tiny-backend-api.graph-14",
+      "model_execution_profile": {
+        "context_window": 200000,
+        "fallback_policy_ref": {
+          "value": "fallback.tiny.record-failure"
+        },
+        "model": "gpt-5.5",
+        "model_execution_profile_id": {
+          "value": "model.implementation.backend"
+        },
+        "provider": "openai-compatible",
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+        "tool_permissions": [
+          "provider.invoke"
+        ],
+        "version": 1
+      },
+      "provider_attempt_refs": [
+        "provider-attempt.openai.resp_0fa2d278b7a47487016a1bb2f251e8819b82e9263753d6a538"
+      ],
+      "snapshot_fingerprint": "835f5fa0d40b3272e5f54b57101c21db1a3a3f8a02246ee3db9d446886900667",
+      "snapshot_ref": "context-snapshot.835f5fa0d40b3272"
+    },
+    {
+      "entry_id": "agent-context-entry.ticket-tiny-docs-run-manifest",
+      "execution_package_ref": "exec.ticket-tiny-docs-run-manifest.graph-14",
+      "model_execution_profile": {
+        "context_window": 200000,
+        "fallback_policy_ref": {
+          "value": "fallback.tiny.record-failure"
+        },
+        "model": "gpt-5.5",
+        "model_execution_profile_id": {
+          "value": "model.implementation.docs"
+        },
+        "provider": "openai-compatible",
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+        "tool_permissions": [
+          "provider.invoke"
+        ],
+        "version": 1
+      },
+      "provider_attempt_refs": [
+        "provider-attempt.openai.resp_08cf7c93e07a6224016a1bb59135b88191947629c54492b600"
+      ],
+      "snapshot_fingerprint": "8ab446b42332dea0509e1a26435195bcf6326f734cf0d0c69a31f5ff56724796",
+      "snapshot_ref": "context-snapshot.8ab446b42332dea0"
+    },
+    {
+      "entry_id": "agent-context-entry.ticket-tiny-frontend-ui",
+      "execution_package_ref": "exec.ticket-tiny-frontend-ui.graph-14",
+      "model_execution_profile": {
+        "context_window": 200000,
+        "fallback_policy_ref": {
+          "value": "fallback.tiny.record-failure"
+        },
+        "model": "gpt-5.5",
+        "model_execution_profile_id": {
+          "value": "model.implementation.frontend"
+        },
+        "provider": "openai-compatible",
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+        "tool_permissions": [
+          "provider.invoke"
+        ],
+        "version": 1
+      },
+      "provider_attempt_refs": [
+        "provider-attempt.openai.resp_04a53246c086c132016a1bb3a26b448191a13c78a3dec60a0d"
+      ],
+      "snapshot_fingerprint": "9c6fac6b1eca6d057d0da90e7f962fc8db067d5117f9a11639fc6fc348c3fa06",
+      "snapshot_ref": "context-snapshot.9c6fac6b1eca6d05"
+    },
+    {
+      "entry_id": "agent-context-entry.ticket-tiny-tests",
+      "execution_package_ref": "exec.ticket-tiny-tests.graph-14",
+      "model_execution_profile": {
+        "context_window": 200000,
+        "fallback_policy_ref": {
+          "value": "fallback.tiny.record-failure"
+        },
+        "model": "gpt-5.5",
+        "model_execution_profile_id": {
+          "value": "model.implementation.tests"
+        },
+        "provider": "openai-compatible",
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+        "tool_permissions": [
+          "provider.invoke"
+        ],
+        "version": 1
+      },
+      "provider_attempt_refs": [
+        "provider-attempt.openai.resp_06bdbfe7ad837dea016a1bb4b97b58819a89ce871ab11f11f9"
+      ],
+      "snapshot_fingerprint": "c7300925ea0cbd3e4b6d7f8edd8c65feb70cea3a673b59308b332b6965384cd0",
+      "snapshot_ref": "context-snapshot.c7300925ea0cbd3e"
+    }
+  ]
+}

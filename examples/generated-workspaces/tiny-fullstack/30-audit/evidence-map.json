@@ -1,0 +1,130 @@
+{
+  "final_evidence_table_ref": "final-evidence-table.acceptance-contract-tiny-fullstack",
+  "rows": [
+    {
+      "acceptance_ref": "AC-TINY-API-BOOK-CREATE",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-API-BOOK-CREATE",
+      "source_inventory_refs": [
+        "backend/app.py",
+        "backend/db.py",
+        "backend/tests/test_api.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-api_test_run",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-CREATE-backend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-API-BOOK-LIST",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-API-BOOK-LIST",
+      "source_inventory_refs": [
+        "backend/app.py",
+        "backend/db.py",
+        "backend/tests/test_api.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-api_test_run",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-LIST-backend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-API-CHECKOUT-RETURN",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-API-CHECKOUT-RETURN",
+      "source_inventory_refs": [
+        "backend/app.py",
+        "backend/db.py",
+        "backend/tests/test_api.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-api_test_run",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-CHECKOUT-RETURN-backend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-API-BOOK-DELETE",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-API-BOOK-DELETE",
+      "source_inventory_refs": [
+        "backend/app.py",
+        "backend/db.py",
+        "backend/tests/test_api.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-api_test_run",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-API-BOOK-DELETE-backend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-PERSISTENCE-SQLITE",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-PERSISTENCE-SQLITE",
+      "source_inventory_refs": [
+        "backend/app.py",
+        "backend/db.py",
+        "backend/tests/test_api.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-backend"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-sqlite_persistence_evidence",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-backend.obl-AC-TINY-PERSISTENCE-SQLITE-backend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-UI-FETCH-BACKEND",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-UI-FETCH-BACKEND",
+      "source_inventory_refs": [
+        "frontend/app.js",
+        "frontend/index.html",
+        "tests/integration/test_frontend_backend.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_backend_integration_evidence",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-UI-FETCH-BACKEND-frontend_source_inventory"
+      ]
+    },
+    {
+      "acceptance_ref": "AC-TINY-RUN-TEST-COMMANDS",
+      "checker_verdict_ref": "checker-verdict.ticket-tiny-checker.final-evidence-table.acceptance-contract-tiny-fullstack",
+      "criterion_ref": "AC-TINY-RUN-TEST-COMMANDS",
+      "source_inventory_refs": [
+        "docs/usage.md",
+        "tests/integration/test_frontend_backend.py"
+      ],
+      "status": "satisfied",
+      "verification_run_refs": [
+        "verification-run.exec.ticket-tiny-tests.graph-14.test-integration"
+      ],
+      "verified_evidence_refs": [
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-run_manifest",
+        "verified-evidence.evidence-claim.verification_run.verification-run.exec.ticket-tiny-tests.graph-14.test-integration.obl-AC-TINY-RUN-TEST-COMMANDS-command_evidence"
+      ]
+    }
+  ]
+}

@@ -228,6 +228,7 @@ def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
         "AC-TINY-API-BOOK-CREATE": ("backend_source_inventory",),
         "AC-TINY-API-BOOK-LIST": ("backend_source_inventory",),
         "AC-TINY-API-CHECKOUT-RETURN": ("backend_source_inventory",),
+        "AC-TINY-API-BOOK-DELETE": ("backend_source_inventory",),
         "AC-TINY-PERSISTENCE-SQLITE": (
             "sqlite_persistence_evidence",
             "backend_source_inventory",
@@ -260,12 +261,7 @@ def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
 
     assert verdict.status is CheckerVerdictStatus.REWORK_REQUIRED
     assert tuple(blocker.code.value for blocker in verdict.blockers) == (
-        "final_evidence_missing",
-        "final_evidence_missing",
-        "final_evidence_missing",
-        "final_evidence_missing",
-        "final_evidence_missing",
-        "final_evidence_missing",
+        *("final_evidence_missing" for _ in table.rows),
     )
     with pytest.raises(ValueError, match="final evidence table must be complete"):
         CompletionGate().build_completion_snapshot(gate_input)

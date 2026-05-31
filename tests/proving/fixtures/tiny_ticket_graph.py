@@ -399,7 +399,7 @@ def _ticket_payloads_by_id(
                 contracts,
                 acceptance_refs=run_test_refs,
             ),
-            allowed_write_set=("README.md", "AGENTS.md", "run-manifest.json"),
+            allowed_write_set=("README.md", "AGENTS.md", "docs/usage.md", "run-manifest.json"),
         ),
         TICKET_CHECKER_ID: _ticket_payload(
             ticket_id=TICKET_CHECKER_ID,
