@@ -13,6 +13,8 @@
 | `acceptance-criteria.md` | V2 总验收标准 |
 | `phase-0-plan.md` | 当前文档基座阶段计划 |
 | `proving-scenario-tiny-fullstack.md` | 第一个端到端证明场景 |
+| `boardroom-os-tiny-fullstack-audit-20260531.md` | V2-080 tiny-fullstack（微型全栈）失败复审报告 |
+| `boardroom-os-tiny-fullstack-gptpro-review.md` | V2-080 tiny-fullstack（微型全栈）专家复审与根因分析 |
 | `v2-040d-command-runner-spec.md` | V2-040D CommandRunner（命令执行器）同行评审 spec |
 | `v2-040e-runtime-executor-spec.md` | V2-040E RuntimeExecutor（运行时执行器）同行评审 spec |
 | `v2-050a-evidence-claim-spec.md` | V2-050A EvidenceClaim（证据声明）同行评审 spec |
@@ -52,6 +54,7 @@
 | `v2-071e-closeout-package-boundary-implementation-plan.md` | V2-071E CloseoutPackage（收尾包）边界严格化与 payload（载荷）内容绑定实施计划 |
 | `v2-071f-fact-chain-regression-spec.md` | V2-071F V2-070 fact-chain（事实链）端到端回归与 Phase 7 重锁 spec |
 | `v2-080cd-provider-evidence-repair-spec.md` | V2-080C/D ProviderAttempt（模型调用尝试记录）与 EvidenceVerifier（证据验证器）修补 spec |
+| `v2-090-tiny-fullstack-blackbox-recovery-plan.md` | V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）计划 |
 
 ## AI 启动入口
 

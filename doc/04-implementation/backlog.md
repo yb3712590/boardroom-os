@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`CHORE-REF-001`
+**当前未完成工作包**：`V2-090A`
 
-**当前重点**：Phase 8 tiny full-stack proving scenario（微型全栈证明场景）已闭合。V2-080A 定义 tiny book availability tracker 的 active contracts（活跃合同）；V2-080B 生成 tiny ticket graph（微型任务图）与 seat assignment（席位分配）；V2-080C/D repair（修补）把真实 OpenAI-compatible provider（兼容 OpenAI 的模型供应商）、ProviderAttempt（模型调用尝试记录）、CommandRunner（命令运行器）和 EvidenceVerifier（证据验证器）接入 fail-closed（失败关闭）证据链；V2-080E 完成 tiny package assembly（微型项目包装配）；V2-080F 生成真实 evidence-backed CloseoutPackage（收尾包）、ReplayBundle（重放包）、GitVersionAuditBundle（Git 版本审计包）、ProcessAuditBundle（流程审计包）和可重生成 golden sample（黄金样例）。下一步进入非阶段技术债 `CHORE-REF-001`。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前进入 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改），第一批工作包为 `V2-090A RolePromptHook`（角色提示词钩子）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -128,6 +128,7 @@ V2-001 Phase 0 audit
   -> V2-070 Closeout + Replay + Process Audit
   -> V2-071 Closeout fact-chain hardening（事实链强化重构）
   -> V2-080 Tiny Full-stack Proving Scenario
+  -> V2-090 Tiny Fullstack Blackbox Recovery（黑盒整改）
 ```
 
 关键接入链必须显式实现，不能靠散文约定：
@@ -160,8 +161,9 @@ RoleProfile（角色模板）
 | Phase 6：Workspace + Package | V2-060 | 6 / 6 | 完成 |
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
-| Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 完成 |
-| **合计** | **V2-000 ~ V2-080** | **59 / 59** | **Phase 8 完成** |
+| Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
+| Phase 9：Tiny blackbox recovery | V2-090 | 0 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **59 / 65** | **V2-090 整改启动** |
 
 ## 当前约束摘要
 
@@ -957,7 +959,7 @@ RoleProfile（角色模板）
 - 目标：端到端生成 tiny book availability tracker，证明 contract-first、reducer-protected、evidence-backed、package-oriented、audit-readable、replayable 的闭环。
 - 输入文档：`proving-scenario-tiny-fullstack.md` 和 V2-010~V2-070 产物。
 - 输出目录：`tests/proving/`、generated workspace、closeout audit。
-- 顶层验收口径：所有 proving scenario 验收项通过；负例覆盖伪交付无法通过。
+- 顶层验收口径：**已撤回**。V2-080A~F 保留 `DONE` 作为历史工作包执行记录；2026-05-31 失败复审证明 V2-080 的证据链未覆盖 declared run commands（声明运行命令）、live frontend/backend integration（真实前后端集成）和 SQLite-over-HTTP persistence（经 HTTP 的 SQLite 持久化），因此 Phase 8 失败复审后结束，不再作为 V2 minimal end-to-end（最小端到端）成立依据。整改转入 V2-090。
 
 ### V2-080A: 定义 tiny scenario active contracts
 
@@ -1028,8 +1030,86 @@ RoleProfile（角色模板）
 - 输出文件：`tests/proving/fixtures/tiny_closeout.py`、`tests/proving/test_tiny_closeout.py`、`scripts/build_tiny_closeout_sample.py`、`examples/generated-workspaces/tiny-fullstack/`。
 - 必须先写的 negative tests：缺 replay bundle、缺 process audit、缺 git audit、workflow completed 替代 closeout 必须失败。
 - 必须证明的 happy path：closeout passed，audit 可回答 timeline、agent decisions、context、artifacts、git history、evidence map。
-- 验收口径：V2 的最小端到端能力成立。
+- 验收口径：**原 V2 最小端到端能力成立判定已于 2026-05-31 失败复审后撤回**。本工作包仅保留为已执行的历史实现记录；其 closeout passed（收尾通过）结论不能作为最终验收依据。
 - 完成证据：2026-05-31 返工后闭合。新增 tiny closeout fixture（微型收尾夹具）复用 V2-080E package assembly（项目包装配）和 V2-070/071 closeout/replay/audit 类型，构造 ReplayBundle（重放包）、GitVersionAuditBundle（Git 版本审计包）、ProcessAuditBundle（流程审计包）、CloseoutGateResult（收尾门禁结果）、CloseoutPackage（收尾包）和 CloseoutReducer（收尾归约器）终态投影。GitVersionAudit（Git 版本审计）改为通过 GitAuditAdapter（Git 审计适配器）消费真实 Git facts（Git 事实），dirty package worktree（脏包工作树）和缺 `base_commit_sha`（基准提交）均 fail closed；临时 package repo（项目包仓库）创建真实 baseline commit（基线提交）与 final package commit（最终包提交），`SourceInventory.package_commit_ref` 与 `GitVersionAuditFactSet.final_commit_sha` 必须一致。ProviderAttempt（模型调用尝试记录）默认读取 ignored `.env` 并调用真实 provider（模型供应商），fake provider（模拟供应商）只允许显式负例；provider artifact lock（模型产物锁）用于 golden sample（黄金样例）稳定重放。tiny generated package（微型生成项目包）覆盖 add/list/checkout/return/delete、SQLite persistence（SQLite 持久化）、frontend fetch backend API（前端调用后端接口）和 declared tests（声明测试）。Negative tests 覆盖缺 replay/process/git audit、dirty Git facts、缺 base commit、fake provider attempt、workflow completed / WORK_PRODUCT_SUBMITTED 不能替代 `CLOSEOUT_COMMITTED`、30-audit 10 项产物缺一不可、篡改 provider artifact lock、unsafe sample output roots（不安全样例输出路径）、缺 delete/SQLite/真实 frontend integration evidence（前端集成证据）等。验证证据：`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_provider_attempts.py tests/proving/test_tiny_package_assembly.py tests/proving/test_tiny_closeout.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-targeted-final` 通过（75 passed in 861.68s）；`PYTHONPATH=src:. python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_ticket_graph.py tests/proving/test_tiny_provider_attempts.py tests/proving/test_tiny_evidence_verification.py tests/proving/test_tiny_package_assembly.py tests/proving/test_tiny_closeout.py -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-proving-final` 通过（98 passed in 759.38s）；`PYTHONPATH=src:. python -m pytest tests/closeout tests/negative -q --tb=short -rf --basetemp=.pytest-tmp-v2080f-closeout-final` 通过（657 passed in 6.08s）；`PYTHONPATH=.; python -m pytest backend/tests/test_api.py tests/integration/test_frontend_backend.py -q --tb=short -rf --basetemp=.pytest-tmp-sample-declared` 在样例 `10-project/` 内通过（6 passed in 0.12s）；底层 sample materializer（样例物化函数）用 provider artifact lock 连续两次重放一致（file_count=39、actual_file_count=40、provider_artifact_files=8、total_bytes=278796、sha256=`9a907a8cd4969ddf03fb84b70dc8fb8e5d6745072925ab820e2f56a87f6aa542`）。`scripts/build_tiny_closeout_sample.py --check` 在当前 dirty worktree（脏工作树）按设计失败并提示先提交或清理，未作为通过证据。
+
+> 2026-05-31 失败复审补充：两份 tiny-fullstack 复审报告证明，上述 V2-080F 验证命令没有证明 generated package（生成包）按 `run-manifest.json` 的 `run-backend` / `run-frontend` 可启动；`verification-runs.json` 只覆盖 `test-backend` / `test-integration`；前端集成证据为 fakeFetch（模拟 fetch）路径捕获，不是 live HTTP integration（真实 HTTP 集成）。因此 V2-080F 的 closeout passed 结论撤回，当前 golden sample 降级为 V2-090 regression negative material（回归负例素材）。
+
+---
+
+## V2-090: Tiny Fullstack Blackbox Recovery
+
+- 状态：TODO
+- 目标：按 `doc/04-implementation/v2-090-tiny-fullstack-blackbox-recovery-plan.md` 执行黑盒整改，重新建立 tiny-fullstack 的真实端到端证明。
+- 输入文档：`boardroom-os-tiny-fullstack-audit-20260531.md`、`boardroom-os-tiny-fullstack-gptpro-review.md`、`v2-090-tiny-fullstack-blackbox-recovery-plan.md`、`domain-model.md`、`contract-and-evidence-model.md`、`execution-and-runtime-boundary.md`。
+- 输出目录：`src/boardroom_os/`、`tests/`、`scripts/`、`examples/generated-workspaces/tiny-fullstack/`。
+- 顶层验收口径：V2-090A~F 全部完成后，必须能证明所有 declared run/test commands（声明运行/测试命令）均有最终证据，backend/frontend service（后端/前端服务）真实启动，HTTP CRUD + SQLite persistence（HTTP CRUD 与 SQLite 持久化）通过黑盒探针验证，CloseoutPackage（收尾包）只能在黑盒证据齐全时 passed（通过）。
+
+### V2-090A: RolePromptHook
+
+- 状态：TODO
+- 目标：定义 CEO / Architect / Worker / Tester / Checker / Closeout 的基础提示词职责边界，并将 RolePromptHook（角色提示词钩子）版本化纳入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链。
+- 输入文档：`doc/04-implementation/v2-090-tiny-fullstack-blackbox-recovery-plan.md`、`doc/03-architecture/domain-model.md`、`doc/03-architecture/contract-and-evidence-model.md`、`doc/03-architecture/execution-and-runtime-boundary.md`、`doc/03-architecture/agent-team-model.md`。
+- 依赖：V2-030A、V2-030C、V2-040A。
+- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/agents/role_prompt_hooks.py`、`tests/execution/test_role_prompt_hooks.py`，必要时更新 `doc/03-architecture/agent-team-model.md`。
+- 必须先写的 negative tests：RoleProfile 缺 role prompt hook version 不得编译 ExecutionPackage；ProviderAttempt 缺 role prompt hook ref 不得作为 implementation evidence；Prompt hook 不能声明绕过 AcceptanceContract / PackageContract / EvidenceVerifier / CloseoutGate；Architect prompt 缺 run command 与 service boundary 一致性检查职责时 tiny contract compilation 必须失败。
+- 必须证明的 happy path：各角色提示词职责边界可版本化、可引用、可审计，并随 ExecutionPackage / ProviderAttempt 留档。
+- 验收口径：提示词 hook 约束 agent 行为，但不得替代程序化门禁。
+
+### V2-090B: Closeout all-command coverage
+
+- 状态：TODO
+- 目标：CloseoutGate（收尾门禁）要求 RunManifest（运行清单）中的每个 run/test command（运行/测试命令）都有最终证据。
+- 输入文档：`doc/04-implementation/v2-090-tiny-fullstack-blackbox-recovery-plan.md`、`contract-and-evidence-model.md`、`process-audit-and-replay.md`。
+- 依赖：V2-090A、V2-060D、V2-070A。
+- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/closeout/gate.py`、`tests/negative/test_run_manifest_command_coverage.py`。
+- 必须先写的 negative tests：当前 V2-080 failure package 缺 `run-backend` / `run-frontend` evidence 时必须被 CloseoutGate 阻断。
+- 必须证明的 happy path：所有 manifest commands 均有最终 evidence 后 closeout gate 才可 passed。
+- 验收口径：已有 verification runs 不能替代未执行的 manifest commands。
+
+### V2-090C: ServiceRunEvidence
+
+- 状态：TODO
+- 目标：引入 ServiceRunEvidence（服务运行证据）或等价模型，区分长运行 service startup/readiness evidence（服务启动/就绪证据）与一次性 test command evidence（测试命令证据）。
+- 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`。
+- 依赖：V2-090B、V2-040D。
+- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/evidence/service_run.py`、`src/boardroom_os/adapters/process_runner.py`。
+- 必须先写的 negative tests：服务命令只有 process id 但无 readiness probe 不得满足 evidence；服务启动后立即退出不得满足 readiness；probe 命中错误端口或错误 path 必须失败。
+- 必须证明的 happy path：backend/frontend service 启动后，健康检查和内容探针均通过，并记录可审计 stdout/stderr refs、时间、端口和 readiness URL。
+- 验收口径：长运行服务不再伪装成普通 pytest passed command。
+
+### V2-090D: Tiny contract recovery
+
+- 状态：TODO
+- 目标：修正 tiny-fullstack contract（微型全栈合同）与 provider prompt（模型提示词）的路线矛盾；推荐标准库 HTTP 路线，避免 uvicorn（ASGI 服务器）依赖与 “standard library only（仅标准库）” 冲突。
+- 输入文档：`proving-scenario-tiny-fullstack.md`、两份 2026-05-31 复审报告。
+- 依赖：V2-090A、V2-090C。
+- 输出文件：待实施阶段确定，计划候选为 `tests/fixtures/contracts/tiny_fullstack_contract.py`、`tests/proving/fixtures/tiny_provider_attempts.py`。
+- 必须先写的 negative tests：合同声明 `uvicorn backend.app:app` 但 provider prompt 禁止第三方依赖时必须 fail closed；acceptance 只写 “fetch backend API” 但不要求 live HTTP integration 时不得进入 closeout-ready。
+- 必须证明的 happy path：run commands、source surfaces、integration boundaries 和 evidence obligations 一致，并要求 backend HTTP endpoints、frontend service、SQLite persistence 和 live integration evidence。
+- 验收口径：tiny-fullstack 不再同时保留互斥技术路线。
+
+### V2-090E: Live blackbox integration
+
+- 状态：TODO
+- 目标：真实启动 generated package 的 backend/frontend，通过 HTTP 验证 CRUD、SQLite persistence 和前端调用后端。
+- 输入文档：V2-090D 修正后的 tiny contract、`execution-and-runtime-boundary.md`。
+- 依赖：V2-090C、V2-090D。
+- 输出文件：待实施阶段确定，计划候选为 `tests/proving/fixtures/tiny_package_assembly.py`、`tests/proving/test_tiny_live_blackbox_integration.py`。
+- 必须先写的 negative tests：fakeFetch-only 集成不得满足 full-stack acceptance；backend HTTP endpoint 缺 delete / checkout / return 任一操作不得 satisfied；SQLite 只在函数单测中落盘不得满足 HTTP persistence evidence。
+- 必须证明的 happy path：backend startup probe、backend HTTP CRUD probe、SQLite file/schema/data probe、frontend startup probe 和 live frontend-backend probe 均通过。
+- 验收口径：集成证据必须来自运行中的服务，不来自 mock 或源码字符串检查。
+
+### V2-090F: Golden sample rebuild
+
+- 状态：TODO
+- 目标：重建 `examples/generated-workspaces/tiny-fullstack/`；新的 CloseoutPackage 只有在黑盒证据齐全时 passed。
+- 输入文档：V2-090A~E 产物。
+- 依赖：V2-090E。
+- 输出文件：`examples/generated-workspaces/tiny-fullstack/`、`scripts/build_tiny_closeout_sample.py`、`examples/README.md`、`scripts/README.md`。
+- 必须先写的 negative tests：当前 V2-080 failure package 必须被 closeout gate 阻断；缺任一 RunManifest command evidence 不得生成 passed sample；golden sample 不得包含未登记的 `__pycache__` 或临时文件。
+- 必须证明的 happy path：样例可在 clean worktree 上重生成；连续两次 hash 稳定；文件数量固定；总大小在上限内；`--check` 只比较不写文件；CloseoutPackage / ReplayBundle / GitVersionAuditBundle / ProcessAuditBundle 均绑定黑盒证据。
+- 验收口径：golden sample 不再只是 deterministic fixture，而是 blackbox-evidence-backed sample。
 
 ---
 

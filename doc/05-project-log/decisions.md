@@ -342,3 +342,42 @@ V2-080D 首轮实现把 command evidence（命令证据）和 provider-backed wo
 - `src/boardroom_os/evidence/table.py` 新增 `missing_required_artifact_types` 并按 required artifact coverage（必需产物覆盖率）判定 status。
 - `src/boardroom_os/checker/checker.py` 接受 missing row 带有已验证 evidence refs，但要求明确列出缺失 artifact types。
 - V2-080D 的验收口径改为“command evidence 可验证，但 FinalEvidenceTable incomplete 且 CompletionGate blocked”；V2-080E 才负责补齐 package/source/run/persistence evidence。
+
+## DEC-0019: 撤回 V2-080 tiny-fullstack 端到端成立结论并启动 V2-090
+
+- 状态：Accepted
+- 日期：2026-05-31
+
+### 决策
+
+撤回 V2-080F “V2 最小端到端能力成立”的验收结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 Phase 8 不再作为 minimal end-to-end（最小端到端）成立依据；当前 `examples/generated-workspaces/tiny-fullstack/` golden sample（黄金样例）降级为 V2-090 的 regression negative material（回归负例素材），直到黑盒证据重新闭合。
+
+新增 Phase 9 / V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改），工作包顺序固定为：
+
+1. V2-090A RolePromptHook（角色提示词钩子）；
+2. V2-090B Closeout all-command coverage（收尾全命令覆盖）；
+3. V2-090C ServiceRunEvidence（服务运行证据）；
+4. V2-090D Tiny contract recovery（微型合同修复）；
+5. V2-090E Live blackbox integration（真实黑盒集成）；
+6. V2-090F Golden sample rebuild（黄金样例重建）。
+
+RolePromptHook（角色提示词钩子）作为第一批整改进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链。它约束 CEO / Architect / Worker / Tester / Checker / Closeout 的基础行为边界，但不能替代 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）或 CloseoutGate（收尾门禁）的程序化 fail-closed（失败关闭）校验。
+
+### 理由
+
+2026-05-31 两份 tiny-fullstack 失败复审报告显示，V2-080 的失败不是旧 runtime（运行时）直接合成 source / verification（源码 / 验证）的同类问题，而是“真实证据证明了错误命题”：
+
+- `run-manifest.json` 声明 `run-backend` / `run-frontend`，但 `verification-runs.json` 只覆盖 `test-backend` / `test-integration`；
+- backend package（后端包）声明 `python -m uvicorn backend.app:app`，但生成的 `backend/app.py` 没有 ASGI `app` 对象；
+- frontend integration（前端集成）使用 fakeFetch（模拟 fetch）捕获 URL，不是 live HTTP integration（真实 HTTP 集成）；
+- SQLite persistence（SQLite 持久化）仅由函数级测试证明，没有通过 HTTP 工作流证明；
+- ProcessAuditBundle（流程审计包）、SourceInventory（源码清单）和 FinalEvidenceTable（最终证据表）证明 refs/hashes/artifacts（引用/哈希/产物）结构一致，但没有证明 generated package（生成包）按声明可启动、可运行、可集成。
+
+同时，自治服务运行期间各角色只能从简短 PRD（产品需求文档）和上游产物派生后续提示词。V2-080 暴露出 Architect（架构师）缺少基础提示词约束：没有被明确要求检查 run command（运行命令）与 service boundary（服务边界）、provider prompt（模型提示词）与 package contract（包合同）、integration boundary（集成边界）与 evidence obligation（证据义务）的一致性。因此 V2-090A 必须先引入角色基础提示词 hook，再推进程序化门禁收紧。
+
+### 影响
+
+- `doc/04-implementation/backlog.md`：当前未完成工作包改为 V2-090A；Phase 8 标记为失败复审后结束；新增 Phase 9 / V2-090A~F；进度变为 59 / 65。
+- `doc/04-implementation/acceptance-criteria.md`：Phase 8 端到端成立判定撤回；新增 Phase 9 验收段；新增 AC-V2-AGENT、AC-V2-EVIDENCE-004、AC-V2-PACKAGE-003、AC-V2-CLOSEOUT-011。
+- `doc/04-implementation/INDEX.md`：登记两份复审报告和 V2-090 整改计划。
+- V2-090 完成前，不得恢复“V2 最小端到端能力成立”结论。

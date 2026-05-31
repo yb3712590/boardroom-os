@@ -7,7 +7,7 @@
 本文件由两层组成：
 
 1. **抽象原则层（AC-V2-XXX）**：principle-level 验收标准，对应架构主线。`backlog.md` 的工作包必须显式映射到这里的某条 AC。
-2. **分批验收层（Phase 0 ~ Phase 8）**：每个 phase 完成时人类用以验收的 checkbox 清单、产出清单和"进入下一 Phase 前置"。这层是人类视角的 quality gate。
+2. **分批验收层（Phase 0 ~ Phase 9）**：每个 phase 完成时人类用以验收的 checkbox 清单、产出清单和"进入下一 Phase 前置"。这层是人类视角的 quality gate。
 
 使用方式：
 
@@ -49,6 +49,16 @@ Ticket graph 是流程状态源。runtime 不得直接推进 project completed�
 
 所有关键状态变更必须通过 reducer 或 validator。
 
+## AC-V2-AGENT
+
+### AC-V2-AGENT-001: role prompt hooks versioned and auditable
+
+CEO / Architect / Worker / Tester / Checker / Closeout 的基础 RolePromptHook（角色提示词钩子）必须是 governed asset（治理资产），具备版本、hash、role category（角色类别）和 policy refs（策略引用），并进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链。
+
+### AC-V2-AGENT-002: prompt constraints do not replace gates
+
+RolePromptHook（角色提示词钩子）只能约束 agent behavior（智能体行为）和派生提示词边界，不能替代 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）或 CloseoutGate（收尾门禁）的程序化校验。
+
 ## AC-V2-EXECUTION
 
 ### AC-V2-EXECUTION-001: execution package required
@@ -77,6 +87,10 @@ Source inventory 必须证明文件路径、hash、producer ticket、provider at
 
 Final evidence table 必须覆盖 active acceptance contract 的所有 blocking criteria。
 
+### AC-V2-EVIDENCE-004: live integration proves behavior
+
+当 AcceptanceContract（验收合同）声明 frontend/backend integration（前后端集成）、HTTP API（HTTP 接口）、service startup（服务启动）或 persistence（持久化）时，最终证据必须来自真实 command evidence（命令证据）、service readiness probe（服务就绪探针）或 live blackbox integration（真实黑盒集成）。fakeFetch（模拟 fetch）、源码字符串检查或函数级单测不能单独满足 full-stack acceptance（全栈验收）。
+
 ## AC-V2-CHECKER
 
 ### AC-V2-CHECKER-001: checker blocks evidence gaps
@@ -96,6 +110,10 @@ Checker notes 不能覆盖 blocker。
 ### AC-V2-PACKAGE-002: package must be runnable when required
 
 对于声明为可运行的软件项目，必须验证 run/test commands。
+
+### AC-V2-PACKAGE-003: all declared commands require evidence
+
+RunManifest（运行清单）中的每个 declared run/test command（声明运行/测试命令）都必须有对应 final evidence（最终证据）。已有 VerificationRun（验证运行）不能代表未执行、未 probe（探测）或未绑定的 command。
 
 ## AC-V2-CLOSEOUT
 
@@ -139,6 +157,10 @@ V2-070 阶段所有持久化引用（`fact_set_id`、`artifact_ref`、`content_r
 
 V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest entries、verification_runs、command_evidence_bindings、checked_refs 等），必须 canonical sort（规范排序）后参与 hash；若语义为序列（events、event_hash_chain），必须说明序列权威来源并保持稳定。同一事实重建必须产出字节相同的 hash。
 
+### AC-V2-CLOSEOUT-011: closeout validates behavior claims
+
+CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希）和 bundle readiness（包就绪摘要）结构一致；它必须确认 final evidence（最终证据）覆盖 active acceptance claims（活跃验收命题）的真实行为对象。真实证据若证明了错误命题，不能 closeout passed（收尾通过）。
+
 ## Negative acceptance
 
 以下情况必须失败：
@@ -151,6 +173,9 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - checker notes 覆盖 blocker；
 - generated project package 缺 run manifest；
 - final package 不可运行却 closeout passed；
+- run manifest 中任一 declared command 缺最终证据；
+- fakeFetch-only integration 被当作 full-stack acceptance；
+- service command 缺 startup/readiness probe；
 - replay bundle 缺失；
 - closeout 阶段才首次发现 implementation 缺口。
 
@@ -158,7 +183,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 ## 分批验收
 
-下面 9 段对应 `backlog.md` 的 Phase 0 ~ Phase 8。每段固定结构：
+下面 10 段对应 `backlog.md` 的 Phase 0 ~ Phase 9。每段固定结构：
 
 - **AC 检查清单**：本 phase 需要勾选的项；每项标注由哪个工作包的 negative / happy test 提供证据，并显式绑定到 AC-V2-XXX。
 - **本批产出**：本 phase 完成时仓库内应存在的文件、模块或文档同步项。
@@ -417,6 +442,8 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 
 ### Phase 8 验收 — V2-080 Tiny Full-stack Proving Scenario
 
+> **失败复审说明（2026-05-31）**：两份 tiny-fullstack 复审报告（`boardroom-os-tiny-fullstack-audit-20260531.md`、`boardroom-os-tiny-fullstack-gptpro-review.md`）撤回 Phase 8 “V2 最小端到端能力成立”结论。下列 V2-080A~F checkbox 保留为“历史工作包产物存在并曾执行”的记录，不再表示 generated package（生成包）通过端到端验收。具体失败点包括：`run-backend` / `run-frontend` 缺最终证据，backend package（后端包）不能按 `uvicorn backend.app:app` 启动，frontend integration（前端集成）为 fakeFetch（模拟 fetch）路径捕获而非 live HTTP integration（真实 HTTP 集成），SQLite persistence（SQLite 持久化）未通过 HTTP 工作流证明。整改转入 Phase 9 / V2-090。
+
 #### AC 检查清单
 
 - [x] tiny scenario active contracts 完整 — 由 V2-080A `test_tiny_contracts.py` 证明：覆盖 API / UI / persistence / run / test acceptance refs
@@ -425,7 +452,7 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - [x] tiny evidence verification — 由 V2-080D `test_tiny_evidence_verification.py` 证明：真实 CommandRunner（命令运行器）command evidence（命令证据）可被 EvidenceVerifier（证据验证器）验证；缺 source inventory（源码清单）/ run manifest（运行清单）/ SQLite persistence evidence（SQLite 持久化证据）/ package assembly（项目包装配）时 FinalEvidenceTable（最终证据表）保持 incomplete（未完成），CompletionGate（完成门禁）继续阻断
 - [x] tiny package assembly — 由 V2-080E `test_tiny_package_assembly.py` 证明：package root + run manifest + source inventory + evidence
 - [x] tiny closeout / replay / process audit — 由 V2-080F `test_tiny_closeout.py` 证明：closeout passed + 10 项 30-audit 产物齐全 + replay 可重建；GitVersionAudit（Git 版本审计）消费真实 GitAuditAdapter（Git 审计适配器）事实，dirty facts（脏事实）/ 缺 base commit（基准提交）/ fake ProviderAttempt（模拟模型调用尝试记录）均 fail closed
-- [x] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足
+- [ ] `proving-scenario-tiny-fullstack.md` 的 Functional / Package / Evidence / Negative checks 全部满足 — **失败复审后撤回**：V2-080 没有证明 declared run commands（声明运行命令）可启动、前后端真实串联或 SQLite 经 HTTP 持久化
 - [x] V2-080A ~ V2-080F 六个工作包全部 DONE
 - [x] `backlog.md` 进度总览 Phase 8 显示 6/6
 
@@ -435,14 +462,43 @@ V2-070 阶段所有 hash 输入若语义为集合（payload/artifact manifest en
 - Evidence bundle：`20-evidence/` 完整目录（tests / integration / git / source-inventory / closeout）
 - Audit bundle：`30-audit/` 10 项产物
 - 测试：`tests/proving/` 至少 6 个测试文件
-- 文档同步：本文件 Phase 8 checkbox 全勾选
+- 文档同步：本文件 Phase 8 历史工作包 checkbox 保留；端到端成立 checkbox 撤回并转入 Phase 9
 
-#### V2 端到端能力成立的判定
+#### V2 端到端能力成立的判定（已撤回）
 
-- [x] 所有 AC checkbox 全部勾选
+- [ ] 所有 AC checkbox 全部勾选 — Phase 8 失败复审后不满足
 - [x] V2-080A ~ V2-080F 状态全部 DONE
-- [x] tiny package 可以本地运行 declared run commands
-- [x] tiny closeout 产生 CloseoutPackage（verdict: passed）
+- [ ] tiny package 可以本地运行 declared run commands — 失败复审证明 `run-backend` 无 ASGI `app` 对象，且缺 `run-backend` / `run-frontend` evidence
+- [ ] tiny closeout 产生可信 CloseoutPackage（verdict: passed）— V2-080F 的 closeout passed 证明对象错误，结论撤回
 - [x] process audit 可被人类读懂并完成审计
 
-> 仅当上述全部满足时，V2 第一阶段（foundation + minimal end-to-end）才算成立。**workflow completed ≠ V2 完成**。
+> Phase 8 只能说明 V2-080A~F 工作包曾按当时计划执行；不能说明 V2 第一阶段（foundation + minimal end-to-end）成立。**workflow completed ≠ V2 完成**。恢复端到端成立结论必须等待 Phase 9 / V2-090 全部闭合。
+
+### Phase 9 验收 — V2-090 Tiny Fullstack Blackbox Recovery
+
+#### AC 检查清单
+
+- [ ] AC-V2-AGENT-001 / AC-V2-AGENT-002（RolePromptHook 版本化且不替代门禁）— 由 V2-090A 证明：CEO / Architect / Worker / Tester / Checker / Closeout 基础提示词职责边界进入 RoleProfile（角色模板）、ExecutionPackage（执行包）和 ProviderAttempt（模型调用尝试记录）审计链
+- [ ] AC-V2-PACKAGE-003 / AC-V2-CLOSEOUT-011（所有 declared commands 有最终证据，closeout 验证行为命题）— 由 V2-090B 证明：RunManifest（运行清单）中每个 run/test command（运行/测试命令）缺 evidence 均阻断 CloseoutGate（收尾门禁）
+- [ ] AC-V2-EVIDENCE-001 / AC-V2-EVIDENCE-004（真实 runner 与 live integration 证据）— 由 V2-090C 证明：ServiceRunEvidence（服务运行证据）区分长运行 service startup/readiness（服务启动/就绪）与一次性 test command（测试命令）
+- [ ] AC-V2-CONTRACT-001 / AC-V2-CONTRACT-002（动态验收与包合同一致）— 由 V2-090D 证明：tiny-fullstack contract（微型全栈合同）不再同时声明 uvicorn ASGI（ASGI 服务器）和 standard-library-only（仅标准库）函数式后端
+- [ ] AC-V2-EVIDENCE-004（live blackbox integration）— 由 V2-090E 证明：真实启动 backend/frontend（后端/前端），通过 HTTP 验证 CRUD、SQLite persistence（SQLite 持久化）和前端调用后端
+- [ ] AC-V2-PACKAGE-001 / AC-V2-CLOSEOUT-001~003 / AC-V2-CLOSEOUT-011（package + closeout + audit）— 由 V2-090F 证明：重建 golden sample（黄金样例），只有黑盒证据齐全时 CloseoutPackage（收尾包）passed
+
+#### 本批产出
+
+- RolePromptHook（角色提示词钩子）基础设施与角色职责基线
+- Closeout all-command coverage（收尾全命令覆盖）门禁
+- ServiceRunEvidence（服务运行证据）或等价服务探针模型
+- 修正后的 tiny-fullstack AcceptanceContract（验收合同）与 PackageContract（包合同）
+- live blackbox integration（真实黑盒集成）证明套件
+- 重新生成的 `examples/generated-workspaces/tiny-fullstack/` golden sample（黄金样例）
+
+#### 进入下一阶段前置
+
+- [ ] V2-090A ~ V2-090F 全部 DONE
+- [ ] 当前 V2-080 failure package（失败包）作为 regression negative（回归负例）被 CloseoutGate 阻断
+- [ ] 每个 declared run/test command 均有 final evidence
+- [ ] backend/frontend 均有 startup/readiness evidence
+- [ ] HTTP CRUD、delete book（删除图书）、SQLite persistence 和 frontend-to-backend live probe 均通过
+- [ ] golden sample 可 clean rebuild（干净重建）且 `--check` 稳定通过
