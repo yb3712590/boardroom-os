@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from boardroom_os.reducers.closeout_reducer import (
 _VERIFY_ERRORS = (ValueError, ValidationError)
 _BASE_COMMIT_SHA = "abcdef0123456789abcdef0123456789abcdef01"
 _FINAL_COMMIT_SHA = "fedcba9876543210fedcba9876543210fedcba98"
+_EXISTING_TINY_SAMPLE_ROOT = Path("examples/generated-workspaces/tiny-fullstack")
 
 
 class _FakeGitTransport:
@@ -99,10 +101,50 @@ def _build_negative_package_fixture(tmp_path: Path):
     )
 
 
-def test_tiny_closeout_rejects_missing_replay_bundle(tmp_path: Path) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+def _closeout_package_payload(fixture, **overrides):
+    payload = {
+        "closeout_gate_result": fixture.closeout_gate_result,
+        "source_inventory": fixture.source_inventory,
+        "final_evidence_table": fixture.package_fixture.final_evidence_table,
+        "replay_bundle": fixture.replay_bundle,
+        "replay_readiness": fixture.replay_readiness,
+        "process_audit_bundle": fixture.process_audit_bundle,
+        "process_audit_readiness": fixture.process_audit_readiness,
+        "git_version_audit_bundle": fixture.git_version_audit_bundle,
+        "git_audit_readiness": fixture.git_audit_readiness,
+        "graph_version": fixture.replay_bundle.attestations[0].event_window.last_graph_version,
+        "generated_at": fixture.replay_bundle.generated_at,
+        "run_id": "run-v2-080f",
+    }
+    payload.update(overrides)
+    return payload
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+
+class _NoCloseoutPayloadResolver:
+    def resolve_closeout_commit(self, payload_ref):
+        raise KeyError(payload_ref.value)
+
+    def resolve_closeout_package(self, closeout_package_ref):
+        raise KeyError(closeout_package_ref.value)
+
+
+def _copy_existing_tiny_sample(output_root: Path) -> None:
+    if not _EXISTING_TINY_SAMPLE_ROOT.exists():
+        raise AssertionError("existing V2-080 tiny sample is required as regression negative material")
+    shutil.copytree(_EXISTING_TINY_SAMPLE_ROOT, output_root)
+
+
+def test_tiny_closeout_rejects_missing_replay_bundle(tmp_path: Path) -> None:
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
+
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
     gate_result = CloseoutGate().evaluate(
         fixture.closeout_gate_input.model_copy(update={"replay_readiness": None})
@@ -114,17 +156,23 @@ def test_tiny_closeout_rejects_missing_replay_bundle(tmp_path: Path) -> None:
         for blocker in gate_result.blockers
     )
     with pytest.raises(_VERIFY_ERRORS, match="replay_bundle must be ReplayBundle"):
-        payload = fixture.closeout_package_input.model_dump(mode="python")
-        payload["replay_bundle"] = None
+        payload = _closeout_package_payload(fixture, replay_bundle=None)
         CloseoutPackageBuilderInput.model_validate(
             payload
         )
 
 
 def test_tiny_closeout_rejects_missing_process_audit(tmp_path: Path) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
     gate_result = CloseoutGate().evaluate(
         fixture.closeout_gate_input.model_copy(update={"process_audit_readiness": None})
@@ -136,17 +184,23 @@ def test_tiny_closeout_rejects_missing_process_audit(tmp_path: Path) -> None:
         for blocker in gate_result.blockers
     )
     with pytest.raises(_VERIFY_ERRORS, match="process_audit_bundle must be ProcessAuditBundle"):
-        payload = fixture.closeout_package_input.model_dump(mode="python")
-        payload["process_audit_bundle"] = None
+        payload = _closeout_package_payload(fixture, process_audit_bundle=None)
         CloseoutPackageBuilderInput.model_validate(
             payload
         )
 
 
 def test_tiny_closeout_rejects_missing_git_audit(tmp_path: Path) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
     gate_result = CloseoutGate().evaluate(
         fixture.closeout_gate_input.model_copy(update={"git_audit_readiness": None})
@@ -161,8 +215,7 @@ def test_tiny_closeout_rejects_missing_git_audit(tmp_path: Path) -> None:
         _VERIFY_ERRORS,
         match="git_version_audit_bundle must be GitVersionAuditBundle",
     ):
-        payload = fixture.closeout_package_input.model_dump(mode="python")
-        payload["git_version_audit_bundle"] = None
+        payload = _closeout_package_payload(fixture, git_version_audit_bundle=None)
         CloseoutPackageBuilderInput.model_validate(
             payload
         )
@@ -216,7 +269,10 @@ def test_tiny_closeout_rejects_fake_provider_even_with_clean_injected_git_facts(
 
     package_fixture = _build_negative_package_fixture(tmp_path)
 
-    with pytest.raises(_VERIFY_ERRORS, match="fake provider|passed closeout|real provider"):
+    with pytest.raises(
+        _VERIFY_ERRORS,
+        match="fake provider|passed closeout|real provider|closeout gate result",
+    ):
         build_tiny_closeout_fixture(
             package_root=package_fixture.package_root_path,
             package_fixture=package_fixture,
@@ -276,15 +332,22 @@ def test_tiny_closeout_rejects_fake_provider_attempt_refs(
 
 
 def test_tiny_work_product_submitted_does_not_replace_closeout(tmp_path: Path) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
     assert all(
         event.event_type is not EventType.CLOSEOUT_COMMITTED
         for event in fixture.events_before_closeout
     )
 
-    projection = CloseoutReducer(fixture.closeout_payload_resolver).reduce(
+    projection = CloseoutReducer(_NoCloseoutPayloadResolver()).reduce(
         fixture.events_before_closeout,
     )
 
@@ -298,9 +361,16 @@ def test_tiny_closeout_rejects_missing_required_30_audit_artifact(
     tmp_path: Path,
     missing_path: str,
 ) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
     broken_bundle = fixture.process_audit_bundle.model_copy(
         update={
             "artifacts": tuple(
@@ -315,24 +385,55 @@ def test_tiny_closeout_rejects_missing_required_30_audit_artifact(
         process_audit_readiness(broken_bundle)
 
 
-def test_tiny_closeout_passes_with_replay_process_git_and_reducer_projection(
+def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidence(
     tmp_path: Path,
 ) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
-    assert fixture.closeout_gate_result.verdict is CloseoutGateVerdict.PASSED
-    assert fixture.closeout_gate_result.blockers == ()
-    assert fixture.closeout_package.verdict.value == "passed"
+    assert fixture.closeout_gate_result.verdict is CloseoutGateVerdict.BLOCKED
+    command_blockers = tuple(
+        blocker
+        for blocker in fixture.closeout_gate_result.blockers
+        if blocker.code is CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL
+    )
+    assert {blocker.related_ref for blocker in command_blockers} >= {
+        "run-backend",
+        "run-frontend",
+    }
+    assert all("RUN_MANIFEST_COMMAND_UNVERIFIED" in blocker.message for blocker in command_blockers)
+    assert {command.command_id.value for command in fixture.package_fixture.run_manifest.commands} == {
+        "run-backend",
+        "run-frontend",
+        "test-backend",
+        "test-integration",
+    }
+    assert {run.command_id.value for run in fixture.verification_runs} == {
+        "test-backend",
+        "test-integration",
+    }
+    assert all(
+        event.event_type is not EventType.CLOSEOUT_COMMITTED
+        for event in fixture.events_before_closeout
+    )
+    with pytest.raises(_VERIFY_ERRORS, match="closeout gate result must be passed"):
+        CloseoutPackageBuilderInput.model_validate(_closeout_package_payload(fixture))
     assert fixture.git_version_audit_bundle.fact_set.base_commit_sha != (
         fixture.git_version_audit_bundle.fact_set.final_commit_sha
     )
-    assert fixture.closeout_projection.terminal_status is CloseoutTerminalStatus.SUCCEEDED
-    assert (
-        fixture.closeout_projection.closeout_package_ref
-        == fixture.closeout_package.closeout_package_id
+    open_projection = CloseoutReducer(_NoCloseoutPayloadResolver()).reduce(
+        fixture.events_before_closeout,
     )
+    assert open_projection.terminal_status is CloseoutTerminalStatus.OPEN
+    assert open_projection.closeout_package_ref is None
 
     assert {artifact.path.value for artifact in fixture.process_audit_bundle.artifacts} == set(
         REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS
@@ -358,9 +459,16 @@ def test_tiny_closeout_passes_with_replay_process_git_and_reducer_projection(
 
 
 def test_tiny_closeout_does_not_write_repo_root_audit_dirs(tmp_path: Path) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
     assert fixture.package_fixture.package_root_path == tmp_path / "physical-package-root"
     assert not (tmp_path / "10-project").exists()
@@ -371,13 +479,19 @@ def test_tiny_closeout_does_not_write_repo_root_audit_dirs(tmp_path: Path) -> No
 def test_tiny_closeout_git_commit_excludes_runtime_cache_artifacts(
     tmp_path: Path,
 ) -> None:
-    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
-    fixture = build_tiny_closeout_fixture(package_root=tmp_path / "physical-package-root")
+    package_fixture = _build_negative_package_fixture(tmp_path)
+    build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
 
     tracked = subprocess.run(
         ("git", "ls-tree", "-r", "--name-only", "HEAD"),
-        cwd=fixture.package_fixture.package_root_path,
+        cwd=package_fixture.package_root_path,
         capture_output=True,
         text=True,
         check=False,
@@ -391,53 +505,21 @@ def test_tiny_closeout_git_commit_excludes_runtime_cache_artifacts(
     assert "tests/integration/test_frontend_backend.py" in tracked_paths
 
 
-def test_tiny_closeout_sample_materialization_is_stable_and_bounded(
+def test_tiny_closeout_sample_materialization_rejects_v2_080_failure_package(
     tmp_path: Path,
 ) -> None:
     from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
 
     output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
-    first = materialize_tiny_closeout_sample(
-        output_root,
-        allow_absolute_output_root=True,
-    )
-    first_files = {
-        path.relative_to(output_root).as_posix(): path.read_bytes()
-        for path in output_root.rglob("*")
-        if path.is_file()
-    }
-    second = materialize_tiny_closeout_sample(
-        output_root,
-        allow_absolute_output_root=True,
-    )
-    second_files = {
-        path.relative_to(output_root).as_posix(): path.read_bytes()
-        for path in output_root.rglob("*")
-        if path.is_file()
-    }
 
-    assert first == second
-    assert first.file_count == 39
-    assert first.total_bytes < 400_000
-    assert first_files == second_files
-    assert len(second_files) == 40
-    assert len(
-        [
-            path
-            for path in second_files
-            if path.startswith("20-evidence/provider-artifacts/")
-        ]
-    ) == 8
-    assert not (output_root / "00-boardroom").exists()
-    assert {path.as_posix() for path in (output_root / "30-audit").iterdir()} == {
-        (output_root / required_path).as_posix()
-        for required_path in REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS
-    }
+    with pytest.raises(ValueError, match="RUN_MANIFEST_COMMAND_UNVERIFIED"):
+        _copy_existing_tiny_sample(output_root)
+        materialize_tiny_closeout_sample(
+            output_root,
+            allow_absolute_output_root=True,
+        )
 
-    manifest = json.loads((output_root / "sample-manifest.json").read_text(encoding="utf-8"))
-    assert first.sha256 == manifest["sha256"]
-    assert manifest["files"] == list(first.files)
-    assert manifest["sample_root"] == "examples/generated-workspaces/tiny-fullstack"
+    assert (output_root / "closeout-package.json").exists()
 
 
 def test_tiny_closeout_sample_materializer_rejects_tampered_provider_artifact_lock(
@@ -446,10 +528,7 @@ def test_tiny_closeout_sample_materializer_rejects_tampered_provider_artifact_lo
     from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
 
     output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
-    materialize_tiny_closeout_sample(
-        output_root,
-        allow_absolute_output_root=True,
-    )
+    _copy_existing_tiny_sample(output_root)
     artifact_path = next((output_root / "20-evidence/provider-artifacts").glob("*.txt"))
     artifact_path.write_text(
         artifact_path.read_text(encoding="utf-8") + "\n# tampered\n",
@@ -522,7 +601,8 @@ def test_tiny_closeout_sample_materializer_rejects_file_output_root(
 ) -> None:
     from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
 
-    output_root = tmp_path / "tiny-fullstack"
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.parent.mkdir(parents=True)
     output_root.write_text("not a directory", encoding="utf-8")
 
     with pytest.raises(ValueError, match="sample output_root must be a directory"):

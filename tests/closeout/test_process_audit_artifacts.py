@@ -855,7 +855,9 @@ def test_process_audit_rejects_missing_fallback_lineage() -> None:
             ),
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=(fallback_evidence, *gate_input.verified_evidence[1:])
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     content["fallback_lineages"] = ()

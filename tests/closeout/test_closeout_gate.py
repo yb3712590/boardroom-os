@@ -131,18 +131,23 @@ def _package_contract():
     )
 
 
-def _verification_run() -> VerificationRun:
+def _verification_run(
+    *,
+    verification_run_id: str = "verification-run.app",
+    command_id: str = "test-app",
+    command: tuple[str, ...] = ("python", "-m", "pytest"),
+) -> VerificationRun:
     return VerificationRun(
-        verification_run_id=VerificationRunRef(value="verification-run.app"),
+        verification_run_id=VerificationRunRef(value=verification_run_id),
         execution_package_ref=ExecutionPackageRef(value="execution-package.app"),
         ticket_ref=TicketId(value="ticket.app"),
-        command_id=ContractId(value="test-app"),
-        command=("python", "-m", "pytest"),
+        command_id=ContractId(value=command_id),
+        command=command,
         cwd=".",
         exit_code=0,
         status=VerificationRunStatus.PASSED,
-        stdout_ref=CommandOutputRef(value="command-output.verification-run.app.stdout"),
-        stderr_ref=CommandOutputRef(value="command-output.verification-run.app.stderr"),
+        stdout_ref=CommandOutputRef(value=f"command-output.{verification_run_id}.stdout"),
+        stderr_ref=CommandOutputRef(value=f"command-output.{verification_run_id}.stderr"),
         duration_ms=0,
         started_at=_NOW,
         finished_at=_NOW,
@@ -152,10 +157,15 @@ def _verification_run() -> VerificationRun:
     )
 
 
-def _verified_evidence(run_ref: VerificationRunRef) -> VerifiedEvidence:
+def _verified_evidence(
+    run_ref: VerificationRunRef,
+    *,
+    verified_evidence_id: str = "verified-evidence.app",
+    fallback_decision_ref: str = _FALLBACK_DECISION_REF,
+) -> VerifiedEvidence:
     return VerifiedEvidence(
-        verified_evidence_id=VerifiedEvidenceRef(value="verified-evidence.app"),
-        evidence_claim_ref=EvidenceClaimRef(value="evidence-claim.verified-evidence.app"),
+        verified_evidence_id=VerifiedEvidenceRef(value=verified_evidence_id),
+        evidence_claim_ref=EvidenceClaimRef(value=f"evidence-claim.{verified_evidence_id}"),
         evidence_obligation_ref=EvidenceObligationRef(value="evidence-obligation.app"),
         producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
         source_kind=EvidenceClaimSourceKind.VERIFICATION_RUN,
@@ -166,7 +176,7 @@ def _verified_evidence(run_ref: VerificationRunRef) -> VerifiedEvidence:
         source_surface_refs=(SourceSurfaceRef(value="app-source"),),
         verified_artifacts=(
             VerifiedArtifact(
-                artifact_ref=EvidenceArtifactRef(value="artifact.app"),
+                artifact_ref=EvidenceArtifactRef(value=f"artifact.{verified_evidence_id}"),
                 sha256=ArtifactSha256(value="d" * 64),
                 producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
                 source_ref=run_ref.value,
@@ -174,7 +184,7 @@ def _verified_evidence(run_ref: VerificationRunRef) -> VerifiedEvidence:
             ),
         ),
         verification_run_refs=(run_ref,),
-        fallback_decision_record_ref=FallbackDecisionRecordRef(value=_FALLBACK_DECISION_REF),
+        fallback_decision_record_ref=FallbackDecisionRecordRef(value=fallback_decision_ref),
         verified_at=_NOW,
     )
 
@@ -225,8 +235,25 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         ),
     )
     run_manifest = build_run_manifest(workspace_manifest=workspace_manifest, package_contract=contract)
-    verification_run = _verification_run()
-    verified_evidence = _verified_evidence(verification_run.verification_run_id)
+    run_verification = _verification_run(
+        verification_run_id="verification-run.run-app",
+        command_id="run-app",
+        command=("python", "app.py"),
+    )
+    test_verification = _verification_run(
+        verification_run_id="verification-run.test-app",
+    )
+    verification_runs = (run_verification, test_verification)
+    run_evidence = _verified_evidence(
+        run_verification.verification_run_id,
+        verified_evidence_id="verified-evidence.run-app",
+    )
+    test_evidence = _verified_evidence(
+        test_verification.verification_run_id,
+        verified_evidence_id="verified-evidence.test-app",
+        fallback_decision_ref="fallback-decision-record.closeout-gate.test-app",
+    )
+    verified_evidence = (run_evidence, test_evidence)
     final_evidence_table = FinalEvidenceTable(
         acceptance_contract_ref=ContractId(value="acceptance-contract.closeout-gate-happy"),
         generated_at=_NOW,
@@ -235,7 +262,9 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
                 acceptance_ref=AcceptanceRef(value="AC-APP"),
                 statement="App acceptance is satisfied by verified command evidence.",
                 status=FinalEvidenceStatus.SATISFIED,
-                verified_evidence_refs=(verified_evidence.verified_evidence_id,),
+                verified_evidence_refs=tuple(
+                    evidence.verified_evidence_id for evidence in verified_evidence
+                ),
             ),
         ),
     )
@@ -256,7 +285,7 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
                 producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
                 consumer_ticket_refs=(TicketId(value="ticket.app"),),
                 acceptance_refs=(AcceptanceRef(value="AC-APP"),),
-                evidence_refs=(verified_evidence.verified_evidence_id,),
+                evidence_refs=tuple(evidence.verified_evidence_id for evidence in verified_evidence),
             ),
             SourceLineageRecord(
                 path=SourceFilePath(value="test_app.py"),
@@ -265,7 +294,7 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
                 producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
                 consumer_ticket_refs=(TicketId(value="ticket.app"),),
                 acceptance_refs=(AcceptanceRef(value="AC-TEST"),),
-                evidence_refs=(verified_evidence.verified_evidence_id,),
+                evidence_refs=tuple(evidence.verified_evidence_id for evidence in verified_evidence),
             ),
             SourceLineageRecord(
                 path=SourceFilePath(value="docs/architecture.md"),
@@ -274,7 +303,7 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
                 producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
                 consumer_ticket_refs=(TicketId(value="ticket.app"),),
                 acceptance_refs=(AcceptanceRef(value="AC-APP"),),
-                evidence_refs=(verified_evidence.verified_evidence_id,),
+                evidence_refs=tuple(evidence.verified_evidence_id for evidence in verified_evidence),
             ),
         ),
     )
@@ -283,8 +312,8 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         package_assembly=package_assembly,
         source_inventory=source_inventory,
         run_manifest=run_manifest,
-        verification_runs=(verification_run,),
-        verified_evidence=(verified_evidence,),
+        verification_runs=verification_runs,
+        verified_evidence=verified_evidence,
         final_evidence_table=final_evidence_table,
     )
     checker_verdict = CheckerVerdict(
@@ -303,10 +332,13 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         else (),
         checked_at=_NOW,
     )
-    run_manifest_binding = validate_run_manifest_binding(
-        run_manifest=run_manifest,
-        package_contract=contract,
-        command_id=ContractId(value="test-app"),
+    run_manifest_bindings = tuple(
+        validate_run_manifest_binding(
+            run_manifest=run_manifest,
+            package_contract=contract,
+            command_id=run.command_id,
+        )
+        for run in verification_runs
     )
     return CloseoutGateInput(
         package_contract=contract,
@@ -315,16 +347,19 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         workspace_evidence_bundle=workspace_evidence_bundle,
         final_evidence_table=final_evidence_table,
         checker_verdict=checker_verdict,
-        verification_runs=(verification_run,),
-        verified_evidence=(verified_evidence,),
+        verification_runs=verification_runs,
+        verified_evidence=verified_evidence,
         provider_attempt_refs=(ProviderAttemptRef(value="provider-attempt.app"),),
         final_command_bindings=(
-            CloseoutCommandEvidenceBinding(
-                verification_run_ref=verification_run.verification_run_id,
-                run_manifest_ref=run_manifest_binding.run_manifest_ref,
-                package_contract_ref=run_manifest_binding.package_contract_ref,
-                command_id=run_manifest_binding.command_id,
-                binding_kind=run_manifest_binding.kind,
+            *(
+                CloseoutCommandEvidenceBinding(
+                    verification_run_ref=run.verification_run_id,
+                    run_manifest_ref=binding.run_manifest_ref,
+                    package_contract_ref=binding.package_contract_ref,
+                    command_id=binding.command_id,
+                    binding_kind=binding.kind,
+                )
+                for run, binding in zip(verification_runs, run_manifest_bindings, strict=True)
             ),
         ),
         replay_readiness=ReplayBundleReadiness(

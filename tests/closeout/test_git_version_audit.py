@@ -74,12 +74,12 @@ def _git_facts(**overrides: Any) -> GitVersionAuditFactSet:
     return GitVersionAuditFactSet(**values)
 
 
-def _command_binding(**overrides: Any) -> GitCommandEvidenceBinding:
+def _command_binding(run_index: int = 0, **overrides: Any) -> GitCommandEvidenceBinding:
     ready = _ready_input()
-    run = ready.verification_runs[0]
+    run = ready.verification_runs[run_index]
     run_manifest_command = next(command for command in ready.run_manifest.commands if command.command_id == run.command_id)
     values = {
-        "binding_id": "git-command-evidence-binding.verification-run.app",
+        "binding_id": f"git-command-evidence-binding.{run.verification_run_id.value}",
         "verification_run_ref": run.verification_run_id,
         "run_manifest_ref": ready.run_manifest.run_manifest_id,
         "package_contract_ref": ready.package_contract.package_contract_id,
@@ -94,6 +94,19 @@ def _command_binding(**overrides: Any) -> GitCommandEvidenceBinding:
     return GitCommandEvidenceBinding(**values)
 
 
+def _command_bindings() -> tuple[GitCommandEvidenceBinding, ...]:
+    return tuple(
+        _command_binding(run_index=index)
+        for index, _run in enumerate(_ready_input().verification_runs)
+    )
+
+
+def _replace_first_command_binding(**overrides: Any) -> tuple[GitCommandEvidenceBinding, ...]:
+    bindings = list(_command_bindings())
+    bindings[0] = _command_binding(**overrides)
+    return tuple(bindings)
+
+
 def _builder_input(**overrides: Any) -> GitVersionAuditBuilderInput:
     ready = _ready_input()
     values = {
@@ -103,7 +116,7 @@ def _builder_input(**overrides: Any) -> GitVersionAuditBuilderInput:
         "source_inventory": ready.source_inventory,
         "run_manifest": ready.run_manifest,
         "verification_runs": ready.verification_runs,
-        "command_evidence_bindings": (_command_binding(),),
+        "command_evidence_bindings": _command_bindings(),
         "git_facts": _git_facts(),
         "run_id": "run-v2-071e",
     }
@@ -143,10 +156,10 @@ def test_git_version_audit_rejects_source_inventory_hash_mismatch() -> None:
 
 
 def test_git_version_audit_rejects_final_command_not_at_final_commit() -> None:
-    binding = _command_binding(commit_sha=_OTHER_COMMIT_SHA)
+    bindings = _replace_first_command_binding(commit_sha=_OTHER_COMMIT_SHA)
 
     with pytest.raises(GitVersionAuditError, match="final commit"):
-        build_git_version_audit_bundle(_builder_input(command_evidence_bindings=(binding,)))
+        build_git_version_audit_bundle(_builder_input(command_evidence_bindings=bindings))
 
 
 def test_git_version_audit_rejects_source_inventory_package_commit_mismatch() -> None:
@@ -155,14 +168,14 @@ def test_git_version_audit_rejects_source_inventory_package_commit_mismatch() ->
         update={"package_commit_ref": PackageCommitRef(value=f"package-commit.{_OTHER_COMMIT_SHA}")}
     )
     facts = _git_facts(source_inventory_hash=source_inventory_hash(mismatched_inventory))
-    binding = _command_binding(source_inventory_hash=source_inventory_hash(mismatched_inventory))
+    bindings = _replace_first_command_binding(source_inventory_hash=source_inventory_hash(mismatched_inventory))
 
     with pytest.raises(GitVersionAuditError, match="package_commit_ref"):
         build_git_version_audit_bundle(
             _builder_input(
                 source_inventory=mismatched_inventory,
                 git_facts=facts,
-                command_evidence_bindings=(binding,),
+                command_evidence_bindings=bindings,
             )
         )
 
@@ -180,10 +193,10 @@ def test_git_version_audit_rejects_orphan_command_evidence_binding() -> None:
 
 
 def test_git_version_audit_rejects_command_binding_not_declared_in_run_manifest() -> None:
-    binding = _command_binding(command_id=ContractId(value="undeclared-command"))
+    bindings = _replace_first_command_binding(command_id=ContractId(value="undeclared-command"))
 
     with pytest.raises(GitVersionAuditError, match="declared command"):
-        build_git_version_audit_bundle(_builder_input(command_evidence_bindings=(binding,)))
+        build_git_version_audit_bundle(_builder_input(command_evidence_bindings=bindings))
 
 
 def test_git_version_audit_rejects_failed_verification_run() -> None:
@@ -315,7 +328,9 @@ def test_git_version_audit_bundle_records_clean_final_version() -> None:
     assert bundle.fact_set.final_commit_sha.value == _FINAL_COMMIT_SHA
     assert bundle.report.package_commit_ref.value == f"package-commit.{_FINAL_COMMIT_SHA}"
     assert bundle.report.source_inventory_hash == source_inventory_hash(_ready_input().source_inventory)
-    assert bundle.report.command_evidence_refs == ("verification-run.app",)
+    assert bundle.report.command_evidence_refs == tuple(
+        run.verification_run_id.value for run in _ready_input().verification_runs
+    )
 
 
 def test_git_version_audit_readiness_matches_closeout_gate_contract() -> None:
@@ -345,7 +360,10 @@ def test_git_version_audit_hash_manifest_closes_bundle_payload() -> None:
 
     assert bundle.hash_manifest.fact_set_hash.value
     assert bundle.hash_manifest.report_hash.value
-    assert set(bundle.hash_manifest.command_binding_hashes) == {"git-command-evidence-binding.verification-run.app"}
+    assert set(bundle.hash_manifest.command_binding_hashes) == {
+        f"git-command-evidence-binding.{run.verification_run_id.value}"
+        for run in _ready_input().verification_runs
+    }
     assert bundle.bundle_hash == bundle.hash_manifest.bundle_payload_hash.value
 
 

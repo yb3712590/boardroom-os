@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090B`
+**当前未完成工作包**：`V2-090C`
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前进入 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改），第一批工作包为 `V2-090A RolePromptHook`（角色提示词钩子）。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）与 `V2-090B Closeout all-command coverage`（收尾全命令覆盖）已完成，下一批为 `V2-090C ServiceRunEvidence`（服务运行证据）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 1 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **60 / 65** | **V2-090A 完成，V2-090B 待启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 2 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **61 / 65** | **V2-090A ~ V2-090B 完成，V2-090C 待启动** |
 
 ## 当前约束摘要
 
@@ -1059,14 +1059,15 @@ RoleProfile（角色模板）
 
 ### V2-090B: Closeout all-command coverage
 
-- 状态：TODO
+- 状态：DONE
 - 目标：CloseoutGate（收尾门禁）要求 RunManifest（运行清单）中的每个 run/test command（运行/测试命令）都有最终证据。
 - 输入文档：`doc/04-implementation/v2-090-tiny-fullstack-blackbox-recovery-plan.md`、`contract-and-evidence-model.md`、`process-audit-and-replay.md`。
 - 依赖：V2-090A、V2-060D、V2-070A。
-- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/closeout/gate.py`、`tests/negative/test_run_manifest_command_coverage.py`。
+- 输出文件：`src/boardroom_os/closeout/gate.py`、`tests/negative/test_run_manifest_command_coverage.py`；同步更新 `tests/closeout/test_closeout_gate.py`、`tests/closeout/test_git_audit_hardening.py`、`tests/closeout/test_git_version_audit.py`、`tests/closeout/test_process_audit.py`、`tests/closeout/test_process_audit_artifacts.py`、`tests/closeout/test_process_audit_fact_chain.py`、`tests/negative/test_process_audit_construction_loop_rejected.py`、`tests/negative/test_v2_070_audit_report_p2_regressions.py`、`tests/proving/fixtures/tiny_closeout.py`、`tests/proving/test_tiny_closeout.py`。
 - 必须先写的 negative tests：当前 V2-080 failure package 缺 `run-backend` / `run-frontend` evidence 时必须被 CloseoutGate 阻断。
 - 必须证明的 happy path：所有 manifest commands 均有最终 evidence 后 closeout gate 才可 passed。
-- 验收口径：已有 verification runs 不能替代未执行的 manifest commands。
+- 验收口径：已有 verification runs 不能替代未执行的 manifest commands；本工作包只证明 CloseoutGate（收尾门禁）强制 declared command evidence requirement（声明命令证据要求），不补齐 V2-080 failure package（失败包）的 `run-backend` / `run-frontend` final evidence（最终证据），也不重建 golden sample（黄金样例）。
+- 完成证据：2026-06-01 `CloseoutGate`（收尾门禁）新增按 `command_id` 反向覆盖 `RunManifest.commands`（运行清单命令集合）的 fail-closed（失败关闭）检查；缺任一 declared command（声明命令）最终绑定时返回 `COMMAND_EVIDENCE_NOT_FINAL`，message 含 `RUN_MANIFEST_COMMAND_UNVERIFIED`，`related_ref` 指向缺失 command id。`tests/negative/test_run_manifest_command_coverage.py` 证明只提供 `test-app` evidence 时 `run-app` 被阻断，且当前 V2-080 failure package 缺 `run-backend` / `run-frontend` evidence 时被阻断；`tests/closeout/test_closeout_gate.py` happy fixture 改为 run/test 两条命令均有 VerificationRun（验证运行）与 CloseoutCommandEvidenceBinding（收尾命令证据绑定）才通过；tiny closeout fixture 不再为缺 run command evidence 的 V2-080 样例构造 passed CloseoutPackage（通过收尾包）。边界说明：V2-090B 是 gate enforcement（门禁强制规则）工作包，当前 V2-080 failure package 继续作为 regression negative material（回归负例素材），真正补齐 service startup/readiness（服务启动/就绪）与 run command final evidence（运行命令最终证据）留给 V2-090C~F。验证证据：`$env:PYTHONPATH='src;.'; python -m pytest tests/negative/test_run_manifest_command_coverage.py tests/closeout/test_closeout_gate.py -q --tb=short --basetemp .pytest-tmp-v2090b-closeout-final2` 通过（6 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/proving/test_tiny_closeout.py -q --tb=short --basetemp .pytest-tmp-v2090b-tiny-closeout-final2` 通过（32 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/proving/test_run_manifest.py tests/proving/test_workspace_evidence_export.py tests/execution/test_command_runner.py tests/evidence/test_final_evidence_table.py -q --tb=short --basetemp .pytest-tmp-v2090b-regression-final2` 通过（95 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/closeout -q --tb=short --basetemp .pytest-tmp-v2090b-closeout-all-final2` 通过（226 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/negative -q --tb=short --basetemp .pytest-tmp-v2090b-negative-all-final2` 通过（435 passed）。Full suite（完整套件）在断网环境下尝试两次，均因 `tests/proving/test_tiny_package_assembly.py` 默认 provider/package assembly 路径长时间运行而超时，未作为通过证据；`git diff --check` 通过。
 
 ### V2-090C: ServiceRunEvidence
 

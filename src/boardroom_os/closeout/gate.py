@@ -738,6 +738,22 @@ def _command_evidence_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
 
     run_by_ref = {run.verification_run_id.value: run for run in runs}
     commands_by_id = {command.command_id.value: command for command in gate_input.run_manifest.commands}
+    bound_command_ids = {binding.command_id.value for binding in bindings}
+    missing_command_ids = tuple(
+        command.command_id.value
+        for command in gate_input.run_manifest.commands
+        if command.command_id.value not in bound_command_ids
+    )
+    if missing_command_ids:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                "RUN_MANIFEST_COMMAND_UNVERIFIED: declared run manifest command lacks final evidence",
+                command_id,
+            )
+            for command_id in missing_command_ids
+        ]
+
     for binding in bindings:
         if (
             binding.run_manifest_ref != gate_input.run_manifest.run_manifest_id

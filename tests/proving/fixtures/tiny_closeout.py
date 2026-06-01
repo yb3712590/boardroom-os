@@ -167,6 +167,27 @@ class TinyCloseoutFixture:
 
 
 @dataclass(frozen=True)
+class TinyCloseoutGateFixture:
+    package_fixture: TinyPackageAssemblyFixture
+    source_inventory: SourceInventory
+    verification_runs: tuple[VerificationRun, ...]
+    provider_attempt_refs: tuple[ProviderAttemptRef, ...]
+    agent_context_index: AgentContextIndex
+    ticket_graph_summary: BaseModel
+    replay_payload_resolver: ReplayPayloadResolver
+    events_before_closeout: tuple[EventRecord, ...]
+    replay_bundle: ReplayBundle
+    replay_readiness: Any
+    git_version_audit_bundle: Any
+    git_audit_readiness: Any
+    process_audit_bundle: ProcessAuditBundle
+    process_audit_readiness: Any
+    closeout_gate_input: CloseoutGateInput
+    closeout_gate_result: CloseoutGateResult
+    audit_answers: TinyCloseoutAuditAnswers
+
+
+@dataclass(frozen=True)
 class TinyCloseoutSampleManifest:
     sample_root: str
     generated_at: str
@@ -272,13 +293,110 @@ def build_tiny_closeout_fixture(
     git_transport: GitCommandTransport | None = None,
     base_commit_sha: str | None = None,
     allow_fake_provider_for_negative_tests: bool = False,
+    provider_lock_root: Path | None = None,
 ) -> TinyCloseoutFixture:
+    gate_fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_root,
+        package_fixture=package_fixture,
+        git_transport=git_transport,
+        base_commit_sha=base_commit_sha,
+        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+        provider_lock_root=provider_lock_root,
+    )
+    gate_result = gate_fixture.closeout_gate_result
+    if gate_result.verdict.value != "passed":
+        raise ValueError("tiny closeout gate result must be passed before CloseoutPackage")
+    _reject_fake_provider_passed_closeout(gate_fixture.package_fixture)
+    package_input = CloseoutPackageBuilderInput(
+        closeout_gate_result=gate_result,
+        source_inventory=gate_fixture.source_inventory,
+        final_evidence_table=gate_fixture.package_fixture.final_evidence_table,
+        replay_bundle=gate_fixture.replay_bundle,
+        replay_readiness=gate_fixture.replay_readiness,
+        process_audit_bundle=gate_fixture.process_audit_bundle,
+        process_audit_readiness=gate_fixture.process_audit_readiness,
+        git_version_audit_bundle=gate_fixture.git_version_audit_bundle,
+        git_audit_readiness=gate_fixture.git_audit_readiness,
+        graph_version=gate_fixture.replay_bundle.attestations[0].event_window.last_graph_version,
+        generated_at=GENERATED_AT,
+        run_id=RUN_ID,
+    )
+    closeout_package = build_closeout_package(package_input)
+    closeout_payload = CloseoutCommitPayload(
+        closeout_package_ref=closeout_package.closeout_package_id,
+        closeout_gate_result_ref=closeout_package.closeout_gate_result_ref,
+        source_inventory_ref=closeout_package.source_inventory_ref,
+        final_evidence_table_ref=closeout_package.final_evidence_table_ref,
+        replay_bundle_ref=closeout_package.replay_bundle_ref,
+        process_audit_bundle_ref=closeout_package.process_audit_bundle_ref,
+        git_version_audit_bundle_ref=closeout_package.git_version_audit_bundle_ref,
+        package_commit_ref=closeout_package.package_commit_ref,
+        terminal_verdict=CloseoutCommitVerdict.PASSED,
+    )
+    closeout_event = EventRecord(
+        event_id=EventId(value="evt.closeout.committed.v2-080f"),
+        event_type=EventType.CLOSEOUT_COMMITTED,
+        project_ref=PROJECT_REF,
+        actor_ref=ActorRef(value="seat-tiny-closeout"),
+        timestamp=GENERATED_AT + timedelta(seconds=1),
+        graph_version=closeout_package.graph_version + 1,
+        payload_refs=(_CLOSEOUT_PAYLOAD_REF,),
+    )
+    closeout_resolver = TinyCloseoutPayloadResolver(
+        closeout_commit_payload=closeout_payload,
+        closeout_package=closeout_package,
+    )
+    projection = CloseoutReducer(closeout_resolver).reduce(
+        (*gate_fixture.events_before_closeout, closeout_event)
+    )
+    return TinyCloseoutFixture(
+        package_fixture=gate_fixture.package_fixture,
+        source_inventory=gate_fixture.source_inventory,
+        verification_runs=gate_fixture.verification_runs,
+        provider_attempt_refs=gate_fixture.provider_attempt_refs,
+        agent_context_index=gate_fixture.agent_context_index,
+        ticket_graph_summary=gate_fixture.ticket_graph_summary,
+        replay_payload_resolver=gate_fixture.replay_payload_resolver,
+        events_before_closeout=gate_fixture.events_before_closeout,
+        replay_bundle=gate_fixture.replay_bundle,
+        replay_readiness=gate_fixture.replay_readiness,
+        git_version_audit_bundle=gate_fixture.git_version_audit_bundle,
+        git_audit_readiness=gate_fixture.git_audit_readiness,
+        process_audit_bundle=gate_fixture.process_audit_bundle,
+        process_audit_readiness=gate_fixture.process_audit_readiness,
+        closeout_gate_input=gate_fixture.closeout_gate_input,
+        closeout_gate_result=gate_result,
+        closeout_package_input=package_input,
+        closeout_package=closeout_package,
+        closeout_commit_payload=closeout_payload,
+        closeout_committed_event=closeout_event,
+        closeout_payload_resolver=closeout_resolver,
+        closeout_projection=projection,
+        audit_answers=gate_fixture.audit_answers,
+    )
+
+
+def build_tiny_closeout_gate_fixture(
+    package_root: Path | None = None,
+    *,
+    package_fixture: TinyPackageAssemblyFixture | None = None,
+    git_transport: GitCommandTransport | None = None,
+    base_commit_sha: str | None = None,
+    allow_fake_provider_for_negative_tests: bool = False,
+    provider_lock_root: Path | None = None,
+) -> TinyCloseoutGateFixture:
     root = package_root or Path(".pytest-tmp-tiny-closeout-package")
-    verification_runs = tuple(
-        result.verification_run
-        for result in package_fixture.command_results_by_id.values()
-    ) if package_fixture is not None else ()
-    package_fixture = package_fixture or build_tiny_package_assembly_fixture(package_root=root)
+    verification_runs: tuple[VerificationRun, ...] = ()
+    if package_fixture is None:
+        provider_fixture = (
+            _locked_provider_fixture_from_sample(provider_lock_root)
+            if provider_lock_root is not None and provider_lock_root.exists()
+            else None
+        )
+        package_fixture = build_tiny_package_assembly_fixture(
+            package_root=root,
+            provider_fixture=provider_fixture,
+        )
     _reject_fake_provider_attempts(
         package_fixture,
         allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
@@ -374,51 +492,7 @@ def build_tiny_closeout_fixture(
         process_readiness=process_readiness,
     )
     gate_result = CloseoutGate().evaluate(gate_input)
-    if gate_result.verdict.value == "passed":
-        _reject_fake_provider_passed_closeout(package_fixture)
-    package_input = CloseoutPackageBuilderInput(
-        closeout_gate_result=gate_result,
-        source_inventory=source_inventory,
-        final_evidence_table=package_fixture.final_evidence_table,
-        replay_bundle=replay_bundle,
-        replay_readiness=replay_readiness,
-        process_audit_bundle=process_audit_bundle,
-        process_audit_readiness=process_readiness,
-        git_version_audit_bundle=git_version_audit_bundle,
-        git_audit_readiness=git_audit_readiness,
-        graph_version=replay_bundle.attestations[0].event_window.last_graph_version,
-        generated_at=GENERATED_AT,
-        run_id=RUN_ID,
-    )
-    closeout_package = build_closeout_package(package_input)
-    closeout_payload = CloseoutCommitPayload(
-        closeout_package_ref=closeout_package.closeout_package_id,
-        closeout_gate_result_ref=closeout_package.closeout_gate_result_ref,
-        source_inventory_ref=closeout_package.source_inventory_ref,
-        final_evidence_table_ref=closeout_package.final_evidence_table_ref,
-        replay_bundle_ref=closeout_package.replay_bundle_ref,
-        process_audit_bundle_ref=closeout_package.process_audit_bundle_ref,
-        git_version_audit_bundle_ref=closeout_package.git_version_audit_bundle_ref,
-        package_commit_ref=closeout_package.package_commit_ref,
-        terminal_verdict=CloseoutCommitVerdict.PASSED,
-    )
-    closeout_event = EventRecord(
-        event_id=EventId(value="evt.closeout.committed.v2-080f"),
-        event_type=EventType.CLOSEOUT_COMMITTED,
-        project_ref=PROJECT_REF,
-        actor_ref=ActorRef(value="seat-tiny-closeout"),
-        timestamp=GENERATED_AT + timedelta(seconds=1),
-        graph_version=closeout_package.graph_version + 1,
-        payload_refs=(_CLOSEOUT_PAYLOAD_REF,),
-    )
-    closeout_resolver = TinyCloseoutPayloadResolver(
-        closeout_commit_payload=closeout_payload,
-        closeout_package=closeout_package,
-    )
-    projection = CloseoutReducer(closeout_resolver).reduce(
-        (*events_before_closeout, closeout_event)
-    )
-    return TinyCloseoutFixture(
+    return TinyCloseoutGateFixture(
         package_fixture=package_fixture,
         source_inventory=source_inventory,
         verification_runs=verification_runs,
@@ -435,12 +509,6 @@ def build_tiny_closeout_fixture(
         process_audit_readiness=process_readiness,
         closeout_gate_input=gate_input,
         closeout_gate_result=gate_result,
-        closeout_package_input=package_input,
-        closeout_package=closeout_package,
-        closeout_commit_payload=closeout_payload,
-        closeout_committed_event=closeout_event,
-        closeout_payload_resolver=closeout_resolver,
-        closeout_projection=projection,
         audit_answers=_audit_answers(
             process_audit_bundle,
             final_commit_sha=git_audit_readiness.final_commit_sha.value,
@@ -461,50 +529,86 @@ def materialize_tiny_closeout_sample(
     _reject_symlinked_output_root(output_root)
     logical_output_root = _logical_sample_root(output_root)
     resolved_root = output_root.resolve(strict=False)
+    if resolved_root.exists() and not resolved_root.is_dir():
+        raise ValueError("sample output_root must be a directory")
+    _reject_existing_v2_080_failure_sample(resolved_root)
+    if not (resolved_root / _PROVIDER_ATTEMPTS_SAMPLE_PATH).exists():
+        raise ValueError(
+            "V2-090B blocks tiny closeout sample rebuild until V2-090F golden sample rebuild"
+        )
     with tempfile.TemporaryDirectory(prefix="boardroom-os-v2080f-fixture-") as temp_dir:
         package_root = Path(temp_dir) / "physical-package-root"
         provider_fixture = _locked_provider_fixture_from_sample(resolved_root)
-        had_provider_lock = provider_fixture is not None
         package_fixture = None
         if provider_fixture is not None:
             package_fixture = build_tiny_package_assembly_fixture(
                 package_root=package_root,
                 provider_fixture=provider_fixture,
             )
-        fixture = build_tiny_closeout_fixture(
+        gate_fixture = build_tiny_closeout_gate_fixture(
             package_root=package_root,
             package_fixture=package_fixture,
+            provider_lock_root=resolved_root,
         )
-        files = _tiny_closeout_sample_files(fixture)
-    if clean:
-        _clean_tiny_closeout_sample(resolved_root)
-    for relative_path, content in files.items():
-        _write_sample_file(resolved_root, relative_path, content)
-    manifest = _sample_manifest(resolved_root, logical_output_root=logical_output_root)
-    _write_sample_file(
-        resolved_root,
-        "sample-manifest.json",
-        _stable_json(
-            {
-                "sample_root": manifest.sample_root,
-                "generated_at": manifest.generated_at,
-                "run_id": manifest.run_id,
-                "file_count": manifest.file_count,
-                "total_bytes": manifest.total_bytes,
-                "sha256": manifest.sha256,
-                "files": list(manifest.files),
-            }
-        ),
+    _raise_if_tiny_closeout_gate_blocked(gate_fixture)
+    raise ValueError("V2-090B blocks V2-080 tiny sample rebuild until V2-090F")
+
+
+def _raise_if_tiny_closeout_gate_blocked(fixture: TinyCloseoutGateFixture) -> None:
+    blockers = tuple(
+        blocker
+        for blocker in fixture.closeout_gate_result.blockers
+        if blocker.related_ref in {"run-backend", "run-frontend"}
     )
-    if not had_provider_lock:
-        # 首次生成必须调用真实 provider；随后立即用写出的 provider artifact lock
-        # 重放一次，使返回值与后续 --check / 重生成的字节树完全一致。
-        return materialize_tiny_closeout_sample(
-            output_root,
-            clean=True,
-            allow_absolute_output_root=allow_absolute_output_root,
+    if blockers:
+        missing_refs = ", ".join(sorted({blocker.related_ref or "" for blocker in blockers}))
+        raise ValueError(
+            "RUN_MANIFEST_COMMAND_UNVERIFIED: V2-080 failure package cannot be "
+            f"materialized as a passed golden sample; missing {missing_refs}"
         )
-    return _sample_manifest(resolved_root, logical_output_root=logical_output_root)
+
+
+def _reject_existing_v2_080_failure_sample(output_root: Path) -> None:
+    _validate_existing_provider_artifact_lock(output_root)
+    run_manifest_path = output_root / "20-evidence/tests/run-manifest.json"
+    verification_runs_path = output_root / "20-evidence/tests/verification-runs.json"
+    if not run_manifest_path.exists() or not verification_runs_path.exists():
+        return
+    run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    verification_runs = json.loads(verification_runs_path.read_text(encoding="utf-8"))
+    declared_command_ids = {
+        item["command_id"]["value"]
+        for item in run_manifest.get("commands", ())
+    }
+    verified_command_ids = {
+        item["command_id"]["value"]
+        for item in verification_runs
+    }
+    missing_command_ids = declared_command_ids - verified_command_ids
+    if {"run-backend", "run-frontend"}.issubset(missing_command_ids):
+        raise ValueError(
+            "RUN_MANIFEST_COMMAND_UNVERIFIED: V2-080 failure package cannot be "
+            "materialized as a passed golden sample; missing run-backend, run-frontend"
+        )
+
+
+def _validate_existing_provider_artifact_lock(output_root: Path) -> None:
+    attempts_path = output_root / _PROVIDER_ATTEMPTS_SAMPLE_PATH
+    artifacts_root = output_root / _PROVIDER_ARTIFACTS_SAMPLE_DIR
+    if not attempts_path.exists() or not artifacts_root.exists():
+        return
+    data = json.loads(attempts_path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or not data:
+        raise ValueError("provider attempt lock must contain attempts")
+    for attempt in data:
+        for key in ("raw_output_ref", "parsed_output_ref"):
+            artifact_ref = attempt.get(key, {}).get("value")
+            if artifact_ref is None:
+                raise ValueError("provider artifact refs are required for sample lock")
+            _read_provider_artifact_text(
+                artifact_root=artifacts_root,
+                artifact_ref=artifact_ref,
+            )
 
 
 def _tiny_closeout_sample_files(

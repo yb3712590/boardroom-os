@@ -4,21 +4,12 @@ from datetime import UTC, datetime
 
 from boardroom_os.adapters.git_audit import GitAuditAdapter, GitCommandResult
 from boardroom_os.audit.git_version_audit import GitChangedFileStatus, build_git_version_audit_bundle
-from boardroom_os.contracts.types import ContractId
-from boardroom_os.execution.package import ExecutionPackageRef
-from boardroom_os.execution.verification_run import (
-    CommandOutputRef,
-    VerificationRun,
-    VerificationRunRef,
-    WorkspaceSnapshotRef,
-)
-from boardroom_os.graph.ticket import TicketId
 from tests.closeout.test_closeout_gate import _FINAL_COMMIT_SHA, _ready_input
 from tests.closeout.test_git_version_audit import (
     _BASE_COMMIT_SHA,
     _OTHER_COMMIT_SHA,
     _builder_input,
-    _command_binding,
+    _command_bindings,
     source_inventory_hash,
 )
 
@@ -66,33 +57,6 @@ def _collect(transport: FakeGitTransport):
         base_commit_sha=_BASE_COMMIT_SHA,
         worktree_ref="worktree.final-package",
         generated_at=_NOW,
-    )
-
-
-def _second_run() -> VerificationRun:
-    run = _ready_input().verification_runs[0]
-    return run.model_copy(
-        update={
-            "verification_run_id": VerificationRunRef(value="verification-run.run-app"),
-            "execution_package_ref": ExecutionPackageRef(value="execution-package.run-app"),
-            "ticket_ref": TicketId(value="ticket.run-app"),
-            "command_id": ContractId(value="run-app"),
-            "command": ("python", "app.py"),
-            "stdout_ref": CommandOutputRef(value="command-output.verification-run.run-app.stdout"),
-            "stderr_ref": CommandOutputRef(value="command-output.verification-run.run-app.stderr"),
-            "workspace_snapshot_ref": WorkspaceSnapshotRef(value="workspace-snapshot.run-app"),
-        }
-    )
-
-
-def _second_binding(run: VerificationRun):
-    return _command_binding(
-        binding_id="git-command-evidence-binding.verification-run.run-app",
-        verification_run_ref=run.verification_run_id,
-        command_id=run.command_id,
-        command=run.command,
-        cwd=run.cwd,
-        workspace_snapshot_ref=run.workspace_snapshot_ref,
     )
 
 
@@ -146,21 +110,19 @@ def test_diff_shortstat_ignores_filename_containing_insertions() -> None:
 
 
 def test_verification_runs_reordering_keeps_command_evidence_refs_and_bundle_hash_stable() -> None:
-    first_run = _ready_input().verification_runs[0]
-    second_run = _second_run()
-    first_binding = _command_binding()
-    second_binding = _second_binding(second_run)
+    first_run, second_run = _ready_input().verification_runs
+    bindings = _command_bindings()
 
     first_bundle = build_git_version_audit_bundle(
         _builder_input(
             verification_runs=(first_run, second_run),
-            command_evidence_bindings=(first_binding, second_binding),
+            command_evidence_bindings=bindings,
         )
     )
     second_bundle = build_git_version_audit_bundle(
         _builder_input(
             verification_runs=(second_run, first_run),
-            command_evidence_bindings=(first_binding, second_binding),
+            command_evidence_bindings=bindings,
         )
     )
 
@@ -169,10 +131,8 @@ def test_verification_runs_reordering_keeps_command_evidence_refs_and_bundle_has
 
 
 def test_command_bindings_reordering_keeps_checked_refs_and_bundle_hash_stable() -> None:
-    first_run = _ready_input().verification_runs[0]
-    second_run = _second_run()
-    first_binding = _command_binding()
-    second_binding = _second_binding(second_run)
+    first_run, second_run = _ready_input().verification_runs
+    first_binding, second_binding = _command_bindings()
 
     first_bundle = build_git_version_audit_bundle(
         _builder_input(

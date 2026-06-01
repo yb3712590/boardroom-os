@@ -17,6 +17,7 @@ from boardroom_os.audit.process_audit import (
 from boardroom_os.closeout.gate import GitAuditReadiness, ProcessAuditReadiness
 from boardroom_os.events.types import EventType
 
+from tests.closeout.test_closeout_gate import _ready_input as _closeout_gate_ready_input
 from tests.closeout.test_process_audit_artifacts import (
     _artifact_by_kind,
     _artifact_by_path,
@@ -159,8 +160,9 @@ def test_process_audit_bundle_id_changes_when_run_id_changes() -> None:
     assert any(ref.startswith("git-version-audit-bundle.") for ref in checked_refs)
     assert any(ref.startswith("git-version-audit-report.") for ref in checked_refs)
     assert any(ref.startswith("git-version-audit-facts.") for ref in checked_refs)
-    assert "verification-run.app" in checked_refs
-    assert "git-command-evidence-binding.verification-run.app" in checked_refs
+    for run in _closeout_gate_ready_input().verification_runs:
+        assert run.verification_run_id.value in checked_refs
+        assert f"git-command-evidence-binding.{run.verification_run_id.value}" in checked_refs
 
 
 def test_process_audit_markdown_is_human_readable() -> None:

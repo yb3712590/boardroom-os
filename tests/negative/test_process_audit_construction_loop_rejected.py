@@ -31,6 +31,7 @@ from boardroom_os.graph.ticket import TicketId
 from tests.closeout.test_git_version_audit import (
     _build_bundle as _build_git_version_audit_bundle,
     _command_binding,
+    _command_bindings,
     _git_facts,
 )
 from tests.closeout.test_process_audit_artifacts import (
@@ -200,12 +201,16 @@ def _replace_artifact_content(bundle, *, kind: ProcessAuditArtifactKind, content
 
 
 def _build_process_audit_with_source_inventory(source_inventory, *, ticket_graph_summary=None):
-    facts = _git_facts(source_inventory_hash=source_inventory_hash(source_inventory))
-    binding = _command_binding(source_inventory_hash=source_inventory_hash(source_inventory))
+    inventory_hash = source_inventory_hash(source_inventory)
+    facts = _git_facts(source_inventory_hash=inventory_hash)
+    bindings = tuple(
+        binding.model_copy(update={"source_inventory_hash": inventory_hash})
+        for binding in _command_bindings()
+    )
     git_bundle = _build_git_version_audit_bundle(
         source_inventory=source_inventory,
         git_facts=facts,
-        command_evidence_bindings=(binding,),
+        command_evidence_bindings=bindings,
     )
     return _build_bundle(
         source_inventory=source_inventory,
@@ -215,12 +220,21 @@ def _build_process_audit_with_source_inventory(source_inventory, *, ticket_graph
 
 
 def _git_bundle_for_source_inventory(source_inventory, *, verification_runs=None):
-    resolved_verification_runs = verification_runs or _process_audit_builder_input().verification_runs
+    base_input = _process_audit_builder_input()
+    resolved_verification_runs = verification_runs or base_input.verification_runs
     inventory_hash = source_inventory_hash(source_inventory)
+    run_index_by_ref = {
+        run.verification_run_id: index
+        for index, run in enumerate(base_input.verification_runs)
+    }
     bindings = tuple(
         _command_binding(
+            run_index=run_index_by_ref[run.verification_run_id],
             binding_id=f"git-command-evidence-binding.{run.verification_run_id.value}",
             verification_run_ref=run.verification_run_id,
+            command_id=run.command_id,
+            command=run.command,
+            cwd=run.cwd,
             workspace_snapshot_ref=run.workspace_snapshot_ref,
             source_inventory_hash=inventory_hash,
         )
@@ -242,6 +256,10 @@ def _process_audit_input_with_raw_source_inventory(source_inventory):
             "source_inventory": source_inventory,
         }
     )
+
+
+def _replace_first_verified_evidence(base_input, evidence):
+    return (evidence, *base_input.verified_evidence[1:])
 
 
 class _TicketWithoutTicketRef(BaseModel):
@@ -829,13 +847,16 @@ def test_artifact_lineage_does_not_default_consumer_to_producer() -> None:
 
 def test_artifact_lineage_rejects_fallback_lineages_when_expected_empty() -> None:
     gate_input = _process_audit_builder_input()
-    evidence = gate_input.verified_evidence[0].model_copy(
-        update={
-            "fallback_decision_record_ref": None,
-            "fallback_decision_recorded_ref": None,
-        }
+    evidence_without_fallbacks = tuple(
+        evidence.model_copy(
+            update={
+                "fallback_decision_record_ref": None,
+                "fallback_decision_recorded_ref": None,
+            }
+        )
+        for evidence in gate_input.verified_evidence
     )
-    bundle = _build_bundle(verified_evidence=(evidence,))
+    bundle = _build_bundle(verified_evidence=evidence_without_fallbacks)
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     content["fallback_lineages"] = (
@@ -874,7 +895,9 @@ def test_artifact_lineage_rejects_missing_expected_fallback_lineage() -> None:
             ),
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=_replace_first_verified_evidence(gate_input, fallback_evidence)
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     content["fallback_lineages"] = ()
@@ -903,7 +926,9 @@ def test_artifact_lineage_rejects_fallback_lineage_without_decision_ref_key() ->
             ),
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=_replace_first_verified_evidence(gate_input, fallback_evidence)
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     fallback_lineages = [dict(item) for item in content["fallback_lineages"]]
@@ -934,7 +959,9 @@ def test_artifact_lineage_rejects_tampered_fallback_recorded_ref() -> None:
             ),
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=_replace_first_verified_evidence(gate_input, fallback_evidence)
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     fallback_lineages = [dict(item) for item in content["fallback_lineages"]]
@@ -965,7 +992,9 @@ def test_artifact_lineage_rejects_missing_fallback_recorded_ref_key() -> None:
             "fallback_decision_recorded_ref": None,
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=_replace_first_verified_evidence(gate_input, fallback_evidence)
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     fallback_lineages = [dict(item) for item in content["fallback_lineages"]]
@@ -996,7 +1025,9 @@ def test_artifact_lineage_rejects_duplicate_fallback_decision_refs() -> None:
             ),
         }
     )
-    bundle = _build_bundle(verified_evidence=(fallback_evidence,))
+    bundle = _build_bundle(
+        verified_evidence=_replace_first_verified_evidence(gate_input, fallback_evidence)
+    )
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     fallback_lineage = dict(content["fallback_lineages"][0])
@@ -1189,12 +1220,12 @@ def test_process_audit_rejects_git_audit_run_manifest_ref_mismatch() -> None:
     base_input = _process_audit_builder_input()
     binding = base_input.git_version_audit_bundle.command_evidence_bindings[0]
     other_manifest_ref = type(binding.run_manifest_ref)(value="run-manifest.unrelated")
+    changed_bindings = (
+        binding.model_copy(update={"run_manifest_ref": other_manifest_ref}),
+        *base_input.git_version_audit_bundle.command_evidence_bindings[1:],
+    )
     self_consistent_git_bundle = base_input.git_version_audit_bundle.model_copy(
-        update={
-            "command_evidence_bindings": (
-                binding.model_copy(update={"run_manifest_ref": other_manifest_ref}),
-            )
-        }
+        update={"command_evidence_bindings": changed_bindings}
     )
     command_binding_hashes = {
         item.verification_run_ref.value: type(self_consistent_git_bundle.hash_manifest.bundle_payload_hash)(
@@ -1267,7 +1298,14 @@ def test_process_audit_rejects_git_audit_verification_run_fact_mismatch() -> Non
         match="git version audit verification run facts mismatch",
     ):
         build_process_audit_bundle(
-            base_input.model_copy(update={"verification_runs": (failed_run,)})
+            base_input.model_copy(
+                update={
+                    "verification_runs": (
+                        failed_run,
+                        *base_input.verification_runs[1:],
+                    )
+                }
+            )
         )
 
 
@@ -1613,11 +1651,13 @@ def test_checked_refs_stable_under_collection_input_reordering() -> None:
     reordered_inventory = base_input.source_inventory.model_copy(
         update={"entries": tuple(reversed(base_input.source_inventory.entries))}
     )
+    reordered_inventory_hash = source_inventory_hash(reordered_inventory)
     reordered_git_bundle = _build_git_version_audit_bundle(
         source_inventory=reordered_inventory,
-        git_facts=_git_facts(source_inventory_hash=source_inventory_hash(reordered_inventory)),
-        command_evidence_bindings=(
-            _command_binding(source_inventory_hash=source_inventory_hash(reordered_inventory)),
+        git_facts=_git_facts(source_inventory_hash=reordered_inventory_hash),
+        command_evidence_bindings=tuple(
+            binding.model_copy(update={"source_inventory_hash": reordered_inventory_hash})
+            for binding in _command_bindings()
         ),
     )
     reordered_input = _process_audit_builder_input(
