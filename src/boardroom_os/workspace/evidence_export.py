@@ -7,6 +7,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
 
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
+from boardroom_os.evidence.service_run import ServiceRunEvidence, ServiceRunEvidenceRef
 from boardroom_os.evidence.table import FinalEvidenceStatus, FinalEvidenceTable, FinalEvidenceTableRef
 from boardroom_os.evidence.verifier import VerifiedEvidence, VerifiedEvidenceRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunRef, VerificationRunStatus
@@ -53,12 +54,14 @@ class EvidenceBundleArtifactKind(StrEnum):
     SOURCE_INVENTORY = "source_inventory"
     RUN_MANIFEST = "run_manifest"
     VERIFICATION_RUNS = "verification_runs"
+    SERVICE_RUNS = "service_runs"
     FINAL_EVIDENCE_TABLE = "final_evidence_table"
 
 
 _ARTIFACT_PATH_BY_KIND: dict[EvidenceBundleArtifactKind, str] = {
     EvidenceBundleArtifactKind.SOURCE_INVENTORY: "20-evidence/source-inventory/source-inventory.json",
     EvidenceBundleArtifactKind.VERIFICATION_RUNS: "20-evidence/tests/verification-runs.json",
+    EvidenceBundleArtifactKind.SERVICE_RUNS: "20-evidence/tests/service-runs.json",
     EvidenceBundleArtifactKind.RUN_MANIFEST: "20-evidence/tests/run-manifest.json",
     EvidenceBundleArtifactKind.FINAL_EVIDENCE_TABLE: "20-evidence/closeout/final-evidence-table.json",
     EvidenceBundleArtifactKind.BUNDLE_MANIFEST: "20-evidence/closeout/evidence-bundle-manifest.json",
@@ -111,6 +114,7 @@ class WorkspaceEvidenceBundle(BaseModel):
     run_manifest_ref: RunManifestRef
     final_evidence_table_ref: FinalEvidenceTableRef
     verification_run_refs: tuple[VerificationRunRef, ...]
+    service_run_refs: tuple[ServiceRunEvidenceRef, ...] = ()
     verified_evidence_refs: tuple[VerifiedEvidenceRef, ...]
     artifacts: tuple[EvidenceBundleArtifact, ...]
     closeout_ready: bool
@@ -127,6 +131,8 @@ class WorkspaceEvidenceBundle(BaseModel):
             raise ValueError("required evidence bundle artifact kinds are missing")
         if tuple(sorted(self.verification_run_refs, key=lambda ref: ref.value)) != self.verification_run_refs:
             raise ValueError("verification_run_refs must be sorted")
+        if tuple(sorted(self.service_run_refs, key=lambda ref: ref.value)) != self.service_run_refs:
+            raise ValueError("service_run_refs must be sorted")
         if tuple(sorted(self.verified_evidence_refs, key=lambda ref: ref.value)) != self.verified_evidence_refs:
             raise ValueError("verified_evidence_refs must be sorted")
         return self
@@ -143,7 +149,7 @@ class WorkspaceEvidenceBundle(BaseModel):
     def _serialize_ref(self, value: NonEmptyTextValue) -> dict[str, str]:
         return value.model_dump()
 
-    @field_serializer("verification_run_refs", "verified_evidence_refs")
+    @field_serializer("verification_run_refs", "service_run_refs", "verified_evidence_refs")
     def _serialize_ref_tuple(self, values: tuple[NonEmptyTextValue, ...]) -> list[dict[str, str]]:
         return [value.model_dump() for value in values]
 
@@ -159,6 +165,7 @@ def build_workspace_evidence_bundle(
     source_inventory: SourceInventory,
     run_manifest: RunManifest,
     verification_runs: tuple[VerificationRun, ...],
+    service_runs: tuple[ServiceRunEvidence, ...] = (),
     verified_evidence: tuple[VerifiedEvidence, ...],
     final_evidence_table: FinalEvidenceTable,
 ) -> WorkspaceEvidenceBundle:
@@ -171,10 +178,12 @@ def build_workspace_evidence_bundle(
     _validate_run_manifest_mirror(package_assembly=package_assembly, run_manifest=run_manifest)
     final_table_evidence_refs = _validate_final_evidence_table(final_evidence_table)
     verification_run_refs = _validate_verification_runs(verification_runs)
+    service_run_refs = _validate_service_runs(service_runs)
     verified_evidence_refs = _validate_verified_evidence(verified_evidence)
     _validate_evidence_ref_closure(
         source_inventory=source_inventory,
         verification_runs=verification_runs,
+        service_runs=service_runs,
         verified_evidence=verified_evidence,
         final_table_evidence_refs=final_table_evidence_refs,
     )
@@ -193,6 +202,7 @@ def build_workspace_evidence_bundle(
         source_inventory=source_inventory,
         run_manifest=run_manifest,
         verification_run_refs=verification_run_refs,
+        service_run_refs=service_run_refs,
         verified_evidence_refs=verified_evidence_refs,
         final_evidence_table=final_evidence_table,
         bundle_id=bundle_id,
@@ -206,6 +216,7 @@ def build_workspace_evidence_bundle(
         run_manifest_ref=run_manifest.run_manifest_id,
         final_evidence_table_ref=final_evidence_table.final_evidence_table_id,
         verification_run_refs=verification_run_refs,
+        service_run_refs=service_run_refs,
         verified_evidence_refs=verified_evidence_refs,
         artifacts=artifacts,
         closeout_ready=True,
@@ -219,6 +230,7 @@ def _build_artifacts(
     source_inventory: SourceInventory,
     run_manifest: RunManifest,
     verification_run_refs: tuple[VerificationRunRef, ...],
+    service_run_refs: tuple[ServiceRunEvidenceRef, ...],
     verified_evidence_refs: tuple[VerifiedEvidenceRef, ...],
     final_evidence_table: FinalEvidenceTable,
     bundle_id: WorkspaceEvidenceBundleRef,
@@ -238,6 +250,7 @@ def _build_artifacts(
             run_manifest.run_manifest_id,
             final_evidence_table.final_evidence_table_id,
             *verification_run_refs,
+            *service_run_refs,
             *verified_evidence_refs,
         )
     )
@@ -252,6 +265,12 @@ def _build_artifacts(
             relative_path=path_by_kind[EvidenceBundleArtifactKind.VERIFICATION_RUNS],
             artifact_kind=EvidenceBundleArtifactKind.VERIFICATION_RUNS,
             source_ref=NonEmptyTextValue(value="verification-runs"),
+            related_refs=related_refs,
+        ),
+        EvidenceBundleArtifact(
+            relative_path=path_by_kind[EvidenceBundleArtifactKind.SERVICE_RUNS],
+            artifact_kind=EvidenceBundleArtifactKind.SERVICE_RUNS,
+            source_ref=NonEmptyTextValue(value="service-runs"),
             related_refs=related_refs,
         ),
         EvidenceBundleArtifact(
@@ -353,10 +372,22 @@ def _validate_verified_evidence(verified_evidence: tuple[VerifiedEvidence, ...])
     return tuple(sorted(refs, key=lambda ref: ref.value))
 
 
+def _validate_service_runs(service_runs: tuple[ServiceRunEvidence, ...]) -> tuple[ServiceRunEvidenceRef, ...]:
+    refs = tuple(service.service_run_evidence_id for service in service_runs)
+    ref_values = tuple(ref.value for ref in refs)
+    if len(ref_values) != len(set(ref_values)):
+        raise WorkspaceEvidenceExportError("service run refs must be unique")
+    for service in service_runs:
+        if service.probe_status_code < 200 or service.probe_status_code >= 300:
+            raise WorkspaceEvidenceExportError("service run readiness must be passed")
+    return tuple(sorted(refs, key=lambda ref: ref.value))
+
+
 def _validate_evidence_ref_closure(
     *,
     source_inventory: SourceInventory,
     verification_runs: tuple[VerificationRun, ...],
+    service_runs: tuple[ServiceRunEvidence, ...],
     verified_evidence: tuple[VerifiedEvidence, ...],
     final_table_evidence_refs: set[str],
 ) -> None:
@@ -377,16 +408,22 @@ def _validate_evidence_ref_closure(
 
     linked_evidence_refs = final_table_evidence_refs | source_inventory_evidence_refs
     verification_run_refs = {run.verification_run_id.value for run in verification_runs}
+    service_run_refs = {service.service_run_evidence_id.value for service in service_runs}
     linked_run_refs: set[str] = set()
+    linked_service_refs: set[str] = set()
     for evidence_ref in linked_evidence_refs:
         evidence = verified_evidence_by_ref.get(evidence_ref)
         if evidence is None:
             raise WorkspaceEvidenceExportError("verified evidence refs must resolve")
         linked_run_refs.update(run_ref.value for run_ref in evidence.verification_run_refs)
+        linked_service_refs.update(service_ref.value for service_ref in evidence.service_run_refs)
 
     orphan_runs = verification_run_refs - linked_run_refs
     if orphan_runs:
         raise WorkspaceEvidenceExportError("orphan verification run cannot be exported")
+    orphan_services = service_run_refs - linked_service_refs
+    if orphan_services:
+        raise WorkspaceEvidenceExportError("orphan service run cannot be exported")
 
 
 __all__ = [

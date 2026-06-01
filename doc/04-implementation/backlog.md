@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090C`
+**当前未完成工作包**：`V2-090D`
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）与 `V2-090B Closeout all-command coverage`（收尾全命令覆盖）已完成，下一批为 `V2-090C ServiceRunEvidence`（服务运行证据）。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）与 `V2-090C ServiceRunEvidence`（服务运行证据）已完成，下一批为 `V2-090D Tiny contract recovery`（微型合同整改）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 2 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **61 / 65** | **V2-090A ~ V2-090B 完成，V2-090C 待启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 3 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **62 / 65** | **V2-090A ~ V2-090C 完成，V2-090D 待启动** |
 
 ## 当前约束摘要
 
@@ -1071,14 +1071,15 @@ RoleProfile（角色模板）
 
 ### V2-090C: ServiceRunEvidence
 
-- 状态：TODO
+- 状态：DONE
 - 目标：引入 ServiceRunEvidence（服务运行证据）或等价模型，区分长运行 service startup/readiness evidence（服务启动/就绪证据）与一次性 test command evidence（测试命令证据）。
 - 输入文档：`execution-and-runtime-boundary.md`、`contract-and-evidence-model.md`。
 - 依赖：V2-090B、V2-040D。
-- 输出文件：待实施阶段确定，计划候选为 `src/boardroom_os/evidence/service_run.py`、`src/boardroom_os/adapters/process_runner.py`。
+- 输出文件：`src/boardroom_os/evidence/service_run.py`、`src/boardroom_os/adapters/process_runner.py`、`src/boardroom_os/evidence/claim.py`、`src/boardroom_os/evidence/verifier.py`、`src/boardroom_os/closeout/gate.py`、`src/boardroom_os/workspace/evidence_export.py`；新增/更新测试 `tests/negative/test_service_run_evidence_fail_closed.py`、`tests/negative/test_service_run_closeout_gate.py`、`tests/evidence/test_service_run_evidence.py`、`tests/execution/test_service_runner.py`、`tests/closeout/test_closeout_gate.py`、`tests/proving/test_workspace_evidence_export.py`。
 - 必须先写的 negative tests：服务命令只有 process id 但无 readiness probe 不得满足 evidence；服务启动后立即退出不得满足 readiness；probe 命中错误端口或错误 path 必须失败。
 - 必须证明的 happy path：backend/frontend service 启动后，健康检查和内容探针均通过，并记录可审计 stdout/stderr refs、时间、端口和 readiness URL。
 - 验收口径：长运行服务不再伪装成普通 pytest passed command。
+- 完成证据：2026-06-01 新增 `ServiceRunEvidence`（服务运行证据）、`ServiceProbeResult`（服务探针结果）与 `ServiceRunner`（服务运行器）；`HttpReadinessProbe`（HTTP 就绪探针）真实轮询 readiness URL（就绪 URL），probe 2xx 后记录 process id、readiness URL、body sha256、stdout/stderr refs、started/ready/stopped 时间、runner/environment/workspace refs。`EvidenceVerifier`（证据验证器）新增 `SERVICE_RUN`（服务运行来源），`required_artifact_type="service_run"` 必须解析到真实 `ServiceRunEvidence`，且 artifact refs 必须等于 canonical service stdout/stderr refs（规范服务标准输出/错误引用）；`CloseoutGate`（收尾门禁）要求 `RUN`（运行命令）绑定同 command id 的 `ServiceRunEvidence`，`TEST`（测试命令）继续绑定 `VerificationRun`（验证运行），缺 service readiness 时返回 `COMMAND_EVIDENCE_NOT_FINAL` 且 message 含 `RUN_MANIFEST_SERVICE_NOT_READY`；`WorkspaceEvidenceBundle`（工作区证据包）新增 `service_run_refs` 与 `20-evidence/tests/service-runs.json`。验证证据：`$env:PYTHONPATH='src;.'; python -m pytest tests/negative/test_service_run_evidence_fail_closed.py tests/negative/test_service_run_closeout_gate.py -q --tb=short --basetemp .pytest-tmp-v2090c-negative-final2` 通过（11 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/evidence/test_service_run_evidence.py tests/execution/test_service_runner.py -q --tb=short --basetemp .pytest-tmp-v2090c-service-final2` 通过（2 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/closeout/test_closeout_gate.py tests/proving/test_workspace_evidence_export.py -q --tb=short --basetemp .pytest-tmp-v2090c-closeout-workspace-final2` 通过（21 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/execution/test_command_runner.py tests/evidence/test_evidence_claim.py tests/evidence/test_evidence_verifier.py tests/negative/test_synthetic_evidence_rejected.py -q --tb=short --basetemp .pytest-tmp-v2090c-regression-final2` 通过（148 passed）；补充回归 `$env:PYTHONPATH='src;.'; python -m pytest tests/negative/test_run_manifest_command_coverage.py tests/negative/test_closeout_fail_closed.py tests/negative/test_service_run_evidence_fail_closed.py tests/negative/test_service_run_closeout_gate.py -q --tb=short --basetemp .pytest-tmp-v2090c-review-negative-all` 通过（38 passed）；`git diff --check` 通过。
 
 ### V2-090D: Tiny contract recovery
 

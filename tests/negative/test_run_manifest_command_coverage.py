@@ -18,11 +18,20 @@ def _without_command_evidence(gate_input, command_id: str):
     remaining_runs = tuple(
         run for run in gate_input.verification_runs if run.command_id.value != command_id
     )
+    remaining_service_runs = tuple(
+        service
+        for service in gate_input.service_run_evidence
+        if service.command_id.value != command_id
+    )
     remaining_run_refs = {run.verification_run_id.value for run in remaining_runs}
+    remaining_service_run_refs = {
+        service.service_run_evidence_id.value for service in remaining_service_runs
+    }
     remaining_evidence = tuple(
         evidence
         for evidence in gate_input.verified_evidence
         if any(ref.value in remaining_run_refs for ref in evidence.verification_run_refs)
+        or any(ref.value in remaining_service_run_refs for ref in evidence.service_run_refs)
     )
     remaining_evidence_refs = tuple(
         evidence.verified_evidence_id for evidence in remaining_evidence
@@ -48,6 +57,9 @@ def _without_command_evidence(gate_input, command_id: str):
             "source_inventory_ref": source_inventory.source_inventory_id,
             "final_evidence_table_ref": final_evidence_table.final_evidence_table_id,
             "verification_run_refs": tuple(run.verification_run_id for run in remaining_runs),
+            "service_run_refs": tuple(
+                service.service_run_evidence_id for service in remaining_service_runs
+            ),
             "verified_evidence_refs": remaining_evidence_refs,
         }
     )
@@ -57,6 +69,7 @@ def _without_command_evidence(gate_input, command_id: str):
             "workspace_evidence_bundle": workspace_evidence_bundle,
             "final_evidence_table": final_evidence_table,
             "verification_runs": remaining_runs,
+            "service_run_evidence": remaining_service_runs,
             "verified_evidence": remaining_evidence,
             "final_command_bindings": tuple(
                 binding
@@ -91,7 +104,7 @@ def test_closeout_gate_blocks_when_run_manifest_command_lacks_final_evidence() -
     blockers = _command_evidence_blockers(result)
     assert blockers
     assert any(blocker.related_ref == "run-app" for blocker in blockers)
-    assert any("RUN_MANIFEST_COMMAND_UNVERIFIED" in blocker.message for blocker in blockers)
+    assert any("RUN_MANIFEST_SERVICE_NOT_READY" in blocker.message for blocker in blockers)
 
 
 def _tiny_failure_gate_input():
@@ -142,7 +155,8 @@ def _tiny_failure_gate_input():
             "verification_run_refs": (
                 backend_run.verification_run_id,
                 integration_run.verification_run_id,
-            )
+            ),
+            "service_run_refs": (),
         }
     )
     final_command_bindings = (
@@ -166,6 +180,7 @@ def _tiny_failure_gate_input():
             "run_manifest": run_manifest,
             "workspace_evidence_bundle": workspace_evidence_bundle,
             "verification_runs": (backend_run, integration_run),
+            "service_run_evidence": (),
             "final_command_bindings": final_command_bindings,
         }
     )
@@ -192,7 +207,7 @@ def test_v2_080_tiny_failure_package_is_blocked_when_run_commands_lack_evidence(
         "run-backend",
         "run-frontend",
     }
-    assert all("RUN_MANIFEST_COMMAND_UNVERIFIED" in blocker.message for blocker in blockers)
+    assert all("RUN_MANIFEST_SERVICE_NOT_READY" in blocker.message for blocker in blockers)
 
 
 def test_existing_verification_runs_do_not_substitute_for_unverified_manifest_commands() -> None:

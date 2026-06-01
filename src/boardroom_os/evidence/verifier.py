@@ -30,6 +30,12 @@ from boardroom_os.evidence.claim import (
     EvidenceClaimRef,
     EvidenceClaimSourceKind,
 )
+from boardroom_os.evidence.service_run import (
+    ServiceRunEvidence,
+    ServiceRunEvidenceRef,
+    stderr_ref_for_service_run,
+    stdout_ref_for_service_run,
+)
 from boardroom_os.evidence.fallback_registry import (
     FallbackDecisionRecord,
     FallbackDecisionRecordRef,
@@ -56,6 +62,7 @@ _VERIFIED_EVIDENCE_TUPLE_REF_FIELDS = (
     "acceptance_refs",
     "source_surface_refs",
     "verification_run_refs",
+    "service_run_refs",
 )
 
 
@@ -253,6 +260,9 @@ class EvidenceVerificationBlockerCode(StrEnum):
     VERIFICATION_RUN_NOT_PASSED = "verification_run_not_passed"
     VERIFICATION_RUN_REF_MISMATCH = "verification_run_ref_mismatch"
     VERIFICATION_RUN_ARTIFACT_REFS_MISMATCH = "verification_run_artifact_refs_mismatch"
+    MISSING_SERVICE_RUN = "missing_service_run"
+    SERVICE_RUN_NOT_READY = "service_run_not_ready"
+    SERVICE_RUN_ARTIFACT_REFS_MISMATCH = "service_run_artifact_refs_mismatch"
     PRIMARY_CLAIM_WITH_FALLBACK_ATTEMPT = "primary_claim_with_fallback_attempt"
     PRIMARY_CLAIM_WITH_FALLBACK_DECISION_RECORD = "primary_claim_with_fallback_decision_record"
     FALLBACK_CLAIM_WITH_PRIMARY_ATTEMPT = "fallback_claim_with_primary_attempt"
@@ -307,6 +317,7 @@ class VerifiedEvidence(BaseModel):
     source_surface_refs: tuple[SourceSurfaceRef, ...]
     verified_artifacts: tuple[VerifiedArtifact, ...]
     verification_run_refs: tuple[VerificationRunRef, ...] = ()
+    service_run_refs: tuple[ServiceRunEvidenceRef, ...] = ()
     fallback_decision_record_ref: FallbackDecisionRecordRef | None = None
     fallback_decision_recorded_ref: FallbackDecisionRecordedRef | None = None
     verified_at: datetime
@@ -343,6 +354,7 @@ class VerifiedEvidence(BaseModel):
                 "acceptance_refs": AcceptanceRef,
                 "source_surface_refs": SourceSurfaceRef,
                 "verification_run_refs": VerificationRunRef,
+                "service_run_refs": ServiceRunEvidenceRef,
             },
         )
 
@@ -384,6 +396,7 @@ class EvidenceVerificationInput(BaseModel):
     execution_packages: tuple[ExecutionPackage, ...]
     role_prompt_hook_registry: RolePromptHookRegistry
     verification_runs: tuple[VerificationRun, ...] = ()
+    service_runs: tuple[ServiceRunEvidence, ...] = ()
     fallback_policy_registry: FallbackPolicyRegistry | None = None
     fallback_decision_record: FallbackDecisionRecord | None = None
     fallback_decision_recorded_ref: FallbackDecisionRecordedRef | None = None
@@ -452,6 +465,7 @@ class EvidenceVerifier:
         self._verify_artifact_manifest(verification_input, blockers)
         self._verify_provider_attempt(verification_input, blockers)
         self._verify_verification_run(verification_input, blockers)
+        self._verify_service_run(verification_input, blockers)
         fallback_decision_record = self._verify_fallback_lineage(
             verification_input,
             blockers,
@@ -477,6 +491,11 @@ class EvidenceVerifier:
                 source_surface_refs=claim.source_surface_refs,
                 verified_artifacts=verified_artifacts,
                 verification_run_refs=claim.verification_run_refs,
+                service_run_refs=(
+                    (ServiceRunEvidenceRef(value=claim.source_ref),)
+                    if claim.source_kind is EvidenceClaimSourceKind.SERVICE_RUN
+                    else ()
+                ),
                 fallback_decision_record_ref=(
                     fallback_decision_record.fallback_decision_record_id
                     if fallback_decision_record is not None
@@ -872,6 +891,68 @@ class EvidenceVerifier:
                 )
             )
 
+    def _verify_service_run(
+        self,
+        verification_input: EvidenceVerificationInput,
+        blockers: list[EvidenceVerificationBlocker],
+    ) -> None:
+        claim = verification_input.claim
+        if (
+            claim.required_artifact_type.value == "service_run"
+            and claim.source_kind is not EvidenceClaimSourceKind.SERVICE_RUN
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_SERVICE_RUN,
+                    message="service_run artifact claims must reference service run evidence",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+        if claim.source_kind is not EvidenceClaimSourceKind.SERVICE_RUN:
+            return
+
+        service_run = self._service_run_by_ref(
+            verification_input.service_runs,
+            claim.source_ref,
+        )
+        if service_run is None:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_SERVICE_RUN,
+                    message="service_run claim source_ref is missing from service_runs",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+
+        if service_run.probe_status_code < 200 or service_run.probe_status_code >= 300:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.SERVICE_RUN_NOT_READY,
+                    message="service_run must include a successful readiness probe",
+                    related_ref=service_run.service_run_evidence_id.value,
+                )
+            )
+
+        expected_artifact_refs = (
+            service_run.stdout_ref.value,
+            service_run.stderr_ref.value,
+        )
+        canonical_artifact_refs = (
+            stdout_ref_for_service_run(service_run.service_run_evidence_id).value,
+            stderr_ref_for_service_run(service_run.service_run_evidence_id).value,
+        )
+        claim_artifact_refs = tuple(artifact_ref.value for artifact_ref in claim.artifact_refs)
+        if claim_artifact_refs != expected_artifact_refs or expected_artifact_refs != canonical_artifact_refs:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.SERVICE_RUN_ARTIFACT_REFS_MISMATCH,
+                    message="service_run artifact_refs must equal canonical stdout_ref and stderr_ref",
+                    related_ref=service_run.service_run_evidence_id.value,
+                )
+            )
+
     def _verify_fallback_lineage(
         self,
         verification_input: EvidenceVerificationInput,
@@ -970,6 +1051,16 @@ class EvidenceVerifier:
         for verification_run in verification_runs:
             if verification_run.verification_run_id.value == source_ref:
                 return verification_run
+        return None
+
+    def _service_run_by_ref(
+        self,
+        service_runs: tuple[ServiceRunEvidence, ...],
+        source_ref: str,
+    ) -> ServiceRunEvidence | None:
+        for service_run in service_runs:
+            if service_run.service_run_evidence_id.value == source_ref:
+                return service_run
         return None
 
     def _provider_attempt_by_ref(

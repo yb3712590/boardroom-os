@@ -27,6 +27,7 @@ from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef,
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
 from boardroom_os.evidence.claim import EvidenceArtifactRef, EvidenceClaimRef, EvidenceClaimSourceKind
 from boardroom_os.evidence.fallback_registry import FallbackDecisionRecordRef
+from boardroom_os.evidence.service_run import ServiceReadinessUrl, ServiceRunEvidence
 from boardroom_os.evidence.table import FinalEvidenceRow, FinalEvidenceStatus, FinalEvidenceTable
 from boardroom_os.evidence.verifier import ArtifactSha256, VerifiedArtifact, VerifiedEvidence, VerifiedEvidenceRef
 from boardroom_os.execution.context_index import ProviderAttemptRef
@@ -59,6 +60,7 @@ _NOW = datetime(2026, 5, 24, 10, 30, tzinfo=UTC)
 _FINAL_COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
 _SOURCE_INVENTORY_HASH = "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
 _SUMMARY_HASH = "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+_SERVICE_BODY_SHA256 = "456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123"
 _FALLBACK_DECISION_REF = "fallback-decision-record.closeout-gate"
 _PROCESS_AUDIT_ARTIFACT_PATHS = (
     "30-audit/process-audit.md",
@@ -189,6 +191,29 @@ def _verified_evidence(
     )
 
 
+def _service_run() -> ServiceRunEvidence:
+    return ServiceRunEvidence(
+        service_run_evidence_id="service-run.run-app",
+        execution_package_ref="execution-package.app",
+        ticket_ref="ticket.app",
+        command_id="run-app",
+        command=("python", "app.py"),
+        cwd=".",
+        process_id=4321,
+        readiness_url=ServiceReadinessUrl(value="http://127.0.0.1:8000/health"),
+        probe_status_code=200,
+        probe_body_sha256=_SERVICE_BODY_SHA256,
+        stdout_ref=CommandOutputRef(value="command-output.service-run.run-app.stdout"),
+        stderr_ref=CommandOutputRef(value="command-output.service-run.run-app.stderr"),
+        started_at=_NOW,
+        ready_at=_NOW,
+        stopped_at=None,
+        runner_ref=RunnerRef(value="runner.local-service"),
+        environment_profile_ref=EnvironmentProfileRef(value="environment.local"),
+        workspace_snapshot_ref=WorkspaceSnapshotRef(value="workspace-snapshot.app"),
+    )
+
+
 def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
     contract = _package_contract()
     workspace_manifest = build_workspace_manifest(
@@ -235,18 +260,21 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         ),
     )
     run_manifest = build_run_manifest(workspace_manifest=workspace_manifest, package_contract=contract)
-    run_verification = _verification_run(
-        verification_run_id="verification-run.run-app",
-        command_id="run-app",
-        command=("python", "app.py"),
-    )
     test_verification = _verification_run(
         verification_run_id="verification-run.test-app",
     )
-    verification_runs = (run_verification, test_verification)
+    service_run = _service_run()
+    verification_runs = (test_verification,)
     run_evidence = _verified_evidence(
-        run_verification.verification_run_id,
+        VerificationRunRef(value=service_run.service_run_evidence_id.value),
         verified_evidence_id="verified-evidence.run-app",
+    ).model_copy(
+        update={
+            "source_kind": EvidenceClaimSourceKind.SERVICE_RUN,
+            "source_ref": service_run.service_run_evidence_id.value,
+            "verification_run_refs": (),
+            "service_run_refs": (service_run.service_run_evidence_id,),
+        }
     )
     test_evidence = _verified_evidence(
         test_verification.verification_run_id,
@@ -313,6 +341,7 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         source_inventory=source_inventory,
         run_manifest=run_manifest,
         verification_runs=verification_runs,
+        service_runs=(service_run,),
         verified_evidence=verified_evidence,
         final_evidence_table=final_evidence_table,
     )
@@ -336,9 +365,31 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         validate_run_manifest_binding(
             run_manifest=run_manifest,
             package_contract=contract,
-            command_id=run.command_id,
+            command_id=ContractId(value=command_id),
         )
-        for run in verification_runs
+        for command_id in ("run-app", "test-app")
+    )
+    run_manifest_bindings_by_id = {
+        binding.command_id.value: binding for binding in run_manifest_bindings
+    }
+    final_command_bindings = (
+        CloseoutCommandEvidenceBinding(
+            verification_run_ref=VerificationRunRef(value=service_run.service_run_evidence_id.value),
+            run_manifest_ref=run_manifest_bindings_by_id["run-app"].run_manifest_ref,
+            package_contract_ref=run_manifest_bindings_by_id["run-app"].package_contract_ref,
+            command_id=run_manifest_bindings_by_id["run-app"].command_id,
+            binding_kind=run_manifest_bindings_by_id["run-app"].kind,
+        ),
+        *(
+            CloseoutCommandEvidenceBinding(
+                verification_run_ref=run.verification_run_id,
+                run_manifest_ref=run_manifest_bindings_by_id[run.command_id.value].run_manifest_ref,
+                package_contract_ref=run_manifest_bindings_by_id[run.command_id.value].package_contract_ref,
+                command_id=run_manifest_bindings_by_id[run.command_id.value].command_id,
+                binding_kind=run_manifest_bindings_by_id[run.command_id.value].kind,
+            )
+            for run in verification_runs
+        ),
     )
     return CloseoutGateInput(
         package_contract=contract,
@@ -348,20 +399,10 @@ def _ready_input(*, checker_notes: bool = False) -> CloseoutGateInput:
         final_evidence_table=final_evidence_table,
         checker_verdict=checker_verdict,
         verification_runs=verification_runs,
+        service_run_evidence=(service_run,),
         verified_evidence=verified_evidence,
         provider_attempt_refs=(ProviderAttemptRef(value="provider-attempt.app"),),
-        final_command_bindings=(
-            *(
-                CloseoutCommandEvidenceBinding(
-                    verification_run_ref=run.verification_run_id,
-                    run_manifest_ref=binding.run_manifest_ref,
-                    package_contract_ref=binding.package_contract_ref,
-                    command_id=binding.command_id,
-                    binding_kind=binding.kind,
-                )
-                for run, binding in zip(verification_runs, run_manifest_bindings, strict=True)
-            ),
-        ),
+        final_command_bindings=final_command_bindings,
         replay_readiness=ReplayBundleReadiness(
             replay_passed=True,
             summary_hash=_SUMMARY_HASH,
@@ -403,6 +444,9 @@ def test_closeout_gate_passes_when_all_closeout_inputs_are_ready() -> None:
     assert gate_input.run_manifest.run_manifest_id.value in result.checked_refs
     assert gate_input.checker_verdict.checker_verdict_id.value in result.checked_refs
     assert _SUMMARY_HASH in result.checked_refs
+    assert "service-run.run-app" in result.checked_refs
+    assert "http://127.0.0.1:8000/health" in result.checked_refs
+    assert _SERVICE_BODY_SHA256 in result.checked_refs
     assert _FINAL_COMMIT_SHA in result.checked_refs
     assert _SOURCE_INVENTORY_HASH in result.checked_refs
     assert _FALLBACK_DECISION_REF in result.checked_refs

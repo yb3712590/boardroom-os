@@ -18,6 +18,7 @@ from boardroom_os.checker.verdict import CheckerVerdict, CheckerVerdictStatus
 from boardroom_os.contracts.hashes import Sha1Hex, Sha256Hex
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
+from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.evidence.table import FinalEvidenceStatus, FinalEvidenceTable, FinalEvidenceTableRef
 from boardroom_os.evidence.verifier import VerifiedEvidence
 from boardroom_os.execution.context_index import ProviderAttemptRef
@@ -278,6 +279,7 @@ class CloseoutGateInput(BaseModel):
     final_evidence_table: FinalEvidenceTable
     checker_verdict: CheckerVerdict
     verification_runs: tuple[VerificationRun, ...]
+    service_run_evidence: tuple[ServiceRunEvidence, ...] = ()
     verified_evidence: tuple[VerifiedEvidence, ...]
     provider_attempt_refs: tuple[ProviderAttemptRef, ...]
     final_command_bindings: tuple[CloseoutCommandEvidenceBinding, ...]
@@ -320,6 +322,11 @@ class CloseoutGateInput(BaseModel):
     @classmethod
     def _require_verified_evidence_tuple(cls, value: Any) -> Any:
         return _require_instance_tuple(value, VerifiedEvidence, "verified_evidence")
+
+    @field_validator("service_run_evidence", mode="before")
+    @classmethod
+    def _require_service_run_evidence_tuple(cls, value: Any) -> Any:
+        return _require_instance_tuple(value, ServiceRunEvidence, "service_run_evidence")
 
     @field_validator("provider_attempt_refs", mode="before")
     @classmethod
@@ -653,6 +660,16 @@ def _workspace_evidence_bundle_blockers(gate_input: CloseoutGateInput) -> list[C
                 bundle.workspace_evidence_bundle_id.value,
             )
         ]
+    if hasattr(bundle, "service_run_refs") and {ref.value for ref in bundle.service_run_refs} != {
+        service.service_run_evidence_id.value for service in gate_input.service_run_evidence
+    }:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY,
+                "workspace evidence bundle service run refs must match gate input",
+                bundle.workspace_evidence_bundle_id.value,
+            )
+        ]
     return []
 
 
@@ -725,19 +742,34 @@ def _command_evidence_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
                 )
             ]
 
-    bindings = gate_input.final_command_bindings
-    binding_refs = [binding.verification_run_ref.value for binding in bindings]
-    if not bindings or len(set(binding_refs)) != len(binding_refs) or set(binding_refs) != set(run_refs):
+    service_runs = gate_input.service_run_evidence
+    service_run_refs = [service.service_run_evidence_id.value for service in service_runs]
+    if len(set(service_run_refs)) != len(service_run_refs):
         return [
             _blocker(
                 CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
-                "every final verification run must have exactly one run manifest binding",
+                "service run evidence refs must be unique",
+                gate_input.run_manifest.run_manifest_id.value,
+            )
+        ]
+
+    bindings = gate_input.final_command_bindings
+    binding_refs = [binding.verification_run_ref.value for binding in bindings]
+    if not bindings or len(set(binding_refs)) != len(binding_refs):
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                "final command evidence bindings must be present and unique",
                 gate_input.run_manifest.run_manifest_id.value,
             )
         ]
 
     run_by_ref = {run.verification_run_id.value: run for run in runs}
     commands_by_id = {command.command_id.value: command for command in gate_input.run_manifest.commands}
+    service_runs_by_ref = {service.service_run_evidence_id.value: service for service in service_runs}
+    service_runs_by_command_id = {
+        service.command_id.value: service for service in gate_input.service_run_evidence
+    }
     bound_command_ids = {binding.command_id.value for binding in bindings}
     missing_command_ids = tuple(
         command.command_id.value
@@ -748,10 +780,34 @@ def _command_evidence_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
         return [
             _blocker(
                 CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
-                "RUN_MANIFEST_COMMAND_UNVERIFIED: declared run manifest command lacks final evidence",
+                (
+                    "RUN_MANIFEST_SERVICE_NOT_READY: run command lacks service readiness evidence"
+                    if commands_by_id[command_id].kind is RunManifestCommandKind.RUN
+                    else "RUN_MANIFEST_COMMAND_UNVERIFIED: declared run manifest command lacks final evidence"
+                ),
                 command_id,
             )
             for command_id in missing_command_ids
+        ]
+
+    binding_ref_values = set(binding_refs)
+    orphan_verification_run_refs = set(run_refs) - binding_ref_values
+    if orphan_verification_run_refs:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                "every final verification run must have exactly one run manifest binding",
+                gate_input.run_manifest.run_manifest_id.value,
+            )
+        ]
+    orphan_service_run_refs = set(service_run_refs) - binding_ref_values
+    if orphan_service_run_refs:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                "every final service run evidence ref must have exactly one run manifest binding",
+                gate_input.run_manifest.run_manifest_id.value,
+            )
         ]
 
     for binding in bindings:
@@ -767,7 +823,6 @@ def _command_evidence_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
                 )
             ]
         command = commands_by_id.get(binding.command_id.value)
-        run = run_by_ref[binding.verification_run_ref.value]
         if command is None or command.kind is not binding.binding_kind:
             return [
                 _blocker(
@@ -776,14 +831,49 @@ def _command_evidence_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
                     binding.command_id.value,
                 )
             ]
-        if run.command_id != command.command_id or run.command != command.command or run.cwd != command.cwd:
-            return [
-                _blocker(
-                    CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
-                    "verification run command must match run manifest binding",
-                    run.verification_run_id.value,
-                )
-            ]
+        if binding.binding_kind is RunManifestCommandKind.TEST:
+            run = run_by_ref.get(binding.verification_run_ref.value)
+            if run is None:
+                return [
+                    _blocker(
+                        CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                        "test command binding must reference verification run evidence",
+                        binding.command_id.value,
+                    )
+                ]
+            if run.command_id != command.command_id or run.command != command.command or run.cwd != command.cwd:
+                return [
+                    _blocker(
+                        CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                        "verification run command must match run manifest binding",
+                        run.verification_run_id.value,
+                    )
+                ]
+        elif binding.binding_kind is RunManifestCommandKind.RUN:
+            service = service_runs_by_ref.get(binding.verification_run_ref.value)
+            if service is None:
+                return [
+                    _blocker(
+                        CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                        "RUN_MANIFEST_SERVICE_NOT_READY: run command lacks service readiness evidence",
+                        binding.command_id.value,
+                    )
+                ]
+            if (
+                service.command_id != command.command_id
+                or service.command != command.command
+                or service.cwd != command.cwd
+                or service.probe_status_code < 200
+                or service.probe_status_code >= 300
+                or service_runs_by_command_id.get(binding.command_id.value) != service
+            ):
+                return [
+                    _blocker(
+                        CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL,
+                        "RUN_MANIFEST_SERVICE_NOT_READY: service readiness evidence does not match run command",
+                        binding.command_id.value,
+                    )
+                ]
     return []
 
 
@@ -894,6 +984,10 @@ def _checked_refs(gate_input: CloseoutGateInput) -> tuple[str, ...]:
     ]
     refs.extend(ref.value for ref in gate_input.provider_attempt_refs)
     refs.extend(run.verification_run_id.value for run in gate_input.verification_runs)
+    for service in gate_input.service_run_evidence:
+        refs.append(service.service_run_evidence_id.value)
+        refs.append(service.readiness_url.value)
+        refs.append(service.probe_body_sha256.value)
     refs.extend(evidence.verified_evidence_id.value for evidence in gate_input.verified_evidence)
     refs.extend(
         evidence.fallback_decision_record_ref.value

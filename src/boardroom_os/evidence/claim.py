@@ -17,6 +17,7 @@ from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import EvidencePurpose, FallbackKind
 from boardroom_os.execution.package import FallbackPolicyRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunRef
+from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.execution.work_product import WorkProduct, WorkProductClaimDraft
 
 
@@ -35,6 +36,7 @@ class EvidenceArtifactRef(NonEmptyTextValue):
 class EvidenceClaimSourceKind(StrEnum):
     WORK_PRODUCT = "work_product"
     VERIFICATION_RUN = "verification_run"
+    SERVICE_RUN = "service_run"
 
 
 _TUPLE_REF_FIELDS = (
@@ -410,6 +412,57 @@ def build_evidence_claim_from_verification_run(
     )
 
 
+def build_evidence_claim_from_service_run(
+    *,
+    service_run: ServiceRunEvidence,
+    evidence_obligation: EvidenceObligation,
+    producer_attempt_ref: ProviderAttemptRef,
+    acceptance_refs: tuple[AcceptanceRef, ...],
+    source_surface_refs: tuple[SourceSurfaceRef, ...],
+    expected_purpose: EvidencePurpose,
+    summary: str,
+    claim_id: EvidenceClaimRef | None = None,
+) -> EvidenceClaim:
+    _validate_producer_attempt_ref(producer_attempt_ref)
+    _validate_expected_purpose(expected_purpose)
+    normalized_acceptance_refs = _normalize_acceptance_refs(acceptance_refs)
+    normalized_source_surface_refs = _normalize_source_surface_refs(source_surface_refs)
+    claim_acceptance_refs = _claim_refs_for_obligation(
+        provided_values=normalized_acceptance_refs,
+        required_values=evidence_obligation.acceptance_refs,
+        field_name="acceptance_refs",
+    )
+    claim_source_surface_refs = _claim_refs_for_obligation(
+        provided_values=normalized_source_surface_refs,
+        required_values=evidence_obligation.source_surface_refs,
+        field_name="source_surface_refs",
+    )
+    source_ref = service_run.service_run_evidence_id.value
+    resolved_claim_id = claim_id or _claim_id_for(
+        source_kind=EvidenceClaimSourceKind.SERVICE_RUN,
+        source_ref=source_ref,
+        evidence_obligation_ref=evidence_obligation.evidence_obligation_id,
+    )
+    return EvidenceClaim(
+        evidence_claim_id=resolved_claim_id,
+        evidence_obligation_ref=evidence_obligation.evidence_obligation_id,
+        producer_attempt_ref=producer_attempt_ref,
+        source_kind=EvidenceClaimSourceKind.SERVICE_RUN,
+        source_ref=source_ref,
+        expected_purpose=expected_purpose,
+        required_artifact_type=evidence_obligation.required_artifact_type,
+        acceptance_refs=claim_acceptance_refs,
+        source_surface_refs=claim_source_surface_refs,
+        artifact_refs=(
+            EvidenceArtifactRef(value=service_run.stdout_ref.value),
+            EvidenceArtifactRef(value=service_run.stderr_ref.value),
+        ),
+        verification_run_refs=(),
+        fallback_marker=None,
+        summary=summary,
+    )
+
+
 __all__ = [
     "EvidenceArtifactRef",
     "EvidenceClaim",
@@ -417,6 +470,7 @@ __all__ = [
     "EvidenceClaimRef",
     "EvidenceClaimSourceKind",
     "FallbackLineageMarker",
+    "build_evidence_claim_from_service_run",
     "build_evidence_claim_from_verification_run",
     "build_evidence_claim_from_work_product",
 ]

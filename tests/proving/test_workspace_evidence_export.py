@@ -18,6 +18,7 @@ from boardroom_os.contracts.package import IntegrationBoundary, PackageCommand, 
 from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef, SourceSurface
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
 from boardroom_os.evidence.claim import EvidenceArtifactRef, EvidenceClaimRef, EvidenceClaimSourceKind
+from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.evidence.table import (
     FinalEvidenceBlocker,
     FinalEvidenceBlockerCode,
@@ -248,6 +249,29 @@ def _verification_run(
     )
 
 
+def _service_run(ref: str = "service-run.run-app") -> ServiceRunEvidence:
+    return ServiceRunEvidence(
+        service_run_evidence_id=ref,
+        execution_package_ref=ExecutionPackageRef(value="execution-package.app"),
+        ticket_ref=TicketId(value="ticket.app"),
+        command_id=ContractId(value="run-app"),
+        command=("python", "-m", "pytest"),
+        cwd=".",
+        process_id=4321,
+        readiness_url="http://127.0.0.1:8000/health",
+        probe_status_code=200,
+        probe_body_sha256="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        stdout_ref=CommandOutputRef(value=f"command-output.{ref}.stdout"),
+        stderr_ref=CommandOutputRef(value=f"command-output.{ref}.stderr"),
+        started_at=_NOW,
+        ready_at=_NOW,
+        stopped_at=None,
+        runner_ref=RunnerRef(value="runner.local-service"),
+        environment_profile_ref=EnvironmentProfileRef(value="environment.local"),
+        workspace_snapshot_ref=WorkspaceSnapshotRef(value="workspace-snapshot.app"),
+    )
+
+
 def _verified_evidence(
     ref: str,
     run_ref: VerificationRunRef,
@@ -275,6 +299,44 @@ def _verified_evidence(
             ),
         ),
         verification_run_refs=(run_ref,),
+        verified_at=_NOW,
+    )
+
+
+def _service_verified_evidence(
+    ref: str,
+    service_run: ServiceRunEvidence,
+    acceptance_ref: AcceptanceRef,
+    source_surface_ref: SourceSurfaceRef,
+) -> VerifiedEvidence:
+    return VerifiedEvidence(
+        verified_evidence_id=VerifiedEvidenceRef(value=ref),
+        evidence_claim_ref=EvidenceClaimRef(value=f"evidence-claim.{ref}"),
+        evidence_obligation_ref=EvidenceObligationRef(value="evidence-obligation.service"),
+        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
+        source_kind=EvidenceClaimSourceKind.SERVICE_RUN,
+        source_ref=service_run.service_run_evidence_id.value,
+        expected_purpose=EvidencePurpose.IMPLEMENTATION,
+        required_artifact_type=RequiredArtifactType(value="service_run"),
+        acceptance_refs=(acceptance_ref,),
+        source_surface_refs=(source_surface_ref,),
+        verified_artifacts=(
+            VerifiedArtifact(
+                artifact_ref=EvidenceArtifactRef(value=service_run.stdout_ref.value),
+                sha256=ArtifactSha256(value="456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123"),
+                producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
+                source_ref=service_run.service_run_evidence_id.value,
+                artifact_kind="service_stdout",
+            ),
+            VerifiedArtifact(
+                artifact_ref=EvidenceArtifactRef(value=service_run.stderr_ref.value),
+                sha256=ArtifactSha256(value="56789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234"),
+                producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
+                source_ref=service_run.service_run_evidence_id.value,
+                artifact_kind="service_stderr",
+            ),
+        ),
+        service_run_refs=(service_run.service_run_evidence_id,),
         verified_at=_NOW,
     )
 
@@ -504,6 +566,7 @@ def test_workspace_evidence_bundle_rejects_forged_closeout_ready_without_artifac
             run_manifest_ref=facts["run_manifest"].run_manifest_id,
             final_evidence_table_ref=facts["final_evidence_table"].final_evidence_table_id,
             verification_run_refs=(),
+            service_run_refs=(),
             verified_evidence_refs=(),
             artifacts=(),
             closeout_ready=True,
@@ -524,6 +587,7 @@ def test_build_workspace_evidence_bundle_returns_closeout_ready_plan() -> None:
     assert bundle.run_manifest_ref == facts["run_manifest"].run_manifest_id
     assert bundle.final_evidence_table_ref == facts["final_evidence_table"].final_evidence_table_id
     assert bundle.verification_run_refs == (facts["verification_runs"][0].verification_run_id,)
+    assert bundle.service_run_refs == ()
     assert bundle.verified_evidence_refs == (facts["verified_evidence"][0].verified_evidence_id,)
     assert {artifact.artifact_kind for artifact in bundle.artifacts} == set(EvidenceBundleArtifactKind)
     assert tuple(artifact.relative_path.value for artifact in bundle.artifacts) == tuple(
@@ -533,10 +597,58 @@ def test_build_workspace_evidence_bundle_returns_closeout_ready_plan() -> None:
     assert {
         "20-evidence/source-inventory/source-inventory.json",
         "20-evidence/tests/verification-runs.json",
+        "20-evidence/tests/service-runs.json",
         "20-evidence/tests/run-manifest.json",
         "20-evidence/closeout/final-evidence-table.json",
         "20-evidence/closeout/evidence-bundle-manifest.json",
     } == {artifact.relative_path.value for artifact in bundle.artifacts}
+
+
+def test_build_workspace_evidence_bundle_preserves_service_run_refs() -> None:
+    from boardroom_os.workspace.evidence_export import build_workspace_evidence_bundle
+
+    facts = _facts()
+    service_run = _service_run()
+    service_evidence = _service_verified_evidence(
+        "verified-evidence.service-run",
+        service_run,
+        AcceptanceRef(value="AC-APP"),
+        SourceSurfaceRef(value="app-source"),
+    )
+    verified_evidence = (*facts["verified_evidence"], service_evidence)
+    verified_evidence_refs = tuple(
+        evidence.verified_evidence_id for evidence in verified_evidence
+    )
+    facts["source_inventory"] = facts["source_inventory"].model_copy(
+        update={
+            "entries": tuple(
+                entry.model_copy(update={"evidence_refs": verified_evidence_refs})
+                for entry in facts["source_inventory"].entries
+            )
+        }
+    )
+    facts["final_evidence_table"] = facts["final_evidence_table"].model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"verified_evidence_refs": verified_evidence_refs})
+                for row in facts["final_evidence_table"].rows
+            )
+        }
+    )
+    facts["verified_evidence"] = verified_evidence
+    facts["service_runs"] = (service_run,)
+
+    bundle = build_workspace_evidence_bundle(**facts)
+
+    assert bundle.service_run_refs == (service_run.service_run_evidence_id,)
+    service_artifact = next(
+        artifact
+        for artifact in bundle.artifacts
+        if artifact.relative_path.value == "20-evidence/tests/service-runs.json"
+    )
+    assert service_run.service_run_evidence_id.value in {
+        related_ref.value for related_ref in service_artifact.related_refs
+    }
 
 
 def test_build_workspace_evidence_bundle_is_deterministic() -> None:

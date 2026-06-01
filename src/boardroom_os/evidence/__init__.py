@@ -7,6 +7,7 @@ from boardroom_os.evidence.claim import (
     EvidenceClaimRef,
     EvidenceClaimSourceKind,
     FallbackLineageMarker,
+    build_evidence_claim_from_service_run,
     build_evidence_claim_from_verification_run,
     build_evidence_claim_from_work_product,
 )
@@ -33,6 +34,12 @@ from boardroom_os.evidence.verifier import (
     VerifiedArtifact,
     VerifiedEvidence,
     VerifiedEvidenceRef,
+)
+from boardroom_os.evidence.service_run import (
+    ServiceProbeResult,
+    ServiceReadinessUrl,
+    ServiceRunEvidence,
+    ServiceRunEvidenceRef,
 )
 from boardroom_os.evidence.table import (
     FinalEvidenceBlocker,
@@ -81,6 +88,11 @@ __all__ = [
     "VerifiedArtifact",
     "VerifiedEvidence",
     "VerifiedEvidenceRef",
+    "ServiceProbeResult",
+    "ServiceReadinessUrl",
+    "ServiceRunEvidence",
+    "ServiceRunEvidenceRef",
+    "build_evidence_claim_from_service_run",
     "build_evidence_claim_from_verification_run",
     "build_evidence_claim_from_work_product",
     "evaluate_fallback_claim",
