@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import os
 import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -37,6 +39,9 @@ class CommandRunnerError(ValueError):
     pass
 
 
+TAfterReady = TypeVar("TAfterReady")
+
+
 class ProcessResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -63,7 +68,13 @@ class ServiceProcessHandle(Protocol):
 
 
 class ServiceProcessExecutor(Protocol):
-    def start(self, *, command: tuple[str, ...], cwd: Path) -> ServiceProcessHandle: ...
+    def start(
+        self,
+        *,
+        command: tuple[str, ...],
+        cwd: Path,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> ServiceProcessHandle: ...
 
 
 class SubprocessExecutor:
@@ -85,11 +96,21 @@ class SubprocessExecutor:
 
 
 class SubprocessServiceExecutor:
-    def start(self, *, command: tuple[str, ...], cwd: Path) -> ServiceProcessHandle:
+    def start(
+        self,
+        *,
+        command: tuple[str, ...],
+        cwd: Path,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> ServiceProcessHandle:
+        environment = os.environ.copy()
+        if environment_overrides:
+            environment.update(environment_overrides)
         try:
             return subprocess.Popen(
                 command,
                 cwd=cwd,
+                env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -280,6 +301,7 @@ class ServiceRunnerInput(BaseModel):
     runner_ref: RunnerRef
     environment_profile_ref: EnvironmentProfileRef
     workspace_snapshot_ref: WorkspaceSnapshotRef
+    environment_overrides: dict[str, str] = {}
     timeout_seconds: float = 10.0
     poll_interval_seconds: float = 0.1
 
@@ -323,6 +345,16 @@ class ServiceRunnerInput(BaseModel):
             raise ValueError("timeout and poll intervals must be positive")
         return value
 
+    @field_validator("environment_overrides")
+    @classmethod
+    def _validate_environment_overrides(cls, value: dict[str, str]) -> dict[str, str]:
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("environment_overrides keys must be non-empty strings")
+            if not isinstance(item, str) or not item:
+                raise ValueError("environment_overrides values must be non-empty strings")
+        return dict(value)
+
 
 class ServiceRunnerResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -330,6 +362,7 @@ class ServiceRunnerResult(BaseModel):
     service_run_evidence: ServiceRunEvidence
     stdout: str
     stderr: str
+    after_ready_result: Any = None
 
 
 class HttpReadinessProbe:
@@ -339,7 +372,7 @@ class HttpReadinessProbe:
                 return response.status, response.read()
         except HTTPError as error:
             return error.code, error.read()
-        except URLError as error:
+        except (http.client.RemoteDisconnected, TimeoutError, URLError) as error:
             raise CommandRunnerError("readiness probe failed") from error
 
 
@@ -355,7 +388,12 @@ class ServiceRunner:
         self._readiness_probe = readiness_probe or HttpReadinessProbe()
         self._clock = clock or SystemClock()
 
-    def run(self, runner_input: ServiceRunnerInput) -> ServiceRunnerResult:
+    def run(
+        self,
+        runner_input: ServiceRunnerInput,
+        *,
+        after_ready_probe: Callable[[ServiceRunEvidence], TAfterReady] | None = None,
+    ) -> ServiceRunnerResult:
         execution_package_command = _resolve_execution_package_command(runner_input)
         contract_command = _resolve_package_contract_command(runner_input)
         _validate_package_command_match(
@@ -366,11 +404,14 @@ class ServiceRunner:
             package_root=runner_input.package_root,
             declared_cwd=execution_package_command.cwd,
         )
+        if self._readiness_url_is_already_ready(runner_input.readiness_url):
+            raise ServiceRunnerError("readiness URL was already ready before service start")
         started_at = _require_timezone_aware(self._clock.now())
         try:
             process = self._service_executor.start(
                 command=execution_package_command.command,
                 cwd=resolved_cwd,
+                environment_overrides=runner_input.environment_overrides,
             )
         except Exception as error:
             raise CommandRunnerError("failed to execute declared service command") from error
@@ -379,6 +420,14 @@ class ServiceRunner:
         probe_status: int | None = None
         probe_body: bytes | None = None
         deadline = time.monotonic() + runner_input.timeout_seconds
+        service_run_evidence_id = ServiceRunEvidenceRef(
+            value=(
+                "service-run."
+                f"{runner_input.execution_package.execution_package_id.value}."
+                f"{runner_input.command_id.value}"
+            )
+        )
+        after_ready_result: TAfterReady | None = None
         try:
             while time.monotonic() < deadline:
                 if process.poll() is not None:
@@ -394,24 +443,67 @@ class ServiceRunner:
                     time.sleep(runner_input.poll_interval_seconds)
                     continue
                 if 200 <= probe_status < 300:
+                    time.sleep(runner_input.poll_interval_seconds)
+                    if process.poll() is not None:
+                        stdout_text, stderr_text = _communicate_service_process(process)
+                        raise ServiceRunnerError(
+                            "service process exited before readiness probe passed"
+                        ) from _ServiceProcessOutputError(stdout_text, stderr_text)
                     ready_at = _require_timezone_aware(self._clock.now())
                     break
                 time.sleep(runner_input.poll_interval_seconds)
             if ready_at is None or probe_status is None or probe_body is None:
                 raise ServiceRunnerError("service readiness probe failed before timeout")
+            if after_ready_probe is not None:
+                probe_evidence = self._service_run_evidence(
+                    runner_input=runner_input,
+                    execution_package_command=execution_package_command,
+                    service_run_evidence_id=service_run_evidence_id,
+                    process_id=process.pid,
+                    probe_status=probe_status,
+                    probe_body=probe_body,
+                    started_at=started_at,
+                    ready_at=ready_at,
+                    stopped_at=None,
+                )
+                after_ready_result = after_ready_probe(probe_evidence)
         finally:
             stopped_at, stdout_text, stderr_text = self._stop_process(process)
 
         if stopped_at < started_at:
             raise ServiceRunnerError("clock stopped_at must not be earlier than started_at")
-        service_run_evidence_id = ServiceRunEvidenceRef(
-            value=(
-                "service-run."
-                f"{runner_input.execution_package.execution_package_id.value}."
-                f"{runner_input.command_id.value}"
-            )
+        service_run_evidence = self._service_run_evidence(
+            runner_input=runner_input,
+            execution_package_command=execution_package_command,
+            service_run_evidence_id=service_run_evidence_id,
+            process_id=process.pid,
+            probe_status=probe_status,
+            probe_body=probe_body,
+            started_at=started_at,
+            ready_at=ready_at,
+            stopped_at=stopped_at,
         )
-        service_run_evidence = ServiceRunEvidence(
+        return ServiceRunnerResult(
+            service_run_evidence=service_run_evidence,
+            stdout=stdout_text,
+            stderr=stderr_text,
+            after_ready_result=after_ready_result,
+        )
+
+    def _service_run_evidence(
+        self,
+        *,
+        runner_input: ServiceRunnerInput,
+        execution_package_command: PackageCommand,
+        service_run_evidence_id: ServiceRunEvidenceRef,
+        process_id: int,
+        probe_status: int,
+        probe_body: bytes,
+        started_at: datetime,
+        ready_at: datetime,
+        stopped_at: datetime | None,
+    ) -> ServiceRunEvidence:
+        return ServiceRunEvidence(
             service_run_evidence_id=service_run_evidence_id,
             execution_package_ref=ExecutionPackageRef(
                 value=runner_input.execution_package.execution_package_id.value
@@ -420,7 +512,7 @@ class ServiceRunner:
             command_id=execution_package_command.command_id,
             command=execution_package_command.command,
             cwd=execution_package_command.cwd,
-            process_id=process.pid,
+            process_id=process_id,
             readiness_url=runner_input.readiness_url,
             probe_status_code=probe_status,
             probe_body_sha256=hashlib.sha256(probe_body).hexdigest(),
@@ -432,12 +524,15 @@ class ServiceRunner:
             runner_ref=runner_input.runner_ref,
             environment_profile_ref=runner_input.environment_profile_ref,
             workspace_snapshot_ref=runner_input.workspace_snapshot_ref,
+            environment_overrides=runner_input.environment_overrides,
         )
-        return ServiceRunnerResult(
-            service_run_evidence=service_run_evidence,
-            stdout=stdout_text,
-            stderr=stderr_text,
-        )
+
+    def _readiness_url_is_already_ready(self, readiness_url: ServiceReadinessUrl) -> bool:
+        try:
+            status, _ = self._readiness_probe.probe(readiness_url)
+        except CommandRunnerError:
+            return False
+        return 200 <= status < 300
 
     def _stop_process(
         self,

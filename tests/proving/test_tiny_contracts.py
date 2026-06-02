@@ -164,6 +164,7 @@ def test_tiny_contract_uses_standard_library_http_backend_route() -> None:
     }
 
     assert run_commands["run-backend"] == ("python", "-m", "backend.app")
+    assert "FRONTEND_PORT" in " ".join(run_commands["run-frontend"])
     assert all("uvicorn" not in " ".join(command) for command in run_commands.values())
 
 

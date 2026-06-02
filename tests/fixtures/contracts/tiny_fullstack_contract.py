@@ -505,7 +505,7 @@ def _package_contract(
         ),
         run_commands=(
             _command("run-backend", "Run backend API", ("python", "-m", "backend.app")),
-            _command("run-frontend", "Run frontend UI", ("python", "-m", "http.server", "5173", "--directory", "frontend")),
+            _command("run-frontend", "Run frontend UI", _frontend_service_command()),
         ),
         test_commands=(
             _command(
@@ -573,4 +573,19 @@ def _command(command_id: str, label: str, command: tuple[str, ...]) -> PackageCo
         label=label,
         command=command,
         cwd=".",
+    )
+
+
+def _frontend_service_command() -> tuple[str, ...]:
+    return (
+        "python",
+        "-c",
+        (
+            "import os; "
+            "from functools import partial; "
+            "from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer; "
+            "handler = partial(SimpleHTTPRequestHandler, directory='frontend'); "
+            "port = int(os.environ.get('FRONTEND_PORT', '5173')); "
+            "ThreadingHTTPServer(('127.0.0.1', port), handler).serve_forever()"
+        ),
     )

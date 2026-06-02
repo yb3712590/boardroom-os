@@ -88,6 +88,7 @@ class ServiceRunEvidence(BaseModel):
     runner_ref: RunnerRef
     environment_profile_ref: EnvironmentProfileRef
     workspace_snapshot_ref: WorkspaceSnapshotRef
+    environment_overrides: dict[str, str] = {}
 
     @model_validator(mode="before")
     @classmethod
@@ -149,6 +150,16 @@ class ServiceRunEvidence(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("datetime fields must be timezone-aware")
         return value
+
+    @field_validator("environment_overrides")
+    @classmethod
+    def _validate_environment_overrides(cls, value: dict[str, str]) -> dict[str, str]:
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("environment_overrides keys must be non-empty strings")
+            if not isinstance(item, str) or not item:
+                raise ValueError("environment_overrides values must be non-empty strings")
+        return dict(value)
 
     @model_validator(mode="after")
     def _validate_service_window(self) -> Self:

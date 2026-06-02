@@ -25,7 +25,7 @@ def _build_negative_tiny_package_fixture(tmp_path: Path, *, package_contents):
         package_root=tmp_path / "physical-package-root",
         package_contents=package_contents,
         provider_fixture=build_tiny_provider_attempt_fixture(use_fake_results=True),
-        allow_fake_provider_for_negative_tests=True,
+        allow_test_provider_transport=True,
     )
 
 

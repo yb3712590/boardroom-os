@@ -18,6 +18,7 @@ from boardroom_os.contracts.evidence_obligation import (
     EvidenceObligation,
     RequiredArtifactType,
 )
+from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import (
     AcceptanceRef,
     EvidenceObligationRef,
@@ -29,6 +30,12 @@ from boardroom_os.evidence.claim import (
     EvidenceClaim,
     EvidenceClaimRef,
     EvidenceClaimSourceKind,
+)
+from boardroom_os.evidence.live_blackbox import (
+    LiveBlackboxIntegrationEvidence,
+    LiveBlackboxIntegrationEvidenceRef,
+    LiveBlackboxIntegrationVerifier,
+    LiveBlackboxVerifierInput,
 )
 from boardroom_os.evidence.service_run import (
     ServiceRunEvidence,
@@ -63,8 +70,8 @@ _VERIFIED_EVIDENCE_TUPLE_REF_FIELDS = (
     "source_surface_refs",
     "verification_run_refs",
     "service_run_refs",
+    "live_blackbox_evidence_refs",
 )
-
 
 def _reject_malformed_verified_evidence_tuple_ref_inputs(data: Any) -> Any:
     if not isinstance(data, dict):
@@ -263,6 +270,8 @@ class EvidenceVerificationBlockerCode(StrEnum):
     MISSING_SERVICE_RUN = "missing_service_run"
     SERVICE_RUN_NOT_READY = "service_run_not_ready"
     SERVICE_RUN_ARTIFACT_REFS_MISMATCH = "service_run_artifact_refs_mismatch"
+    MISSING_LIVE_BLACKBOX_EVIDENCE = "missing_live_blackbox_evidence"
+    LIVE_BLACKBOX_SOURCE_KIND_REQUIRED = "live_blackbox_source_kind_required"
     PRIMARY_CLAIM_WITH_FALLBACK_ATTEMPT = "primary_claim_with_fallback_attempt"
     PRIMARY_CLAIM_WITH_FALLBACK_DECISION_RECORD = "primary_claim_with_fallback_decision_record"
     FALLBACK_CLAIM_WITH_PRIMARY_ATTEMPT = "fallback_claim_with_primary_attempt"
@@ -318,6 +327,7 @@ class VerifiedEvidence(BaseModel):
     verified_artifacts: tuple[VerifiedArtifact, ...]
     verification_run_refs: tuple[VerificationRunRef, ...] = ()
     service_run_refs: tuple[ServiceRunEvidenceRef, ...] = ()
+    live_blackbox_evidence_refs: tuple[LiveBlackboxIntegrationEvidenceRef, ...] = ()
     fallback_decision_record_ref: FallbackDecisionRecordRef | None = None
     fallback_decision_recorded_ref: FallbackDecisionRecordedRef | None = None
     verified_at: datetime
@@ -355,6 +365,7 @@ class VerifiedEvidence(BaseModel):
                 "source_surface_refs": SourceSurfaceRef,
                 "verification_run_refs": VerificationRunRef,
                 "service_run_refs": ServiceRunEvidenceRef,
+                "live_blackbox_evidence_refs": LiveBlackboxIntegrationEvidenceRef,
             },
         )
 
@@ -390,6 +401,7 @@ class EvidenceVerificationInput(BaseModel):
     claim: EvidenceClaim
     evidence_obligation: EvidenceObligation
     active_acceptance_contract: AcceptanceContract
+    active_package_contract: PackageContract | None = None
     artifact_manifest: ArtifactManifest
     purpose_policy: EvidencePurposePolicy
     provider_attempts: tuple[ProviderAttempt, ...]
@@ -397,6 +409,7 @@ class EvidenceVerificationInput(BaseModel):
     role_prompt_hook_registry: RolePromptHookRegistry
     verification_runs: tuple[VerificationRun, ...] = ()
     service_runs: tuple[ServiceRunEvidence, ...] = ()
+    live_blackbox_evidence: tuple[LiveBlackboxIntegrationEvidence, ...] = ()
     fallback_policy_registry: FallbackPolicyRegistry | None = None
     fallback_decision_record: FallbackDecisionRecord | None = None
     fallback_decision_recorded_ref: FallbackDecisionRecordedRef | None = None
@@ -411,6 +424,19 @@ class EvidenceVerificationInput(BaseModel):
     ) -> AcceptanceContract:
         if not isinstance(value, AcceptanceContract):
             raise ValueError("active_acceptance_contract must be an AcceptanceContract")
+        return value
+
+    @field_validator("active_package_contract", mode="wrap")
+    @classmethod
+    def _require_package_contract_instance(
+        cls,
+        value: Any,
+        handler: Any,
+    ) -> PackageContract | None:
+        if value is None:
+            return None
+        if not isinstance(value, PackageContract):
+            raise ValueError("active_package_contract must be a PackageContract")
         return value
 
     @field_validator("role_prompt_hook_registry", mode="wrap")
@@ -466,6 +492,7 @@ class EvidenceVerifier:
         self._verify_provider_attempt(verification_input, blockers)
         self._verify_verification_run(verification_input, blockers)
         self._verify_service_run(verification_input, blockers)
+        self._verify_live_blackbox_evidence(verification_input, blockers)
         fallback_decision_record = self._verify_fallback_lineage(
             verification_input,
             blockers,
@@ -494,6 +521,11 @@ class EvidenceVerifier:
                 service_run_refs=(
                     (ServiceRunEvidenceRef(value=claim.source_ref),)
                     if claim.source_kind is EvidenceClaimSourceKind.SERVICE_RUN
+                    else ()
+                ),
+                live_blackbox_evidence_refs=(
+                    (LiveBlackboxIntegrationEvidenceRef(value=claim.source_ref),)
+                    if claim.source_kind is EvidenceClaimSourceKind.LIVE_BLACKBOX
                     else ()
                 ),
                 fallback_decision_record_ref=(
@@ -953,6 +985,74 @@ class EvidenceVerifier:
                 )
             )
 
+    def _verify_live_blackbox_evidence(
+        self,
+        verification_input: EvidenceVerificationInput,
+        blockers: list[EvidenceVerificationBlocker],
+    ) -> None:
+        claim = verification_input.claim
+        if (
+            verification_input.evidence_obligation.required_verifier.value == "live_blackbox"
+            and claim.source_kind is not EvidenceClaimSourceKind.LIVE_BLACKBOX
+        ):
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.LIVE_BLACKBOX_SOURCE_KIND_REQUIRED,
+                    message="live integration artifact claims must reference live blackbox evidence",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+        if claim.source_kind is not EvidenceClaimSourceKind.LIVE_BLACKBOX:
+            return
+
+        evidence = self._live_blackbox_evidence_by_ref(
+            verification_input.live_blackbox_evidence,
+            claim.source_ref,
+        )
+        if evidence is None:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_LIVE_BLACKBOX_EVIDENCE,
+                    message="live_blackbox claim source_ref is missing from live_blackbox_evidence",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+
+        if verification_input.active_package_contract is None:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_LIVE_BLACKBOX_EVIDENCE,
+                    message="live_blackbox evidence requires active package contract",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+
+        result = LiveBlackboxIntegrationVerifier().verify(
+            LiveBlackboxVerifierInput(
+                evidence=evidence,
+                package_contract=verification_input.active_package_contract,
+                service_runs=verification_input.service_runs,
+            )
+        )
+        if not result.success:
+            blocker_messages = "; ".join(
+                blocker.message for blocker in result.blockers
+            )
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_LIVE_BLACKBOX_EVIDENCE,
+                    message=(
+                        "live_blackbox evidence failed blackbox validation: "
+                        f"{blocker_messages}"
+                    ),
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+
     def _verify_fallback_lineage(
         self,
         verification_input: EvidenceVerificationInput,
@@ -1061,6 +1161,16 @@ class EvidenceVerifier:
         for service_run in service_runs:
             if service_run.service_run_evidence_id.value == source_ref:
                 return service_run
+        return None
+
+    def _live_blackbox_evidence_by_ref(
+        self,
+        live_blackbox_evidence: tuple[LiveBlackboxIntegrationEvidence, ...],
+        source_ref: str,
+    ) -> LiveBlackboxIntegrationEvidence | None:
+        for evidence in live_blackbox_evidence:
+            if evidence.live_blackbox_evidence_id.value == source_ref:
+                return evidence
         return None
 
     def _provider_attempt_by_ref(

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import http.client
 import json
 import re
 import sqlite3
+import socket
+import subprocess
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,14 +20,29 @@ from boardroom_os.adapters.process_runner import (
     CommandRunner,
     CommandRunnerInput,
     CommandRunnerResult,
+    ServiceRunner,
+    ServiceRunnerInput,
 )
 from boardroom_os.contracts.evidence_obligation import EvidenceObligation
 from boardroom_os.contracts.package import PackageContract
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, SourceSurfaceRef
 from boardroom_os.evidence.claim import (
     EvidenceArtifactRef,
+    build_evidence_claim_from_live_blackbox,
+    build_evidence_claim_from_service_run,
     build_evidence_claim_from_verification_run,
 )
+from boardroom_os.evidence.live_blackbox import (
+    BackendCrudProbeResult,
+    FrontendLiveProbeResult,
+    LiveBlackboxIntegrationEvidence,
+    LiveBlackboxIntegrationEvidenceRef,
+    LiveBlackboxIntegrationVerifier,
+    LiveBlackboxVerifierInput,
+    SQLitePersistenceProbeResult,
+    artifact_refs_for_live_blackbox,
+)
+from boardroom_os.evidence.service_run import ServiceReadinessUrl, ServiceRunEvidence
 from boardroom_os.evidence.table import (
     FinalEvidenceTable,
     FinalEvidenceTableBuilder,
@@ -38,6 +59,7 @@ from boardroom_os.evidence.verifier import (
     VerifiedEvidence,
 )
 from boardroom_os.execution.fallback import EvidencePurpose
+from boardroom_os.execution.package import ExecutionPackageId
 from boardroom_os.execution.verification_run import (
     EnvironmentProfileRef,
     RunnerRef,
@@ -407,17 +429,23 @@ class TinyPackageAssemblyFixture:
         )
 
 
+@dataclass(frozen=True)
+class TinyLiveBlackboxFixture(TinyPackageAssemblyFixture):
+    service_runs: tuple[ServiceRunEvidence, ...] = ()
+    live_blackbox_evidence: LiveBlackboxIntegrationEvidence | None = None
+
+
 def build_tiny_package_assembly_fixture(
     *,
     package_root: Path,
     package_contents: Mapping[str, str] | None = None,
     provider_fixture: TinyProviderAttemptFixture | None = None,
-    allow_fake_provider_for_negative_tests: bool = False,
+    allow_test_provider_transport: bool = False,
 ) -> TinyPackageAssemblyFixture:
     _validate_package_content_override_paths(package_contents)
     _validate_source_override_usage(
         package_contents=package_contents,
-        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+        allow_test_provider_transport=allow_test_provider_transport,
     )
     provider_fixture = provider_fixture or build_tiny_provider_attempt_fixture(
         settings=openai_settings_from_test_env(),
@@ -425,7 +453,7 @@ def build_tiny_package_assembly_fixture(
     )
     _validate_real_provider_fixture(
         provider_fixture,
-        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+        allow_test_provider_transport=allow_test_provider_transport,
     )
     package_contract = provider_fixture.compiled.ticket_graph_fixture.contracts.package_contract
     workspace_manifest = build_workspace_manifest(
@@ -445,7 +473,7 @@ def build_tiny_package_assembly_fixture(
     )
     provider_contents = _source_delivery_files_from_provider(
         provider_fixture,
-        allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
+        allow_test_provider_transport=allow_test_provider_transport,
     )
     contents = _package_contents_with_generated_files(
         provider_contents=provider_contents,
@@ -517,6 +545,94 @@ def build_tiny_package_assembly_fixture(
         source_inventory=source_inventory,
         final_evidence_table=final_evidence_table,
         workspace_evidence_bundle=workspace_evidence_bundle,
+    )
+
+
+def build_tiny_live_blackbox_fixture(
+    *,
+    package_root: Path,
+    package_contents: Mapping[str, str] | None = None,
+    provider_fixture: TinyProviderAttemptFixture | None = None,
+    allow_test_provider_transport: bool = False,
+) -> TinyLiveBlackboxFixture:
+    base = build_tiny_package_assembly_fixture(
+        package_root=package_root,
+        package_contents=package_contents,
+        provider_fixture=provider_fixture,
+        allow_test_provider_transport=allow_test_provider_transport,
+    )
+    _reject_fake_fetch_live_blackbox(base.source_contents)
+    live_execution_package = _live_blackbox_execution_package(base)
+    service_runs, live_blackbox_evidence = _tiny_service_runs(
+        base,
+        live_execution_package=live_execution_package,
+    )
+    live_result = LiveBlackboxIntegrationVerifier().verify(
+        LiveBlackboxVerifierInput(
+            evidence=live_blackbox_evidence,
+            package_contract=base.package_contract,
+            service_runs=service_runs,
+        )
+    )
+    if not live_result.success:
+        messages = "; ".join(blocker.message for blocker in live_result.blockers)
+        raise ValueError(f"live blackbox verification failed: {messages}")
+
+    live_verified_evidence = _live_verified_evidence(
+        provider_fixture=base.provider_fixture,
+        live_execution_package=live_execution_package,
+        live_blackbox_evidence=live_blackbox_evidence,
+        service_runs=service_runs,
+    )
+    verified_evidence = (*base.verified_evidence, *live_verified_evidence)
+    source_inventory = build_source_inventory(
+        package_assembly=base.package_assembly,
+        package_contract=base.package_contract,
+        package_commit_ref=PACKAGE_COMMIT_REF,
+        source_files=_source_files(base.source_contents),
+        lineage_records=_source_lineage_records(
+            provider_fixture=base.provider_fixture,
+            verified_evidence=verified_evidence,
+        ),
+    )
+    final_evidence_table = FinalEvidenceTableBuilder().build(
+        FinalEvidenceTableInput(
+            active_acceptance_contract=(
+                base.provider_fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
+            ),
+            verified_evidence=verified_evidence,
+            generated_at=GENERATED_AT,
+        )
+    )
+    workspace_evidence_bundle = build_workspace_evidence_bundle(
+        workspace_manifest=base.workspace_manifest,
+        package_assembly=base.package_assembly,
+        source_inventory=source_inventory,
+        run_manifest=base.run_manifest,
+        verification_runs=tuple(
+            result.verification_run for result in base.command_results_by_id.values()
+        ),
+        service_runs=service_runs,
+        live_blackbox_evidence=(live_blackbox_evidence,),
+        verified_evidence=verified_evidence,
+        final_evidence_table=final_evidence_table,
+    )
+    return TinyLiveBlackboxFixture(
+        provider_fixture=base.provider_fixture,
+        workspace_manifest=base.workspace_manifest,
+        package_contract=base.package_contract,
+        package_artifacts=base.package_artifacts,
+        package_assembly=base.package_assembly,
+        run_manifest=base.run_manifest,
+        package_root_path=base.package_root_path,
+        source_contents=base.source_contents,
+        command_results_by_id=base.command_results_by_id,
+        verified_evidence=verified_evidence,
+        source_inventory=source_inventory,
+        final_evidence_table=final_evidence_table,
+        workspace_evidence_bundle=workspace_evidence_bundle,
+        service_runs=service_runs,
+        live_blackbox_evidence=live_blackbox_evidence,
     )
 
 
@@ -850,18 +966,501 @@ def _command_results_by_id(
     return results
 
 
+def _tiny_service_runs(
+    base: TinyPackageAssemblyFixture,
+    *,
+    live_execution_package,
+) -> tuple[tuple[ServiceRunEvidence, ...], LiveBlackboxIntegrationEvidence]:
+    backend_port = _free_port()
+    frontend_port = _free_port()
+    db_path = base.package_root_path / "books.blackbox.sqlite3"
+    live_evidence: LiveBlackboxIntegrationEvidence | None = None
+    frontend_run: ServiceRunEvidence | None = None
+
+    def probe_backend_while_ready(backend_service: ServiceRunEvidence) -> None:
+        nonlocal live_evidence, frontend_run
+
+        def probe_frontend_while_ready(frontend_service: ServiceRunEvidence) -> None:
+            nonlocal live_evidence
+            live_evidence = _live_blackbox_evidence(
+                base=base,
+                backend_service=backend_service,
+                frontend_service=frontend_service,
+            )
+
+        frontend_result = _run_service_command(
+            base,
+            live_execution_package=live_execution_package,
+            command_id="run-frontend",
+            readiness_url=f"http://127.0.0.1:{frontend_port}/index.html",
+            environment_overrides={"FRONTEND_PORT": str(frontend_port)},
+            after_ready_probe=probe_frontend_while_ready,
+        )
+        frontend_run = frontend_result.service_run_evidence
+
+    backend_result = _run_service_command(
+        base,
+        live_execution_package=live_execution_package,
+        command_id="run-backend",
+        readiness_url=f"http://127.0.0.1:{backend_port}/health",
+        environment_overrides={
+            "PORT": str(backend_port),
+            "BOOKS_DB_PATH": str(db_path),
+        },
+        after_ready_probe=probe_backend_while_ready,
+    )
+    backend_run = backend_result.service_run_evidence
+    if frontend_run is None or live_evidence is None:
+        raise ValueError("live blackbox probes must run while backend and frontend services are ready")
+    return (backend_run, frontend_run), live_evidence
+
+
+def _run_service_command(
+    base: TinyPackageAssemblyFixture,
+    *,
+    live_execution_package,
+    command_id: str,
+    readiness_url: str,
+    environment_overrides: Mapping[str, str],
+    after_ready_probe=None,
+):
+    return ServiceRunner().run(
+        ServiceRunnerInput(
+            execution_package=live_execution_package,
+            package_contract=base.package_contract,
+            command_id=ContractId(value=command_id),
+            package_root=base.package_root_path,
+            readiness_url=readiness_url,
+            runner_ref=RunnerRef(value=f"runner.tiny-live-blackbox.{command_id}"),
+            environment_profile_ref=EnvironmentProfileRef(
+                value="env.tiny-live-blackbox"
+            ),
+            workspace_snapshot_ref=WorkspaceSnapshotRef(
+                value="workspace-snapshot.tiny-live-blackbox"
+            ),
+            environment_overrides=dict(environment_overrides),
+            timeout_seconds=5,
+            poll_interval_seconds=0.05,
+        ),
+        after_ready_probe=after_ready_probe,
+    )
+
+
+def _live_blackbox_execution_package(base: TinyPackageAssemblyFixture):
+    source_package = base.provider_fixture.execution_packages[TICKET_TESTS_ID]
+    return source_package.model_copy(
+        update={
+            "execution_package_id": ExecutionPackageId(value="exec.tiny-live-blackbox"),
+            "commands": base.package_contract.run_commands,
+        }
+    )
+
+
+def _live_blackbox_evidence(
+    *,
+    base: TinyPackageAssemblyFixture,
+    backend_service: ServiceRunEvidence,
+    frontend_service: ServiceRunEvidence,
+) -> LiveBlackboxIntegrationEvidence:
+    backend_port = _required_env_value(backend_service, "PORT")
+    db_path = Path(_required_env_value(backend_service, "BOOKS_DB_PATH"))
+    backend_url = f"http://127.0.0.1:{backend_port}"
+    backend_probe = _probe_backend_crud(backend_url)
+    sqlite_probe = _probe_sqlite(
+        db_path,
+        deleted_book_id=backend_probe.created_book_id,
+    )
+    frontend_probe = _probe_frontend_live(
+        package_root=base.package_root_path,
+        backend_url=backend_url,
+        frontend_url=frontend_service.readiness_url.value,
+    )
+
+    return LiveBlackboxIntegrationEvidence(
+        live_blackbox_evidence_id=LiveBlackboxIntegrationEvidenceRef(
+            value="live-blackbox.tiny-fullstack"
+        ),
+        package_contract_ref=base.package_contract.package_contract_id,
+        backend_command_id=ContractId(value="run-backend"),
+        frontend_command_id=ContractId(value="run-frontend"),
+        backend_service_run_ref=backend_service.service_run_evidence_id,
+        frontend_service_run_ref=frontend_service.service_run_evidence_id,
+        backend_probe=backend_probe,
+        sqlite_probe=sqlite_probe,
+        frontend_probe=frontend_probe,
+        generated_at=VERIFIED_AT,
+    )
+
+
+def _probe_backend_crud(backend_url: str) -> BackendCrudProbeResult:
+    create_status, created = _http_json(
+        f"{backend_url}/books",
+        method="POST",
+        payload={"title": "Dune"},
+    )
+    book_id = int(created["id"])
+    list_status, _ = _http_json(f"{backend_url}/books")
+    checkout_status, checked_out = _http_json(
+        f"{backend_url}/books/{book_id}/checkout",
+        method="POST",
+    )
+    return_status, returned = _http_json(
+        f"{backend_url}/books/{book_id}/return",
+        method="POST",
+    )
+    delete_status, deleted = _http_json(
+        f"{backend_url}/books/{book_id}",
+        method="DELETE",
+    )
+    _, after_delete = _http_json(f"{backend_url}/books")
+    witness_in_library_status, _ = _http_json(
+        f"{backend_url}/books",
+        method="POST",
+        payload={"title": "State witness in library"},
+    )
+    witness_checked_out_status, witness_checked_out = _http_json(
+        f"{backend_url}/books",
+        method="POST",
+        payload={"title": "State witness checked out"},
+    )
+    if witness_in_library_status != 201 or witness_checked_out_status != 201:
+        raise ValueError("HTTP workflow failed to create SQLite state witnesses")
+    _http_json(
+        f"{backend_url}/books/{int(witness_checked_out['id'])}/checkout",
+        method="POST",
+    )
+    return BackendCrudProbeResult(
+        backend_url=ServiceReadinessUrl(value=f"{backend_url}/health"),
+        created_book_id=book_id,
+        create_status=create_status,
+        list_status=list_status,
+        checkout_status=checkout_status,
+        checkout_state=str(checked_out.get("state", "")),
+        return_status=return_status,
+        return_state=str(returned.get("state", "")),
+        delete_status=delete_status,
+        delete_confirmed=bool(deleted.get("deleted")) and all(
+            book.get("id") != book_id for book in after_delete.get("books", [])
+        ),
+        probed_at=VERIFIED_AT,
+    )
+
+
+def _probe_sqlite(db_path: Path, *, deleted_book_id: int) -> SQLitePersistenceProbeResult:
+    if not db_path.exists():
+        raise ValueError("SQLite HTTP workflow did not create database file")
+    with sqlite3.connect(db_path) as connection:
+        table_names = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )
+        )
+        observed_states = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT state FROM books ORDER BY state"
+            )
+        )
+        deleted_count = connection.execute(
+            "SELECT COUNT(*) FROM books WHERE id = ?",
+            (deleted_book_id,),
+        ).fetchone()[0]
+    return SQLitePersistenceProbeResult(
+        db_path=db_path,
+        table_names=table_names,
+        observed_states=observed_states,
+        deleted_book_absent=(deleted_count == 0),
+        source="http_workflow",
+        probed_at=VERIFIED_AT,
+    )
+
+
+def _probe_frontend_live(
+    *,
+    package_root: Path,
+    backend_url: str,
+    frontend_url: str,
+) -> FrontendLiveProbeResult:
+    frontend_status, frontend_body = _http_text(frontend_url)
+    if frontend_status != 200:
+        raise ValueError("frontend service did not serve index.html")
+    delete_status, delete_candidate = _http_json(
+        f"{backend_url}/books",
+        method="POST",
+        payload={"title": "Frontend delete candidate"},
+    )
+    if delete_status != 201:
+        raise ValueError("frontend live probe failed to create delete candidate")
+    frontend_app_url = frontend_url.rsplit("/", 1)[0] + "/app.js"
+    script = (
+        "import { Buffer } from 'node:buffer';\n"
+        f"globalThis.BOARDROOM_API_BASE = {json.dumps(backend_url)};\n"
+        f"const appResponse = await fetch({json.dumps(frontend_app_url)});\n"
+        "if (!appResponse.ok) { throw new Error(`frontend app.js fetch failed: ${appResponse.status}`); }\n"
+        "const appSource = await appResponse.text();\n"
+        "const appModuleUrl = `data:text/javascript;base64,${Buffer.from(appSource, 'utf8').toString('base64')}`;\n"
+        "const mod = await import(appModuleUrl);\n"
+        "const fetchedPaths = [];\n"
+        "const fetchedMethods = [];\n"
+        "const liveFetch = async (url, options = {}) => {\n"
+        "  const parsed = new URL(url);\n"
+        "  fetchedPaths.push(parsed.pathname);\n"
+        "  fetchedMethods.push((options.method || 'GET').toUpperCase());\n"
+        "  return await fetch(url, options);\n"
+        "};\n"
+        "await mod.probeBackend(liveFetch);\n"
+        "await mod.loadBooks(liveFetch);\n"
+        f"await mod.deleteBook(liveFetch, {int(delete_candidate['id'])});\n"
+        "console.log(JSON.stringify({ fetchedPaths, fetchedMethods }));\n"
+    )
+    completed = subprocess.run(
+        ("node", "--input-type=module", "-e", script),
+        cwd=package_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ValueError(f"frontend live probe failed: {completed.stderr}")
+    report = json.loads(completed.stdout)
+    fetched_paths = tuple(report["fetchedPaths"])
+    fetched_methods = tuple(report["fetchedMethods"])
+    return FrontendLiveProbeResult(
+        frontend_url=ServiceReadinessUrl(value=frontend_url),
+        backend_url=ServiceReadinessUrl(value=f"{backend_url}/health"),
+        fetched_paths=fetched_paths,
+        fetched_methods=fetched_methods,
+        used_fake_fetch=False,
+        response_body_sha256=hashlib.sha256(frontend_body.encode("utf-8")).hexdigest(),
+        probed_at=VERIFIED_AT,
+    )
+
+
+def _live_verified_evidence(
+    *,
+    provider_fixture: TinyProviderAttemptFixture,
+    live_execution_package,
+    live_blackbox_evidence: LiveBlackboxIntegrationEvidence,
+    service_runs: tuple[ServiceRunEvidence, ...],
+) -> tuple[VerifiedEvidence, ...]:
+    verified: list[VerifiedEvidence] = []
+    for obligation in provider_fixture.compiled.ticket_graph_fixture.contracts.contract_gate.evidence_obligations:
+        if obligation.required_artifact_type.value in _SERVICE_RUN_EVIDENCE_TYPES:
+            service_run = _service_for_obligation(obligation, service_runs)
+            claim = build_evidence_claim_from_service_run(
+                service_run=service_run,
+                evidence_obligation=obligation,
+                producer_attempt_ref=_producer_attempt_ref_for_obligation(
+                    provider_fixture=provider_fixture,
+                    obligation=obligation,
+                ),
+                acceptance_refs=obligation.acceptance_refs,
+                source_surface_refs=obligation.source_surface_refs,
+                expected_purpose=EvidencePurpose.IMPLEMENTATION,
+                summary="Tiny service command readiness evidence.",
+            )
+            artifact_manifest = _service_artifact_manifest(
+                service_run=service_run,
+                producer_attempt_ref=claim.producer_attempt_ref,
+            )
+            result = EvidenceVerifier().verify(
+                EvidenceVerificationInput(
+                    claim=claim,
+                    evidence_obligation=obligation,
+                    active_acceptance_contract=(
+                        provider_fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
+                    ),
+                    artifact_manifest=artifact_manifest,
+                    purpose_policy=_purpose_policy(obligation),
+                    provider_attempts=tuple(provider_fixture.provider_attempts_by_ticket_id.values()),
+                    execution_packages=(
+                        *provider_fixture.execution_packages.values(),
+                        live_execution_package,
+                    ),
+                    role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
+                    service_runs=(service_run,),
+                    verified_at=VERIFIED_AT,
+                )
+            )
+        elif obligation.required_artifact_type.value in _LIVE_BLACKBOX_EVIDENCE_TYPES:
+            claim = build_evidence_claim_from_live_blackbox(
+                evidence=live_blackbox_evidence,
+                evidence_obligation=obligation,
+                producer_attempt_ref=_producer_attempt_ref_for_obligation(
+                    provider_fixture=provider_fixture,
+                    obligation=obligation,
+                ),
+                expected_purpose=EvidencePurpose.IMPLEMENTATION,
+                summary="Tiny live blackbox integration evidence.",
+            )
+            result = EvidenceVerifier().verify(
+                EvidenceVerificationInput(
+                    claim=claim,
+                    evidence_obligation=obligation,
+                    active_acceptance_contract=(
+                        provider_fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
+                    ),
+                    active_package_contract=(
+                        provider_fixture.compiled.ticket_graph_fixture.contracts.package_contract
+                    ),
+                    artifact_manifest=_live_blackbox_artifact_manifest(
+                        live_blackbox_evidence=live_blackbox_evidence,
+                        producer_attempt_ref=claim.producer_attempt_ref,
+                        artifact_kind=obligation.required_artifact_type.value,
+                    ),
+                    purpose_policy=_purpose_policy(obligation),
+                    provider_attempts=tuple(provider_fixture.provider_attempts_by_ticket_id.values()),
+                    execution_packages=(
+                        *provider_fixture.execution_packages.values(),
+                        live_execution_package,
+                    ),
+                    role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
+                    service_runs=service_runs,
+                    live_blackbox_evidence=(live_blackbox_evidence,),
+                    verified_at=VERIFIED_AT,
+                )
+            )
+        else:
+            continue
+        if not result.success or result.verified_evidence is None:
+            raise AssertionError(f"tiny live evidence verification failed: {result.blockers}")
+        verified.append(result.verified_evidence)
+    return tuple(verified)
+
+
+_SERVICE_RUN_EVIDENCE_TYPES = {"backend_service_run", "frontend_service_run"}
+_LIVE_BLACKBOX_EVIDENCE_TYPES = {
+    "backend_http_crud_evidence",
+    "sqlite_persistence_http_evidence",
+    "live_frontend_backend_integration_evidence",
+}
+
+
+def _purpose_policy(obligation: EvidenceObligation) -> EvidencePurposePolicy:
+    return EvidencePurposePolicy(
+        rules=(
+            EvidencePurposeRule(
+                required_artifact_type=obligation.required_artifact_type,
+                allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
+            ),
+        )
+    )
+
+
+def _service_artifact_manifest(*, service_run: ServiceRunEvidence, producer_attempt_ref) -> ArtifactManifest:
+    return ArtifactManifest(
+        entries=(
+            ArtifactManifestEntry(
+                artifact_ref=EvidenceArtifactRef(value=service_run.stdout_ref.value),
+                sha256=_sha256("service stdout"),
+                producer_attempt_ref=producer_attempt_ref,
+                source_ref=service_run.service_run_evidence_id.value,
+                artifact_kind="service_stdout",
+            ),
+            ArtifactManifestEntry(
+                artifact_ref=EvidenceArtifactRef(value=service_run.stderr_ref.value),
+                sha256=_sha256("service stderr"),
+                producer_attempt_ref=producer_attempt_ref,
+                source_ref=service_run.service_run_evidence_id.value,
+                artifact_kind="service_stderr",
+            ),
+        )
+    )
+
+
+def _live_blackbox_artifact_manifest(
+    *,
+    live_blackbox_evidence: LiveBlackboxIntegrationEvidence,
+    producer_attempt_ref,
+    artifact_kind: str,
+) -> ArtifactManifest:
+    return ArtifactManifest(
+        entries=tuple(
+            ArtifactManifestEntry(
+                artifact_ref=EvidenceArtifactRef(value=artifact_ref),
+                sha256=_sha256(f"{artifact_kind}:{artifact_ref}"),
+                producer_attempt_ref=producer_attempt_ref,
+                source_ref=live_blackbox_evidence.live_blackbox_evidence_id.value,
+                artifact_kind=f"{artifact_kind}_{index}",
+            )
+            for index, artifact_ref in enumerate(
+                artifact_refs_for_live_blackbox(live_blackbox_evidence),
+                start=1,
+            )
+        )
+    )
+
+
+def _service_for_obligation(
+    obligation: EvidenceObligation,
+    service_runs: tuple[ServiceRunEvidence, ...],
+) -> ServiceRunEvidence:
+    if obligation.required_artifact_type.value == "backend_service_run":
+        return _service_by_command(service_runs, "run-backend")
+    return _service_by_command(service_runs, "run-frontend")
+
+
+def _service_by_command(
+    service_runs: tuple[ServiceRunEvidence, ...],
+    command_id: str,
+) -> ServiceRunEvidence:
+    for service_run in service_runs:
+        if service_run.command_id == ContractId(value=command_id):
+            return service_run
+    raise ValueError(f"missing service run evidence for {command_id}")
+
+
+def _required_env_value(service_run: ServiceRunEvidence, key: str) -> str:
+    try:
+        return service_run.environment_overrides[key]
+    except KeyError as error:
+        raise ValueError(f"service run missing environment override: {key}") from error
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _http_json(url: str, *, method: str = "GET", payload: Mapping[str, object] | None = None) -> tuple[int, dict]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method=method)
+    request.add_header("Content-Type", "application/json")
+    last_error: Exception | None = None
+    for _ in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except (http.client.RemoteDisconnected, TimeoutError, urllib.error.URLError) as error:
+            last_error = error
+            time.sleep(0.05)
+    raise ValueError(f"HTTP JSON probe failed: {url}") from last_error
+
+
+def _http_text(url: str) -> tuple[int, str]:
+    with urllib.request.urlopen(url, timeout=2) as response:
+        return response.status, response.read().decode("utf-8")
+
+
+def _reject_fake_fetch_live_blackbox(contents: Mapping[str, str]) -> None:
+    if "fakeFetch" in contents.get("tests/integration/test_frontend_backend.py", ""):
+        raise ValueError("fakeFetch cannot satisfy live blackbox integration")
+
+
 def _validate_real_provider_fixture(
     provider_fixture: TinyProviderAttemptFixture,
     *,
-    allow_fake_provider_for_negative_tests: bool,
+    allow_test_provider_transport: bool,
 ) -> None:
     fake_attempt_refs = tuple(
         attempt.provider_attempt_id.value
         for attempt in provider_fixture.provider_attempts_by_ticket_id.values()
         if ".fake." in attempt.provider_attempt_id.value
     )
-    if fake_attempt_refs and not allow_fake_provider_for_negative_tests:
-        raise ValueError("fake provider attempts cannot build tiny package assembly")
+    if fake_attempt_refs and not allow_test_provider_transport:
+        raise ValueError("test provider attempts require explicit allow_test_provider_transport")
     if not provider_fixture.provider_attempts_by_ticket_id:
         raise ValueError("ProviderAttempt records are required for tiny package assembly")
 
@@ -869,12 +1468,12 @@ def _validate_real_provider_fixture(
 def _source_delivery_files_from_provider(
     provider_fixture: TinyProviderAttemptFixture,
     *,
-    allow_fake_provider_for_negative_tests: bool,
+    allow_test_provider_transport: bool,
 ) -> dict[str, str]:
     if _provider_fixture_uses_fake_attempts(provider_fixture):
-        if allow_fake_provider_for_negative_tests:
+        if allow_test_provider_transport:
             return {}
-        raise ValueError("fake provider attempts cannot deliver source files")
+        raise ValueError("test provider attempts cannot deliver source files without explicit test transport")
     files: dict[str, str] = {}
     artifact_root = _provider_artifact_root(provider_fixture)
     for result in provider_fixture.runtime_results:
@@ -1362,11 +1961,13 @@ def _verified_evidence(
 
 
 _SUPPORTED_PACKAGE_ASSEMBLY_EVIDENCE_TYPES = {
+    "backend_http_api_evidence",
     "backend_source_inventory",
     "sqlite_persistence_evidence",
     "frontend_source_inventory",
     "run_manifest",
     "test_command_evidence",
+    "final_command_evidence",
 }
 
 
@@ -1426,6 +2027,7 @@ def _command_id_for_obligation(obligation: EvidenceObligation) -> str:
         "frontend_source_inventory",
         "run_manifest",
         "test_command_evidence",
+        "final_command_evidence",
     }:
         return "test-integration"
     return "test-backend"
@@ -1503,11 +2105,11 @@ def _validate_package_content_override_paths(
 def _validate_source_override_usage(
     *,
     package_contents: Mapping[str, str] | None,
-    allow_fake_provider_for_negative_tests: bool,
+    allow_test_provider_transport: bool,
 ) -> None:
-    if package_contents is not None and not allow_fake_provider_for_negative_tests:
+    if package_contents is not None and not allow_test_provider_transport:
         raise ValueError(
-            "package source override is only allowed for explicit negative tests"
+            "package source override is only allowed when test provider transport is explicit"
         )
 
 

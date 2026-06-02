@@ -218,7 +218,6 @@ def test_tiny_runner_evidence_keeps_live_service_acceptance_incomplete(
     assert all(row.blockers == () for row in table.rows)
     assert _command_ids_from_verified_evidence(bundle.verified_evidence) == {
         "test-backend",
-        "test-integration",
     }
     missing_by_acceptance = {
         row.acceptance_ref.value: tuple(
@@ -253,6 +252,7 @@ def test_tiny_runner_evidence_keeps_live_service_acceptance_incomplete(
             "frontend_source_inventory",
         ),
         "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION": (
+            "live_frontend_backend_integration_evidence",
             "frontend_source_inventory",
         ),
         "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED": (
@@ -386,7 +386,6 @@ def _verify_all_tiny_evidence(
     ):
         if obligation.required_artifact_type.value in {
             "backend_http_api_evidence",
-            "live_frontend_backend_integration_evidence",
             "test_command_evidence",
         }:
             command_id = _command_id_for_obligation(obligation)
@@ -560,8 +559,6 @@ def _obligation_by_artifact_type(
 
 
 def _command_id_for_obligation(obligation: EvidenceObligation) -> str:
-    if obligation.required_artifact_type.value == "live_frontend_backend_integration_evidence":
-        return "test-integration"
     return "test-backend"
 
 

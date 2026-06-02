@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090E`
+**当前未完成工作包**：`V2-090F`
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）与 `V2-090D Tiny contract recovery`（微型合同整改）已完成，下一批为 `V2-090E Live blackbox integration`（真实黑盒集成）。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）与 `V2-090E Live blackbox integration`（真实黑盒集成）已完成，下一批为 `V2-090F Golden sample rebuild`（黄金样例重建）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 4 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **63 / 65** | **V2-090A ~ V2-090D 完成，V2-090E 待启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 5 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **64 / 65** | **V2-090A ~ V2-090E 完成，V2-090F 待启动** |
 
 ## 当前约束摘要
 
@@ -1095,14 +1095,16 @@ RoleProfile（角色模板）
 
 ### V2-090E: Live blackbox integration
 
-- 状态：TODO
+- 状态：DONE
 - 目标：真实启动 generated package 的 backend/frontend，通过 HTTP 验证 CRUD、SQLite persistence 和前端调用后端。
 - 输入文档：V2-090D 修正后的 tiny contract、`execution-and-runtime-boundary.md`。
 - 依赖：V2-090C、V2-090D。
-- 输出文件：待实施阶段确定，计划候选为 `tests/proving/fixtures/tiny_package_assembly.py`、`tests/proving/test_tiny_live_blackbox_integration.py`。
+- 输出文件：`src/boardroom_os/evidence/live_blackbox.py`、`src/boardroom_os/adapters/process_runner.py`、`src/boardroom_os/evidence/service_run.py`、`src/boardroom_os/evidence/claim.py`、`src/boardroom_os/evidence/verifier.py`、`src/boardroom_os/workspace/evidence_export.py`、`tests/execution/test_service_runner_environment.py`、`tests/evidence/test_live_blackbox_evidence.py`、`tests/negative/test_live_blackbox_integration_fail_closed.py`、`tests/proving/test_tiny_live_blackbox_integration.py`、`tests/proving/fixtures/tiny_package_assembly.py`、`tests/proving/test_workspace_evidence_export.py`。
 - 必须先写的 negative tests：fakeFetch-only 集成不得满足 full-stack acceptance；backend HTTP endpoint 缺 delete / checkout / return 任一操作不得 satisfied；SQLite 只在函数单测中落盘不得满足 HTTP persistence evidence。
 - 必须证明的 happy path：backend startup probe、backend HTTP CRUD probe、SQLite file/schema/data probe、frontend startup probe 和 live frontend-backend probe 均通过。
 - 验收口径：集成证据必须来自运行中的服务，不来自 mock 或源码字符串检查。
+- 完成证据：2026-06-02 新增 `LiveBlackboxIntegrationEvidence`（真实黑盒集成证据）与 `LiveBlackboxIntegrationVerifier`（真实黑盒集成验证器），显式消费 `PackageContract`（包合同）、backend/frontend `ServiceRunEvidence`（服务运行证据）和 backend CRUD / SQLite HTTP persistence / frontend live probe（后端增删改查 / 经 HTTP 的 SQLite 持久化 / 前端真实探针）结果；`EvidenceVerifier`（证据验证器）新增 `LIVE_BLACKBOX`（真实黑盒来源），并以 `EvidenceObligation.required_verifier="live_blackbox"`（证据义务要求真实黑盒验证器）为权威源，要求该类义务只能由 live blackbox evidence（真实黑盒证据）满足，普通 `VerificationRun`（验证运行）不能冒充。`ServiceRunnerInput`（服务运行器输入）新增 `environment_overrides`（环境变量覆盖）以支持动态端口和临时 SQLite 路径，`ServiceRunner.run`（服务运行器运行）新增 `after_ready_probe`（就绪后探针）以保证黑盒探针发生在同一个服务进程仍运行期间；`WorkspaceEvidenceBundle`（工作区证据包）新增 `live_blackbox_evidence_refs`（真实黑盒证据引用）和 `20-evidence/tests/live-blackbox.json` 导出项，并要求 live blackbox evidence 绑定的 backend/frontend service run refs（服务运行引用）可解析。`tests/proving/fixtures/tiny_package_assembly.py` 新增 `build_tiny_live_blackbox_fixture`（微型真实黑盒夹具），真实启动 backend/frontend，完成 `/health` readiness（就绪）、create/list/checkout/return/delete HTTP workflow（HTTP 工作流）、SQLite schema/data/state transition（模式/数据/状态转换）和 frontend-to-backend live probe（真实前后端探针），且 verifier（验证器）把 backend CRUD URL（后端增删改查地址）、frontend/backend probe URL（前端/后端探针地址）、frontend request method/path trace（前端请求方法/路径轨迹）和 SQLite db path（数据库路径）绑定回同一组 service run evidence（服务运行证据）；但不重建 `examples/generated-workspaces/tiny-fullstack/`，也不生成 passed `CloseoutPackage`（通过收尾包）；V2-090F 仍负责 golden sample rebuild（黄金样例重建）。验证证据：`$env:PYTHONPATH='src;.'; python -m pytest tests/evidence/test_live_blackbox_evidence.py tests/negative/test_live_blackbox_integration_fail_closed.py tests/proving/test_tiny_live_blackbox_integration.py tests/proving/test_tiny_evidence_verification.py -q --tb=short --basetemp .pytest-tmp-v2090e-request-trace-core1` 通过（28 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/execution/test_service_runner.py tests/execution/test_service_runner_environment.py tests/evidence/test_service_run_evidence.py tests/evidence/test_live_blackbox_evidence.py tests/negative/test_live_blackbox_integration_fail_closed.py tests/negative/test_service_run_evidence_fail_closed.py tests/negative/test_service_run_closeout_gate.py tests/proving/test_tiny_live_blackbox_integration.py tests/proving/test_tiny_evidence_verification.py tests/proving/test_workspace_evidence_export.py -q --tb=short --basetemp .pytest-tmp-v2090e-request-trace-combined1` 通过（67 passed）；`git diff --check` 通过。未作为通过证据：`tests/proving/test_tiny_package_assembly.py` 默认真实 provider/package assembly（模型供应商/包组装）路径本轮未完整重跑；V2-090E 使用 `allow_test_provider_transport`（允许测试模型传输）只为构造测试传输，不把 fake provider（模拟模型供应商）当作行为证据。
+- 最终复核补充：子代理只读复核发现固定 frontend readiness URL（前端就绪地址）可能误命中旧服务；已补充 fail-closed（失败关闭）负例，`ServiceRunner`（服务运行器）在 readiness URL 启动前已 2xx 或 ready 后子进程退出时均拒绝生成 `ServiceRunEvidence`（服务运行证据）。tiny `run-frontend`（运行前端）命令支持 `FRONTEND_PORT`（前端端口）环境覆盖，`build_tiny_live_blackbox_fixture`（微型真实黑盒夹具）同时记录 `PORT` / `FRONTEND_PORT` / `BOOKS_DB_PATH`（后端端口 / 前端端口 / 数据库路径）动态证据。最终组合验证：`$env:PYTHONPATH='src;.'; python -m pytest tests/execution/test_service_runner.py tests/execution/test_service_runner_environment.py tests/evidence/test_service_run_evidence.py tests/evidence/test_live_blackbox_evidence.py tests/negative/test_live_blackbox_integration_fail_closed.py tests/negative/test_service_run_evidence_fail_closed.py tests/negative/test_service_run_closeout_gate.py tests/proving/test_tiny_live_blackbox_integration.py tests/proving/test_tiny_evidence_verification.py tests/proving/test_workspace_evidence_export.py tests/contracts/test_tiny_fullstack_contract_fixture.py tests/proving/test_tiny_contracts.py tests/negative/test_tiny_contract_recovery_fail_closed.py tests/negative/test_run_manifest_command_coverage.py -q --tb=short --basetemp .pytest-tmp-v2090e-final-combined` 通过（95 passed）；`git diff --check` 通过，未发现 backend/frontend/tiny live blackbox（后端/前端/微型真实黑盒）残留进程。
 
 ### V2-090F: Golden sample rebuild
 

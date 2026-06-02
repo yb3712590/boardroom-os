@@ -18,6 +18,13 @@ from boardroom_os.contracts.package import IntegrationBoundary, PackageCommand, 
 from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef, SourceSurface
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
 from boardroom_os.evidence.claim import EvidenceArtifactRef, EvidenceClaimRef, EvidenceClaimSourceKind
+from boardroom_os.evidence.live_blackbox import (
+    BackendCrudProbeResult,
+    FrontendLiveProbeResult,
+    LiveBlackboxIntegrationEvidence,
+    LiveBlackboxIntegrationEvidenceRef,
+    SQLitePersistenceProbeResult,
+)
 from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.evidence.table import (
     FinalEvidenceBlocker,
@@ -341,6 +348,79 @@ def _service_verified_evidence(
     )
 
 
+def _live_blackbox_evidence(ref: str = "live-blackbox.app") -> LiveBlackboxIntegrationEvidence:
+    return LiveBlackboxIntegrationEvidence(
+        live_blackbox_evidence_id=LiveBlackboxIntegrationEvidenceRef(value=ref),
+        package_contract_ref=ContractId(value="package-contract.workspace-evidence-export"),
+        backend_command_id=ContractId(value="run-app"),
+        frontend_command_id=ContractId(value="run-frontend"),
+        backend_service_run_ref="service-run.backend",
+        frontend_service_run_ref="service-run.frontend",
+        backend_probe=BackendCrudProbeResult(
+            backend_url="http://127.0.0.1:8000/health",
+            created_book_id=1,
+            create_status=201,
+            list_status=200,
+            checkout_status=200,
+            checkout_state="CHECKED_OUT",
+            return_status=200,
+            return_state="IN_LIBRARY",
+            delete_status=200,
+            delete_confirmed=True,
+            probed_at=_NOW,
+        ),
+        sqlite_probe=SQLitePersistenceProbeResult(
+            db_path="books.sqlite3",
+            table_names=("books",),
+            observed_states=("CHECKED_OUT", "IN_LIBRARY"),
+            deleted_book_absent=True,
+            source="http_workflow",
+            probed_at=_NOW,
+        ),
+        frontend_probe=FrontendLiveProbeResult(
+            frontend_url="http://127.0.0.1:5173/index.html",
+            backend_url="http://127.0.0.1:8000/health",
+            fetched_paths=("/health", "/books", "/books/1"),
+            fetched_methods=("GET", "GET", "DELETE"),
+            used_fake_fetch=False,
+            response_body_sha256="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            probed_at=_NOW,
+        ),
+        generated_at=_NOW,
+    )
+
+
+def _live_blackbox_verified_evidence(
+    ref: str,
+    evidence: LiveBlackboxIntegrationEvidence,
+    acceptance_ref: AcceptanceRef,
+    source_surface_ref: SourceSurfaceRef,
+) -> VerifiedEvidence:
+    return VerifiedEvidence(
+        verified_evidence_id=VerifiedEvidenceRef(value=ref),
+        evidence_claim_ref=EvidenceClaimRef(value=f"evidence-claim.{ref}"),
+        evidence_obligation_ref=EvidenceObligationRef(value="evidence-obligation.live-blackbox"),
+        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
+        source_kind=EvidenceClaimSourceKind.LIVE_BLACKBOX,
+        source_ref=evidence.live_blackbox_evidence_id.value,
+        expected_purpose=EvidencePurpose.IMPLEMENTATION,
+        required_artifact_type=RequiredArtifactType(value="live_frontend_backend_integration_evidence"),
+        acceptance_refs=(acceptance_ref,),
+        source_surface_refs=(source_surface_ref,),
+        verified_artifacts=(
+            VerifiedArtifact(
+                artifact_ref=EvidenceArtifactRef(value=f"{evidence.live_blackbox_evidence_id.value}.frontend-live"),
+                sha256=ArtifactSha256(value="6" * 64),
+                producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.app"),
+                source_ref=evidence.live_blackbox_evidence_id.value,
+                artifact_kind="live_frontend_backend_integration_evidence",
+            ),
+        ),
+        live_blackbox_evidence_refs=(evidence.live_blackbox_evidence_id,),
+        verified_at=_NOW,
+    )
+
+
 def _final_table(*, rows: tuple[FinalEvidenceRow, ...], complete: bool | None = None) -> FinalEvidenceTable:
     return FinalEvidenceTable(
         acceptance_contract_ref=ContractId(value="acceptance-contract.workspace-evidence-export"),
@@ -598,6 +678,7 @@ def test_build_workspace_evidence_bundle_returns_closeout_ready_plan() -> None:
         "20-evidence/source-inventory/source-inventory.json",
         "20-evidence/tests/verification-runs.json",
         "20-evidence/tests/service-runs.json",
+        "20-evidence/tests/live-blackbox.json",
         "20-evidence/tests/run-manifest.json",
         "20-evidence/closeout/final-evidence-table.json",
         "20-evidence/closeout/evidence-bundle-manifest.json",
@@ -649,6 +730,97 @@ def test_build_workspace_evidence_bundle_preserves_service_run_refs() -> None:
     assert service_run.service_run_evidence_id.value in {
         related_ref.value for related_ref in service_artifact.related_refs
     }
+
+
+def test_build_workspace_evidence_bundle_preserves_live_blackbox_refs() -> None:
+    from boardroom_os.workspace.evidence_export import build_workspace_evidence_bundle
+
+    facts = _facts()
+    live_evidence = _live_blackbox_evidence()
+    backend_service_run = _service_run("service-run.backend")
+    frontend_service_run = _service_run("service-run.frontend")
+    verified_live = _live_blackbox_verified_evidence(
+        "verified-evidence.live-blackbox",
+        live_evidence,
+        AcceptanceRef(value="AC-APP"),
+        SourceSurfaceRef(value="app-source"),
+    )
+    verified_evidence = (*facts["verified_evidence"], verified_live)
+    verified_evidence_refs = tuple(
+        evidence.verified_evidence_id for evidence in verified_evidence
+    )
+    facts["source_inventory"] = facts["source_inventory"].model_copy(
+        update={
+            "entries": tuple(
+                entry.model_copy(update={"evidence_refs": verified_evidence_refs})
+                for entry in facts["source_inventory"].entries
+            )
+        }
+    )
+    facts["final_evidence_table"] = facts["final_evidence_table"].model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"verified_evidence_refs": verified_evidence_refs})
+                for row in facts["final_evidence_table"].rows
+            )
+        }
+    )
+    facts["verified_evidence"] = verified_evidence
+    facts["live_blackbox_evidence"] = (live_evidence,)
+    facts["service_runs"] = (backend_service_run, frontend_service_run)
+
+    bundle = build_workspace_evidence_bundle(**facts)
+
+    assert bundle.live_blackbox_evidence_refs == (live_evidence.live_blackbox_evidence_id,)
+    live_artifact = next(
+        artifact
+        for artifact in bundle.artifacts
+        if artifact.relative_path.value == "20-evidence/tests/live-blackbox.json"
+    )
+    assert live_evidence.live_blackbox_evidence_id.value in {
+        related_ref.value for related_ref in live_artifact.related_refs
+    }
+
+
+def test_build_workspace_evidence_bundle_rejects_live_blackbox_without_bound_service_runs() -> None:
+    from boardroom_os.workspace.evidence_export import (
+        WorkspaceEvidenceExportError,
+        build_workspace_evidence_bundle,
+    )
+
+    facts = _facts()
+    live_evidence = _live_blackbox_evidence()
+    verified_live = _live_blackbox_verified_evidence(
+        "verified-evidence.live-blackbox",
+        live_evidence,
+        AcceptanceRef(value="AC-APP"),
+        SourceSurfaceRef(value="app-source"),
+    )
+    verified_evidence = (*facts["verified_evidence"], verified_live)
+    verified_evidence_refs = tuple(
+        evidence.verified_evidence_id for evidence in verified_evidence
+    )
+    facts["source_inventory"] = facts["source_inventory"].model_copy(
+        update={
+            "entries": tuple(
+                entry.model_copy(update={"evidence_refs": verified_evidence_refs})
+                for entry in facts["source_inventory"].entries
+            )
+        }
+    )
+    facts["final_evidence_table"] = facts["final_evidence_table"].model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"verified_evidence_refs": verified_evidence_refs})
+                for row in facts["final_evidence_table"].rows
+            )
+        }
+    )
+    facts["verified_evidence"] = verified_evidence
+    facts["live_blackbox_evidence"] = (live_evidence,)
+
+    with pytest.raises(WorkspaceEvidenceExportError, match="service run"):
+        build_workspace_evidence_bundle(**facts)
 
 
 def test_build_workspace_evidence_bundle_is_deterministic() -> None:

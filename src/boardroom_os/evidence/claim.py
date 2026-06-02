@@ -17,6 +17,10 @@ from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import EvidencePurpose, FallbackKind
 from boardroom_os.execution.package import FallbackPolicyRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunRef
+from boardroom_os.evidence.live_blackbox import (
+    LiveBlackboxIntegrationEvidence,
+    artifact_refs_for_live_blackbox,
+)
 from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.execution.work_product import WorkProduct, WorkProductClaimDraft
 
@@ -37,6 +41,7 @@ class EvidenceClaimSourceKind(StrEnum):
     WORK_PRODUCT = "work_product"
     VERIFICATION_RUN = "verification_run"
     SERVICE_RUN = "service_run"
+    LIVE_BLACKBOX = "live_blackbox"
 
 
 _TUPLE_REF_FIELDS = (
@@ -144,7 +149,7 @@ class EvidenceClaim(BaseModel):
                     "source_ref must match the first verification_run_ref"
                 )
         elif self.verification_run_refs:
-            raise ValueError("work_product claims must not include verification_run_refs")
+            raise ValueError("non-verification_run claims must not include verification_run_refs")
 
         if self.fallback_marker is not None:
             if self.fallback_marker.producer_attempt_ref != self.producer_attempt_ref:
@@ -463,6 +468,43 @@ def build_evidence_claim_from_service_run(
     )
 
 
+def build_evidence_claim_from_live_blackbox(
+    *,
+    evidence: LiveBlackboxIntegrationEvidence,
+    evidence_obligation: EvidenceObligation,
+    producer_attempt_ref: ProviderAttemptRef,
+    expected_purpose: EvidencePurpose,
+    summary: str,
+    claim_id: EvidenceClaimRef | None = None,
+) -> EvidenceClaim:
+    _validate_producer_attempt_ref(producer_attempt_ref)
+    _validate_expected_purpose(expected_purpose)
+    source_ref = evidence.live_blackbox_evidence_id.value
+    resolved_claim_id = claim_id or _claim_id_for(
+        source_kind=EvidenceClaimSourceKind.LIVE_BLACKBOX,
+        source_ref=source_ref,
+        evidence_obligation_ref=evidence_obligation.evidence_obligation_id,
+    )
+    return EvidenceClaim(
+        evidence_claim_id=resolved_claim_id,
+        evidence_obligation_ref=evidence_obligation.evidence_obligation_id,
+        producer_attempt_ref=producer_attempt_ref,
+        source_kind=EvidenceClaimSourceKind.LIVE_BLACKBOX,
+        source_ref=source_ref,
+        expected_purpose=expected_purpose,
+        required_artifact_type=evidence_obligation.required_artifact_type,
+        acceptance_refs=evidence_obligation.acceptance_refs,
+        source_surface_refs=evidence_obligation.source_surface_refs,
+        artifact_refs=tuple(
+            EvidenceArtifactRef(value=value)
+            for value in artifact_refs_for_live_blackbox(evidence)
+        ),
+        verification_run_refs=(),
+        fallback_marker=None,
+        summary=summary,
+    )
+
+
 __all__ = [
     "EvidenceArtifactRef",
     "EvidenceClaim",
@@ -471,6 +513,7 @@ __all__ = [
     "EvidenceClaimSourceKind",
     "FallbackLineageMarker",
     "build_evidence_claim_from_service_run",
+    "build_evidence_claim_from_live_blackbox",
     "build_evidence_claim_from_verification_run",
     "build_evidence_claim_from_work_product",
 ]
