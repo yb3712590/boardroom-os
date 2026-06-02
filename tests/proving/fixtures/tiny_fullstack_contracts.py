@@ -19,10 +19,20 @@ REQUIRED_ACCEPTANCE_REFS_BY_CATEGORY: Mapping[str, tuple[str, ...]] = {
         "AC-TINY-API-BOOK-LIST",
         "AC-TINY-API-CHECKOUT-RETURN",
         "AC-TINY-API-BOOK-DELETE",
+        "AC-TINY-BACKEND-STARTUP",
+        "AC-TINY-BACKEND-HTTP-CRUD",
     ),
-    "ui": ("AC-TINY-UI-FETCH-BACKEND",),
-    "persistence": ("AC-TINY-PERSISTENCE-SQLITE",),
-    "run_test": ("AC-TINY-RUN-TEST-COMMANDS",),
+    "ui": (
+        "AC-TINY-FRONTEND-STARTUP",
+        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+    ),
+    "persistence": (
+        "AC-TINY-PERSISTENCE-SQLITE",
+        "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+    ),
+    "run_test": (
+        "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+    ),
 }
 
 

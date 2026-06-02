@@ -111,6 +111,10 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
     "AGENTS.md": "Run declared commands from the package root.\n",
     "package-contract.json": '{"package_root":"10-project"}\n',
     "backend/app.py": (
+        "import json\n"
+        "import os\n"
+        "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+        "from urllib.parse import urlparse\n\n"
         "from backend.db import BookStore\n\n"
         "DEFAULT_DB_PATH = 'books.sqlite3'\n\n"
         "def create_store(db_path=DEFAULT_DB_PATH):\n"
@@ -130,6 +134,54 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
         "def delete_book(book_id, *, store=None):\n"
         "    active_store = store or create_store()\n"
         "    return active_store.delete_book(book_id)\n"
+        "\n"
+        "def _active_store():\n"
+        "    return create_store(os.environ.get('BOOKS_DB_PATH', DEFAULT_DB_PATH))\n"
+        "\n"
+        "class LibraryHandler(BaseHTTPRequestHandler):\n"
+        "    def _send_json(self, status, payload):\n"
+        "        body = json.dumps(payload).encode('utf-8')\n"
+        "        self.send_response(status)\n"
+        "        self.send_header('Content-Type', 'application/json')\n"
+        "        self.send_header('Content-Length', str(len(body)))\n"
+        "        self.end_headers()\n"
+        "        self.wfile.write(body)\n\n"
+        "    def _read_json(self):\n"
+        "        length = int(self.headers.get('Content-Length', '0'))\n"
+        "        if length == 0:\n"
+        "            return {}\n"
+        "        return json.loads(self.rfile.read(length).decode('utf-8'))\n\n"
+        "    def do_GET(self):\n"
+        "        path = urlparse(self.path).path\n"
+        "        if path == '/health':\n"
+        "            self._send_json(200, {'status': 'ok'})\n"
+        "        elif path == '/books':\n"
+        "            self._send_json(200, {'books': list_books(store=_active_store())})\n"
+        "        else:\n"
+        "            self._send_json(404, {'error': 'not found'})\n\n"
+        "    def do_POST(self):\n"
+        "        path = urlparse(self.path).path\n"
+        "        store = _active_store()\n"
+        "        if path == '/books':\n"
+        "            payload = self._read_json()\n"
+        "            self._send_json(201, create_book(payload.get('title', ''), store=store))\n"
+        "        elif path.startswith('/books/') and path.endswith('/checkout'):\n"
+        "            self._send_json(200, checkout_book(int(path.split('/')[2]), store=store))\n"
+        "        elif path.startswith('/books/') and path.endswith('/return'):\n"
+        "            self._send_json(200, return_book(int(path.split('/')[2]), store=store))\n"
+        "        else:\n"
+        "            self._send_json(404, {'error': 'not found'})\n\n"
+        "    def do_DELETE(self):\n"
+        "        path = urlparse(self.path).path\n"
+        "        if path.startswith('/books/'):\n"
+        "            self._send_json(200, delete_book(int(path.split('/')[2]), store=_active_store()))\n"
+        "        else:\n"
+        "            self._send_json(404, {'error': 'not found'})\n\n"
+        "def run():\n"
+        "    port = int(os.environ.get('PORT', '8000'))\n"
+        "    ThreadingHTTPServer(('127.0.0.1', port), LibraryHandler).serve_forever()\n\n"
+        "if __name__ == '__main__':\n"
+        "    run()\n"
     ),
     "backend/db.py": (
         "import sqlite3\n\n"
@@ -204,12 +256,18 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
         "<html><body><main id=\"app\"></main><script src=\"app.js\"></script></body></html>\n"
     ),
     "frontend/app.js": (
+        "const API_BASE = globalThis.BOARDROOM_API_BASE || 'http://127.0.0.1:8000';\n"
+        "function apiPath(path) { return `${API_BASE}${path}`; }\n\n"
+        "export async function probeBackend(fetchImpl) {\n"
+        "  const response = await fetchImpl(apiPath('/health'));\n"
+        "  return response.json();\n"
+        "}\n\n"
         "export async function loadBooks(fetchImpl) {\n"
-        "  const response = await fetchImpl('/books');\n"
+        "  const response = await fetchImpl(apiPath('/books'));\n"
         "  return response.json();\n"
         "}\n\n"
         "export async function deleteBook(fetchImpl, bookId) {\n"
-        "  const response = await fetchImpl(`/books/${bookId}`, { method: 'DELETE' });\n"
+        "  const response = await fetchImpl(apiPath(`/books/${encodeURIComponent(String(bookId))}`), { method: 'DELETE' });\n"
         "  return response.json();\n"
         "}\n"
     ),
@@ -242,32 +300,53 @@ TINY_PACKAGE_CONTENTS: Mapping[str, str] = {
     ),
     "tests/integration/test_frontend_backend.py": (
         "import json\n"
+        "import os\n"
+        "import socket\n"
         "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "import urllib.error\n"
+        "import urllib.request\n"
         "from pathlib import Path\n\n"
+        "def _free_port():\n"
+        "    sock = socket.socket()\n"
+        "    sock.bind(('127.0.0.1', 0))\n"
+        "    port = sock.getsockname()[1]\n"
+        "    sock.close()\n"
+        "    return port\n\n"
+        "def _request(url, method='GET', payload=None):\n"
+        "    body = None if payload is None else json.dumps(payload).encode('utf-8')\n"
+        "    request = urllib.request.Request(url, data=body, method=method)\n"
+        "    request.add_header('Content-Type', 'application/json')\n"
+        "    with urllib.request.urlopen(request, timeout=2) as response:\n"
+        "        return response.status, json.loads(response.read().decode('utf-8'))\n\n"
         "def test_frontend_fetches_backend_and_run_manifest_exists():\n"
-        "    script = \"\"\"\n"
-        "import { loadBooks, deleteBook } from './frontend/app.js';\n"
-        "const calls = [];\n"
-        "const fakeFetch = async (url, options = {}) => {\n"
-        "  calls.push({ url, options });\n"
-        "  return { ok: true, status: 200, json: async () => [] };\n"
-        "};\n"
-        "await loadBooks(fakeFetch);\n"
-        "await deleteBook(fakeFetch, 7);\n"
-        "console.log(JSON.stringify(calls));\n"
-        "\"\"\"\n"
-        "    result = subprocess.run(\n"
-        "        ['node', '--input-type=module', '-e', script],\n"
-        "        cwd=Path.cwd(),\n"
-        "        capture_output=True,\n"
-        "        text=True,\n"
-        "        check=False,\n"
-        "    )\n"
-        "    assert result.returncode == 0, result.stderr\n"
-        "    calls = json.loads(result.stdout)\n"
-        "    assert calls[0]['url'] == '/books'\n"
-        "    assert calls[1]['url'] == '/books/7'\n"
-        "    assert calls[1]['options']['method'] == 'DELETE'\n"
+        "    port = _free_port()\n"
+        "    base_url = f'http://127.0.0.1:{port}'\n"
+        "    env = dict(os.environ, PORT=str(port), BOOKS_DB_PATH=str(Path.cwd() / 'books.integration.sqlite3'))\n"
+        "    server = subprocess.Popen([sys.executable, '-m', 'backend.app'], cwd=Path.cwd(), env=env)\n"
+        "    try:\n"
+        "        for _ in range(50):\n"
+        "            try:\n"
+        "                status, _ = _request(base_url + '/health')\n"
+        "                if status == 200:\n"
+        "                    break\n"
+        "            except (OSError, urllib.error.URLError):\n"
+        "                time.sleep(0.1)\n"
+        "        assert _request(base_url + '/health')[0] == 200\n"
+        "        status, created = _request(base_url + '/books', method='POST', payload={'title': 'Dune'})\n"
+        "        assert status == 201\n"
+        "        book_id = created['id']\n"
+        "        assert _request(f'{base_url}/books/{book_id}/checkout', method='POST')[1]['state'] == 'CHECKED_OUT'\n"
+        "        assert _request(f'{base_url}/books/{book_id}/return', method='POST')[1]['state'] == 'IN_LIBRARY'\n"
+        "        assert _request(f'{base_url}/books/{book_id}', method='DELETE')[1]['deleted'] is True\n"
+        "        assert all(book['id'] != book_id for book in _request(base_url + '/books')[1]['books'])\n"
+        "    finally:\n"
+        "        server.terminate()\n"
+        "        server.wait(timeout=5)\n"
+        "    frontend = Path('frontend/app.js').read_text(encoding='utf-8')\n"
+        "    assert 'probeBackend' in frontend and '/health' in frontend\n"
+        "    assert 'loadBooks(fetchImpl)' in frontend and 'deleteBook(fetchImpl, bookId)' in frontend\n"
         "    assert Path('run-manifest.json').exists()\n"
     ),
     "docs/usage.md": "Use pytest backend/tests and pytest tests/integration.\n",
@@ -288,7 +367,7 @@ class TinyPackageAssemblyFixture:
     verified_evidence: tuple[VerifiedEvidence, ...]
     source_inventory: SourceInventory
     final_evidence_table: FinalEvidenceTable
-    workspace_evidence_bundle: WorkspaceEvidenceBundle
+    workspace_evidence_bundle: WorkspaceEvidenceBundle | None
 
     @property
     def provider_attempts_by_ticket_id(self) -> Mapping[TicketId, ProviderAttempt]:
@@ -409,16 +488,20 @@ def build_tiny_package_assembly_fixture(
             generated_at=GENERATED_AT,
         )
     )
-    workspace_evidence_bundle = build_workspace_evidence_bundle(
-        workspace_manifest=workspace_manifest,
-        package_assembly=package_assembly,
-        source_inventory=source_inventory,
-        run_manifest=run_manifest,
-        verification_runs=tuple(
-            result.verification_run for result in command_results_by_id.values()
-        ),
-        verified_evidence=verified_evidence,
-        final_evidence_table=final_evidence_table,
+    workspace_evidence_bundle = (
+        build_workspace_evidence_bundle(
+            workspace_manifest=workspace_manifest,
+            package_assembly=package_assembly,
+            source_inventory=source_inventory,
+            run_manifest=run_manifest,
+            verification_runs=tuple(
+                result.verification_run for result in command_results_by_id.values()
+            ),
+            verified_evidence=verified_evidence,
+            final_evidence_table=final_evidence_table,
+        )
+        if final_evidence_table.complete is True
+        else None
     )
     return TinyPackageAssemblyFixture(
         provider_fixture=provider_fixture,
@@ -443,25 +526,29 @@ def _package_artifacts() -> tuple[PackageArtifact, ...]:
             "README.md",
             PackageArtifactKind.README,
             "docs",
-            ("AC-TINY-RUN-TEST-COMMANDS",),
+            ("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
         ),
         _artifact(
             "AGENTS.md",
             PackageArtifactKind.AGENTS,
             "docs",
-            ("AC-TINY-RUN-TEST-COMMANDS",),
+            ("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
         ),
         _artifact(
             "package-contract.json",
             PackageArtifactKind.PACKAGE_CONTRACT,
             "docs",
-            ("AC-TINY-RUN-TEST-COMMANDS",),
+            ("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
         ),
         _artifact(
             "run-manifest.json",
             PackageArtifactKind.RUN_MANIFEST,
             "run-manifest",
-            ("AC-TINY-RUN-TEST-COMMANDS",),
+            (
+                "AC-TINY-BACKEND-STARTUP",
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+            ),
         ),
         _artifact(
             "backend/app.py",
@@ -472,25 +559,33 @@ def _package_artifacts() -> tuple[PackageArtifact, ...]:
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
                 "AC-TINY-API-BOOK-DELETE",
+                "AC-TINY-BACKEND-STARTUP",
+                "AC-TINY-BACKEND-HTTP-CRUD",
             ),
         ),
         _artifact(
             "backend/db.py",
             PackageArtifactKind.SOURCE,
             "persistence",
-            ("AC-TINY-PERSISTENCE-SQLITE",),
+            ("AC-TINY-PERSISTENCE-SQLITE", "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
         ),
         _artifact(
             "frontend/index.html",
             PackageArtifactKind.SOURCE,
             "frontend-ui",
-            ("AC-TINY-UI-FETCH-BACKEND",),
+            (
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+            ),
         ),
         _artifact(
             "frontend/app.js",
             PackageArtifactKind.SOURCE,
             "frontend-ui",
-            ("AC-TINY-UI-FETCH-BACKEND",),
+            (
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+            ),
         ),
         _artifact(
             "backend/tests/test_api.py",
@@ -509,15 +604,19 @@ def _package_artifacts() -> tuple[PackageArtifact, ...]:
             PackageArtifactKind.TEST,
             "tests",
             (
-                "AC-TINY-UI-FETCH-BACKEND",
-                "AC-TINY-RUN-TEST-COMMANDS",
+                "AC-TINY-BACKEND-STARTUP",
+                "AC-TINY-BACKEND-HTTP-CRUD",
+                "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+                "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
             ),
         ),
         _artifact(
             "docs/usage.md",
             PackageArtifactKind.DOC,
             "docs",
-            ("AC-TINY-RUN-TEST-COMMANDS",),
+            ("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
         ),
     )
 
@@ -588,6 +687,8 @@ def _source_lineage_records(
                 "AC-TINY-API-BOOK-LIST",
                 "AC-TINY-API-CHECKOUT-RETURN",
                 "AC-TINY-API-BOOK-DELETE",
+                "AC-TINY-BACKEND-STARTUP",
+                "AC-TINY-BACKEND-HTTP-CRUD",
             ),
             evidence_refs=evidence_refs_by_type["backend_source_inventory"],
         ),
@@ -599,8 +700,11 @@ def _source_lineage_records(
                 TICKET_BACKEND_API_ID
             ].provider_attempt_id,
             consumer_ticket_refs=(TICKET_BACKEND_API_ID, TICKET_TESTS_ID),
-            acceptance_refs=("AC-TINY-PERSISTENCE-SQLITE",),
-            evidence_refs=evidence_refs_by_type["backend_source_inventory"],
+            acceptance_refs=("AC-TINY-PERSISTENCE-SQLITE", "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
+            evidence_refs=(
+                *evidence_refs_by_type["backend_source_inventory"],
+                *evidence_refs_by_type["sqlite_persistence_evidence"],
+            ),
         ),
         _lineage(
             path="frontend/app.js",
@@ -610,7 +714,10 @@ def _source_lineage_records(
                 TICKET_FRONTEND_UI_ID
             ].provider_attempt_id,
             consumer_ticket_refs=(TICKET_FRONTEND_UI_ID, TICKET_TESTS_ID),
-            acceptance_refs=("AC-TINY-UI-FETCH-BACKEND",),
+            acceptance_refs=(
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+            ),
             evidence_refs=evidence_refs_by_type["frontend_source_inventory"],
         ),
         _lineage(
@@ -621,7 +728,10 @@ def _source_lineage_records(
                 TICKET_FRONTEND_UI_ID
             ].provider_attempt_id,
             consumer_ticket_refs=(TICKET_FRONTEND_UI_ID, TICKET_TESTS_ID),
-            acceptance_refs=("AC-TINY-UI-FETCH-BACKEND",),
+            acceptance_refs=(
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+            ),
             evidence_refs=evidence_refs_by_type["frontend_source_inventory"],
         ),
         _lineage(
@@ -640,8 +750,9 @@ def _source_lineage_records(
                 "AC-TINY-PERSISTENCE-SQLITE",
             ),
             evidence_refs=(
-                *evidence_refs_by_type["api_test_run"],
+                *evidence_refs_by_type["backend_source_inventory"],
                 *evidence_refs_by_type["sqlite_persistence_evidence"],
+                *evidence_refs_by_type["test_command_evidence"],
             ),
         ),
         _lineage(
@@ -653,12 +764,17 @@ def _source_lineage_records(
             ].provider_attempt_id,
             consumer_ticket_refs=(TICKET_TESTS_ID,),
             acceptance_refs=(
-                "AC-TINY-UI-FETCH-BACKEND",
-                "AC-TINY-RUN-TEST-COMMANDS",
+                "AC-TINY-BACKEND-STARTUP",
+                "AC-TINY-BACKEND-HTTP-CRUD",
+                "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+                "AC-TINY-FRONTEND-STARTUP",
+                "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+                "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
             ),
             evidence_refs=(
-                *evidence_refs_by_type["frontend_backend_integration_evidence"],
-                *evidence_refs_by_type["command_evidence"],
+                *evidence_refs_by_type["frontend_source_inventory"],
+                *evidence_refs_by_type["run_manifest"],
+                *evidence_refs_by_type["test_command_evidence"],
             ),
         ),
         _lineage(
@@ -669,8 +785,11 @@ def _source_lineage_records(
                 TICKET_DOCS_RUN_MANIFEST_ID
             ].provider_attempt_id,
             consumer_ticket_refs=(TICKET_DOCS_RUN_MANIFEST_ID,),
-            acceptance_refs=("AC-TINY-RUN-TEST-COMMANDS",),
-            evidence_refs=evidence_refs_by_type["run_manifest"],
+            acceptance_refs=("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
+            evidence_refs=(
+                *evidence_refs_by_type["run_manifest"],
+                *evidence_refs_by_type["test_command_evidence"],
+            ),
         ),
     )
 
@@ -877,6 +996,7 @@ def _validate_tiny_package_functional_scope(package_contents: Mapping[str, str])
     if "def delete_book" not in backend_app or "delete_book" not in backend_tests:
         raise ValueError("AC-TINY-API-BOOK-DELETE requires delete_book source and tests")
     _validate_backend_public_api_signatures(backend_app)
+    _validate_backend_standard_library_http_service(backend_app)
     _reject_delete_test_that_refetches_deleted_book(backend_tests)
     sqlite_markers = (
         "import sqlite3",
@@ -920,15 +1040,19 @@ def _validate_tiny_package_functional_scope(package_contents: Mapping[str, str])
         function_name="loadBooks",
         parameters=("fetchImpl",),
     ):
-        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires loadBooks(fetchImpl)")
+        raise ValueError(
+            "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires loadBooks(fetchImpl)"
+        )
     if not _frontend_has_exact_function_signature(
         frontend_app,
         function_name="deleteBook",
         parameters=("fetchImpl", "bookId"),
     ):
-        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires deleteBook(fetchImpl, bookId)")
-    if "/books" not in frontend_app or "DELETE" not in frontend_app:
-        raise ValueError("AC-TINY-UI-FETCH-BACKEND requires backend fetch paths")
+        raise ValueError(
+            "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires deleteBook(fetchImpl, bookId)"
+        )
+    if "/health" not in frontend_app or "/books" not in frontend_app or "DELETE" not in frontend_app:
+        raise ValueError("AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires live backend HTTP paths")
     if not _frontend_module_is_node_import_safe(frontend_app):
         raise ValueError(
             "frontend module must guard window.addEventListener before Node integration import"
@@ -991,6 +1115,29 @@ def _validate_backend_public_api_signatures(backend_app: str) -> None:
                 raise ValueError(
                     f"backend app {function_name} must include explicit {required_name} parameter"
                 )
+
+
+def _validate_backend_standard_library_http_service(backend_app: str) -> None:
+    try:
+        ast.parse(backend_app)
+    except SyntaxError as error:
+        raise ValueError("backend/app.py must be valid Python") from error
+    service_markers = (
+        "http.server",
+        "BaseHTTPRequestHandler",
+        "HTTPServer",
+        "ThreadingHTTPServer",
+        "socketserver.TCPServer",
+    )
+    if not any(marker in backend_app for marker in service_markers):
+        raise ValueError("AC-TINY-BACKEND-STARTUP requires standard-library HTTP service")
+    if "serve_forever" not in backend_app or "__main__" not in backend_app:
+        raise ValueError("AC-TINY-BACKEND-STARTUP requires runnable backend service entrypoint")
+    route_markers = ("/health", "/books", "checkout", "return")
+    if not all(marker in backend_app for marker in route_markers):
+        raise ValueError("AC-TINY-BACKEND-HTTP-CRUD requires live HTTP CRUD routes")
+    if not any(marker in backend_app for marker in ("do_DELETE", "DELETE", "delete")):
+        raise ValueError("AC-TINY-BACKEND-HTTP-CRUD requires delete HTTP endpoint")
 
 
 def _helpers_that_refetch_bool_like_mutations(tree: ast.AST) -> set[str]:
@@ -1103,36 +1250,31 @@ def _validate_frontend_integration_behavior_evidence(integration_tests: str) -> 
     if not integration_tests.strip():
         raise ValueError("frontend integration behavior evidence is required")
     try:
-        tree = ast.parse(integration_tests)
+        ast.parse(integration_tests)
     except SyntaxError as error:
         raise ValueError("frontend integration tests must be valid Python") from error
-    called_names = {_callable_name(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
-    if not any(name.endswith("loadBooks") for name in called_names) and "loadBooks(" not in integration_tests:
-        raise ValueError("integration behavior evidence must call loadBooks")
-    if not any(name.endswith("deleteBook") for name in called_names) and "deleteBook(" not in integration_tests:
-        raise ValueError("integration behavior evidence must call deleteBook")
-    capture_markers = (
-        "calls.append",
-        "calls.push",
-        "requests.append",
-        "requests.push",
-        "recorded.append",
-        "recorded.push",
-        "captured.append",
-        "captured.push",
-        "fetch_calls.append",
-        "fetchCalls.push",
-        "call_log.append",
-        "url",
-        "options",
-    )
-    if not any(marker in integration_tests for marker in capture_markers):
-        raise ValueError("integration behavior evidence must capture fetch url/options")
-    runner_markers = ("subprocess.run", "asyncio.run", "pytest.mark.asyncio", "node")
+    runner_markers = ("subprocess.Popen", "subprocess.run", "asyncio.run", "pytest.mark.asyncio")
     if not any(marker in integration_tests for marker in runner_markers):
         raise ValueError("integration behavior evidence must execute frontend functions")
-    if "/books" not in integration_tests or "DELETE" not in integration_tests:
-        raise ValueError("integration behavior evidence must assert backend API paths")
+    startup_markers = (
+        "python -m backend.app",
+        '"-m", "backend.app"',
+        "'-m', 'backend.app'",
+        "backend.app",
+    )
+    http_client_markers = ("urllib.request", "http.client", "urlopen(")
+    if (
+        not any(marker in integration_tests for marker in startup_markers)
+        or not any(marker in integration_tests for marker in http_client_markers)
+        or "/health" not in integration_tests
+        or "/books" not in integration_tests
+        or ("127.0.0.1" not in integration_tests and "localhost" not in integration_tests)
+    ):
+        raise ValueError("live HTTP integration evidence must start backend and probe /health and /books")
+    if "DELETE" not in integration_tests:
+        raise ValueError("integration behavior evidence must assert backend delete API path")
+    if "fakeFetch" in integration_tests:
+        raise ValueError("fakeFetch-only cannot satisfy live frontend/backend integration evidence")
     reset_markers = (".length = 0", ".splice(0")
     if any(marker in integration_tests for marker in reset_markers):
         raise ValueError(
@@ -1168,6 +1310,8 @@ def _verified_evidence(
 ) -> tuple[VerifiedEvidence, ...]:
     verified: list[VerifiedEvidence] = []
     for obligation in provider_fixture.compiled.ticket_graph_fixture.contracts.contract_gate.evidence_obligations:
+        if obligation.required_artifact_type.value not in _SUPPORTED_PACKAGE_ASSEMBLY_EVIDENCE_TYPES:
+            continue
         command_result = command_results_by_id[_command_id_for_obligation(obligation)]
         producer_attempt_ref = _producer_attempt_ref_for_obligation(
             provider_fixture=provider_fixture,
@@ -1215,6 +1359,15 @@ def _verified_evidence(
             raise AssertionError(f"tiny evidence verification failed: {result.blockers}")
         verified.append(result.verified_evidence)
     return tuple(verified)
+
+
+_SUPPORTED_PACKAGE_ASSEMBLY_EVIDENCE_TYPES = {
+    "backend_source_inventory",
+    "sqlite_persistence_evidence",
+    "frontend_source_inventory",
+    "run_manifest",
+    "test_command_evidence",
+}
 
 
 def _producer_attempt_ref_for_obligation(
@@ -1270,10 +1423,9 @@ def _artifact_manifest(
 
 def _command_id_for_obligation(obligation: EvidenceObligation) -> str:
     if obligation.required_artifact_type.value in {
-        "frontend_backend_integration_evidence",
         "frontend_source_inventory",
         "run_manifest",
-        "command_evidence",
+        "test_command_evidence",
     }:
         return "test-integration"
     return "test-backend"

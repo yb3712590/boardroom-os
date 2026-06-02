@@ -91,7 +91,7 @@ def test_inactive_acceptance_contract_rejected() -> None:
 
 def test_package_surfaces_missing_active_refs_rejected() -> None:
     contracts = build_tiny_scenario_active_contracts()
-    removed_ref = "AC-TINY-UI-FETCH-BACKEND"
+    removed_ref = "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION"
     package_contract = contracts.package_contract.model_copy(
         update={
             "source_surfaces": tuple(
@@ -145,6 +145,63 @@ def test_fixture_builds_active_project_acceptance_and_package_contracts() -> Non
     assert contracts.contract_gate.package_contract_ref == contracts.package_contract.package_contract_id
     assert contracts.required_acceptance_refs_by_category == REQUIRED_ACCEPTANCE_REFS_BY_CATEGORY
     assert "AC-TINY-API-BOOK-DELETE" in active_refs
+    assert {
+        "AC-TINY-BACKEND-STARTUP",
+        "AC-TINY-BACKEND-HTTP-CRUD",
+        "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+        "AC-TINY-FRONTEND-STARTUP",
+        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+        "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+    }.issubset(active_refs)
+
+
+def test_tiny_contract_uses_standard_library_http_backend_route() -> None:
+    contracts = build_tiny_scenario_active_contracts()
+
+    run_commands = {
+        command.command_id.value: command.command
+        for command in contracts.package_contract.run_commands
+    }
+
+    assert run_commands["run-backend"] == ("python", "-m", "backend.app")
+    assert all("uvicorn" not in " ".join(command) for command in run_commands.values())
+
+
+def test_tiny_contract_requires_live_http_and_command_evidence() -> None:
+    contracts = build_tiny_scenario_active_contracts()
+
+    required_by_ref = {
+        criterion.acceptance_ref.value: {
+            evidence.value for evidence in criterion.evidence_required
+        }
+        for criterion in contracts.acceptance_contract.blocking_criteria()
+    }
+
+    assert "backend_service_run" in required_by_ref["AC-TINY-BACKEND-STARTUP"]
+    assert "backend_http_crud_evidence" in required_by_ref["AC-TINY-BACKEND-HTTP-CRUD"]
+    assert (
+        "sqlite_persistence_http_evidence"
+        in required_by_ref["AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"]
+    )
+    assert "frontend_service_run" in required_by_ref["AC-TINY-FRONTEND-STARTUP"]
+    assert (
+        "live_frontend_backend_integration_evidence"
+        in required_by_ref["AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION"]
+    )
+    assert {
+        "backend_service_run",
+        "frontend_service_run",
+        "test_command_evidence",
+        "final_command_evidence",
+    }.issubset(required_by_ref["AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED"])
+
+    boundaries = {boundary.value for boundary in contracts.package_contract.integration_boundaries}
+    assert {
+        "backend-standard-library-http-service",
+        "frontend-static-service",
+        "frontend-calls-live-backend-http-api",
+        "backend-persists-book-state-in-sqlite-via-http",
+    }.issubset(boundaries)
 
 
 def test_source_surfaces_cover_full_stack_package() -> None:
@@ -169,6 +226,16 @@ def test_source_surfaces_cover_full_stack_package() -> None:
     }
     for surface in contracts.package_contract.source_surfaces:
         assert {ref.value for ref in surface.acceptance_refs}.issubset(active_refs)
+
+    backend_surface = next(
+        surface
+        for surface in contracts.package_contract.source_surfaces
+        if surface.source_surface_ref.value == "backend-api"
+    )
+    assert {
+        "AC-TINY-BACKEND-STARTUP",
+        "AC-TINY-BACKEND-HTTP-CRUD",
+    }.issubset({ref.value for ref in backend_surface.acceptance_refs})
 
 
 def test_contract_gate_evidence_obligations_cover_all_blocking_evidence_required() -> None:

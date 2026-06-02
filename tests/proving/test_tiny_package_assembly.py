@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from boardroom_os.contracts.types import SourceSurfaceRef
+from boardroom_os.evidence.table import FinalEvidenceStatus
 from boardroom_os.workspace.assembler import PackageArtifactKind, PackageArtifactPath
 
 _VERIFY_ERRORS = (ValueError, ValidationError)
@@ -115,8 +116,8 @@ def test_tiny_generated_package_locates_package_source_and_evidence(
     assert "passed" in fixture.command_results_by_id["test-integration"].stdout
     assert fixture.run_manifest.package_contract_ref == fixture.package_contract.package_contract_id
     assert fixture.source_inventory.package_assembly_ref == fixture.package_assembly.package_assembly_id
-    assert fixture.final_evidence_table.complete is True
-    assert fixture.workspace_evidence_bundle.closeout_ready is True
+    assert fixture.final_evidence_table.complete is False
+    assert fixture.workspace_evidence_bundle is None
 
     inventory_paths = {entry.path.value for entry in fixture.source_inventory.entries}
     assert inventory_paths == {
@@ -128,14 +129,7 @@ def test_tiny_generated_package_locates_package_source_and_evidence(
         "backend/tests/test_api.py",
         "tests/integration/test_frontend_backend.py",
     }
-    assert {
-        artifact.artifact_kind
-        for artifact in fixture.workspace_evidence_bundle.artifacts
-    } == fixture.required_evidence_artifact_kinds
-    assert all(
-        artifact.relative_path.value.startswith("20-evidence/")
-        for artifact in fixture.workspace_evidence_bundle.artifacts
-    )
+    assert fixture.workspace_evidence_bundle is None
     assert "def delete_book" in fixture.source_contents["backend/app.py"]
     assert "sqlite3.connect" in fixture.source_contents["backend/db.py"]
     assert "CREATE TABLE" in fixture.source_contents["backend/db.py"]
@@ -144,13 +138,36 @@ def test_tiny_generated_package_locates_package_source_and_evidence(
     assert {
         row.acceptance_ref.value
         for row in fixture.final_evidence_table.rows
-        if row.status.value == "satisfied"
-    }.issuperset(
-        {
-            "AC-TINY-API-BOOK-DELETE",
-            "AC-TINY-PERSISTENCE-SQLITE",
-        }
-    )
+        if row.status is FinalEvidenceStatus.SATISFIED
+    } == {
+        "AC-TINY-API-BOOK-CREATE",
+        "AC-TINY-API-BOOK-LIST",
+        "AC-TINY-API-CHECKOUT-RETURN",
+        "AC-TINY-API-BOOK-DELETE",
+        "AC-TINY-PERSISTENCE-SQLITE",
+    }
+    assert {
+        row.acceptance_ref.value
+        for row in fixture.final_evidence_table.rows
+        if row.status is FinalEvidenceStatus.MISSING
+    } == {
+        "AC-TINY-BACKEND-STARTUP",
+        "AC-TINY-BACKEND-HTTP-CRUD",
+        "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+        "AC-TINY-FRONTEND-STARTUP",
+        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+        "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+    }
+    assert "AC-TINY-UI-FETCH-BACKEND" not in {
+        acceptance_ref.value
+        for artifact in fixture.package_artifacts
+        for acceptance_ref in artifact.acceptance_refs
+    }
+    assert "AC-TINY-RUN-TEST-COMMANDS" not in {
+        acceptance_ref.value
+        for artifact in fixture.package_artifacts
+        for acceptance_ref in artifact.acceptance_refs
+    }
 
 
 def test_tiny_package_assembly_rejects_missing_delete_book_api(
@@ -251,7 +268,7 @@ def test_tiny_package_assembly_accepts_sqlite_cleanup_evidence_without_schema_qu
         package_contents=package_contents,
     )
 
-    assert fixture.final_evidence_table.complete is True
+    assert fixture.final_evidence_table.complete is False
 
 
 def test_tiny_package_assembly_rejects_persistent_sqlite_connection(
@@ -590,6 +607,16 @@ def test_tiny_source_inventory_binds_producer_attempts_and_verified_evidence(
     )
     assert {entry.path.value for entry in backend_entries} == {"backend/app.py"}
     assert all(entry.sha256.value != "0" * 64 for entry in fixture.source_inventory.entries)
+    assert "AC-TINY-UI-FETCH-BACKEND" not in {
+        acceptance_ref.value
+        for entry in fixture.source_inventory.entries
+        for acceptance_ref in entry.acceptance_refs
+    }
+    assert "AC-TINY-RUN-TEST-COMMANDS" not in {
+        acceptance_ref.value
+        for entry in fixture.source_inventory.entries
+        for acceptance_ref in entry.acceptance_refs
+    }
 
 
 def test_tiny_package_assembly_rejects_failed_declared_command(

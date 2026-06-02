@@ -84,7 +84,7 @@ def test_tiny_synthetic_verification_without_runner_record_is_rejected(
         package_root=package_root,
         command_id="test-backend",
     )
-    obligation = _obligation_by_artifact_type(bundle_seed, "command_evidence")
+    obligation = _obligation_by_artifact_type(bundle_seed, "test_command_evidence")
     producer_attempt_ref = bundle_seed.provider_attempts_by_ticket_id[
         TICKET_TESTS_ID
     ].provider_attempt_id
@@ -127,7 +127,7 @@ def test_tiny_synthetic_verification_without_runner_record_is_rejected(
 
 def test_tiny_missing_acceptance_map_blocks_final_evidence_table(tmp_path: Path) -> None:
     bundle = _build_tiny_evidence_bundle(tmp_path)
-    omitted_acceptance_ref = "AC-TINY-UI-FETCH-BACKEND"
+    omitted_acceptance_ref = "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION"
     incomplete_evidence = tuple(
         evidence
         for evidence in bundle.verified_evidence
@@ -155,7 +155,7 @@ def test_tiny_missing_acceptance_map_blocks_final_evidence_table(tmp_path: Path)
         artifact_type.value
         for artifact_type in omitted_row.missing_required_artifact_types
     ) == (
-        "frontend_backend_integration_evidence",
+        "live_frontend_backend_integration_evidence",
         "frontend_source_inventory",
     )
     assert omitted_row.blockers == ()
@@ -202,7 +202,7 @@ def test_tiny_checker_notes_cannot_clear_evidence_blocker(tmp_path: Path) -> Non
     )
 
 
-def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
+def test_tiny_runner_evidence_keeps_live_service_acceptance_incomplete(
     tmp_path: Path,
 ) -> None:
     bundle = _build_tiny_evidence_bundle(tmp_path)
@@ -236,8 +236,31 @@ def test_tiny_runner_evidence_verifies_all_blocking_acceptance_refs(
             "sqlite_persistence_evidence",
             "backend_source_inventory",
         ),
-        "AC-TINY-UI-FETCH-BACKEND": ("frontend_source_inventory",),
-        "AC-TINY-RUN-TEST-COMMANDS": ("run_manifest",),
+        "AC-TINY-BACKEND-STARTUP": (
+            "backend_service_run",
+            "backend_source_inventory",
+        ),
+        "AC-TINY-BACKEND-HTTP-CRUD": (
+            "backend_http_crud_evidence",
+            "backend_source_inventory",
+        ),
+        "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP": (
+            "sqlite_persistence_http_evidence",
+            "backend_source_inventory",
+        ),
+        "AC-TINY-FRONTEND-STARTUP": (
+            "frontend_service_run",
+            "frontend_source_inventory",
+        ),
+        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION": (
+            "frontend_source_inventory",
+        ),
+        "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED": (
+            "run_manifest",
+            "backend_service_run",
+            "frontend_service_run",
+            "final_command_evidence",
+        ),
     }
 
     verdict = CheckerService().review(
@@ -362,9 +385,9 @@ def _verify_all_tiny_evidence(
         fixture.compiled.ticket_graph_fixture.contracts.contract_gate.evidence_obligations
     ):
         if obligation.required_artifact_type.value in {
-            "api_test_run",
-            "frontend_backend_integration_evidence",
-            "command_evidence",
+            "backend_http_api_evidence",
+            "live_frontend_backend_integration_evidence",
+            "test_command_evidence",
         }:
             command_id = _command_id_for_obligation(obligation)
             verified.append(
@@ -537,7 +560,7 @@ def _obligation_by_artifact_type(
 
 
 def _command_id_for_obligation(obligation: EvidenceObligation) -> str:
-    if obligation.required_artifact_type.value == "frontend_backend_integration_evidence":
+    if obligation.required_artifact_type.value == "live_frontend_backend_integration_evidence":
         return "test-integration"
     return "test-backend"
 

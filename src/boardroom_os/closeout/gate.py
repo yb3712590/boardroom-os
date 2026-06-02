@@ -275,7 +275,7 @@ class CloseoutGateInput(BaseModel):
     package_contract: PackageContract
     source_inventory: SourceInventory
     run_manifest: RunManifest
-    workspace_evidence_bundle: WorkspaceEvidenceBundle
+    workspace_evidence_bundle: WorkspaceEvidenceBundle | None
     final_evidence_table: FinalEvidenceTable
     checker_verdict: CheckerVerdict
     verification_runs: tuple[VerificationRun, ...]
@@ -307,6 +307,8 @@ class CloseoutGateInput(BaseModel):
             "checker_verdict": CheckerVerdict,
         }
         expected_type = expected_types[info.field_name]
+        if info.field_name == "workspace_evidence_bundle" and value is None:
+            return value
         if not isinstance(value, expected_type):
             raise CloseoutGateError(
                 f"{info.field_name} must be a {expected_type.__name__} instance"
@@ -482,30 +484,31 @@ def _reference_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGateBlock
         package_contract_ref,
         "run_manifest.package_contract_ref",
     )
-    _append_ref_mismatch(
-        blockers,
-        gate_input.workspace_evidence_bundle.package_contract_ref,
-        package_contract_ref,
-        "workspace_evidence_bundle.package_contract_ref",
-    )
-    _append_ref_mismatch(
-        blockers,
-        gate_input.workspace_evidence_bundle.source_inventory_ref,
-        gate_input.source_inventory.source_inventory_id,
-        "workspace_evidence_bundle.source_inventory_ref",
-    )
-    _append_ref_mismatch(
-        blockers,
-        gate_input.workspace_evidence_bundle.run_manifest_ref,
-        gate_input.run_manifest.run_manifest_id,
-        "workspace_evidence_bundle.run_manifest_ref",
-    )
-    _append_ref_mismatch(
-        blockers,
-        gate_input.workspace_evidence_bundle.final_evidence_table_ref,
-        gate_input.final_evidence_table.final_evidence_table_id,
-        "workspace_evidence_bundle.final_evidence_table_ref",
-    )
+    if gate_input.workspace_evidence_bundle is not None:
+        _append_ref_mismatch(
+            blockers,
+            gate_input.workspace_evidence_bundle.package_contract_ref,
+            package_contract_ref,
+            "workspace_evidence_bundle.package_contract_ref",
+        )
+        _append_ref_mismatch(
+            blockers,
+            gate_input.workspace_evidence_bundle.source_inventory_ref,
+            gate_input.source_inventory.source_inventory_id,
+            "workspace_evidence_bundle.source_inventory_ref",
+        )
+        _append_ref_mismatch(
+            blockers,
+            gate_input.workspace_evidence_bundle.run_manifest_ref,
+            gate_input.run_manifest.run_manifest_id,
+            "workspace_evidence_bundle.run_manifest_ref",
+        )
+        _append_ref_mismatch(
+            blockers,
+            gate_input.workspace_evidence_bundle.final_evidence_table_ref,
+            gate_input.final_evidence_table.final_evidence_table_id,
+            "workspace_evidence_bundle.final_evidence_table_ref",
+        )
     _append_ref_mismatch(
         blockers,
         gate_input.checker_verdict.acceptance_contract_ref,
@@ -623,6 +626,14 @@ def _source_inventory_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
 
 def _workspace_evidence_bundle_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGateBlocker]:
     bundle = gate_input.workspace_evidence_bundle
+    if bundle is None:
+        return [
+            _blocker(
+                CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY,
+                "workspace evidence bundle is required and cannot be synthesized",
+                "workspace-evidence-bundle.unavailable",
+            )
+        ]
     if bundle.closeout_ready is not True:
         return [
             _blocker(
@@ -978,10 +989,11 @@ def _checked_refs(gate_input: CloseoutGateInput) -> tuple[str, ...]:
         gate_input.package_contract.package_contract_id.value,
         gate_input.source_inventory.source_inventory_id.value,
         gate_input.run_manifest.run_manifest_id.value,
-        gate_input.workspace_evidence_bundle.workspace_evidence_bundle_id.value,
         gate_input.final_evidence_table.final_evidence_table_id.value,
         gate_input.checker_verdict.checker_verdict_id.value,
     ]
+    if gate_input.workspace_evidence_bundle is not None:
+        refs.append(gate_input.workspace_evidence_bundle.workspace_evidence_bundle_id.value)
     refs.extend(ref.value for ref in gate_input.provider_attempt_refs)
     refs.extend(run.verification_run_id.value for run in gate_input.verification_runs)
     for service in gate_input.service_run_evidence:

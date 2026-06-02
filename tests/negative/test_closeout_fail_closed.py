@@ -580,6 +580,19 @@ def test_closeout_gate_blocks_when_verified_evidence_contains_orphan_not_in_fina
     _assert_blocked(result, _gate_module().CloseoutGateBlockerCode.FINAL_EVIDENCE_INCOMPLETE)
 
 
+def test_closeout_gate_blocks_when_workspace_evidence_bundle_is_missing() -> None:
+    gate_input = _ready_input()
+
+    result = _evaluate(
+        gate_input.model_copy(update={"workspace_evidence_bundle": None})
+    )
+
+    _assert_blocked(
+        result,
+        _gate_module().CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY,
+    )
+
+
 @pytest.mark.parametrize(
     "workspace_evidence_bundle",
     (

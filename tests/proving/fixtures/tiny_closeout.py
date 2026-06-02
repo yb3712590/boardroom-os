@@ -180,11 +180,11 @@ class TinyCloseoutGateFixture:
     replay_readiness: Any
     git_version_audit_bundle: Any
     git_audit_readiness: Any
-    process_audit_bundle: ProcessAuditBundle
+    process_audit_bundle: ProcessAuditBundle | None
     process_audit_readiness: Any
     closeout_gate_input: CloseoutGateInput
     closeout_gate_result: CloseoutGateResult
-    audit_answers: TinyCloseoutAuditAnswers
+    audit_answers: TinyCloseoutAuditAnswers | None
 
 
 @dataclass(frozen=True)
@@ -306,6 +306,8 @@ def build_tiny_closeout_fixture(
     gate_result = gate_fixture.closeout_gate_result
     if gate_result.verdict.value != "passed":
         raise ValueError("tiny closeout gate result must be passed before CloseoutPackage")
+    if gate_fixture.process_audit_bundle is None or gate_fixture.process_audit_readiness is None:
+        raise ValueError("process audit bundle is required before CloseoutPackage")
     _reject_fake_provider_passed_closeout(gate_fixture.package_fixture)
     package_input = CloseoutPackageBuilderInput(
         closeout_gate_result=gate_result,
@@ -453,34 +455,37 @@ def build_tiny_closeout_gate_fixture(
     )
     git_audit_readiness = git_version_audit_readiness(git_version_audit_bundle)
     checker_verdict = _checker_verdict(package_fixture)
-    process_audit_bundle = build_process_audit_bundle(
-        ProcessAuditBuilderInput(
-            project_ref=PROJECT_REF,
-            generated_at=GENERATED_AT,
-            package_contract=package_fixture.package_contract,
-            acceptance_contract=(
-                package_fixture.provider_fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
-            ),
-            agent_context_index=agent_context_index,
-            ticket_graph_summary=ticket_graph_summary,
-            source_inventory=source_inventory,
-            run_manifest=package_fixture.run_manifest,
-            workspace_evidence_bundle=package_fixture.workspace_evidence_bundle.model_copy(
-                update={"source_inventory_ref": source_inventory.source_inventory_id}
-            ),
-            final_evidence_table=package_fixture.final_evidence_table,
-            checker_verdict=checker_verdict,
-            verification_runs=verification_runs,
-            verified_evidence=package_fixture.verified_evidence,
-            provider_attempt_refs=provider_attempt_refs,
-            replay_bundle=replay_bundle,
-            replay_readiness=replay_readiness,
-            git_version_audit_bundle=git_version_audit_bundle,
-            git_audit_readiness=git_audit_readiness,
-            run_id=RUN_ID,
+    process_audit_bundle = None
+    process_readiness = None
+    if package_fixture.workspace_evidence_bundle is not None:
+        process_audit_bundle = build_process_audit_bundle(
+            ProcessAuditBuilderInput(
+                project_ref=PROJECT_REF,
+                generated_at=GENERATED_AT,
+                package_contract=package_fixture.package_contract,
+                acceptance_contract=(
+                    package_fixture.provider_fixture.compiled.ticket_graph_fixture.contracts.acceptance_contract
+                ),
+                agent_context_index=agent_context_index,
+                ticket_graph_summary=ticket_graph_summary,
+                source_inventory=source_inventory,
+                run_manifest=package_fixture.run_manifest,
+                workspace_evidence_bundle=package_fixture.workspace_evidence_bundle.model_copy(
+                    update={"source_inventory_ref": source_inventory.source_inventory_id}
+                ),
+                final_evidence_table=package_fixture.final_evidence_table,
+                checker_verdict=checker_verdict,
+                verification_runs=verification_runs,
+                verified_evidence=package_fixture.verified_evidence,
+                provider_attempt_refs=provider_attempt_refs,
+                replay_bundle=replay_bundle,
+                replay_readiness=replay_readiness,
+                git_version_audit_bundle=git_version_audit_bundle,
+                git_audit_readiness=git_audit_readiness,
+                run_id=RUN_ID,
+            )
         )
-    )
-    process_readiness = process_audit_readiness(process_audit_bundle)
+        process_readiness = process_audit_readiness(process_audit_bundle)
     gate_input = _closeout_gate_input(
         package_fixture=package_fixture,
         source_inventory=source_inventory,
@@ -509,9 +514,13 @@ def build_tiny_closeout_gate_fixture(
         process_audit_readiness=process_readiness,
         closeout_gate_input=gate_input,
         closeout_gate_result=gate_result,
-        audit_answers=_audit_answers(
-            process_audit_bundle,
-            final_commit_sha=git_audit_readiness.final_commit_sha.value,
+        audit_answers=(
+            _audit_answers(
+                process_audit_bundle,
+                final_commit_sha=git_audit_readiness.final_commit_sha.value,
+            )
+            if process_audit_bundle is not None
+            else None
         ),
     )
 
@@ -1619,13 +1628,18 @@ def _closeout_gate_input(
         _closeout_command_binding(package_fixture, run)
         for run in verification_runs
     )
+    workspace_evidence_bundle = (
+        package_fixture.workspace_evidence_bundle.model_copy(
+            update={"source_inventory_ref": source_inventory.source_inventory_id}
+        )
+        if package_fixture.workspace_evidence_bundle is not None
+        else None
+    )
     return CloseoutGateInput(
         package_contract=package_fixture.package_contract,
         source_inventory=source_inventory,
         run_manifest=package_fixture.run_manifest,
-        workspace_evidence_bundle=package_fixture.workspace_evidence_bundle.model_copy(
-            update={"source_inventory_ref": source_inventory.source_inventory_id}
-        ),
+        workspace_evidence_bundle=workspace_evidence_bundle,
         final_evidence_table=package_fixture.final_evidence_table,
         checker_verdict=checker_verdict,
         verification_runs=verification_runs,

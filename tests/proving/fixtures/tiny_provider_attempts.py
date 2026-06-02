@@ -81,7 +81,7 @@ class TinyProviderAttemptFixture:
 
 
 _REAL_PROVIDER_FIXTURE_CACHE: dict[tuple[object, ...], TinyProviderAttemptFixture] = {}
-_TINY_SOURCE_DELIVERY_PROMPT_VERSION = "v2-080f-source-delivery-2026-05-30.9"
+_TINY_SOURCE_DELIVERY_PROMPT_VERSION = "v2-090d-source-delivery-2026-06-02.1"
 _PROVIDER_RETRY_GRAPH_VERSION_STRIDE = 10_000
 
 
@@ -377,7 +377,7 @@ def _provider_source_delivery_files_are_functionally_valid(files: object) -> boo
         if not all(isinstance(content, str) for content in typed_files.values()):
             return False
         backend_app = typed_files.get("backend/app.py")
-        if backend_app is not None and not _provider_backend_public_api_signatures_are_valid(
+        if backend_app is not None and not _provider_backend_http_service_markers_are_valid(
             backend_app
         ):
             return False
@@ -413,6 +413,10 @@ def _provider_source_delivery_files_are_functionally_valid(files: object) -> boo
                     "startswith('.pytest-tmp')",
                 )
             ):
+                return False
+            if not _provider_integration_test_has_live_backend_probe(integration_tests):
+                return False
+            if _provider_integration_test_is_fake_fetch_only(integration_tests):
                 return False
         return True
     except Exception:
@@ -453,37 +457,50 @@ def _provider_sqlite_schema_literals_are_valid(backend_db: str) -> bool:
     return bool(strings or create_table_sql)
 
 
-def _provider_backend_public_api_signatures_are_valid(backend_app: str) -> bool:
+def _provider_backend_http_service_markers_are_valid(backend_app: str) -> bool:
     try:
-        tree = __import__("ast").parse(backend_app)
+        __import__("ast").parse(backend_app)
     except SyntaxError:
         return False
-    functions = {
-        node.name: node
-        for node in __import__("ast").walk(tree)
-        if isinstance(node, (__import__("ast").FunctionDef, __import__("ast").AsyncFunctionDef))
-    }
-    required = {
-        "create_store": ("db_path",),
-        "create_book": ("title",),
-        "list_books": (),
-        "checkout_book": ("book_id",),
-        "return_book": ("book_id",),
-        "delete_book": ("book_id",),
-    }
-    for function_name, required_names in required.items():
-        node = functions.get(function_name)
-        if node is None:
-            return False
-        if node.args.vararg is not None or node.args.kwarg is not None:
-            return False
-        positional = tuple(argument.arg for argument in node.args.args)
-        keyword_only = tuple(argument.arg for argument in node.args.kwonlyargs)
-        available = (*positional, *keyword_only)
-        for required_name in required_names:
-            if required_name not in available:
-                return False
-    return True
+    service_markers = (
+        "http.server",
+        "BaseHTTPRequestHandler",
+        "HTTPServer",
+        "ThreadingHTTPServer",
+        "socketserver.TCPServer",
+    )
+    if not any(marker in backend_app for marker in service_markers):
+        return False
+    if "serve_forever" not in backend_app and "__main__" not in backend_app:
+        return False
+    route_markers = ("/health", "/books", "checkout", "return")
+    if not all(marker in backend_app for marker in route_markers):
+        return False
+    method_markers = ("do_DELETE", "DELETE", "delete")
+    return any(marker in backend_app for marker in method_markers)
+
+
+def _provider_integration_test_has_live_backend_probe(integration_tests: str) -> bool:
+    startup_markers = (
+        "python -m backend.app",
+        '"-m", "backend.app"',
+        "'-m', 'backend.app'",
+        "backend.app",
+    )
+    http_client_markers = ("urllib.request", "http.client", "urlopen(")
+    return (
+        any(marker in integration_tests for marker in startup_markers)
+        and any(marker in integration_tests for marker in http_client_markers)
+        and "/health" in integration_tests
+        and "/books" in integration_tests
+        and ("127.0.0.1" in integration_tests or "localhost" in integration_tests)
+    )
+
+
+def _provider_integration_test_is_fake_fetch_only(integration_tests: str) -> bool:
+    if "fakeFetch" not in integration_tests:
+        return False
+    return not _provider_integration_test_has_live_backend_probe(integration_tests)
 
 
 def _provider_frontend_has_exact_function_signature(
@@ -521,13 +538,9 @@ def _provider_artifact_file_text(*, artifact_root: Path, artifact_ref: str) -> s
     return (artifact_root / f"{safe_name}.txt").read_text(encoding="utf-8")
 
 
-def _settings_for_tiny_source_delivery(
-    settings: OpenAIProviderSettings,
-) -> OpenAIProviderSettings:
-    min_output_tokens = max(settings.max_output_tokens, 8_192)
-    timeout_seconds = max(settings.timeout_seconds, 240.0)
-    instructions = (
-        "For this V2-080F proving run, this system instruction replaces any "
+def tiny_source_delivery_system_instructions() -> str:
+    return (
+        "For this V2-090D proving run, this system instruction replaces any "
         "environment-level audit-summary instruction. "
         f"Prompt version: {_TINY_SOURCE_DELIVERY_PROMPT_VERSION}. "
         "Return only valid minified JSON and no Markdown. The JSON schema is "
@@ -537,57 +550,67 @@ def _settings_for_tiny_source_delivery(
         "and no other paths. Generate complete runnable source for each "
         "requested file. Use only Python standard library modules. Do not use "
         "Flask, FastAPI, requests, npm, or other third-party packages. Backend "
-        "scope must expose create_store, create_book, list_books, checkout_book, "
-        "return_book, delete_book in backend/app.py and a sqlite3-backed "
-        "BookStore in backend/db.py. The backend must represent book states as "
-        "IN_LIBRARY and CHECKED_OUT. backend/app.py public functions must use "
-        "explicit inspectable signatures, not *args or **kwargs: create_store "
-        "must accept db_path, create_book must accept title, checkout_book / "
-        "return_book / delete_book must accept book_id, and optional store must "
-        "be a named keyword or positional parameter. BookStore must use short-lived sqlite3 "
-        "connections opened with context managers inside each operation; do not "
-        "store sqlite3 Connection objects on self because Windows test cleanup "
-        "must be able to remove the SQLite file after each test. Test scope must "
-        "verify delete behavior, SQLite file persistence, and frontend fetches "
-        "backend API paths. If tests open sqlite3.connect directly, wrap it with "
+        "scope must implement backend/app.py as a standard-library HTTP "
+        "service using http.server, BaseHTTPRequestHandler, HTTPServer, "
+        "ThreadingHTTPServer, or an equivalent Python standard-library HTTP "
+        "server. Running run-backend must start the same service behavior as "
+        "python -m backend.app. backend/app.py must expose a real service "
+        "entrypoint guarded by if __name__ == '__main__' or equivalent and "
+        "must route /health, /books, /books/<id>/checkout, "
+        "/books/<id>/return, and DELETE /books/<id> or a clearly equivalent "
+        "delete endpoint. The backend must represent book states as IN_LIBRARY "
+        "and CHECKED_OUT. SQLite persistence via HTTP is required: API calls "
+        "must create, list, checkout, return, and delete books through sqlite3 "
+        "state that survives separate HTTP requests. BookStore must use "
+        "short-lived sqlite3 connections opened with context managers inside "
+        "each operation; do not store sqlite3 Connection objects on self "
+        "because Windows test cleanup must be able to remove the SQLite file "
+        "after each test. Tests must verify delete behavior, SQLite file "
+        "persistence via HTTP, service startup, and frontend/backend live "
+        "integration. If tests open sqlite3.connect directly, wrap it with "
         "contextlib.closing(...) or explicitly close the connection before "
-        "TemporaryDirectory cleanup; a plain 'with sqlite3.connect(...) as conn' "
-        "does not close the connection on Windows. delete_book tests must call "
-        "delete_book and then assert the deleted id is absent from list_books; "
-        "do not route delete_book through a mutation helper that refetches the "
-        "same book when delete_book returns bool/int/str or None. checkout_book "
-        "and return_book may assert returned state or refetch updated rows, but "
-        "delete_book must be verified by absence after deletion. Frontend scope "
-        "must export exact "
-        "function signatures 'export async function loadBooks(fetchImpl)' and "
+        "TemporaryDirectory cleanup; a plain 'with sqlite3.connect(...) as "
+        "conn' does not close the connection on Windows. Delete tests must "
+        "issue an HTTP DELETE or equivalent delete endpoint call and then "
+        "assert the deleted id is absent from a subsequent HTTP GET /books "
+        "response. Checkout and return tests may assert returned state or "
+        "refetch updated rows, but delete must be verified by absence after "
+        "deletion. Frontend scope must export exact function signatures "
+        "'export async function loadBooks(fetchImpl)' and "
         "'export async function deleteBook(fetchImpl, bookId)' with no default "
-        "fetchImpl value. loadBooks must call fetchImpl('/books'); deleteBook "
-        "must call fetchImpl(`/books/${bookId}` or encoded equivalent) using "
-        "method DELETE. The integration test must execute frontend functions "
-        "with a fake fetch implementation and capture url/options calls; do not "
-        "write a regex-only or source-string-only integration test. Use Node "
-        "stdlib via subprocess when testing JavaScript modules from pytest, and "
-        "allow encoded equivalents such as encodeURIComponent(String(bookId)). "
-        "The integration test must preserve the full fake fetch call list; do "
-        "not clear calls.length or otherwise reset the capture before reporting. "
-        "The final report/assertions must include both the loadBooks('/books') "
-        "call and the deleteBook('/books/<id>', {method:'DELETE'}) call. "
-        "Do not write '.length = 0', '.splice(0', or 'calls = []' anywhere in "
-        "tests/integration/test_frontend_backend.py. The Python test should "
-        "assert calls[0].url == '/books' and calls[1].options.method == 'DELETE' "
-        "after one loadBooks call followed by one deleteBook call. Do not exclude "
-        "candidate frontend modules because any absolute path segment starts with "
-        "'.pytest-tmp'; pytest runs the whole package under such a temporary root. "
-        "Prefer testing ROOT / 'frontend' / 'app.js' directly, or only filter "
-        "package-relative cache paths such as node_modules and __pycache__. "
-        "frontend/app.js must be safe to import in Node without a browser DOM; "
-        "do not call window.addEventListener at module top level unless it is "
-        "guarded by typeof window.addEventListener === 'function' or an "
-        "equivalent addEventListener-in-window check. "
-        "Docs scope must include runnable README/AGENTS/docs usage "
-        "content. Do not include run-manifest.json or package-contract.json; "
-        "the typed assembler writes those files."
+        "fetchImpl value. Frontend code must include a live backend probe "
+        "against /health and must call the real backend HTTP base URL for "
+        "/books and delete actions. fakeFetch-only frontend tests are allowed "
+        "as narrow unit checks, but fakeFetch-only cannot satisfy final "
+        "integration evidence. The final integration test must start the "
+        "backend service with python -m backend.app or run-backend, wait for "
+        "a live /health readiness probe, exercise /books over HTTP, and prove "
+        "frontend/backend integration against the live backend. Do not write "
+        "a regex-only or source-string-only integration test as final "
+        "evidence. Use Python standard-library HTTP clients such as "
+        "urllib.request or http.client for blackbox HTTP checks. Do not write "
+        "'.length = 0', '.splice(0', or 'calls = []' anywhere in "
+        "tests/integration/test_frontend_backend.py. Do not exclude candidate "
+        "frontend modules because any absolute path segment starts with "
+        "'.pytest-tmp'; pytest runs the whole package under such a temporary "
+        "root. Prefer testing ROOT / 'frontend' / 'app.js' directly, or only "
+        "filter package-relative cache paths such as node_modules and "
+        "__pycache__. frontend/app.js must be safe to import in Node without "
+        "a browser DOM; do not call window.addEventListener at module top "
+        "level unless it is guarded by typeof window.addEventListener === "
+        "'function' or an equivalent addEventListener-in-window check. "
+        "Docs scope must include runnable README/AGENTS/docs usage content. "
+        "Do not include run-manifest.json or package-contract.json; the typed "
+        "assembler writes those files."
     )
+
+
+def _settings_for_tiny_source_delivery(
+    settings: OpenAIProviderSettings,
+) -> OpenAIProviderSettings:
+    min_output_tokens = max(settings.max_output_tokens, 8_192)
+    timeout_seconds = max(settings.timeout_seconds, 240.0)
+    instructions = tiny_source_delivery_system_instructions()
     return settings.model_copy(
         update={
             "system_instructions": instructions,
@@ -792,5 +815,6 @@ __all__ = [
     "build_tiny_provider_attempt_fixture",
     "compile_tiny_implementation_execution_packages",
     "openai_settings_from_test_env",
+    "tiny_source_delivery_system_instructions",
     "validate_tiny_provider_attempt_results",
 ]

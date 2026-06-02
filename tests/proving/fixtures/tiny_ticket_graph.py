@@ -352,7 +352,7 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.backend", "surface.persistence"),
             acceptance_refs=api_refs + persistence_refs,
-            source_surface_refs=("backend-api", "persistence", "tests"),
+            source_surface_refs=("backend-api", "persistence", "run-manifest", "tests"),
             evidence_obligations=_obligation_refs_for(
                 contracts,
                 acceptance_refs=api_refs + persistence_refs,
@@ -365,7 +365,7 @@ def _ticket_payloads_by_id(
             role_category=RoleCategory.IMPLEMENTATION,
             capability_tags=("task.implementation", "surface.frontend"),
             acceptance_refs=ui_refs,
-            source_surface_refs=("frontend-ui", "tests"),
+            source_surface_refs=("frontend-ui", "run-manifest", "tests"),
             evidence_obligations=_obligation_refs_for(contracts, acceptance_refs=ui_refs),
             allowed_write_set=("frontend/index.html", "frontend/app.js"),
         ),

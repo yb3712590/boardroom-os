@@ -9,10 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from boardroom_os.audit.process_audit import (
-    REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS,
-    process_audit_readiness,
-)
+from boardroom_os.audit.process_audit import REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS
 from boardroom_os.audit.replay_bundle import replay_bundle_readiness
 from boardroom_os.adapters.git_audit import GitAuditAdapter, GitCommandResult
 from boardroom_os.closeout.gate import (
@@ -183,6 +180,8 @@ def test_tiny_closeout_rejects_missing_process_audit(tmp_path: Path) -> None:
         blocker.code is CloseoutGateBlockerCode.PROCESS_AUDIT_NOT_READY
         for blocker in gate_result.blockers
     )
+    assert fixture.process_audit_bundle is None
+    assert fixture.process_audit_readiness is None
     with pytest.raises(_VERIFY_ERRORS, match="process_audit_bundle must be ProcessAuditBundle"):
         payload = _closeout_package_payload(fixture, process_audit_bundle=None)
         CloseoutPackageBuilderInput.model_validate(
@@ -357,7 +356,7 @@ def test_tiny_work_product_submitted_does_not_replace_closeout(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("missing_path", REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS)
-def test_tiny_closeout_rejects_missing_required_30_audit_artifact(
+def test_tiny_closeout_defers_30_audit_artifacts_until_workspace_evidence_bundle_exists(
     tmp_path: Path,
     missing_path: str,
 ) -> None:
@@ -371,18 +370,15 @@ def test_tiny_closeout_rejects_missing_required_30_audit_artifact(
         base_commit_sha=_BASE_COMMIT_SHA,
         allow_fake_provider_for_negative_tests=True,
     )
-    broken_bundle = fixture.process_audit_bundle.model_copy(
-        update={
-            "artifacts": tuple(
-                artifact
-                for artifact in fixture.process_audit_bundle.artifacts
-                if artifact.path.value != missing_path
-            )
-        }
-    )
 
-    with pytest.raises(_VERIFY_ERRORS, match="artifact|required|process audit"):
-        process_audit_readiness(broken_bundle)
+    assert missing_path in REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS
+    assert fixture.package_fixture.workspace_evidence_bundle is None
+    assert fixture.process_audit_bundle is None
+    assert fixture.process_audit_readiness is None
+    assert any(
+        blocker.code is CloseoutGateBlockerCode.PROCESS_AUDIT_NOT_READY
+        for blocker in fixture.closeout_gate_result.blockers
+    )
 
 
 def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidence(
@@ -409,7 +405,11 @@ def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidenc
         "run-backend",
         "run-frontend",
     }
-    assert all("RUN_MANIFEST_COMMAND_UNVERIFIED" in blocker.message for blocker in command_blockers)
+    assert all(
+        "RUN_MANIFEST_COMMAND_UNVERIFIED" in blocker.message
+        or "RUN_MANIFEST_SERVICE_NOT_READY" in blocker.message
+        for blocker in command_blockers
+    )
     assert {command.command_id.value for command in fixture.package_fixture.run_manifest.commands} == {
         "run-backend",
         "run-frontend",
@@ -420,11 +420,20 @@ def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidenc
         "test-backend",
         "test-integration",
     }
+    assert fixture.package_fixture.workspace_evidence_bundle is None
+    assert any(
+        blocker.code is CloseoutGateBlockerCode.WORKSPACE_EVIDENCE_BUNDLE_NOT_READY
+        and blocker.related_ref == "workspace-evidence-bundle.unavailable"
+        for blocker in fixture.closeout_gate_result.blockers
+    )
     assert all(
         event.event_type is not EventType.CLOSEOUT_COMMITTED
         for event in fixture.events_before_closeout
     )
-    with pytest.raises(_VERIFY_ERRORS, match="closeout gate result must be passed"):
+    with pytest.raises(
+        _VERIFY_ERRORS,
+        match="closeout gate result must be passed|process_audit_bundle",
+    ):
         CloseoutPackageBuilderInput.model_validate(_closeout_package_payload(fixture))
     assert fixture.git_version_audit_bundle.fact_set.base_commit_sha != (
         fixture.git_version_audit_bundle.fact_set.final_commit_sha
@@ -435,27 +444,14 @@ def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidenc
     assert open_projection.terminal_status is CloseoutTerminalStatus.OPEN
     assert open_projection.closeout_package_ref is None
 
-    assert {artifact.path.value for artifact in fixture.process_audit_bundle.artifacts} == set(
-        REQUIRED_PROCESS_AUDIT_ARTIFACT_PATHS
-    )
+    assert fixture.process_audit_bundle is None
+    assert fixture.process_audit_readiness is None
     assert replay_bundle_readiness(
         fixture.replay_bundle,
         payload_resolver=fixture.replay_payload_resolver,
     ) == fixture.replay_readiness
 
-    audit_answers = fixture.audit_answers
-    assert audit_answers.timeline_event_count >= len(fixture.events_before_closeout)
-    assert audit_answers.agent_decision_count >= 1
-    assert audit_answers.agent_context_entry_count == len(
-        fixture.package_fixture.provider_attempts_by_ticket_id
-    )
-    assert {entry.path.value for entry in fixture.source_inventory.entries}.issubset(
-        set(audit_answers.artifact_paths)
-    )
-    assert audit_answers.git_final_commit_sha == fixture.git_audit_readiness.final_commit_sha.value
-    assert set(audit_answers.evidence_map_acceptance_refs) == {
-        row.acceptance_ref.value for row in fixture.package_fixture.final_evidence_table.rows
-    }
+    assert fixture.audit_answers is None
 
 
 def test_tiny_closeout_does_not_write_repo_root_audit_dirs(tmp_path: Path) -> None:

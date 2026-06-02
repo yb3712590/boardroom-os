@@ -35,8 +35,35 @@ TINY_FULLSTACK_AC_V2_BINDINGS = {
     "AC-TINY-API-CHECKOUT-RETURN": ("AC-V2-CONTRACT-001", "AC-V2-PACKAGE-002"),
     "AC-TINY-API-BOOK-DELETE": ("AC-V2-CONTRACT-001", "AC-V2-PACKAGE-002"),
     "AC-TINY-PERSISTENCE-SQLITE": ("AC-V2-CONTRACT-001", "AC-V2-EVIDENCE-003"),
-    "AC-TINY-UI-FETCH-BACKEND": ("AC-V2-CONTRACT-001", "AC-V2-PACKAGE-001"),
-    "AC-TINY-RUN-TEST-COMMANDS": ("AC-V2-EVIDENCE-001", "AC-V2-PACKAGE-002"),
+    "AC-TINY-BACKEND-STARTUP": (
+        "AC-V2-CONTRACT-002",
+        "AC-V2-EVIDENCE-004",
+        "AC-V2-PACKAGE-002",
+    ),
+    "AC-TINY-BACKEND-HTTP-CRUD": (
+        "AC-V2-CONTRACT-001",
+        "AC-V2-EVIDENCE-004",
+        "AC-V2-PACKAGE-002",
+    ),
+    "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP": (
+        "AC-V2-CONTRACT-001",
+        "AC-V2-EVIDENCE-004",
+    ),
+    "AC-TINY-FRONTEND-STARTUP": (
+        "AC-V2-CONTRACT-002",
+        "AC-V2-EVIDENCE-004",
+        "AC-V2-PACKAGE-002",
+    ),
+    "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION": (
+        "AC-V2-CONTRACT-001",
+        "AC-V2-EVIDENCE-004",
+        "AC-V2-PACKAGE-001",
+    ),
+    "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED": (
+        "AC-V2-EVIDENCE-001",
+        "AC-V2-PACKAGE-002",
+        "AC-V2-PACKAGE-003",
+    ),
 }
 
 _ALLOWED_AC_V2_REFS = {
@@ -45,11 +72,22 @@ _ALLOWED_AC_V2_REFS = {
     "AC-V2-CONTRACT-003",
     "AC-V2-EVIDENCE-001",
     "AC-V2-EVIDENCE-003",
+    "AC-V2-EVIDENCE-004",
     "AC-V2-EXECUTION-003",
     "AC-V2-PACKAGE-001",
     "AC-V2-PACKAGE-002",
+    "AC-V2-PACKAGE-003",
 }
 _FALLBACK_FORBIDDEN_ACCEPTANCE_REF = "AC-TINY-EVIDENCE-NO-FALLBACK"
+_STANDARD_LIBRARY_PROVIDER_POLICY = (
+    "Use only Python standard library modules. Do not use Flask, FastAPI, "
+    "requests, npm, uvicorn, or other third-party packages. Implement "
+    "backend/app.py as a standard-library HTTP service with http.server, "
+    "BaseHTTPRequestHandler, and python -m backend.app. Require /health, "
+    "/books, checkout, return, DELETE endpoints, SQLite persistence via "
+    "HTTP, and final live integration evidence; fakeFetch-only cannot "
+    "satisfy final integration evidence."
+)
 
 
 @dataclass(frozen=True)
@@ -109,6 +147,11 @@ def build_tiny_fullstack_contract_fixture() -> TinyFullstackContractFixture:
         acceptance_contract=acceptance_contract,
         ac_v2_bindings=TINY_FULLSTACK_AC_V2_BINDINGS,
     )
+    validate_tiny_fullstack_contract_recovery(
+        acceptance_contract=acceptance_contract,
+        package_contract=package_contract,
+        provider_system_instructions=_STANDARD_LIBRARY_PROVIDER_POLICY,
+    )
 
     return TinyFullstackContractFixture(
         board_directive=board_directive,
@@ -146,6 +189,125 @@ def validate_tiny_fullstack_ac_v2_bindings(
             raise ValueError("unknown AC-V2 binding")
 
 
+def validate_tiny_fullstack_contract_recovery(
+    *,
+    acceptance_contract: AcceptanceContract,
+    package_contract: PackageContract,
+    provider_system_instructions: str,
+) -> None:
+    _validate_tiny_standard_library_backend_route(
+        package_contract=package_contract,
+        provider_system_instructions=provider_system_instructions,
+    )
+    _validate_live_http_acceptance(acceptance_contract)
+    _validate_final_command_evidence_acceptance(acceptance_contract)
+    _validate_tiny_integration_boundaries(package_contract)
+
+
+def _validate_tiny_standard_library_backend_route(
+    *,
+    package_contract: PackageContract,
+    provider_system_instructions: str,
+) -> None:
+    backend_command = _package_command_by_id(package_contract, "run-backend")
+    command_text = " ".join(backend_command.command).lower()
+    third_party_markers = ("uvicorn", "flask", "fastapi", "starlette")
+    if any(marker in command_text for marker in third_party_markers):
+        raise ValueError(
+            "tiny contract standard-library HTTP route cannot use uvicorn or third-party servers"
+        )
+    if backend_command.command != ("python", "-m", "backend.app"):
+        raise ValueError(
+            "tiny contract standard-library HTTP route requires run-backend to execute python -m backend.app"
+        )
+    _validate_tiny_provider_prompt_http_route(provider_system_instructions)
+
+
+def _validate_tiny_provider_prompt_http_route(provider_system_instructions: str) -> None:
+    if not provider_system_instructions.strip():
+        raise ValueError("tiny provider prompt is required for standard-library HTTP route")
+    required_markers = (
+        "Python standard library modules",
+        "http.server",
+        "BaseHTTPRequestHandler",
+        "python -m backend.app",
+        "/health",
+        "/books",
+        "SQLite persistence via HTTP",
+        "fakeFetch-only",
+    )
+    missing_markers = tuple(
+        marker
+        for marker in required_markers
+        if marker not in provider_system_instructions
+    )
+    if missing_markers:
+        raise ValueError(
+            "tiny provider prompt must require "
+            f"{', '.join(missing_markers)} for standard-library HTTP route"
+        )
+
+
+def _validate_live_http_acceptance(acceptance_contract: AcceptanceContract) -> None:
+    criterion = _blocking_criterion_by_ref(
+        acceptance_contract,
+        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+    )
+    evidence_required = {evidence.value for evidence in criterion.evidence_required}
+    if "live_frontend_backend_integration_evidence" not in evidence_required:
+        raise ValueError("live HTTP integration evidence is required for frontend/backend acceptance")
+    statement = criterion.statement.lower()
+    required_markers = ("live", "http", "backend")
+    if any(marker not in statement for marker in required_markers):
+        raise ValueError("live HTTP integration evidence must be explicit in acceptance statement")
+
+
+def _validate_final_command_evidence_acceptance(acceptance_contract: AcceptanceContract) -> None:
+    criterion = _blocking_criterion_by_ref(
+        acceptance_contract,
+        "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+    )
+    evidence_required = {evidence.value for evidence in criterion.evidence_required}
+    required = {
+        "run_manifest",
+        "backend_service_run",
+        "frontend_service_run",
+        "test_command_evidence",
+        "final_command_evidence",
+    }
+    if not required.issubset(evidence_required):
+        raise ValueError("final command evidence is required for all declared run/test commands")
+
+
+def _validate_tiny_integration_boundaries(package_contract: PackageContract) -> None:
+    boundaries = {boundary.value for boundary in package_contract.integration_boundaries}
+    required_boundaries = {
+        "frontend-calls-live-backend-http-api",
+        "backend-persists-book-state-in-sqlite-via-http",
+        "backend-standard-library-http-service",
+        "frontend-static-service",
+    }
+    if not required_boundaries.issubset(boundaries):
+        raise ValueError("tiny package integration boundaries must require live HTTP services")
+
+
+def _blocking_criterion_by_ref(
+    acceptance_contract: AcceptanceContract,
+    acceptance_ref: str,
+) -> AcceptanceCriterion:
+    for criterion in acceptance_contract.blocking_criteria():
+        if criterion.acceptance_ref == AcceptanceRef(value=acceptance_ref):
+            return criterion
+    raise ValueError(f"missing tiny acceptance criterion: {acceptance_ref}")
+
+
+def _package_command_by_id(package_contract: PackageContract, command_id: str) -> PackageCommand:
+    for command in (*package_contract.run_commands, *package_contract.test_commands):
+        if command.command_id == ContractId(value=command_id):
+            return command
+    raise ValueError(f"missing package command: {command_id}")
+
+
 def _methodology_profile(project_charter_ref: ContractId) -> MethodologyProfile:
     template_kind = MethodologyTemplateKind.HYBRID
     return MethodologyProfile(
@@ -168,26 +330,26 @@ def _acceptance_contract(project_charter: ProjectCharter) -> AcceptanceContract:
         criteria=(
             _criterion(
                 acceptance_ref="AC-TINY-API-BOOK-CREATE",
-                statement="Backend API can create books.",
-                evidence_required=("api_test_run", "backend_source_inventory"),
+                statement="Backend HTTP API can create books through POST /books.",
+                evidence_required=("backend_http_api_evidence", "backend_source_inventory"),
                 source_surface_refs=("backend-api", "tests"),
             ),
             _criterion(
                 acceptance_ref="AC-TINY-API-BOOK-LIST",
-                statement="Backend API can list books.",
-                evidence_required=("api_test_run", "backend_source_inventory"),
+                statement="Backend HTTP API can list books through GET /books.",
+                evidence_required=("backend_http_api_evidence", "backend_source_inventory"),
                 source_surface_refs=("backend-api", "tests"),
             ),
             _criterion(
                 acceptance_ref="AC-TINY-API-CHECKOUT-RETURN",
-                statement="Backend API supports checkout and return state transitions.",
-                evidence_required=("api_test_run", "backend_source_inventory"),
+                statement="Backend HTTP API supports checkout and return state transitions.",
+                evidence_required=("backend_http_api_evidence", "backend_source_inventory"),
                 source_surface_refs=("backend-api", "tests"),
             ),
             _criterion(
                 acceptance_ref="AC-TINY-API-BOOK-DELETE",
-                statement="Backend API can delete books.",
-                evidence_required=("api_test_run", "backend_source_inventory"),
+                statement="Backend HTTP API can delete books through DELETE /books/{id}.",
+                evidence_required=("backend_http_api_evidence", "backend_source_inventory"),
                 source_surface_refs=("backend-api", "tests"),
             ),
             _criterion(
@@ -197,15 +359,45 @@ def _acceptance_contract(project_charter: ProjectCharter) -> AcceptanceContract:
                 source_surface_refs=("persistence", "tests"),
             ),
             _criterion(
-                acceptance_ref="AC-TINY-UI-FETCH-BACKEND",
-                statement="Frontend fetches the backend API instead of serving static placeholder data.",
-                evidence_required=("frontend_backend_integration_evidence", "frontend_source_inventory"),
+                acceptance_ref="AC-TINY-BACKEND-STARTUP",
+                statement="Backend run command starts a live standard-library HTTP service and passes /health readiness.",
+                evidence_required=("backend_service_run", "backend_source_inventory"),
+                source_surface_refs=("backend-api", "run-manifest", "tests"),
+            ),
+            _criterion(
+                acceptance_ref="AC-TINY-BACKEND-HTTP-CRUD",
+                statement="Live backend HTTP service supports create, list, checkout, return, and delete CRUD flow.",
+                evidence_required=("backend_http_crud_evidence", "backend_source_inventory"),
+                source_surface_refs=("backend-api", "tests"),
+            ),
+            _criterion(
+                acceptance_ref="AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+                statement="SQLite persistence is proven through the live HTTP workflow.",
+                evidence_required=("sqlite_persistence_http_evidence", "backend_source_inventory"),
+                source_surface_refs=("persistence", "tests"),
+            ),
+            _criterion(
+                acceptance_ref="AC-TINY-FRONTEND-STARTUP",
+                statement="Frontend run command starts a live static frontend service.",
+                evidence_required=("frontend_service_run", "frontend_source_inventory"),
+                source_surface_refs=("frontend-ui", "run-manifest", "tests"),
+            ),
+            _criterion(
+                acceptance_ref="AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+                statement="Frontend code performs live HTTP integration with the running backend service.",
+                evidence_required=("live_frontend_backend_integration_evidence", "frontend_source_inventory"),
                 source_surface_refs=("frontend-ui", "tests"),
             ),
             _criterion(
-                acceptance_ref="AC-TINY-RUN-TEST-COMMANDS",
-                statement="Package declares local run and test commands.",
-                evidence_required=("run_manifest", "command_evidence"),
+                acceptance_ref="AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+                statement="Every declared run and test command has final command evidence.",
+                evidence_required=(
+                    "run_manifest",
+                    "backend_service_run",
+                    "frontend_service_run",
+                    "test_command_evidence",
+                    "final_command_evidence",
+                ),
                 source_surface_refs=("run-manifest", "tests"),
             ),
         ),
@@ -251,6 +443,8 @@ def _package_contract(
                     "AC-TINY-API-BOOK-LIST",
                     "AC-TINY-API-CHECKOUT-RETURN",
                     "AC-TINY-API-BOOK-DELETE",
+                    "AC-TINY-BACKEND-STARTUP",
+                    "AC-TINY-BACKEND-HTTP-CRUD",
                 ),
                 required_tests=("test-backend", "test-integration"),
             ),
@@ -258,14 +452,17 @@ def _package_contract(
                 surface_ref="frontend-ui",
                 name="Frontend UI",
                 paths=("frontend/index.html", "frontend/app.js"),
-                acceptance_refs=("AC-TINY-UI-FETCH-BACKEND",),
+                acceptance_refs=(
+                    "AC-TINY-FRONTEND-STARTUP",
+                    "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+                ),
                 required_tests=("test-integration",),
             ),
             _surface(
                 surface_ref="persistence",
                 name="SQLite Persistence",
                 paths=("backend/db.py",),
-                acceptance_refs=("AC-TINY-PERSISTENCE-SQLITE",),
+                acceptance_refs=("AC-TINY-PERSISTENCE-SQLITE", "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
                 required_tests=("test-backend", "test-integration"),
             ),
             _surface(
@@ -278,8 +475,12 @@ def _package_contract(
                     "AC-TINY-API-CHECKOUT-RETURN",
                     "AC-TINY-API-BOOK-DELETE",
                     "AC-TINY-PERSISTENCE-SQLITE",
-                    "AC-TINY-UI-FETCH-BACKEND",
-                    "AC-TINY-RUN-TEST-COMMANDS",
+                    "AC-TINY-BACKEND-STARTUP",
+                    "AC-TINY-BACKEND-HTTP-CRUD",
+                    "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+                    "AC-TINY-FRONTEND-STARTUP",
+                    "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+                    "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
                 ),
                 required_tests=("test-backend", "test-integration"),
             ),
@@ -287,19 +488,23 @@ def _package_contract(
                 surface_ref="docs",
                 name="Project Documentation",
                 paths=("README.md", "AGENTS.md", "docs/usage.md"),
-                acceptance_refs=("AC-TINY-RUN-TEST-COMMANDS",),
+                acceptance_refs=("AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",),
                 required_tests=("test-integration",),
             ),
             _surface(
                 surface_ref="run-manifest",
                 name="Run Manifest",
                 paths=("run-manifest.json",),
-                acceptance_refs=("AC-TINY-RUN-TEST-COMMANDS",),
+                acceptance_refs=(
+                    "AC-TINY-BACKEND-STARTUP",
+                    "AC-TINY-FRONTEND-STARTUP",
+                    "AC-TINY-ALL-RUN-AND-TEST-COMMANDS-VERIFIED",
+                ),
                 required_tests=("test-integration",),
             ),
         ),
         run_commands=(
-            _command("run-backend", "Run backend API", ("python", "-m", "uvicorn", "backend.app:app")),
+            _command("run-backend", "Run backend API", ("python", "-m", "backend.app")),
             _command("run-frontend", "Run frontend UI", ("python", "-m", "http.server", "5173", "--directory", "frontend")),
         ),
         test_commands=(
@@ -331,8 +536,10 @@ def _package_contract(
             ),
         ),
         integration_boundaries=(
-            IntegrationBoundary(value="frontend-calls-backend-http-api"),
-            IntegrationBoundary(value="backend-persists-book-state-in-sqlite"),
+            IntegrationBoundary(value="backend-standard-library-http-service"),
+            IntegrationBoundary(value="frontend-static-service"),
+            IntegrationBoundary(value="frontend-calls-live-backend-http-api"),
+            IntegrationBoundary(value="backend-persists-book-state-in-sqlite-via-http"),
         ),
         docs_required=True,
         closeout_required=True,

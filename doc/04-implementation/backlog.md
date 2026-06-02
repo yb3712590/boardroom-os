@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090D`
+**当前未完成工作包**：`V2-090E`
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）与 `V2-090C ServiceRunEvidence`（服务运行证据）已完成，下一批为 `V2-090D Tiny contract recovery`（微型合同整改）。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）与 `V2-090D Tiny contract recovery`（微型合同整改）已完成，下一批为 `V2-090E Live blackbox integration`（真实黑盒集成）。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 3 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **62 / 65** | **V2-090A ~ V2-090C 完成，V2-090D 待启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 4 / 6 | 进行中 |
+| **合计** | **V2-000 ~ V2-090** | **63 / 65** | **V2-090A ~ V2-090D 完成，V2-090E 待启动** |
 
 ## 当前约束摘要
 
@@ -1083,14 +1083,15 @@ RoleProfile（角色模板）
 
 ### V2-090D: Tiny contract recovery
 
-- 状态：TODO
+- 状态：DONE
 - 目标：修正 tiny-fullstack contract（微型全栈合同）与 provider prompt（模型提示词）的路线矛盾；推荐标准库 HTTP 路线，避免 uvicorn（ASGI 服务器）依赖与 “standard library only（仅标准库）” 冲突。
 - 输入文档：`proving-scenario-tiny-fullstack.md`、两份 2026-05-31 复审报告。
 - 依赖：V2-090A、V2-090C。
-- 输出文件：待实施阶段确定，计划候选为 `tests/fixtures/contracts/tiny_fullstack_contract.py`、`tests/proving/fixtures/tiny_provider_attempts.py`。
+- 输出文件：`tests/fixtures/contracts/tiny_fullstack_contract.py`、`tests/proving/fixtures/tiny_provider_attempts.py`、`tests/proving/fixtures/tiny_package_assembly.py`、`tests/negative/test_tiny_contract_recovery_fail_closed.py`、`tests/proving/test_tiny_contracts.py`、`tests/proving/test_tiny_provider_attempts.py`、`tests/proving/test_tiny_package_assembly.py`；同步更新 `src/boardroom_os/closeout/gate.py`、`tests/negative/test_closeout_fail_closed.py`、`tests/proving/fixtures/tiny_closeout.py`、`tests/proving/test_tiny_closeout.py`，使缺失 `WorkspaceEvidenceBundle`（工作区证据包）可审计地 fail closed（失败关闭）。
 - 必须先写的 negative tests：合同声明 `uvicorn backend.app:app` 但 provider prompt 禁止第三方依赖时必须 fail closed；acceptance 只写 “fetch backend API” 但不要求 live HTTP integration 时不得进入 closeout-ready。
 - 必须证明的 happy path：run commands、source surfaces、integration boundaries 和 evidence obligations 一致，并要求 backend HTTP endpoints、frontend service、SQLite persistence 和 live integration evidence。
 - 验收口径：tiny-fullstack 不再同时保留互斥技术路线。
+- 完成证据：2026-06-02 tiny-fullstack `AcceptanceContract`（验收合同）拆分/新增 backend startup（后端启动）、HTTP CRUD、SQLite persistence via HTTP（经 HTTP 的 SQLite 持久化）、frontend startup（前端启动）、live frontend-backend integration（真实前后端集成）与 all command final evidence（全部命令最终证据）blocking refs（阻断验收引用）；`PackageContract`（包合同）将 `run-backend` 固定为 `python -m backend.app`，source surfaces（源码实现面）和 integration boundaries（集成边界）明确标准库 HTTP service（标准库 HTTP 服务）、frontend static service（前端静态服务）和 SQLite via HTTP workflow（经 HTTP 的 SQLite 工作流）。tiny-scoped validator（微型场景校验器）拒绝 `uvicorn` / Flask / FastAPI / Starlette backend route（后端路线）、缺 live HTTP evidence obligation（真实 HTTP 证据义务）、缺 final command evidence（最终命令证据）和 provider prompt（模型提示词）缺 `http.server` / `BaseHTTPRequestHandler` / SQLite via HTTP / fakeFetch-only 禁止语义。`tiny_provider_attempts`（微型模型调用尝试夹具）提示词升级到 `v2-090d-*`，要求 `backend/app.py` 使用标准库 HTTP 服务、live endpoints（真实端点）和禁止 fakeFetch-only final evidence（仅 fakeFetch 最终证据）。V2-090D 不重建 `examples/generated-workspaces/tiny-fullstack/`，也不实现 live blackbox runner（真实黑盒运行器）；`WorkspaceEvidenceBundle` 仍只有 final evidence table complete（最终证据表完整）后才构造，缺失时由 `CloseoutGate`（收尾门禁）返回 `WORKSPACE_EVIDENCE_BUNDLE_NOT_READY` 而不是伪造 closeout-ready（可收尾）证据。验证证据：`$env:PYTHONPATH='src;.'; python -m pytest tests/negative/test_tiny_contract_recovery_fail_closed.py tests/negative/test_tiny_fullstack_contract_fixture_fail_closed.py -q --tb=short --basetemp .pytest-tmp-v2090d-negative-final` 通过（11 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/proving/test_tiny_contracts.py tests/proving/test_tiny_provider_attempts.py -q --tb=short -k "not real_provider_records_attempts_for_every_tiny_implementation_ticket" --basetemp .pytest-tmp-v2090d-provider-final-no-real` 通过（28 passed, 1 deselected）；`$env:PYTHONPATH='src;.'; python -m pytest tests/contracts tests/proving/test_tiny_contracts.py tests/negative/test_tiny_contract_recovery_fail_closed.py -q --tb=short --basetemp .pytest-tmp-v2090d-contracts-final2` 通过（90 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/negative/test_closeout_fail_closed.py tests/closeout/test_closeout_gate.py tests/proving/test_tiny_closeout.py tests/proving/test_workspace_evidence_export.py tests/evidence/test_final_evidence_table.py tests/evidence/test_evidence_verifier.py -q --tb=short --basetemp .pytest-tmp-v2090d-regression-final` 通过（111 passed）；`$env:PYTHONPATH='src;.'; python -m pytest tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_missing_run_manifest_artifact tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_missing_delete_book_api tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_non_sqlite_persistence tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_missing_sqlite_test_import tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_accepts_sqlite_cleanup_evidence_without_schema_query tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_regex_only_frontend_integration_test tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_frontend_integration_that_reports_delete_only_calls tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_frontend_integration_that_excludes_pytest_tmp_root tests/proving/test_tiny_package_assembly.py::test_tiny_package_assembly_rejects_delete_test_that_refetches_deleted_book -q --tb=short --basetemp .pytest-tmp-v2090d-package-final` 通过（9 passed）；真实 provider（模型供应商）单用例 `$env:PYTHONPATH='src;.'; python -m pytest tests/proving/test_tiny_provider_attempts.py::test_real_provider_records_attempts_for_every_tiny_implementation_ticket -q --tb=short --basetemp .pytest-tmp-v2090d-real-provider-rerun3` 通过（1 passed in 710.37s）；`git diff --check` 通过。未作为通过证据：早先包含真实 provider 调用的完整 provider/proving 集合在 184 秒外层等待超时；原因是 V2-090D 源码交付设置会把 provider timeout（模型供应商超时）提升到至少 240 秒、`max_retries` 提升到至少 2。默认真实 provider package assembly（模型供应商包组装）路径仍未在本轮完整重跑，已清理本轮 pytest 残留进程。
 
 ### V2-090E: Live blackbox integration
 

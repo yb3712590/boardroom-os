@@ -81,12 +81,36 @@ def test_tiny_source_delivery_settings_force_json_object_response_format(
     )
 
     tuned = tiny_provider_attempts._settings_for_tiny_source_delivery(settings)
+    expected_instructions = (
+        tiny_provider_attempts.tiny_source_delivery_system_instructions()
+    )
 
     assert tuned.response_format == "json_object"
     assert tuned.max_output_tokens >= 8192
     assert tuned.timeout_seconds >= 240
     assert "Do not generate full source files" not in tuned.system_instructions
+    assert tuned.system_instructions == expected_instructions
     assert "Return only valid minified JSON" in tuned.system_instructions
+
+
+def test_tiny_source_delivery_prompt_targets_v2_090d_http_backend() -> None:
+    instructions = tiny_provider_attempts.tiny_source_delivery_system_instructions()
+
+    assert "Prompt version: v2-090d-" in instructions
+    assert "Python standard library modules" in instructions
+    assert "http.server" in instructions
+    assert "BaseHTTPRequestHandler" in instructions
+    assert "python -m backend.app" in instructions
+    assert "run-backend" in instructions
+    assert "/health" in instructions
+    assert "/books" in instructions
+    assert "checkout" in instructions
+    assert "return" in instructions
+    assert "DELETE" in instructions
+    assert "SQLite persistence via HTTP" in instructions
+    assert "fakeFetch-only" in instructions
+    assert "create_store" not in instructions
+    assert "checkout_book" not in instructions
 
 
 def test_tiny_fixture_does_not_bypass_runtime_or_compiler_validation() -> None:
@@ -393,19 +417,54 @@ def test_real_provider_retry_reexecutes_invalid_source_delivery_artifact(
 def _valid_source_file_for_retry(path: str) -> str:
     if path == "backend/app.py":
         return (
+            "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
+            "import json\n"
+            "import os\n"
+            "from urllib.parse import urlparse\n"
             "from backend.db import BookStore\n\n"
-            "def create_store(db_path):\n"
-            "    return BookStore(db_path)\n\n"
-            "def create_book(title, store=None):\n"
-            "    return (store or create_store('books.sqlite3')).add_book(title)\n\n"
-            "def list_books(store=None):\n"
-            "    return (store or create_store('books.sqlite3')).list_books()\n\n"
-            "def checkout_book(book_id, store=None):\n"
-            "    return (store or create_store('books.sqlite3')).set_book_state(book_id, 'CHECKED_OUT')\n\n"
-            "def return_book(book_id, store=None):\n"
-            "    return (store or create_store('books.sqlite3')).set_book_state(book_id, 'IN_LIBRARY')\n\n"
-            "def delete_book(book_id, store=None):\n"
-            "    return (store or create_store('books.sqlite3')).delete_book(book_id)\n"
+            "DB_PATH = os.environ.get('BOOKS_DB_PATH', 'books.sqlite3')\n\n"
+            "def _store():\n"
+            "    return BookStore(DB_PATH)\n\n"
+            "class LibraryHandler(BaseHTTPRequestHandler):\n"
+            "    def _send_json(self, status, payload):\n"
+            "        body = json.dumps(payload).encode('utf-8')\n"
+            "        self.send_response(status)\n"
+            "        self.send_header('Content-Type', 'application/json')\n"
+            "        self.send_header('Content-Length', str(len(body)))\n"
+            "        self.end_headers()\n"
+            "        self.wfile.write(body)\n\n"
+            "    def do_GET(self):\n"
+            "        path = urlparse(self.path).path\n"
+            "        if path == '/health':\n"
+            "            self._send_json(200, {'status': 'ok'})\n"
+            "        elif path == '/books':\n"
+            "            self._send_json(200, {'books': _store().list_books()})\n"
+            "        else:\n"
+            "            self._send_json(404, {'error': 'not found'})\n\n"
+            "    def do_POST(self):\n"
+            "        path = urlparse(self.path).path\n"
+            "        if path == '/books':\n"
+            "            self._send_json(201, _store().add_book('Generated'))\n"
+            "        elif path.startswith('/books/') and path.endswith('/checkout'):\n"
+            "            book_id = int(path.split('/')[2])\n"
+            "            self._send_json(200, _store().set_book_state(book_id, 'CHECKED_OUT'))\n"
+            "        elif path.startswith('/books/') and path.endswith('/return'):\n"
+            "            book_id = int(path.split('/')[2])\n"
+            "            self._send_json(200, _store().set_book_state(book_id, 'IN_LIBRARY'))\n"
+            "        else:\n"
+            "            self._send_json(404, {'error': 'not found'})\n\n"
+            "    def do_DELETE(self):\n"
+            "        path = urlparse(self.path).path\n"
+            "        if path.startswith('/books/'):\n"
+            "            book_id = int(path.split('/')[2])\n"
+            "            self._send_json(200, {'deleted': _store().delete_book(book_id)})\n"
+            "        else:\n"
+            "            self._send_json(404, {'error': 'not found'})\n\n"
+            "def run():\n"
+            "    port = int(os.environ.get('PORT', '8000'))\n"
+            "    ThreadingHTTPServer(('127.0.0.1', port), LibraryHandler).serve_forever()\n\n"
+            "if __name__ == '__main__':\n"
+            "    run()\n"
         )
     if path == "backend/db.py":
         return (
@@ -440,31 +499,65 @@ def _valid_source_file_for_retry(path: str) -> str:
         )
     if path == "frontend/app.js":
         return (
-            "export async function loadBooks(fetchImpl) { return fetchImpl('/books'); }\n"
+            "const API_BASE = globalThis.BOARDROOM_API_BASE || 'http://127.0.0.1:8000';\n"
+            "function apiPath(path) { return `${API_BASE}${path}`; }\n"
+            "export async function probeBackend(fetchImpl) { return fetchImpl(apiPath('/health')); }\n"
+            "export async function loadBooks(fetchImpl) { return fetchImpl(apiPath('/books')); }\n"
             "export async function deleteBook(fetchImpl, bookId) { "
-            "return fetchImpl(`/books/${bookId}`, { method: 'DELETE' }); }\n"
+            "return fetchImpl(apiPath(`/books/${encodeURIComponent(String(bookId))}`), { method: 'DELETE' }); }\n"
         )
     if path == "tests/integration/test_frontend_backend.py":
         return (
-            "import subprocess\n\n"
-            "def test_frontend_fetches_backend():\n"
-            "    script = \"\"\"\n"
-            "import { loadBooks, deleteBook } from './frontend/app.js';\n"
-            "const calls = [];\n"
-            "const fakeFetch = async (url, options = {}) => { calls.push({ url, options }); return { json: async () => [] }; };\n"
-            "await loadBooks(fakeFetch);\n"
-            "await deleteBook(fakeFetch, 7);\n"
-            "console.log(JSON.stringify(calls));\n"
-            "\"\"\"\n"
-            "    result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True)\n"
-            "    assert result.returncode == 0\n"
-            "    assert '/books' in result.stdout\n"
-            "    assert 'DELETE' in result.stdout\n"
+            "import os\n"
+            "import socket\n"
+            "import subprocess\n"
+            "import sys\n"
+            "import time\n"
+            "import urllib.request\n\n"
+            "def test_frontend_fetches_live_backend(tmp_path):\n"
+            "    sock = socket.socket()\n"
+            "    sock.bind(('127.0.0.1', 0))\n"
+            "    port = sock.getsockname()[1]\n"
+            "    sock.close()\n"
+            "    env = dict(os.environ, PORT=str(port), BOOKS_DB_PATH=str(tmp_path / 'books.sqlite3'))\n"
+            "    server = subprocess.Popen([sys.executable, '-m', 'backend.app'], env=env)\n"
+            "    try:\n"
+            "        health_url = f'http://127.0.0.1:{port}/health'\n"
+            "        books_url = f'http://127.0.0.1:{port}/books'\n"
+            "        for _ in range(50):\n"
+            "            try:\n"
+            "                urllib.request.urlopen(health_url, timeout=1).read()\n"
+            "                break\n"
+            "            except OSError:\n"
+            "                time.sleep(0.1)\n"
+            "        assert urllib.request.urlopen(health_url, timeout=2).status == 200\n"
+            "        assert urllib.request.urlopen(books_url, timeout=2).status == 200\n"
+            "    finally:\n"
+            "        server.terminate()\n"
+            "        server.wait(timeout=5)\n"
         )
     return f"# generated for {path}\n"
 
 
-def test_provider_source_delivery_rejects_varargs_only_backend_api() -> None:
+def _valid_source_delivery_files() -> dict[str, str]:
+    return {
+        path: _valid_source_file_for_retry(path)
+        for path in (
+            "backend/app.py",
+            "backend/db.py",
+            "frontend/app.js",
+            "tests/integration/test_frontend_backend.py",
+        )
+    }
+
+
+def test_provider_source_delivery_accepts_standard_library_http_backend_routes() -> None:
+    assert tiny_provider_attempts._provider_source_delivery_files_are_functionally_valid(
+        _valid_source_delivery_files()
+    ) is True
+
+
+def test_provider_source_delivery_rejects_function_only_backend_without_http_routes() -> None:
     files = {
         "backend/app.py": (
             "from backend.db import BookStore\n\n"
@@ -499,6 +592,30 @@ def test_provider_source_delivery_rejects_varargs_only_backend_api() -> None:
             "    assert 'loadBooks(' and 'deleteBook('\n"
         ),
     }
+
+    assert tiny_provider_attempts._provider_source_delivery_files_are_functionally_valid(
+        files
+    ) is False
+
+
+def test_provider_source_delivery_rejects_fake_fetch_only_final_integration_evidence() -> None:
+    files = _valid_source_delivery_files()
+    files["tests/integration/test_frontend_backend.py"] = (
+        "import subprocess\n\n"
+        "def test_frontend_fetches_backend():\n"
+        "    script = \"\"\"\n"
+        "import { loadBooks, deleteBook } from './frontend/app.js';\n"
+        "const calls = [];\n"
+        "const fakeFetch = async (url, options = {}) => { calls.push({ url, options }); return { json: async () => [] }; };\n"
+        "await loadBooks(fakeFetch);\n"
+        "await deleteBook(fakeFetch, 7);\n"
+        "console.log(JSON.stringify(calls));\n"
+        "\"\"\"\n"
+        "    result = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True)\n"
+        "    assert result.returncode == 0\n"
+        "    assert '/books' in result.stdout\n"
+        "    assert 'DELETE' in result.stdout\n"
+    )
 
     assert tiny_provider_attempts._provider_source_delivery_files_are_functionally_valid(
         files
