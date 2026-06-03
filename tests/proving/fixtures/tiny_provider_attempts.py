@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -117,11 +115,39 @@ def _provider_env_candidate_paths(path: Path) -> tuple[Path, ...]:
 def compile_tiny_implementation_execution_packages(
     ticket_graph_fixture: TinyTicketGraphFixture | None = None,
     *,
-    model: str,
+    model: str | None = None,
+    settings: OpenAIProviderSettings | None = None,
+    context_window: int | None = None,
 ) -> TinyCompiledImplementationPackages:
+    if settings is None:
+        if model is None:
+            raise TinyProviderAttemptValidationError(
+                "model or settings is required for tiny implementation packages"
+            )
+        model_name = model
+        resolved_context_window = (
+            context_window
+            if context_window is not None
+            else _fake_provider_settings().context_window
+        )
+    else:
+        model_name = settings.model
+        resolved_context_window = settings.context_window
+        if model is not None and model != model_name:
+            raise TinyProviderAttemptValidationError(
+                "model must match settings.model for tiny implementation packages"
+            )
+        if context_window is not None and context_window != resolved_context_window:
+            raise TinyProviderAttemptValidationError(
+                "context_window must match settings.context_window for tiny implementation packages"
+            )
     graph_fixture = ticket_graph_fixture or build_tiny_ticket_graph_fixture()
     model_profiles_by_seat_ref = {
-        seat.seat_ref: _model_execution_profile_for_seat(seat=seat, model=model)
+        seat.seat_ref: _model_execution_profile_for_seat(
+            seat=seat,
+            model=model_name,
+            context_window=resolved_context_window,
+        )
         for seat in graph_fixture.seats
     }
     model_profiles_by_ticket_id = {
@@ -190,7 +216,12 @@ def build_tiny_provider_attempt_fixture(
     *,
     settings: OpenAIProviderSettings | None = None,
     use_fake_results: bool = False,
+    source_delivery_attempt_limit: int = 2,
 ) -> TinyProviderAttemptFixture:
+    if source_delivery_attempt_limit < 1:
+        raise TinyProviderAttemptValidationError(
+            "source_delivery_attempt_limit must be positive"
+        )
     if settings is None and not use_fake_results:
         settings = openai_settings_from_test_env()
     resolved_settings = _settings_for_tiny_source_delivery(settings) if settings else _fake_provider_settings()
@@ -199,7 +230,7 @@ def build_tiny_provider_attempt_fixture(
     if not use_fake_results and cache_key in _REAL_PROVIDER_FIXTURE_CACHE:
         return _REAL_PROVIDER_FIXTURE_CACHE[cache_key]
 
-    compiled = compile_tiny_implementation_execution_packages(model=resolved_settings.model)
+    compiled = compile_tiny_implementation_execution_packages(settings=resolved_settings)
     base_graph_version = compiled.ticket_graph_fixture.seat_assignment_graph.graph_version
     execution_items = tuple(compiled.execution_packages.items())
     runtime_results = tuple(
@@ -215,6 +246,7 @@ def build_tiny_provider_attempt_fixture(
                 + (index * _PROVIDER_RETRY_GRAPH_VERSION_STRIDE)
                 + 1
             ),
+            source_delivery_attempt_limit=source_delivery_attempt_limit,
         )
         for index, (ticket_id, execution_package) in enumerate(execution_items)
     )
@@ -299,8 +331,13 @@ def _execute_tiny_runtime_package_with_real_retries(
     artifact_root: Path,
     use_fake_results: bool,
     first_fact_graph_version: int,
+    source_delivery_attempt_limit: int = 2,
 ) -> RuntimeExecutionResult:
-    max_attempts = 1 if use_fake_results else max(resolved_settings.max_retries + 1, 3)
+    if source_delivery_attempt_limit < 1:
+        raise TinyProviderAttemptValidationError(
+            "source_delivery_attempt_limit must be positive"
+        )
+    max_attempts = 1 if use_fake_results else source_delivery_attempt_limit
     last_result: RuntimeExecutionResult | None = None
     for attempt_index in range(max_attempts):
         result = _execute_tiny_runtime_package(
@@ -320,6 +357,15 @@ def _execute_tiny_runtime_package_with_real_retries(
             return result
         last_result = result
     assert last_result is not None
+    if not use_fake_results:
+        raise TinyProviderAttemptValidationError(
+            "provider source delivery did not satisfy execution package after retries: "
+            f"ticket={ticket_id.value}; "
+            f"attempt={last_result.provider_attempt.provider_attempt_id.value}; "
+            f"status={last_result.provider_attempt.status.value}; "
+            f"failure_kind={last_result.provider_attempt.failure_kind or 'none'}; "
+            f"source_delivery_attempt_limit={source_delivery_attempt_limit}"
+        )
     return last_result
 
 
@@ -331,6 +377,7 @@ def _fake_provider_settings() -> OpenAIProviderSettings:
         api_protocol="chat_completions",
         reasoning_effort="high",
         text_verbosity="low",
+        timeout_seconds=600,
         artifact_store_root=Path(".pytest-tmp-provider-artifacts"),
     )
 
@@ -372,165 +419,7 @@ def _provider_source_delivery_artifact_is_valid(
 def _provider_source_delivery_files_are_functionally_valid(files: object) -> bool:
     if not isinstance(files, dict):
         return False
-    try:
-        typed_files = {str(path): content for path, content in files.items()}
-        if not all(isinstance(content, str) for content in typed_files.values()):
-            return False
-        backend_app = typed_files.get("backend/app.py")
-        if backend_app is not None and not _provider_backend_http_service_markers_are_valid(
-            backend_app
-        ):
-            return False
-        backend_db = typed_files.get("backend/db.py")
-        if backend_db is not None and not _provider_sqlite_schema_literals_are_valid(backend_db):
-            return False
-        frontend_app = typed_files.get("frontend/app.js")
-        if frontend_app is not None:
-            if not _provider_frontend_has_exact_function_signature(
-                frontend_app,
-                function_name="loadBooks",
-                parameters=("fetchImpl",),
-            ):
-                return False
-            if not _provider_frontend_has_exact_function_signature(
-                frontend_app,
-                function_name="deleteBook",
-                parameters=("fetchImpl", "bookId"),
-            ):
-                return False
-            if not _provider_frontend_module_is_node_import_safe(frontend_app):
-                return False
-        integration_tests = typed_files.get("tests/integration/test_frontend_backend.py")
-        if integration_tests is not None:
-            if any(marker in integration_tests for marker in (".length = 0", ".splice(0")):
-                return False
-            if any(
-                marker in integration_tests
-                for marker in (
-                    "part.startswith(\".pytest-tmp\")",
-                    "part.startswith('.pytest-tmp')",
-                    "startswith(\".pytest-tmp\")",
-                    "startswith('.pytest-tmp')",
-                )
-            ):
-                return False
-            if not _provider_integration_test_has_live_backend_probe(integration_tests):
-                return False
-            if _provider_integration_test_is_fake_fetch_only(integration_tests):
-                return False
-        return True
-    except Exception:
-        return False
-
-
-def _provider_sqlite_schema_literals_are_valid(backend_db: str) -> bool:
-    create_table_sql = tuple(
-        match.group(0)
-        for match in re.finditer(
-            r"CREATE\s+TABLE[^'\"]+",
-            backend_db,
-            flags=re.IGNORECASE,
-        )
-    )
-    if "CREATE TABLE" not in backend_db.upper():
-        return False
-    try:
-        tree = __import__("ast").parse(backend_db)
-    except SyntaxError:
-        return False
-    strings = tuple(
-        node.value
-        for node in __import__("ast").walk(tree)
-        if isinstance(node, __import__("ast").Constant)
-        and isinstance(node.value, str)
-        and "CREATE TABLE" in node.value.upper()
-    )
-    for sql in strings:
-        try:
-            connection = sqlite3.connect(":memory:")
-            try:
-                connection.execute(sql)
-            finally:
-                connection.close()
-        except sqlite3.Error:
-            return False
-    return bool(strings or create_table_sql)
-
-
-def _provider_backend_http_service_markers_are_valid(backend_app: str) -> bool:
-    try:
-        __import__("ast").parse(backend_app)
-    except SyntaxError:
-        return False
-    service_markers = (
-        "http.server",
-        "BaseHTTPRequestHandler",
-        "HTTPServer",
-        "ThreadingHTTPServer",
-        "socketserver.TCPServer",
-    )
-    if not any(marker in backend_app for marker in service_markers):
-        return False
-    if "serve_forever" not in backend_app and "__main__" not in backend_app:
-        return False
-    route_markers = ("/health", "/books", "checkout", "return")
-    if not all(marker in backend_app for marker in route_markers):
-        return False
-    method_markers = ("do_DELETE", "DELETE", "delete")
-    return any(marker in backend_app for marker in method_markers)
-
-
-def _provider_integration_test_has_live_backend_probe(integration_tests: str) -> bool:
-    startup_markers = (
-        "python -m backend.app",
-        '"-m", "backend.app"',
-        "'-m', 'backend.app'",
-        "backend.app",
-    )
-    http_client_markers = ("urllib.request", "http.client", "urlopen(")
-    return (
-        any(marker in integration_tests for marker in startup_markers)
-        and any(marker in integration_tests for marker in http_client_markers)
-        and "/health" in integration_tests
-        and "/books" in integration_tests
-        and ("127.0.0.1" in integration_tests or "localhost" in integration_tests)
-    )
-
-
-def _provider_integration_test_is_fake_fetch_only(integration_tests: str) -> bool:
-    if "fakeFetch" not in integration_tests:
-        return False
-    return not _provider_integration_test_has_live_backend_probe(integration_tests)
-
-
-def _provider_frontend_has_exact_function_signature(
-    frontend_app: str,
-    *,
-    function_name: str,
-    parameters: tuple[str, ...],
-) -> bool:
-    parameter_pattern = r"\s*,\s*".join(re.escape(parameter) for parameter in parameters)
-    patterns = (
-        rf"(?:export\s+)?async\s+function\s+{re.escape(function_name)}\s*\(\s*{parameter_pattern}\s*\)",
-        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*async\s*\(\s*{parameter_pattern}\s*\)",
-        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*\(\s*{parameter_pattern}\s*\)\s*=>",
-    )
-    if not any(re.search(pattern, frontend_app) for pattern in patterns):
-        return False
-    default_pattern = rf"{re.escape(function_name)}\s*\([^)]*="
-    return re.search(default_pattern, frontend_app) is None
-
-
-def _provider_frontend_module_is_node_import_safe(frontend_app: str) -> bool:
-    if "window.addEventListener" not in frontend_app:
-        return True
-    guard_markers = (
-        "typeof window.addEventListener === 'function'",
-        'typeof window.addEventListener === "function"',
-        "'addEventListener' in window",
-        '"addEventListener" in window',
-    )
-    return any(marker in frontend_app for marker in guard_markers)
+    return all(isinstance(content, str) and content.strip() for content in files.values())
 
 
 def _provider_artifact_file_text(*, artifact_root: Path, artifact_ref: str) -> str:
@@ -547,48 +436,59 @@ def tiny_source_delivery_system_instructions() -> str:
         "{\"files\":{\"relative/path\":\"complete UTF-8 file content\"}}. "
         "The files object must contain exactly every path listed in "
         "allowed_write_set except run-manifest.json and package-contract.json, "
-        "and no other paths. Generate complete runnable source for each "
-        "requested file. Use only Python standard library modules. Do not use "
-        "Flask, FastAPI, requests, npm, or other third-party packages. Backend "
-        "scope must implement backend/app.py as a standard-library HTTP "
-        "service using http.server, BaseHTTPRequestHandler, HTTPServer, "
-        "ThreadingHTTPServer, or an equivalent Python standard-library HTTP "
-        "server. Running run-backend must start the same service behavior as "
-        "python -m backend.app. backend/app.py must expose a real service "
-        "entrypoint guarded by if __name__ == '__main__' or equivalent and "
-        "must route /health, /books, /books/<id>/checkout, "
-        "/books/<id>/return, and DELETE /books/<id> or a clearly equivalent "
-        "delete endpoint. The backend must represent book states as IN_LIBRARY "
-        "and CHECKED_OUT. SQLite persistence via HTTP is required: API calls "
-        "must create, list, checkout, return, and delete books through sqlite3 "
-        "state that survives separate HTTP requests. BookStore must use "
-        "short-lived sqlite3 connections opened with context managers inside "
-        "each operation; do not store sqlite3 Connection objects on self "
-        "because Windows test cleanup must be able to remove the SQLite file "
-        "after each test. Tests must verify delete behavior, SQLite file "
+        "and no other paths. Treat allowed_write_set as a hard contract: do "
+        "not output backend files for a tests/docs/frontend package, do not "
+        "output tests for a backend/frontend/docs package, and do not invent "
+        "replacement paths. If allowed_write_set only includes tests, return "
+        "only test files; if it only includes README/AGENTS/docs, return only "
+        "those documentation files. Generate complete runnable source for "
+        "each requested file. Use only Python standard library modules. Do not use "
+        "Flask, FastAPI, requests, npm, or other third-party packages. When "
+        "allowed_write_set includes backend/app.py, implement backend/app.py "
+        "as a standard-library HTTP service using http.server, "
+        "BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer, or an "
+        "equivalent Python standard-library HTTP server. Running run-backend "
+        "must start the same service behavior as python -m backend.app. "
+        "backend/app.py must expose a real service entrypoint guarded by if "
+        "__name__ == '__main__' or equivalent and must route /health, /books, "
+        "/books/<id>/checkout, /books/<id>/return, and DELETE /books/<id> or "
+        "a clearly equivalent delete endpoint. The backend must represent "
+        "book states as IN_LIBRARY and CHECKED_OUT. When allowed_write_set "
+        "includes backend/db.py, implement SQLite persistence for API calls "
+        "that create, list, checkout, return, and delete books through "
+        "sqlite3 state that survives separate HTTP requests; this is the "
+        "SQLite persistence via HTTP requirement. BookStore must "
+        "use short-lived sqlite3 connections opened with context managers "
+        "inside each operation; do not store sqlite3 Connection objects on "
+        "self because Windows test cleanup must be able to remove the SQLite "
+        "file after each test. When allowed_write_set includes backend/tests "
+        "or tests/integration, tests must verify delete behavior, SQLite file "
         "persistence via HTTP, service startup, and frontend/backend live "
-        "integration. If tests open sqlite3.connect directly, wrap it with "
-        "contextlib.closing(...) or explicitly close the connection before "
-        "TemporaryDirectory cleanup; a plain 'with sqlite3.connect(...) as "
-        "conn' does not close the connection on Windows. Delete tests must "
-        "issue an HTTP DELETE or equivalent delete endpoint call and then "
-        "assert the deleted id is absent from a subsequent HTTP GET /books "
-        "response. Checkout and return tests may assert returned state or "
-        "refetch updated rows, but delete must be verified by absence after "
-        "deletion. Frontend scope must export exact function signatures "
-        "'export async function loadBooks(fetchImpl)' and "
-        "'export async function deleteBook(fetchImpl, bookId)' with no default "
-        "fetchImpl value. Frontend code must include a live backend probe "
-        "against /health and must call the real backend HTTP base URL for "
-        "/books and delete actions. fakeFetch-only frontend tests are allowed "
-        "as narrow unit checks, but fakeFetch-only cannot satisfy final "
-        "integration evidence. The final integration test must start the "
-        "backend service with python -m backend.app or run-backend, wait for "
-        "a live /health readiness probe, exercise /books over HTTP, and prove "
-        "frontend/backend integration against the live backend. Do not write "
-        "a regex-only or source-string-only integration test as final "
-        "evidence. Use Python standard-library HTTP clients such as "
-        "urllib.request or http.client for blackbox HTTP checks. Do not write "
+        "integration without outputting backend source files. If tests open "
+        "sqlite3.connect directly, wrap it with contextlib.closing(...) or "
+        "explicitly close the connection before TemporaryDirectory cleanup; a "
+        "plain 'with sqlite3.connect(...) as conn' does not close the "
+        "connection on Windows. Delete tests must issue an HTTP DELETE or "
+        "equivalent delete endpoint call and then assert the deleted id is "
+        "absent from a subsequent HTTP GET /books response. Checkout and "
+        "return tests may assert returned state or refetch updated rows, but "
+        "delete must be verified by absence after deletion. When "
+        "allowed_write_set includes frontend/app.js, frontend code must export "
+        "exact function signatures 'export async function loadBooks(fetchImpl)' "
+        "and 'export async function deleteBook(fetchImpl, bookId)' with no "
+        "default fetchImpl value. Frontend code must include a live backend "
+        "probe against /health and must call the real backend HTTP base URL "
+        "for /books and delete actions. fakeFetch-only frontend tests are "
+        "allowed as narrow unit checks, but fakeFetch-only cannot satisfy "
+        "final integration evidence. When allowed_write_set includes "
+        "tests/integration/test_frontend_backend.py, the final integration "
+        "test must start the backend service with python -m backend.app or "
+        "run-backend, wait for a live /health readiness probe, exercise "
+        "/books over HTTP, and prove frontend/backend integration against the "
+        "live backend. Do not write a regex-only or source-string-only "
+        "integration test as final evidence. Use Python standard-library HTTP "
+        "clients such as urllib.request or http.client for blackbox HTTP "
+        "checks. Do not write "
         "'.length = 0', '.splice(0', or 'calls = []' anywhere in "
         "tests/integration/test_frontend_backend.py. Do not exclude candidate "
         "frontend modules because any absolute path segment starts with "
@@ -598,8 +498,10 @@ def tiny_source_delivery_system_instructions() -> str:
         "__pycache__. frontend/app.js must be safe to import in Node without "
         "a browser DOM; do not call window.addEventListener at module top "
         "level unless it is guarded by typeof window.addEventListener === "
-        "'function' or an equivalent addEventListener-in-window check. "
-        "Docs scope must include runnable README/AGENTS/docs usage content. "
+        "'function' or an equivalent addEventListener-in-window check. When "
+        "allowed_write_set includes README.md, AGENTS.md, or docs/usage.md, "
+        "docs scope must include runnable README/AGENTS/docs usage content "
+        "without outputting source or test files. "
         "Do not include run-manifest.json or package-contract.json; the typed "
         "assembler writes those files."
     )
@@ -609,15 +511,12 @@ def _settings_for_tiny_source_delivery(
     settings: OpenAIProviderSettings,
 ) -> OpenAIProviderSettings:
     min_output_tokens = max(settings.max_output_tokens, 8_192)
-    timeout_seconds = max(settings.timeout_seconds, 240.0)
     instructions = tiny_source_delivery_system_instructions()
     return settings.model_copy(
         update={
             "system_instructions": instructions,
             "response_format": "json_object",
             "max_output_tokens": min_output_tokens,
-            "timeout_seconds": timeout_seconds,
-            "max_retries": max(settings.max_retries, 2),
         }
     )
 
@@ -634,6 +533,7 @@ def _real_provider_fixture_cache_key(
         settings.text_verbosity,
         settings.response_format,
         settings.max_output_tokens,
+        settings.context_window,
         settings.timeout_seconds,
         settings.max_retries,
         settings.system_instructions,
@@ -744,13 +644,14 @@ def _model_execution_profile_for_seat(
     *,
     seat: object,
     model: str,
+    context_window: int,
 ) -> ModelExecutionProfile:
     return ModelExecutionProfile(
         model_execution_profile_id=seat.model_execution_profile_ref,
         provider="openai-compatible",
         model=model,
         reasoning_effort="xhigh" if seat.role_category is RoleCategory.ARCHITECTURE else "high",
-        context_window=200000,
+        context_window=context_window,
         temperature=0.2,
         tool_permissions=("provider.invoke",),
         fallback_policy_ref=ContractId(value="fallback.tiny.record-failure"),

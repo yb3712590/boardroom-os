@@ -614,10 +614,12 @@ def _source_inventory_blockers(gate_input: CloseoutGateInput) -> list[CloseoutGa
             ]
 
     if not final_table_refs.issubset(inventory_evidence_refs):
+        missing_refs = tuple(sorted(final_table_refs - inventory_evidence_refs))
         return [
             _blocker(
                 CloseoutGateBlockerCode.SOURCE_INVENTORY_INCOMPLETE,
-                "source inventory must cover final evidence refs",
+                "source inventory must cover final evidence refs: "
+                + ", ".join(missing_refs),
                 inventory.source_inventory_id.value,
             )
         ]

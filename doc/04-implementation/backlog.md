@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090F`
+**当前未完成工作包**：`V2-090F`（BLOCKED）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）与 `V2-090E Live blackbox integration`（真实黑盒集成）已完成，下一批为 `V2-090F Golden sample rebuild`（黄金样例重建）。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）与 `V2-090E Live blackbox integration`（真实黑盒集成）已完成。`V2-090F Golden sample rebuild`（黄金样例重建）已启动但 BLOCKED：真实 provider-backed source delivery（模型供应商支撑的源码交付）当前只是每个 ticket（任务）一次 LLM request（大模型请求）返回 JSON 文件内容，不具备 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）应有的 workspace 读写、工具调用、命令运行、多轮修复和证据归档能力，因此不能把 ProviderAttempt（模型调用尝试记录）误判为自主 agent work（智能体工作）完成。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 5 / 6 | 进行中 |
-| **合计** | **V2-000 ~ V2-090** | **64 / 65** | **V2-090A ~ V2-090E 完成，V2-090F 待启动** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 5 / 6 | 阻塞 |
+| **合计** | **V2-000 ~ V2-090** | **64 / 65** | **V2-090A ~ V2-090E 完成，V2-090F BLOCKED，Phase 9 未闭合** |
 
 ## 当前约束摘要
 
@@ -1108,7 +1108,7 @@ RoleProfile（角色模板）
 
 ### V2-090F: Golden sample rebuild
 
-- 状态：TODO
+- 状态：BLOCKED
 - 目标：重建 `examples/generated-workspaces/tiny-fullstack/`；新的 CloseoutPackage 只有在黑盒证据齐全时 passed。
 - 输入文档：V2-090A~E 产物。
 - 依赖：V2-090E。
@@ -1116,6 +1116,8 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：当前 V2-080 failure package 必须被 closeout gate 阻断；缺任一 RunManifest command evidence 不得生成 passed sample；golden sample 不得包含未登记的 `__pycache__` 或临时文件。
 - 必须证明的 happy path：样例可在 clean worktree 上重生成；连续两次 hash 稳定；文件数量固定；总大小在上限内；`--check` 只比较不写文件；CloseoutPackage / ReplayBundle / GitVersionAuditBundle / ProcessAuditBundle 均绑定黑盒证据。
 - 验收口径：golden sample 不再只是 deterministic fixture，而是 blackbox-evidence-backed sample。
+- 阻塞证据：2026-06-03 V2-090F 真实 provider-backed（模型供应商支撑）路径暴露出系统缺少 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）。当前 `ProviderAttempt`（模型调用尝试记录）只能证明 `OpenAIProviderTransport`（OpenAI 模型传输）发起了 LLM request（大模型请求）并记录 raw/parsed artifact（原始/解析产物）；它不会自主读取 workspace（工作区）、写入文件、运行命令、观察失败、循环修复或归档 command evidence（命令证据）。`scripts/build_tiny_closeout_sample.py`（构建微型收尾样例脚本）已有 locked replay（锁定重放）、provider lock（模型产物锁）和 V2-080 failure package（失败包）阻断路径的阶段性改动，但 provider-backed sample generation（模型供应商支撑样例生成）在 600 秒配置下仍未形成可验收的 passed golden sample（通过黄金样例），且后续失败显示单次 JSON source delivery（源码交付）并不是 agent team（智能体团队）自治实施。
+- 解阻条件：先设计并实现显式 AgentWorkExecutor（智能体工作执行器）或等价 agent loop executor（智能体循环执行器）边界，使 agent 能接收 ExecutionPackage（执行包）、在受控 workspace（工作区）内读写文件、运行允许命令、记录 ProviderAttempt / ToolAttempt / CommandEvidence（模型调用尝试 / 工具尝试 / 命令证据）、多轮处理失败并把产物交给 reducer（归约器）/ validator（校验器）/ EvidenceVerifier（证据验证器）；之后才能重新启动 V2-090F 并恢复 golden sample rebuild（黄金样例重建）验收。
 
 ---
 

@@ -487,6 +487,8 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - [x] AC-V2-EVIDENCE-004（live blackbox integration）— 由 V2-090E 证明：真实启动 backend/frontend（后端/前端），通过 HTTP 验证 CRUD、SQLite persistence（SQLite 持久化）和前端调用后端
 - [ ] AC-V2-PACKAGE-001 / AC-V2-CLOSEOUT-001~003 / AC-V2-CLOSEOUT-011（package + closeout + audit）— 由 V2-090F 证明：重建 golden sample（黄金样例），只有黑盒证据齐全时 CloseoutPackage（收尾包）passed
 
+> V2-090F 当前为 BLOCKED（阻塞）：ProviderAttempt（模型调用尝试记录）只证明 LLM request（大模型请求）事实，不证明自主 agent work（智能体工作）已经执行。恢复本项验收前，必须先实现 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）边界，使 agent 能在受控 workspace（工作区）内读写、运行命令、多轮修复并产出真实 evidence（证据）。
+
 #### 本批产出
 
 - RolePromptHook（角色提示词钩子）基础设施与角色职责基线
@@ -495,6 +497,8 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - 修正后的 tiny-fullstack AcceptanceContract（验收合同）与 PackageContract（包合同）
 - live blackbox integration（真实黑盒集成）证明套件
 - 重新生成的 `examples/generated-workspaces/tiny-fullstack/` golden sample（黄金样例）
+
+> 当前 `examples/generated-workspaces/tiny-fullstack/` 仍不得被当作 V2-090F passed golden sample（通过黄金样例）。已完成的 V2-090A~E 只证明提示词钩子、命令覆盖、服务运行证据、合同整改和真实黑盒集成基础能力；没有证明生成包由自主 agent loop（智能体循环）闭合后产出。
 
 #### 进入下一阶段前置
 
@@ -506,3 +510,4 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - [ ] golden sample 可 clean rebuild（干净重建）且 `--check` 稳定通过
 
 > V2-090B 勾选的是 CloseoutGate（收尾门禁）已强制 declared command evidence requirement（声明命令证据要求）；当前 V2-080 failure package（失败包）仍缺 `run-backend` / `run-frontend` final evidence（最终证据），因此 golden sample（黄金样例）证据齐全前置项必须保持未勾选。
+> V2-090F 解阻前不得把 `scripts/build_tiny_closeout_sample.py --check`（构建脚本检查模式）、provider artifact lock（模型产物锁）或 ProviderAttempt（模型调用尝试记录）单独作为 agent team framework（智能体团队框架）端到端成立证据。

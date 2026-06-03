@@ -407,3 +407,37 @@ V2-080 失败复审显示，系统虽然记录了真实证据，但 agent 角色
 - `RoleProfileRegistry.from_profiles(...)` 必须接收 hook registry 并校验 ref/version/hash/category。
 - `ExecutionPackageCompiler` 继续保持 0 外部文件输入，只消费 typed registry（类型化注册表）。
 - `EvidenceVerifier` 对 provider-backed evidence（模型支撑证据）必须拒绝缺 hook 审计字段、hook ref/version/hash 无法由 RolePromptHookRegistry（角色提示词钩子注册表）验真，或 ProviderAttempt（模型调用尝试记录）与其 `input_package_ref` 对应 ExecutionPackage（执行包）RolePromptHook snapshot（角色提示词快照）不一致的记录。Verifier 不得按 RoleCategory（角色类别）推断 evidence（证据）权限。
+
+## DEC-0021: ProviderAttempt 不是自主 agent work
+
+- 状态：Accepted
+- 日期：2026-06-03
+
+### 决策
+
+ProviderAttempt（模型调用尝试记录）只记录一次 provider request / response（模型供应商请求 / 响应）事实；它不能被当作 autonomous agent work（自主智能体工作）、agent loop completion（智能体循环完成）或 generated project package（生成项目包）已经被智能体实施完成的证明。
+
+V2 必须引入显式 AgentWorkExecutor（智能体工作执行器）或等价 agent loop executor（智能体循环执行器）边界，才能宣称 agent team framework（智能体团队框架）完成实施闭环。该执行器至少必须：
+
+1. 接收 ExecutionPackage（执行包）和 RolePromptHook snapshot（角色提示词快照）；
+2. 在受控 workspace（工作区）内按 allowed read/write set（允许读写集合）读取和写入文件；
+3. 调用 provider（模型供应商）并记录 ProviderAttempt（模型调用尝试记录）；
+4. 调用受控 tool / command runner（工具 / 命令执行器）并记录 ToolAttempt / CommandEvidence（工具尝试 / 命令证据）；
+5. 根据真实 command output（命令输出）多轮修复，直到产物提交或明确失败；
+6. 把 WorkProduct（工作产物）、EvidenceClaim（证据声明）和失败事实交给 reducer（归约器）、validator（校验器）、EvidenceVerifier（证据验证器）和 CloseoutGate（收尾门禁），不得自行决定 ticket completed（任务完成）或 project completed（项目完成）。
+
+LLM request timeout（大模型请求超时）必须与 agent task deadline（智能体任务期限）分离配置。`BOARDROOM_OPENAI_TIMEOUT_SECONDS` 只表示 provider request timeout（模型请求超时）；它不得被解释为 agent loop deadline（智能体循环期限）或任务完成门槛。后续 agent loop executor 应拥有独立配置项和审计字段来表达 task deadline / step deadline（任务期限 / 步骤期限）。
+
+### 理由
+
+V2-090F Golden sample rebuild（黄金样例重建）期间，真实 provider-backed source delivery（模型供应商支撑的源码交付）暴露当前系统只会对每个 implementation ticket（实施任务）发起一次 LLM request（大模型请求）并要求返回 JSON 文件内容。该路径不会自主读取 workspace（工作区）、写文件、运行 declared commands（声明命令）、观察失败、循环修复或归档 command evidence（命令证据）。把这类单次请求包装为“agent team 自治实施”会重复 V2-080 的错误：证据链看似完整，但证明的命题错误。
+
+同一轮排查还显示，600 秒 timeout（超时）和 400000 context window（上下文窗口）是模型请求层配置问题，不是 agent 工作边界。单纯放大 timeout 不能补齐 agent loop executor（智能体循环执行器）缺口。
+
+### 影响
+
+- V2-090F 状态改为 BLOCKED（阻塞），Phase 9 保持 5 / 6；不得标记为 DONE（完成）。
+- `examples/generated-workspaces/tiny-fullstack/` 在 V2-090F 解阻前不得被宣称为 passed golden sample（通过黄金样例）。
+- `scripts/build_tiny_closeout_sample.py`（构建微型收尾样例脚本）的 provider-backed generation subprocess deadline（模型供应商生成子进程期限）只能作为临时执行保护，不是 agent task deadline（智能体任务期限）。
+- `.env.example` / `.env.template` 记录 provider request timeout（模型请求超时）和 context window（上下文窗口）默认值，但后续必须新增独立 agent loop deadline（智能体循环期限）配置后才能实施 autonomous agent execution（自主智能体执行）。
+- 后续工作包必须先补 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器），再恢复 V2-090F golden sample rebuild（黄金样例重建）验收。

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
+from boardroom_os.contracts.acceptance import (
+    AcceptanceCriterion,
+    EvidenceRequirement,
+    VerificationStrategy,
+)
 from boardroom_os.contracts.evidence_obligation import (
     EvidenceObligation,
     RequiredArtifactType,
@@ -21,14 +25,11 @@ from boardroom_os.evidence.claim import (
     build_evidence_claim_from_live_blackbox,
 )
 from boardroom_os.evidence.live_blackbox import (
-    BackendCrudProbeResult,
-    FrontendLiveProbeResult,
     LiveBlackboxIntegrationEvidence,
     LiveBlackboxIntegrationEvidenceRef,
     LiveBlackboxIntegrationVerifier,
+    LiveBlackboxProbeResult,
     LiveBlackboxVerifierInput,
-    SQLitePersistenceProbeResult,
-    artifact_refs_for_live_blackbox,
 )
 from boardroom_os.evidence.verifier import (
     ArtifactManifest,
@@ -39,7 +40,6 @@ from boardroom_os.evidence.verifier import (
     EvidenceVerificationInput,
     EvidenceVerifier,
 )
-from boardroom_os.evidence.service_run import ServiceReadinessUrl
 from boardroom_os.execution.context_index import ProviderAttemptRef
 from boardroom_os.execution.fallback import EvidencePurpose
 from boardroom_os.execution.verification_run import VerificationRunRef
@@ -69,45 +69,64 @@ def _frontend_service_command() -> tuple[str, ...]:
     )
 
 
-def _evidence() -> LiveBlackboxIntegrationEvidence:
+def _probe(
+    probe_ref: str,
+    *,
+    acceptance_ref: str,
+    service_run_refs: tuple[str, ...],
+    command_ids: tuple[str, ...],
+    probe_url: str | None = None,
+    passed: bool = True,
+    observed_facts: dict[str, object] | None = None,
+) -> LiveBlackboxProbeResult:
+    return LiveBlackboxProbeResult(
+        probe_ref=probe_ref,
+        acceptance_refs=(AcceptanceRef(value=acceptance_ref),),
+        service_run_refs=tuple(service_run_refs),
+        command_ids=tuple(command_ids),
+        probe_url=probe_url,
+        status_code=200 if passed else 500,
+        passed=passed,
+        observed_facts=observed_facts or {"workflow": probe_ref, "real_probe": True},
+        body_sha256=_HASH,
+        probed_at=_NOW,
+    )
+
+
+def _evidence(
+    *,
+    probes: tuple[LiveBlackboxProbeResult, ...] | None = None,
+) -> LiveBlackboxIntegrationEvidence:
     return LiveBlackboxIntegrationEvidence(
         live_blackbox_evidence_id=LiveBlackboxIntegrationEvidenceRef(
-            value="live-blackbox.tiny-fullstack"
+            value="live-blackbox.inventory-app"
         ),
-        package_contract_ref=ContractId(value="package-contract-tiny-fullstack"),
+        package_contract_ref=ContractId(value="package-contract-inventory-app"),
         backend_command_id=ContractId(value="run-backend"),
         frontend_command_id=ContractId(value="run-frontend"),
         backend_service_run_ref="service-run.backend",
         frontend_service_run_ref="service-run.frontend",
-        backend_probe=BackendCrudProbeResult(
-            backend_url=ServiceReadinessUrl(value="http://127.0.0.1:8000/health"),
-            created_book_id=1,
-            create_status=201,
-            list_status=200,
-            checkout_status=200,
-            checkout_state="CHECKED_OUT",
-            return_status=200,
-            return_state="IN_LIBRARY",
-            delete_status=200,
-            delete_confirmed=True,
-            probed_at=_NOW,
-        ),
-        sqlite_probe=SQLitePersistenceProbeResult(
-            db_path=Path("books.sqlite3"),
-            table_names=("books",),
-            observed_states=("CHECKED_OUT", "IN_LIBRARY"),
-            deleted_book_absent=True,
-            source="http_workflow",
-            probed_at=_NOW,
-        ),
-        frontend_probe=FrontendLiveProbeResult(
-            frontend_url=ServiceReadinessUrl(value="http://127.0.0.1:5173/index.html"),
-            backend_url=ServiceReadinessUrl(value="http://127.0.0.1:8000/health"),
-            fetched_paths=("/health", "/books", "/books/1"),
-            fetched_methods=("GET", "GET", "DELETE"),
-            used_fake_fetch=False,
-            response_body_sha256=_HASH,
-            probed_at=_NOW,
+        probes=probes
+        or (
+            _probe(
+                "backend-http-workflow",
+                acceptance_ref="AC-INVENTORY-BACKEND",
+                service_run_refs=("service-run.backend",),
+                command_ids=("run-backend",),
+                probe_url="http://127.0.0.1:8000/api/inventory",
+                observed_facts={"created_item_id": "sku-1", "listed_after_create": True},
+            ),
+            _probe(
+                "frontend-live-workflow",
+                acceptance_ref="AC-INVENTORY-FRONTEND",
+                service_run_refs=("service-run.backend", "service-run.frontend"),
+                command_ids=("run-backend", "run-frontend"),
+                probe_url="http://127.0.0.1:5173/",
+                observed_facts={
+                    "browser_observed_backend_origin": "http://127.0.0.1:8000",
+                    "used_synthetic_fetch": False,
+                },
+            ),
         ),
         generated_at=_NOW,
     )
@@ -115,17 +134,17 @@ def _evidence() -> LiveBlackboxIntegrationEvidence:
 
 def _package_contract() -> PackageContract:
     return PackageContract(
-        package_contract_id=ContractId(value="package-contract-tiny-fullstack"),
-        project_charter_ref=ContractId(value="project-charter.tiny-fullstack"),
+        package_contract_id=ContractId(value="package-contract-inventory-app"),
+        project_charter_ref=ContractId(value="project-charter.inventory-app"),
         package_root="10-project",
         project_type=PackageProjectType.SOFTWARE,
         source_surfaces=(
             SourceSurface(
-                source_surface_ref=SourceSurfaceRef(value="tests"),
-                name="Live integration tests",
-                paths=("tests",),
-                owned_by=OwnerSeatRef(value="owner.tests"),
-                acceptance_refs=(AcceptanceRef(value="AC-TINY-BACKEND-HTTP-CRUD"),),
+                source_surface_ref=SourceSurfaceRef(value="app"),
+                name="Inventory app",
+                paths=("backend", "frontend"),
+                owned_by=OwnerSeatRef(value="owner.app"),
+                acceptance_refs=(AcceptanceRef(value="AC-INVENTORY-FRONTEND"),),
                 required_tests=(RequiredTestRef(value="live-blackbox"),),
             ),
         ),
@@ -133,7 +152,7 @@ def _package_contract() -> PackageContract:
             PackageCommand(
                 command_id=ContractId(value="run-backend"),
                 label="Run backend",
-                command=("python", "-m", "backend.app"),
+                command=("python", "-m", "inventory_service"),
                 cwd=".",
             ),
             PackageCommand(
@@ -161,61 +180,59 @@ def _obligation(artifact_type: str, acceptance_ref: str) -> EvidenceObligation:
     return EvidenceObligation(
         evidence_obligation_id=EvidenceObligationRef(value=f"evidence.{artifact_type}"),
         acceptance_refs=(AcceptanceRef(value=acceptance_ref),),
-        source_surface_refs=(SourceSurfaceRef(value="tests"),),
+        source_surface_refs=(SourceSurfaceRef(value="app"),),
         required_artifact_type=RequiredArtifactType(value=artifact_type),
         required_verifier=RequiredVerifier(value="live_blackbox"),
         blocking=True,
     )
 
 
-def test_live_blackbox_claim_uses_first_class_source_kind() -> None:
+def test_live_blackbox_verifier_accepts_generic_probe_facts_without_project_shape_markers() -> None:
     evidence = _evidence()
-    verified = LiveBlackboxIntegrationVerifier().verify(
+
+    result = LiveBlackboxIntegrationVerifier().verify(
         LiveBlackboxVerifierInput(
             evidence=evidence,
             package_contract=_package_contract(),
-            service_runs=(
-                _service_run(evidence.backend_service_run_ref.value),
-                _service_run(evidence.frontend_service_run_ref.value),
-            ),
+            service_runs=_service_runs(),
         )
     )
-    assert verified.success is True
 
+    assert result.success is True
+
+
+def test_live_blackbox_claim_uses_first_class_source_kind_and_matching_probe_artifact() -> None:
+    evidence = _evidence()
     claim = build_evidence_claim_from_live_blackbox(
         evidence=evidence,
         evidence_obligation=_obligation(
             "live_frontend_backend_integration_evidence",
-            "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+            "AC-INVENTORY-FRONTEND",
         ),
-        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.tiny.tests"),
+        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.inventory.tests"),
         expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        summary="Live frontend/backend blackbox integration evidence.",
+        summary="Live inventory app blackbox integration evidence.",
     )
 
     assert claim.source_kind is EvidenceClaimSourceKind.LIVE_BLACKBOX
     assert claim.source_ref == evidence.live_blackbox_evidence_id.value
-    assert {
-        artifact_ref.value for artifact_ref in claim.artifact_refs
-    } == {
-        "live-blackbox.tiny-fullstack.backend-crud",
-        "live-blackbox.tiny-fullstack.sqlite-http",
-        "live-blackbox.tiny-fullstack.frontend-live",
-    }
+    assert [artifact_ref.value for artifact_ref in claim.artifact_refs] == [
+        "live-blackbox.inventory-app.frontend-live-workflow"
+    ]
 
 
 def test_live_blackbox_claim_becomes_verified_evidence() -> None:
     evidence = _evidence()
     obligation = _obligation(
-        "backend_http_crud_evidence",
-        "AC-TINY-BACKEND-HTTP-CRUD",
+        "custom_live_blackbox_artifact",
+        "AC-INVENTORY-FRONTEND",
     )
     claim = build_evidence_claim_from_live_blackbox(
         evidence=evidence,
         evidence_obligation=obligation,
         producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
         expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        summary="Live backend CRUD blackbox evidence.",
+        summary="Live frontend/backend blackbox evidence.",
     )
 
     result = EvidenceVerifier().verify(
@@ -224,53 +241,23 @@ def test_live_blackbox_claim_becomes_verified_evidence() -> None:
             evidence_obligation=obligation,
             active_acceptance_contract=_acceptance_contract(
                 criteria=(
-                    __import__(
-                        "boardroom_os.contracts.acceptance",
-                        fromlist=["AcceptanceCriterion", "EvidenceRequirement", "VerificationStrategy"],
-                    ).AcceptanceCriterion(
-                        acceptance_ref=AcceptanceRef(value="AC-TINY-BACKEND-HTTP-CRUD"),
-                        statement="Live backend supports CRUD.",
-                        evidence_required=(__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["EvidenceRequirement"],
-                        ).EvidenceRequirement(value="backend_http_crud_evidence"),),
+                    AcceptanceCriterion(
+                        acceptance_ref=AcceptanceRef(value="AC-INVENTORY-FRONTEND"),
+                        statement="Frontend talks to the live backend.",
+                        evidence_required=(EvidenceRequirement(value="custom_live_blackbox_artifact"),),
                         blocking=True,
-                        source_surface_refs=(SourceSurfaceRef(value="tests"),),
-                        verification_strategy=__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["VerificationStrategy"],
-                        ).VerificationStrategy(value="live_blackbox"),
+                        source_surface_refs=(SourceSurfaceRef(value="app"),),
+                        verification_strategy=VerificationStrategy(value="live_blackbox"),
                     ),
                 )
             ),
-            artifact_manifest=ArtifactManifest(
-                entries=tuple(
-                    ArtifactManifestEntry(
-                        artifact_ref=artifact_ref,
-                        sha256=ArtifactSha256(value="1" * 64),
-                        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
-                        source_ref=evidence.live_blackbox_evidence_id.value,
-                        artifact_kind=f"{obligation.required_artifact_type.value}_{index}",
-                    )
-                    for index, artifact_ref in enumerate(claim.artifact_refs, start=1)
-                )
-            ),
-            purpose_policy=EvidencePurposePolicy(
-                rules=(
-                    EvidencePurposeRule(
-                        required_artifact_type=obligation.required_artifact_type,
-                        allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
-                    ),
-                )
-            ),
+            artifact_manifest=_artifact_manifest(claim=claim, evidence=evidence, artifact_type=obligation.required_artifact_type.value),
+            purpose_policy=_purpose_policy(obligation),
             provider_attempts=(_provider_attempt(),),
             execution_packages=(_execution_package(),),
             role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
             active_package_contract=_package_contract(),
-            service_runs=(
-                _service_run(evidence.backend_service_run_ref.value),
-                _service_run(evidence.frontend_service_run_ref.value),
-            ),
+            service_runs=_service_runs(),
             live_blackbox_evidence=(evidence,),
             verified_at=_NOW,
         )
@@ -285,15 +272,15 @@ def test_live_blackbox_claim_becomes_verified_evidence() -> None:
 def test_evidence_verifier_rejects_live_blackbox_without_bound_service_runs() -> None:
     evidence = _evidence()
     obligation = _obligation(
-        "backend_http_crud_evidence",
-        "AC-TINY-BACKEND-HTTP-CRUD",
+        "custom_live_blackbox_artifact",
+        "AC-INVENTORY-FRONTEND",
     )
     claim = build_evidence_claim_from_live_blackbox(
         evidence=evidence,
         evidence_obligation=obligation,
         producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
         expected_purpose=EvidencePurpose.IMPLEMENTATION,
-        summary="Live backend CRUD blackbox evidence.",
+        summary="Live frontend/backend blackbox evidence.",
     )
 
     result = EvidenceVerifier().verify(
@@ -302,45 +289,18 @@ def test_evidence_verifier_rejects_live_blackbox_without_bound_service_runs() ->
             evidence_obligation=obligation,
             active_acceptance_contract=_acceptance_contract(
                 criteria=(
-                    __import__(
-                        "boardroom_os.contracts.acceptance",
-                        fromlist=["AcceptanceCriterion", "EvidenceRequirement", "VerificationStrategy"],
-                    ).AcceptanceCriterion(
-                        acceptance_ref=AcceptanceRef(value="AC-TINY-BACKEND-HTTP-CRUD"),
-                        statement="Live backend supports CRUD.",
-                        evidence_required=(__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["EvidenceRequirement"],
-                        ).EvidenceRequirement(value="backend_http_crud_evidence"),),
+                    AcceptanceCriterion(
+                        acceptance_ref=AcceptanceRef(value="AC-INVENTORY-FRONTEND"),
+                        statement="Frontend talks to the live backend.",
+                        evidence_required=(EvidenceRequirement(value="custom_live_blackbox_artifact"),),
                         blocking=True,
-                        source_surface_refs=(SourceSurfaceRef(value="tests"),),
-                        verification_strategy=__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["VerificationStrategy"],
-                        ).VerificationStrategy(value="live_blackbox"),
+                        source_surface_refs=(SourceSurfaceRef(value="app"),),
+                        verification_strategy=VerificationStrategy(value="live_blackbox"),
                     ),
                 )
             ),
-            artifact_manifest=ArtifactManifest(
-                entries=tuple(
-                    ArtifactManifestEntry(
-                        artifact_ref=artifact_ref,
-                        sha256=ArtifactSha256(value="1" * 64),
-                        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
-                        source_ref=evidence.live_blackbox_evidence_id.value,
-                        artifact_kind=f"{obligation.required_artifact_type.value}_{index}",
-                    )
-                    for index, artifact_ref in enumerate(claim.artifact_refs, start=1)
-                )
-            ),
-            purpose_policy=EvidencePurposePolicy(
-                rules=(
-                    EvidencePurposeRule(
-                        required_artifact_type=obligation.required_artifact_type,
-                        allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
-                    ),
-                )
-            ),
+            artifact_manifest=_artifact_manifest(claim=claim, evidence=evidence, artifact_type=obligation.required_artifact_type.value),
+            purpose_policy=_purpose_policy(obligation),
             provider_attempts=(_provider_attempt(),),
             execution_packages=(_execution_package(),),
             role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
@@ -367,11 +327,11 @@ def test_evidence_verifier_rejects_verification_run_claim_when_obligation_requir
 ) -> None:
     obligation = _obligation(
         artifact_type,
-        "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP",
+        "AC-INVENTORY-FRONTEND",
     )
-    run_ref = VerificationRunRef(value="verification-run.sqlite.unit-test")
+    run_ref = VerificationRunRef(value="verification-run.integration")
     claim = EvidenceClaim(
-        evidence_claim_id=EvidenceClaimRef(value="evidence-claim.verification-run.sqlite.unit-test"),
+        evidence_claim_id=EvidenceClaimRef(value="evidence-claim.verification-run.integration"),
         evidence_obligation_ref=obligation.evidence_obligation_id,
         producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
         source_kind=EvidenceClaimSourceKind.VERIFICATION_RUN,
@@ -385,7 +345,7 @@ def test_evidence_verifier_rejects_verification_run_claim_when_obligation_requir
             EvidenceArtifactRef(value=f"command-output.{run_ref.value}.stderr"),
         ),
         verification_run_refs=(run_ref,),
-        summary="Function-level SQLite test must not satisfy live HTTP persistence.",
+        summary="Command output must not satisfy a live blackbox obligation.",
     )
 
     result = EvidenceVerifier().verify(
@@ -394,22 +354,13 @@ def test_evidence_verifier_rejects_verification_run_claim_when_obligation_requir
             evidence_obligation=obligation,
             active_acceptance_contract=_acceptance_contract(
                 criteria=(
-                    __import__(
-                        "boardroom_os.contracts.acceptance",
-                        fromlist=["AcceptanceCriterion", "EvidenceRequirement", "VerificationStrategy"],
-                    ).AcceptanceCriterion(
-                        acceptance_ref=AcceptanceRef(value="AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
-                        statement="SQLite persistence is proven through HTTP workflow.",
-                        evidence_required=(__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["EvidenceRequirement"],
-                        ).EvidenceRequirement(value="sqlite_persistence_http_evidence"),),
+                    AcceptanceCriterion(
+                        acceptance_ref=AcceptanceRef(value="AC-INVENTORY-FRONTEND"),
+                        statement="Frontend talks to the live backend.",
+                        evidence_required=(EvidenceRequirement(value=artifact_type),),
                         blocking=True,
-                        source_surface_refs=(SourceSurfaceRef(value="tests"),),
-                        verification_strategy=__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["VerificationStrategy"],
-                        ).VerificationStrategy(value="live_blackbox"),
+                        source_surface_refs=(SourceSurfaceRef(value="app"),),
+                        verification_strategy=VerificationStrategy(value="live_blackbox"),
                     ),
                 )
             ),
@@ -425,14 +376,7 @@ def test_evidence_verifier_rejects_verification_run_claim_when_obligation_requir
                     for index, artifact_ref in enumerate(claim.artifact_refs, start=1)
                 )
             ),
-            purpose_policy=EvidencePurposePolicy(
-                rules=(
-                    EvidencePurposeRule(
-                        required_artifact_type=obligation.required_artifact_type,
-                        allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
-                    ),
-                )
-            ),
+            purpose_policy=_purpose_policy(obligation),
             provider_attempts=(_provider_attempt(),),
             execution_packages=(_execution_package(),),
             verification_runs=(_verification_run(run_ref),),
@@ -447,16 +391,21 @@ def test_evidence_verifier_rejects_verification_run_claim_when_obligation_requir
 
 
 def test_evidence_verifier_rejects_live_blackbox_evidence_that_fails_blackbox_validator() -> None:
-    evidence = _evidence().model_copy(
-        update={
-            "frontend_probe": _evidence().frontend_probe.model_copy(
-                update={"used_fake_fetch": True}
-            )
-        }
+    evidence = _evidence(
+        probes=(
+            _probe(
+                "failed-frontend-live-workflow",
+                acceptance_ref="AC-INVENTORY-FRONTEND",
+                service_run_refs=("service-run.backend", "service-run.frontend"),
+                command_ids=("run-backend", "run-frontend"),
+                probe_url="http://127.0.0.1:5173/",
+                passed=False,
+            ),
+        )
     )
     obligation = _obligation(
-        "live_frontend_backend_integration_evidence",
-        "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
+        "custom_live_blackbox_artifact",
+        "AC-INVENTORY-FRONTEND",
     )
     claim = build_evidence_claim_from_live_blackbox(
         evidence=evidence,
@@ -472,53 +421,23 @@ def test_evidence_verifier_rejects_live_blackbox_evidence_that_fails_blackbox_va
             evidence_obligation=obligation,
             active_acceptance_contract=_acceptance_contract(
                 criteria=(
-                    __import__(
-                        "boardroom_os.contracts.acceptance",
-                        fromlist=["AcceptanceCriterion", "EvidenceRequirement", "VerificationStrategy"],
-                    ).AcceptanceCriterion(
-                        acceptance_ref=AcceptanceRef(value="AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION"),
-                        statement="Frontend calls the live backend.",
-                        evidence_required=(__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["EvidenceRequirement"],
-                        ).EvidenceRequirement(value="live_frontend_backend_integration_evidence"),),
+                    AcceptanceCriterion(
+                        acceptance_ref=AcceptanceRef(value="AC-INVENTORY-FRONTEND"),
+                        statement="Frontend talks to the live backend.",
+                        evidence_required=(EvidenceRequirement(value="custom_live_blackbox_artifact"),),
                         blocking=True,
-                        source_surface_refs=(SourceSurfaceRef(value="tests"),),
-                        verification_strategy=__import__(
-                            "boardroom_os.contracts.acceptance",
-                            fromlist=["VerificationStrategy"],
-                        ).VerificationStrategy(value="live_blackbox"),
+                        source_surface_refs=(SourceSurfaceRef(value="app"),),
+                        verification_strategy=VerificationStrategy(value="live_blackbox"),
                     ),
                 )
             ),
-            artifact_manifest=ArtifactManifest(
-                entries=tuple(
-                    ArtifactManifestEntry(
-                        artifact_ref=artifact_ref,
-                        sha256=ArtifactSha256(value="1" * 64),
-                        producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
-                        source_ref=evidence.live_blackbox_evidence_id.value,
-                        artifact_kind=f"{obligation.required_artifact_type.value}_{index}",
-                    )
-                    for index, artifact_ref in enumerate(claim.artifact_refs, start=1)
-                )
-            ),
-            purpose_policy=EvidencePurposePolicy(
-                rules=(
-                    EvidencePurposeRule(
-                        required_artifact_type=obligation.required_artifact_type,
-                        allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
-                    ),
-                )
-            ),
+            artifact_manifest=_artifact_manifest(claim=claim, evidence=evidence, artifact_type=obligation.required_artifact_type.value),
+            purpose_policy=_purpose_policy(obligation),
             provider_attempts=(_provider_attempt(),),
             execution_packages=(_execution_package(),),
             role_prompt_hook_registry=baseline_role_prompt_hook_registry(),
             active_package_contract=_package_contract(),
-            service_runs=(
-                _service_run(evidence.backend_service_run_ref.value),
-                _service_run(evidence.frontend_service_run_ref.value),
-            ),
+            service_runs=_service_runs(),
             live_blackbox_evidence=(evidence,),
             verified_at=_NOW,
         )
@@ -528,7 +447,67 @@ def test_evidence_verifier_rejects_live_blackbox_evidence_that_fails_blackbox_va
     assert result.verified_evidence is None
 
 
-def _service_run(service_run_ref: str):
+def _artifact_manifest(
+    *,
+    claim: EvidenceClaim,
+    evidence: LiveBlackboxIntegrationEvidence,
+    artifact_type: str,
+) -> ArtifactManifest:
+    return ArtifactManifest(
+        entries=tuple(
+            ArtifactManifestEntry(
+                artifact_ref=artifact_ref,
+                sha256=ArtifactSha256(value="1" * 64),
+                producer_attempt_ref=ProviderAttemptRef(value="provider-attempt.backend"),
+                source_ref=evidence.live_blackbox_evidence_id.value,
+                artifact_kind=f"{artifact_type}_{index}",
+            )
+            for index, artifact_ref in enumerate(claim.artifact_refs, start=1)
+        )
+    )
+
+
+def _purpose_policy(obligation: EvidenceObligation) -> EvidencePurposePolicy:
+    return EvidencePurposePolicy(
+        rules=(
+            EvidencePurposeRule(
+                required_artifact_type=obligation.required_artifact_type,
+                allowed_purposes=(EvidencePurpose.IMPLEMENTATION,),
+            ),
+        )
+    )
+
+
+def _service_runs():
+    return (
+        _service_run(
+            "service-run.backend",
+            command_id="run-backend",
+            command=("python", "-m", "inventory_service"),
+            cwd=".",
+            readiness_url="http://127.0.0.1:8000/ready",
+            environment_overrides={"PORT": "8000"},
+        ),
+        _service_run(
+            "service-run.frontend",
+            command_id="run-frontend",
+            command=_frontend_service_command(),
+            cwd=".",
+            readiness_url="http://127.0.0.1:5173/",
+            environment_overrides={"FRONTEND_PORT": "5173"},
+        ),
+    )
+
+
+def _service_run(
+    service_run_ref: str,
+    *,
+    command_id: str,
+    command: tuple[str, ...],
+    cwd: str,
+    readiness_url: str,
+    environment_overrides: dict[str, str],
+):
     from boardroom_os.evidence.service_run import ServiceRunEvidence
     from boardroom_os.execution.verification_run import (
         CommandOutputRef,
@@ -536,19 +515,6 @@ def _service_run(service_run_ref: str):
         RunnerRef,
         WorkspaceSnapshotRef,
     )
-
-    if service_run_ref.endswith(".frontend"):
-        command_id = "run-frontend"
-        command = _frontend_service_command()
-        cwd = "."
-        readiness_url = "http://127.0.0.1:5173/index.html"
-        environment_overrides = {"FRONTEND_PORT": "5173"}
-    else:
-        command_id = "run-backend"
-        command = ("python", "-m", "backend.app")
-        cwd = "."
-        readiness_url = "http://127.0.0.1:8000/health"
-        environment_overrides = {"BOOKS_DB_PATH": "books.sqlite3"}
 
     return ServiceRunEvidence(
         service_run_evidence_id=service_run_ref,
@@ -587,7 +553,7 @@ def _verification_run(run_ref: VerificationRunRef):
         verification_run_id=run_ref,
         execution_package_ref="exec.backend.1",
         ticket_ref="ticket.backend.1",
-        command_id="test-backend",
+        command_id="test-live",
         command=("python", "-m", "pytest"),
         cwd=".",
         exit_code=0,

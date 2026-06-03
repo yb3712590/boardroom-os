@@ -31,6 +31,7 @@ docs/
 .env
 .env.*
 !.env.example
+!.env.template
 .DS_Store
 *.log
 .claude/
@@ -38,4 +39,3 @@ docs/
 # Archives
 *.zip
 *.tar.gz
-

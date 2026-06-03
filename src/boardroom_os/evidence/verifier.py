@@ -1052,6 +1052,36 @@ class EvidenceVerifier:
                 )
             )
             return
+        obligation_acceptance_refs = {
+            acceptance_ref.value
+            for acceptance_ref in verification_input.evidence_obligation.acceptance_refs
+        }
+        expected_artifact_refs = {
+            f"{evidence.live_blackbox_evidence_id.value}.{probe.probe_ref.value}"
+            for probe in evidence.probes
+            if obligation_acceptance_refs.intersection(
+                acceptance_ref.value for acceptance_ref in probe.acceptance_refs
+            )
+        }
+        claim_artifact_refs = {artifact_ref.value for artifact_ref in claim.artifact_refs}
+        if not expected_artifact_refs:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_LIVE_BLACKBOX_EVIDENCE,
+                    message="live_blackbox evidence has no probe for obligation acceptance refs",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
+        if claim_artifact_refs != expected_artifact_refs:
+            blockers.append(
+                EvidenceVerificationBlocker(
+                    code=EvidenceVerificationBlockerCode.MISSING_LIVE_BLACKBOX_EVIDENCE,
+                    message="live_blackbox claim artifact_refs must match obligation probe refs",
+                    related_ref=claim.source_ref,
+                )
+            )
+            return
 
     def _verify_fallback_lineage(
         self,

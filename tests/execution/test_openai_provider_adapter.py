@@ -238,6 +238,7 @@ def test_openai_provider_settings_loads_first_available_env_file(tmp_path: Path)
                 "OPENAI_BASE_URL=https://api.example.invalid/v1",
                 "BOARDROOM_OPENAI_MODEL=gpt-5.4",
                 "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+                "BOARDROOM_OPENAI_TIMEOUT_SECONDS=600",
             )
         ),
         encoding="utf-8",
@@ -250,6 +251,72 @@ def test_openai_provider_settings_loads_first_available_env_file(tmp_path: Path)
     assert settings.base_url == "https://api.example.invalid/v1"
     assert settings.model == "gpt-5.4"
     assert settings.api_protocol == "chat_completions"
+    assert settings.timeout_seconds == 600
+
+
+def test_openai_provider_settings_defaults_context_window_to_400000(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text(
+        "\n".join(
+            (
+                "OPENAI_API_KEY=sk-test-secret",
+                "OPENAI_BASE_URL=https://api.example.invalid/v1",
+                "BOARDROOM_OPENAI_MODEL=gpt-5.4",
+                "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+                "BOARDROOM_OPENAI_TIMEOUT_SECONDS=600",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    settings = OpenAIProviderSettings.from_env_file(env_file)
+
+    assert settings.context_window == 400000
+
+
+def test_openai_provider_settings_reads_context_window_from_env(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text(
+        "\n".join(
+            (
+                "OPENAI_API_KEY=sk-test-secret",
+                "OPENAI_BASE_URL=https://api.example.invalid/v1",
+                "BOARDROOM_OPENAI_MODEL=gpt-5.4",
+                "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+                "BOARDROOM_OPENAI_TIMEOUT_SECONDS=600",
+                "BOARDROOM_OPENAI_CONTEXT_WINDOW=500000",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    settings = OpenAIProviderSettings.from_env_file(env_file)
+
+    assert settings.context_window == 500000
+
+
+def test_openai_provider_settings_fail_closed_without_timeout_config(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.test"
+    env_file.write_text(
+        "\n".join(
+            (
+                "OPENAI_API_KEY=sk-test-secret",
+                "OPENAI_BASE_URL=https://api.example.invalid/v1",
+                "BOARDROOM_OPENAI_MODEL=gpt-5.4",
+                "BOARDROOM_OPENAI_API_PROTOCOL=chat_completions",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OpenAIProviderConfigError, match="BOARDROOM_OPENAI_TIMEOUT_SECONDS"):
+        OpenAIProviderSettings.from_env_file(env_file)
 
 
 def test_openai_provider_settings_fail_closed_without_api_key(tmp_path: Path) -> None:
@@ -282,6 +349,7 @@ def test_openai_provider_transport_invokes_responses_api_and_materializes_artifa
             api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=artifact_store,
@@ -356,6 +424,7 @@ def test_openai_provider_transport_records_failed_attempt_without_secret_leak() 
             api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
+            timeout_seconds=60,
         ),
         client=_FailingClient(),
         artifact_store=FileProviderOutputStore(root=Path(".pytest-tmp-openai-failed-artifacts")),
@@ -383,6 +452,7 @@ def test_openai_provider_transport_fails_closed_when_explicit_responses_api_is_b
             api_protocol="responses",
             reasoning_effort="high",
             text_verbosity="low",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
@@ -406,6 +476,7 @@ def test_openai_provider_transport_uses_explicit_chat_completions_protocol(
             api_protocol="chat_completions",
             reasoning_effort="high",
             text_verbosity="low",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
@@ -445,6 +516,7 @@ def test_openai_provider_transport_passes_json_object_response_format(
             reasoning_effort="high",
             text_verbosity="low",
             response_format="json_object",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
@@ -471,6 +543,7 @@ def test_openai_provider_transport_passes_system_instructions_to_chat_completion
             reasoning_effort="high",
             text_verbosity="low",
             system_instructions="Return a short audit summary.",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),
@@ -497,6 +570,7 @@ def test_openai_provider_transport_rejects_empty_chat_completion_content(
             api_protocol="chat_completions",
             reasoning_effort="high",
             text_verbosity="low",
+            timeout_seconds=60,
         ),
         client=client,
         artifact_store=FileProviderOutputStore(root=tmp_path / "provider-artifacts"),

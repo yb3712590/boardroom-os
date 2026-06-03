@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, field_validator, model_validator
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.hashes import Sha256Hex
 from boardroom_os.contracts.package import PackageCommand, PackageContract
-from boardroom_os.contracts.types import ContractId, NonEmptyTextValue
+from boardroom_os.contracts.types import AcceptanceRef, ContractId, NonEmptyTextValue
 from boardroom_os.evidence.service_run import (
     ServiceReadinessUrl,
     ServiceRunEvidence,
@@ -23,9 +23,8 @@ class LiveBlackboxIntegrationEvidenceRef(NonEmptyTextValue):
 
 
 class LiveBlackboxBlockerCode(StrEnum):
-    BACKEND_CRUD_INCOMPLETE = "backend_crud_incomplete"
-    SQLITE_NOT_PROVEN_VIA_HTTP = "sqlite_not_proven_via_http"
-    FRONTEND_NOT_LIVE = "frontend_not_live"
+    PROBE_FAILED = "probe_failed"
+    PROBE_EVIDENCE_MISSING = "probe_evidence_missing"
     COMMAND_EVIDENCE_MISSING = "command_evidence_missing"
 
 
@@ -45,95 +44,18 @@ class LiveBlackboxBlocker(BaseModel):
         return normalized
 
 
-class BackendCrudProbeResult(BaseModel):
+class LiveBlackboxProbeResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    backend_url: ServiceReadinessUrl
-    created_book_id: StrictInt
-    create_status: StrictInt
-    list_status: StrictInt
-    checkout_status: StrictInt
-    checkout_state: str
-    return_status: StrictInt
-    return_state: str
-    delete_status: StrictInt
-    delete_confirmed: StrictBool
-    probed_at: datetime
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_refs(cls, data: object) -> object:
-        return _normalize_ref_fields(
-            data,
-            {"backend_url": ServiceReadinessUrl},
-        )
-
-    @field_validator("created_book_id")
-    @classmethod
-    def _require_positive_book_id(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("created_book_id must be positive")
-        return value
-
-    @field_validator("checkout_state", "return_state")
-    @classmethod
-    def _reject_empty_state(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("state fields must not be empty")
-        return normalized
-
-    @field_validator("probed_at")
-    @classmethod
-    def _require_timezone_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("probed_at must be timezone-aware")
-        return value
-
-
-class SQLitePersistenceProbeResult(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    db_path: Path
-    table_names: tuple[str, ...]
-    observed_states: tuple[str, ...]
-    deleted_book_absent: StrictBool
-    source: str
-    probed_at: datetime
-
-    @field_validator("table_names", "observed_states")
-    @classmethod
-    def _reject_empty_text_tuple(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(value.strip() for value in values)
-        if not normalized or any(not value for value in normalized):
-            raise ValueError("tuple fields must contain non-empty text")
-        return normalized
-
-    @field_validator("source")
-    @classmethod
-    def _reject_empty_source(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("source must not be empty")
-        return normalized
-
-    @field_validator("probed_at")
-    @classmethod
-    def _require_timezone_aware(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("probed_at must be timezone-aware")
-        return value
-
-
-class FrontendLiveProbeResult(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    frontend_url: ServiceReadinessUrl
-    backend_url: ServiceReadinessUrl
-    fetched_paths: tuple[str, ...]
-    fetched_methods: tuple[str, ...]
-    used_fake_fetch: StrictBool
-    response_body_sha256: Sha256Hex
+    probe_ref: NonEmptyTextValue
+    acceptance_refs: tuple[AcceptanceRef, ...]
+    service_run_refs: tuple[ServiceRunEvidenceRef, ...]
+    command_ids: tuple[ContractId, ...]
+    probe_url: ServiceReadinessUrl | None = None
+    status_code: StrictInt | None = None
+    passed: StrictBool
+    observed_facts: dict[str, Any]
+    body_sha256: Sha256Hex | None = None
     probed_at: datetime
 
     @model_validator(mode="before")
@@ -142,32 +64,53 @@ class FrontendLiveProbeResult(BaseModel):
         return _normalize_ref_fields(
             data,
             {
-                "frontend_url": ServiceReadinessUrl,
-                "backend_url": ServiceReadinessUrl,
-                "response_body_sha256": Sha256Hex,
+                "probe_ref": NonEmptyTextValue,
+                "probe_url": ServiceReadinessUrl,
+                "body_sha256": Sha256Hex,
+            },
+            {
+                "acceptance_refs": AcceptanceRef,
+                "service_run_refs": ServiceRunEvidenceRef,
+                "command_ids": ContractId,
             },
         )
 
-    @field_validator("fetched_paths")
+    @field_validator("acceptance_refs", "service_run_refs", "command_ids")
     @classmethod
-    def _reject_empty_paths(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(value.strip() for value in values)
-        if not normalized or any(not value or not value.startswith("/") for value in normalized):
-            raise ValueError("fetched_paths must contain HTTP paths")
-        return normalized
+    def _reject_empty_ref_tuple(cls, values: tuple[object, ...]) -> tuple[object, ...]:
+        if not values:
+            raise ValueError("probe ref tuples must not be empty")
+        return values
 
-    @field_validator("fetched_methods")
+    @field_validator("status_code")
     @classmethod
-    def _reject_empty_methods(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(value.strip().upper() for value in values)
-        if not normalized or any(not value for value in normalized):
-            raise ValueError("fetched_methods must contain HTTP methods")
-        return normalized
+    def _require_positive_status_code(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if value <= 0:
+            raise ValueError("status_code must be positive")
+        return value
+
+    @field_validator("observed_facts")
+    @classmethod
+    def _reject_empty_observed_facts(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not value:
+            raise ValueError("observed_facts must not be empty")
+        for key in value:
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("observed_facts keys must be non-empty strings")
+        return dict(value)
 
     @model_validator(mode="after")
-    def _validate_trace_shape(self) -> Self:
-        if len(self.fetched_methods) != len(self.fetched_paths):
-            raise ValueError("fetched_methods must align with fetched_paths")
+    def _validate_probe_shape(self) -> Self:
+        if len({ref.value for ref in self.acceptance_refs}) != len(self.acceptance_refs):
+            raise ValueError("acceptance_refs must be unique")
+        if len({ref.value for ref in self.service_run_refs}) != len(self.service_run_refs):
+            raise ValueError("service_run_refs must be unique")
+        if len({command_id.value for command_id in self.command_ids}) != len(self.command_ids):
+            raise ValueError("command_ids must be unique")
+        if self.status_code is not None and self.passed and not (200 <= self.status_code < 300):
+            raise ValueError("passed HTTP probe status_code must be 2xx")
         return self
 
     @field_validator("probed_at")
@@ -188,9 +131,7 @@ class LiveBlackboxIntegrationEvidence(BaseModel):
     frontend_command_id: ContractId
     backend_service_run_ref: ServiceRunEvidenceRef
     frontend_service_run_ref: ServiceRunEvidenceRef
-    backend_probe: BackendCrudProbeResult
-    sqlite_probe: SQLitePersistenceProbeResult
-    frontend_probe: FrontendLiveProbeResult
+    probes: tuple[LiveBlackboxProbeResult, ...]
     generated_at: datetime
 
     @model_validator(mode="before")
@@ -219,6 +160,33 @@ class LiveBlackboxIntegrationEvidence(BaseModel):
     def _validate_distinct_services(self) -> Self:
         if self.backend_service_run_ref == self.frontend_service_run_ref:
             raise ValueError("backend and frontend service run refs must be distinct")
+        if not self.probes:
+            raise ValueError("live blackbox probes are required")
+        probe_refs = tuple(probe.probe_ref.value for probe in self.probes)
+        if len(set(probe_refs)) != len(probe_refs):
+            raise ValueError("live blackbox probe refs must be unique")
+        required_service_refs = {
+            self.backend_service_run_ref.value,
+            self.frontend_service_run_ref.value,
+        }
+        linked_service_refs = {
+            service_ref.value
+            for probe in self.probes
+            for service_ref in probe.service_run_refs
+        }
+        if not required_service_refs.issubset(linked_service_refs):
+            raise ValueError("live blackbox probes must bind backend and frontend services")
+        required_command_ids = {
+            self.backend_command_id.value,
+            self.frontend_command_id.value,
+        }
+        linked_command_ids = {
+            command_id.value
+            for probe in self.probes
+            for command_id in probe.command_ids
+        }
+        if not required_command_ids.issubset(linked_command_ids):
+            raise ValueError("live blackbox probes must bind backend and frontend commands")
         return self
 
 
@@ -275,9 +243,7 @@ class LiveBlackboxIntegrationVerifier:
                     frontend_service=service_binding.frontend_service,
                 )
             )
-        blockers.extend(_backend_crud_blockers(evidence.backend_probe))
-        blockers.extend(_sqlite_blockers(evidence.sqlite_probe))
-        blockers.extend(_frontend_blockers(evidence.frontend_probe))
+        blockers.extend(_probe_blockers(evidence))
         if blockers:
             return LiveBlackboxVerificationResult(blockers=tuple(blockers))
         return LiveBlackboxVerificationResult(evidence=evidence)
@@ -413,100 +379,72 @@ def _probe_binding_blockers(
     frontend_service: ServiceRunEvidence,
 ) -> tuple[LiveBlackboxBlocker, ...]:
     blockers: list[LiveBlackboxBlocker] = []
-    if evidence.frontend_probe.frontend_url != frontend_service.readiness_url:
+    service_urls = {
+        backend_service.service_run_evidence_id.value: backend_service.readiness_url.value,
+        frontend_service.service_run_evidence_id.value: frontend_service.readiness_url.value,
+    }
+    for probe in evidence.probes:
+        if probe.probe_url is None:
+            continue
+        bound_origins = {
+            _url_origin(service_urls[service_ref.value])
+            for service_ref in probe.service_run_refs
+            if service_ref.value in service_urls
+        }
+        if _url_origin(probe.probe_url.value) in bound_origins:
+            continue
         blockers.append(
             _blocker(
-                LiveBlackboxBlockerCode.FRONTEND_NOT_LIVE,
-                "frontend_probe.frontend_url must match frontend service readiness_url",
-                evidence.frontend_probe.frontend_url.value,
-            )
-        )
-    if evidence.frontend_probe.backend_url != backend_service.readiness_url:
-        blockers.append(
-            _blocker(
-                LiveBlackboxBlockerCode.FRONTEND_NOT_LIVE,
-                "frontend_probe.backend_url must match backend service readiness_url",
-                evidence.frontend_probe.backend_url.value,
-            )
-        )
-    if evidence.backend_probe.backend_url != backend_service.readiness_url:
-        blockers.append(
-            _blocker(
-                LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE,
-                "backend_probe.backend_url must match backend service readiness_url",
-                evidence.backend_probe.backend_url.value,
-            )
-        )
-    backend_db_path = backend_service.environment_overrides.get("BOOKS_DB_PATH")
-    if backend_db_path is None:
-        blockers.append(
-            _blocker(
-                LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP,
-                "backend service run must include BOOKS_DB_PATH environment override",
-                backend_service.service_run_evidence_id.value,
-            )
-        )
-    elif _normalized_path(evidence.sqlite_probe.db_path) != _normalized_path(Path(backend_db_path)):
-        blockers.append(
-            _blocker(
-                LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP,
-                "sqlite_probe.db_path must match backend service BOOKS_DB_PATH",
-                str(evidence.sqlite_probe.db_path),
+                LiveBlackboxBlockerCode.PROBE_EVIDENCE_MISSING,
+                "live blackbox probe_url must match a bound service origin",
+                probe.probe_ref.value,
             )
         )
     return tuple(blockers)
 
 
-def _normalized_path(path: Path) -> str:
-    return str(path.expanduser().resolve(strict=False))
+def _url_origin(value: str) -> str:
+    parsed = urlparse(value)
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _backend_crud_blockers(probe: BackendCrudProbeResult) -> tuple[LiveBlackboxBlocker, ...]:
+def _probe_blockers(evidence: LiveBlackboxIntegrationEvidence) -> tuple[LiveBlackboxBlocker, ...]:
     blockers: list[LiveBlackboxBlocker] = []
-    if probe.create_status != 201:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE, "create HTTP operation failed", "create"))
-    if probe.list_status != 200:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE, "list HTTP operation failed", "list"))
-    if probe.checkout_status != 200 or probe.checkout_state != "CHECKED_OUT":
-        blockers.append(_blocker(LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE, "checkout HTTP operation failed", "checkout"))
-    if probe.return_status != 200 or probe.return_state != "IN_LIBRARY":
-        blockers.append(_blocker(LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE, "return HTTP operation failed", "return"))
-    if probe.delete_status != 200 or probe.delete_confirmed is not True:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.BACKEND_CRUD_INCOMPLETE, "delete HTTP operation failed", "delete"))
-    return tuple(blockers)
-
-
-def _sqlite_blockers(probe: SQLitePersistenceProbeResult) -> tuple[LiveBlackboxBlocker, ...]:
-    blockers: list[LiveBlackboxBlocker] = []
-    if probe.source != "http_workflow":
-        blockers.append(
-            _blocker(
-                LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP,
-                "SQLite persistence must be proven through HTTP workflow",
-                probe.source,
+    expected_service_refs = {
+        evidence.backend_service_run_ref.value,
+        evidence.frontend_service_run_ref.value,
+    }
+    expected_command_ids = {
+        evidence.backend_command_id.value,
+        evidence.frontend_command_id.value,
+    }
+    for probe in evidence.probes:
+        if not probe.passed:
+            blockers.append(
+                _blocker(
+                    LiveBlackboxBlockerCode.PROBE_FAILED,
+                    "live blackbox probe did not pass",
+                    probe.probe_ref.value,
+                )
             )
-        )
-    if "books" not in probe.table_names:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP, "SQLite books table missing", "books"))
-    if not {"CHECKED_OUT", "IN_LIBRARY"}.issubset(set(probe.observed_states)):
-        blockers.append(_blocker(LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP, "SQLite HTTP workflow states missing", "states"))
-    if probe.deleted_book_absent is not True:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.SQLITE_NOT_PROVEN_VIA_HTTP, "deleted book remained in SQLite", "delete"))
-    return tuple(blockers)
-
-
-def _frontend_blockers(probe: FrontendLiveProbeResult) -> tuple[LiveBlackboxBlocker, ...]:
-    blockers: list[LiveBlackboxBlocker] = []
-    if probe.used_fake_fetch:
-        blockers.append(_blocker(LiveBlackboxBlockerCode.FRONTEND_NOT_LIVE, "fakeFetch cannot satisfy live frontend/backend integration", "fakeFetch"))
-    required_paths = {"/health", "/books"}
-    if not required_paths.issubset(set(probe.fetched_paths)):
-        blockers.append(_blocker(LiveBlackboxBlockerCode.FRONTEND_NOT_LIVE, "frontend live probe did not fetch backend health and books", "frontend"))
-    if not any(
-        method == "DELETE" and path.startswith("/books/")
-        for method, path in zip(probe.fetched_methods, probe.fetched_paths, strict=True)
-    ):
-        blockers.append(_blocker(LiveBlackboxBlockerCode.FRONTEND_NOT_LIVE, "frontend live probe must execute DELETE /books/{id}", "frontend-delete"))
+        probe_service_refs = {ref.value for ref in probe.service_run_refs}
+        if not probe_service_refs.issubset(expected_service_refs):
+            blockers.append(
+                _blocker(
+                    LiveBlackboxBlockerCode.PROBE_EVIDENCE_MISSING,
+                    "live blackbox probe references unknown service_run_refs",
+                    probe.probe_ref.value,
+                )
+            )
+        probe_command_ids = {command_id.value for command_id in probe.command_ids}
+        if not probe_command_ids.issubset(expected_command_ids):
+            blockers.append(
+                _blocker(
+                    LiveBlackboxBlockerCode.PROBE_EVIDENCE_MISSING,
+                    "live blackbox probe references unknown command_ids",
+                    probe.probe_ref.value,
+                )
+            )
     return tuple(blockers)
 
 
@@ -522,23 +460,20 @@ def artifact_refs_for_live_blackbox(
     evidence: LiveBlackboxIntegrationEvidence,
 ) -> tuple[str, ...]:
     evidence_id = evidence.live_blackbox_evidence_id.value
-    return (
-        f"{evidence_id}.backend-crud",
-        f"{evidence_id}.sqlite-http",
-        f"{evidence_id}.frontend-live",
+    return tuple(
+        f"{evidence_id}.{probe.probe_ref.value}"
+        for probe in sorted(evidence.probes, key=lambda item: item.probe_ref.value)
     )
 
 
 __all__ = [
-    "BackendCrudProbeResult",
-    "FrontendLiveProbeResult",
     "LiveBlackboxBlocker",
     "LiveBlackboxBlockerCode",
     "LiveBlackboxIntegrationEvidence",
     "LiveBlackboxIntegrationEvidenceRef",
     "LiveBlackboxIntegrationVerifier",
+    "LiveBlackboxProbeResult",
     "LiveBlackboxVerificationResult",
     "LiveBlackboxVerifierInput",
-    "SQLitePersistenceProbeResult",
     "artifact_refs_for_live_blackbox",
 ]

@@ -19,7 +19,6 @@ from boardroom_os.execution.package import FallbackPolicyRef
 from boardroom_os.execution.verification_run import VerificationRun, VerificationRunRef
 from boardroom_os.evidence.live_blackbox import (
     LiveBlackboxIntegrationEvidence,
-    artifact_refs_for_live_blackbox,
 )
 from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.execution.work_product import WorkProduct, WorkProductClaimDraft
@@ -480,6 +479,18 @@ def build_evidence_claim_from_live_blackbox(
     _validate_producer_attempt_ref(producer_attempt_ref)
     _validate_expected_purpose(expected_purpose)
     source_ref = evidence.live_blackbox_evidence_id.value
+    obligation_acceptance_refs = {ref.value for ref in evidence_obligation.acceptance_refs}
+    matching_probe_refs = tuple(
+        f"{source_ref}.{probe.probe_ref.value}"
+        for probe in sorted(evidence.probes, key=lambda item: item.probe_ref.value)
+        if obligation_acceptance_refs.intersection(
+            acceptance_ref.value for acceptance_ref in probe.acceptance_refs
+        )
+    )
+    if not matching_probe_refs:
+        raise EvidenceClaimBuildError(
+            "live blackbox evidence has no probe bound to evidence obligation acceptance refs"
+        )
     resolved_claim_id = claim_id or _claim_id_for(
         source_kind=EvidenceClaimSourceKind.LIVE_BLACKBOX,
         source_ref=source_ref,
@@ -495,10 +506,7 @@ def build_evidence_claim_from_live_blackbox(
         required_artifact_type=evidence_obligation.required_artifact_type,
         acceptance_refs=evidence_obligation.acceptance_refs,
         source_surface_refs=evidence_obligation.source_surface_refs,
-        artifact_refs=tuple(
-            EvidenceArtifactRef(value=value)
-            for value in artifact_refs_for_live_blackbox(evidence)
-        ),
+        artifact_refs=tuple(EvidenceArtifactRef(value=value) for value in matching_probe_refs),
         verification_run_refs=(),
         fallback_marker=None,
         summary=summary,

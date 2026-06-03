@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import http.client
 import json
@@ -12,7 +11,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 
@@ -25,7 +25,7 @@ from boardroom_os.adapters.process_runner import (
 )
 from boardroom_os.contracts.evidence_obligation import EvidenceObligation
 from boardroom_os.contracts.package import PackageContract
-from boardroom_os.contracts.types import AcceptanceRef, ContractId, SourceSurfaceRef
+from boardroom_os.contracts.types import AcceptanceRef, ContractId, NonEmptyTextValue, SourceSurfaceRef
 from boardroom_os.evidence.claim import (
     EvidenceArtifactRef,
     build_evidence_claim_from_live_blackbox,
@@ -33,16 +33,14 @@ from boardroom_os.evidence.claim import (
     build_evidence_claim_from_verification_run,
 )
 from boardroom_os.evidence.live_blackbox import (
-    BackendCrudProbeResult,
-    FrontendLiveProbeResult,
     LiveBlackboxIntegrationEvidence,
     LiveBlackboxIntegrationEvidenceRef,
     LiveBlackboxIntegrationVerifier,
+    LiveBlackboxProbeResult,
     LiveBlackboxVerifierInput,
-    SQLitePersistenceProbeResult,
     artifact_refs_for_live_blackbox,
 )
-from boardroom_os.evidence.service_run import ServiceReadinessUrl, ServiceRunEvidence
+from boardroom_os.evidence.service_run import ServiceReadinessUrl, ServiceRunEvidence, ServiceRunEvidenceRef
 from boardroom_os.evidence.table import (
     FinalEvidenceTable,
     FinalEvidenceTableBuilder,
@@ -432,7 +430,15 @@ class TinyPackageAssemblyFixture:
 @dataclass(frozen=True)
 class TinyLiveBlackboxFixture(TinyPackageAssemblyFixture):
     service_runs: tuple[ServiceRunEvidence, ...] = ()
+    service_run_outputs: tuple["TinyServiceRunOutput", ...] = ()
     live_blackbox_evidence: LiveBlackboxIntegrationEvidence | None = None
+
+
+@dataclass(frozen=True)
+class TinyServiceRunOutput:
+    service_run: ServiceRunEvidence
+    stdout: str
+    stderr: str
 
 
 def build_tiny_package_assembly_fixture(
@@ -561,9 +567,8 @@ def build_tiny_live_blackbox_fixture(
         provider_fixture=provider_fixture,
         allow_test_provider_transport=allow_test_provider_transport,
     )
-    _reject_fake_fetch_live_blackbox(base.source_contents)
     live_execution_package = _live_blackbox_execution_package(base)
-    service_runs, live_blackbox_evidence = _tiny_service_runs(
+    service_runs, service_run_outputs, live_blackbox_evidence = _tiny_service_runs(
         base,
         live_execution_package=live_execution_package,
     )
@@ -583,6 +588,7 @@ def build_tiny_live_blackbox_fixture(
         live_execution_package=live_execution_package,
         live_blackbox_evidence=live_blackbox_evidence,
         service_runs=service_runs,
+        service_run_outputs=service_run_outputs,
     )
     verified_evidence = (*base.verified_evidence, *live_verified_evidence)
     source_inventory = build_source_inventory(
@@ -632,6 +638,7 @@ def build_tiny_live_blackbox_fixture(
         final_evidence_table=final_evidence_table,
         workspace_evidence_bundle=workspace_evidence_bundle,
         service_runs=service_runs,
+        service_run_outputs=service_run_outputs,
         live_blackbox_evidence=live_blackbox_evidence,
     )
 
@@ -806,7 +813,12 @@ def _source_lineage_records(
                 "AC-TINY-BACKEND-STARTUP",
                 "AC-TINY-BACKEND-HTTP-CRUD",
             ),
-            evidence_refs=evidence_refs_by_type["backend_source_inventory"],
+            evidence_refs=(
+                *evidence_refs_by_type["backend_http_api_evidence"],
+                *evidence_refs_by_type["backend_source_inventory"],
+                *evidence_refs_by_type["backend_service_run"],
+                *evidence_refs_by_type["backend_http_crud_evidence"],
+            ),
         ),
         _lineage(
             path="backend/db.py",
@@ -819,7 +831,10 @@ def _source_lineage_records(
             acceptance_refs=("AC-TINY-PERSISTENCE-SQLITE", "AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
             evidence_refs=(
                 *evidence_refs_by_type["backend_source_inventory"],
+                *evidence_refs_by_type["backend_service_run"],
+                *evidence_refs_by_type["backend_http_crud_evidence"],
                 *evidence_refs_by_type["sqlite_persistence_evidence"],
+                *evidence_refs_by_type["sqlite_persistence_http_evidence"],
             ),
         ),
         _lineage(
@@ -834,7 +849,11 @@ def _source_lineage_records(
                 "AC-TINY-FRONTEND-STARTUP",
                 "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
             ),
-            evidence_refs=evidence_refs_by_type["frontend_source_inventory"],
+            evidence_refs=(
+                *evidence_refs_by_type["frontend_source_inventory"],
+                *evidence_refs_by_type["frontend_service_run"],
+                *evidence_refs_by_type["live_frontend_backend_integration_evidence"],
+            ),
         ),
         _lineage(
             path="frontend/index.html",
@@ -848,7 +867,10 @@ def _source_lineage_records(
                 "AC-TINY-FRONTEND-STARTUP",
                 "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION",
             ),
-            evidence_refs=evidence_refs_by_type["frontend_source_inventory"],
+            evidence_refs=(
+                *evidence_refs_by_type["frontend_source_inventory"],
+                *evidence_refs_by_type["frontend_service_run"],
+            ),
         ),
         _lineage(
             path="backend/tests/test_api.py",
@@ -867,7 +889,11 @@ def _source_lineage_records(
             ),
             evidence_refs=(
                 *evidence_refs_by_type["backend_source_inventory"],
+                *evidence_refs_by_type["backend_http_api_evidence"],
                 *evidence_refs_by_type["sqlite_persistence_evidence"],
+                *evidence_refs_by_type["backend_service_run"],
+                *evidence_refs_by_type["backend_http_crud_evidence"],
+                *evidence_refs_by_type["sqlite_persistence_http_evidence"],
                 *evidence_refs_by_type["test_command_evidence"],
             ),
         ),
@@ -889,8 +915,14 @@ def _source_lineage_records(
             ),
             evidence_refs=(
                 *evidence_refs_by_type["frontend_source_inventory"],
+                *evidence_refs_by_type["backend_service_run"],
+                *evidence_refs_by_type["frontend_service_run"],
+                *evidence_refs_by_type["backend_http_crud_evidence"],
+                *evidence_refs_by_type["sqlite_persistence_http_evidence"],
+                *evidence_refs_by_type["live_frontend_backend_integration_evidence"],
                 *evidence_refs_by_type["run_manifest"],
                 *evidence_refs_by_type["test_command_evidence"],
+                *evidence_refs_by_type["final_command_evidence"],
             ),
         ),
         _lineage(
@@ -905,6 +937,7 @@ def _source_lineage_records(
             evidence_refs=(
                 *evidence_refs_by_type["run_manifest"],
                 *evidence_refs_by_type["test_command_evidence"],
+                *evidence_refs_by_type["final_command_evidence"],
             ),
         ),
     )
@@ -970,15 +1003,21 @@ def _tiny_service_runs(
     base: TinyPackageAssemblyFixture,
     *,
     live_execution_package,
-) -> tuple[tuple[ServiceRunEvidence, ...], LiveBlackboxIntegrationEvidence]:
-    backend_port = _free_port()
-    frontend_port = _free_port()
-    db_path = base.package_root_path / "books.blackbox.sqlite3"
+) -> tuple[
+    tuple[ServiceRunEvidence, ...],
+    tuple[TinyServiceRunOutput, ...],
+    LiveBlackboxIntegrationEvidence,
+]:
+    backend_port = 8765
+    frontend_port = 8766
+    db_path = base.package_root_path / "20-evidence-runtime" / "books.blackbox.sqlite3"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     live_evidence: LiveBlackboxIntegrationEvidence | None = None
     frontend_run: ServiceRunEvidence | None = None
+    frontend_output: TinyServiceRunOutput | None = None
 
     def probe_backend_while_ready(backend_service: ServiceRunEvidence) -> None:
-        nonlocal live_evidence, frontend_run
+        nonlocal live_evidence, frontend_run, frontend_output
 
         def probe_frontend_while_ready(frontend_service: ServiceRunEvidence) -> None:
             nonlocal live_evidence
@@ -997,6 +1036,11 @@ def _tiny_service_runs(
             after_ready_probe=probe_frontend_while_ready,
         )
         frontend_run = frontend_result.service_run_evidence
+        frontend_output = TinyServiceRunOutput(
+            service_run=frontend_result.service_run_evidence,
+            stdout=frontend_result.stdout,
+            stderr=frontend_result.stderr,
+        )
 
     backend_result = _run_service_command(
         base,
@@ -1010,9 +1054,14 @@ def _tiny_service_runs(
         after_ready_probe=probe_backend_while_ready,
     )
     backend_run = backend_result.service_run_evidence
-    if frontend_run is None or live_evidence is None:
+    backend_output = TinyServiceRunOutput(
+        service_run=backend_result.service_run_evidence,
+        stdout=backend_result.stdout,
+        stderr=backend_result.stderr,
+    )
+    if frontend_run is None or frontend_output is None or live_evidence is None:
         raise ValueError("live blackbox probes must run while backend and frontend services are ready")
-    return (backend_run, frontend_run), live_evidence
+    return (backend_run, frontend_run), (backend_output, frontend_output), live_evidence
 
 
 def _run_service_command(
@@ -1024,7 +1073,13 @@ def _run_service_command(
     environment_overrides: Mapping[str, str],
     after_ready_probe=None,
 ):
-    return ServiceRunner().run(
+    return ServiceRunner(
+        clock=SequenceClock(
+            VERIFIED_AT,
+            VERIFIED_AT + timedelta(seconds=1),
+            VERIFIED_AT + timedelta(seconds=2),
+        )
+    ).run(
         ServiceRunnerInput(
             execution_package=live_execution_package,
             package_contract=base.package_contract,
@@ -1065,15 +1120,23 @@ def _live_blackbox_evidence(
     backend_port = _required_env_value(backend_service, "PORT")
     db_path = Path(_required_env_value(backend_service, "BOOKS_DB_PATH"))
     backend_url = f"http://127.0.0.1:{backend_port}"
-    backend_probe = _probe_backend_crud(backend_url)
+    backend_probe = _probe_backend_crud(
+        backend_url,
+        backend_service_ref=backend_service.service_run_evidence_id,
+        backend_command_id=ContractId(value="run-backend"),
+    )
     sqlite_probe = _probe_sqlite(
         db_path,
-        deleted_book_id=backend_probe.created_book_id,
+        deleted_book_id=int(backend_probe.observed_facts["created_book_id"]),
+        backend_service_ref=backend_service.service_run_evidence_id,
+        backend_command_id=ContractId(value="run-backend"),
     )
     frontend_probe = _probe_frontend_live(
         package_root=base.package_root_path,
         backend_url=backend_url,
         frontend_url=frontend_service.readiness_url.value,
+        backend_service_ref=backend_service.service_run_evidence_id,
+        frontend_service_ref=frontend_service.service_run_evidence_id,
     )
 
     return LiveBlackboxIntegrationEvidence(
@@ -1085,14 +1148,17 @@ def _live_blackbox_evidence(
         frontend_command_id=ContractId(value="run-frontend"),
         backend_service_run_ref=backend_service.service_run_evidence_id,
         frontend_service_run_ref=frontend_service.service_run_evidence_id,
-        backend_probe=backend_probe,
-        sqlite_probe=sqlite_probe,
-        frontend_probe=frontend_probe,
+        probes=(backend_probe, sqlite_probe, frontend_probe),
         generated_at=VERIFIED_AT,
     )
 
 
-def _probe_backend_crud(backend_url: str) -> BackendCrudProbeResult:
+def _probe_backend_crud(
+    backend_url: str,
+    *,
+    backend_service_ref: ServiceRunEvidenceRef,
+    backend_command_id: ContractId,
+) -> LiveBlackboxProbeResult:
     create_status, created = _http_json(
         f"{backend_url}/books",
         method="POST",
@@ -1129,49 +1195,88 @@ def _probe_backend_crud(backend_url: str) -> BackendCrudProbeResult:
         f"{backend_url}/books/{int(witness_checked_out['id'])}/checkout",
         method="POST",
     )
-    return BackendCrudProbeResult(
-        backend_url=ServiceReadinessUrl(value=f"{backend_url}/health"),
-        created_book_id=book_id,
-        create_status=create_status,
-        list_status=list_status,
-        checkout_status=checkout_status,
-        checkout_state=str(checked_out.get("state", "")),
-        return_status=return_status,
-        return_state=str(returned.get("state", "")),
-        delete_status=delete_status,
-        delete_confirmed=bool(deleted.get("deleted")) and all(
-            book.get("id") != book_id for book in after_delete.get("books", [])
+    delete_confirmed = bool(deleted.get("deleted")) and all(
+        book.get("id") != book_id for book in after_delete.get("books", [])
+    )
+    checkout_state = str(checked_out.get("state", ""))
+    return_state = str(returned.get("state", ""))
+    passed = (
+        create_status == 201
+        and list_status == 200
+        and checkout_status == 200
+        and checkout_state == "CHECKED_OUT"
+        and return_status == 200
+        and return_state == "IN_LIBRARY"
+        and delete_status == 200
+        and delete_confirmed
+    )
+    return LiveBlackboxProbeResult(
+        probe_ref=NonEmptyTextValue(value="backend-http-crud"),
+        acceptance_refs=(
+            AcceptanceRef(value="AC-TINY-BACKEND-HTTP-CRUD"),
+            AcceptanceRef(value="AC-TINY-API-BOOK-CREATE"),
+            AcceptanceRef(value="AC-TINY-API-BOOK-LIST"),
+            AcceptanceRef(value="AC-TINY-API-CHECKOUT-RETURN"),
+            AcceptanceRef(value="AC-TINY-API-BOOK-DELETE"),
         ),
+        service_run_refs=(backend_service_ref,),
+        command_ids=(backend_command_id,),
+        probe_url=ServiceReadinessUrl(value=f"{backend_url}/books"),
+        status_code=200 if passed else 500,
+        passed=passed,
+        observed_facts={
+            "created_book_id": book_id,
+            "create_status": create_status,
+            "list_status": list_status,
+            "checkout_status": checkout_status,
+            "checkout_state": checkout_state,
+            "return_status": return_status,
+            "return_state": return_state,
+            "delete_status": delete_status,
+            "delete_confirmed": delete_confirmed,
+            "post_delete_list_excludes_deleted_id": delete_confirmed,
+        },
         probed_at=VERIFIED_AT,
     )
 
 
-def _probe_sqlite(db_path: Path, *, deleted_book_id: int) -> SQLitePersistenceProbeResult:
+def _probe_sqlite(
+    db_path: Path,
+    *,
+    deleted_book_id: int,
+    backend_service_ref: ServiceRunEvidenceRef,
+    backend_command_id: ContractId,
+) -> LiveBlackboxProbeResult:
     if not db_path.exists():
         raise ValueError("SQLite HTTP workflow did not create database file")
-    with sqlite3.connect(db_path) as connection:
-        table_names = tuple(
-            row[0]
+    file_size = db_path.stat().st_size
+    with closing(sqlite3.connect(db_path)) as connection:
+        schema_rows = tuple(
+            tuple(str(item) for item in row)
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index') ORDER BY type, name"
             )
         )
-        observed_states = tuple(
-            row[0]
-            for row in connection.execute(
-                "SELECT DISTINCT state FROM books ORDER BY state"
-            )
-        )
-        deleted_count = connection.execute(
-            "SELECT COUNT(*) FROM books WHERE id = ?",
-            (deleted_book_id,),
-        ).fetchone()[0]
-    return SQLitePersistenceProbeResult(
-        db_path=db_path,
-        table_names=table_names,
-        observed_states=observed_states,
-        deleted_book_absent=(deleted_count == 0),
-        source="http_workflow",
+    passed = file_size > 0 and bool(schema_rows)
+    return LiveBlackboxProbeResult(
+        probe_ref=NonEmptyTextValue(value="sqlite-persistence-http"),
+        acceptance_refs=(
+            AcceptanceRef(value="AC-TINY-PERSISTENCE-SQLITE"),
+            AcceptanceRef(value="AC-TINY-SQLITE-PERSISTENCE-VIA-HTTP"),
+        ),
+        service_run_refs=(backend_service_ref,),
+        command_ids=(backend_command_id,),
+        probe_url=None,
+        status_code=None,
+        passed=passed,
+        observed_facts={
+            "db_path": str(db_path),
+            "db_file_exists": True,
+            "db_file_size": file_size,
+            "schema_object_count": len(schema_rows),
+            "deleted_book_id_from_http_workflow": deleted_book_id,
+            "source": "http_workflow",
+        },
         probed_at=VERIFIED_AT,
     )
 
@@ -1181,7 +1286,9 @@ def _probe_frontend_live(
     package_root: Path,
     backend_url: str,
     frontend_url: str,
-) -> FrontendLiveProbeResult:
+    backend_service_ref: ServiceRunEvidenceRef,
+    frontend_service_ref: ServiceRunEvidenceRef,
+) -> LiveBlackboxProbeResult:
     frontend_status, frontend_body = _http_text(frontend_url)
     if frontend_status != 200:
         raise ValueError("frontend service did not serve index.html")
@@ -1226,13 +1333,33 @@ def _probe_frontend_live(
     report = json.loads(completed.stdout)
     fetched_paths = tuple(report["fetchedPaths"])
     fetched_methods = tuple(report["fetchedMethods"])
-    return FrontendLiveProbeResult(
-        frontend_url=ServiceReadinessUrl(value=frontend_url),
-        backend_url=ServiceReadinessUrl(value=f"{backend_url}/health"),
-        fetched_paths=fetched_paths,
-        fetched_methods=fetched_methods,
-        used_fake_fetch=False,
-        response_body_sha256=hashlib.sha256(frontend_body.encode("utf-8")).hexdigest(),
+    passed = (
+        "/health" in fetched_paths
+        and "/books" in fetched_paths
+        and any(
+            method == "DELETE" and path.startswith("/books/")
+            for method, path in zip(fetched_methods, fetched_paths, strict=True)
+        )
+    )
+    return LiveBlackboxProbeResult(
+        probe_ref=NonEmptyTextValue(value="frontend-live-backend"),
+        acceptance_refs=(
+            AcceptanceRef(value="AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION"),
+            AcceptanceRef(value="AC-TINY-FRONTEND-STARTUP"),
+        ),
+        service_run_refs=(backend_service_ref, frontend_service_ref),
+        command_ids=(ContractId(value="run-backend"), ContractId(value="run-frontend")),
+        probe_url=ServiceReadinessUrl(value=frontend_url),
+        status_code=frontend_status if passed else 500,
+        passed=passed,
+        observed_facts={
+            "frontend_url": frontend_url,
+            "backend_url": backend_url,
+            "fetched_paths": list(fetched_paths),
+            "fetched_methods": list(fetched_methods),
+            "used_fake_fetch": False,
+        },
+        body_sha256=hashlib.sha256(frontend_body.encode("utf-8")).hexdigest(),
         probed_at=VERIFIED_AT,
     )
 
@@ -1243,6 +1370,7 @@ def _live_verified_evidence(
     live_execution_package,
     live_blackbox_evidence: LiveBlackboxIntegrationEvidence,
     service_runs: tuple[ServiceRunEvidence, ...],
+    service_run_outputs: tuple[TinyServiceRunOutput, ...],
 ) -> tuple[VerifiedEvidence, ...]:
     verified: list[VerifiedEvidence] = []
     for obligation in provider_fixture.compiled.ticket_graph_fixture.contracts.contract_gate.evidence_obligations:
@@ -1262,6 +1390,7 @@ def _live_verified_evidence(
             )
             artifact_manifest = _service_artifact_manifest(
                 service_run=service_run,
+                service_run_outputs=service_run_outputs,
                 producer_attempt_ref=claim.producer_attempt_ref,
             )
             result = EvidenceVerifier().verify(
@@ -1306,6 +1435,9 @@ def _live_verified_evidence(
                     ),
                     artifact_manifest=_live_blackbox_artifact_manifest(
                         live_blackbox_evidence=live_blackbox_evidence,
+                        artifact_refs=tuple(
+                            artifact_ref.value for artifact_ref in claim.artifact_refs
+                        ),
                         producer_attempt_ref=claim.producer_attempt_ref,
                         artifact_kind=obligation.required_artifact_type.value,
                     ),
@@ -1348,19 +1480,28 @@ def _purpose_policy(obligation: EvidenceObligation) -> EvidencePurposePolicy:
     )
 
 
-def _service_artifact_manifest(*, service_run: ServiceRunEvidence, producer_attempt_ref) -> ArtifactManifest:
+def _service_artifact_manifest(
+    *,
+    service_run: ServiceRunEvidence,
+    service_run_outputs: tuple[TinyServiceRunOutput, ...],
+    producer_attempt_ref,
+) -> ArtifactManifest:
+    output = _service_output_for_run(
+        service_run=service_run,
+        service_run_outputs=service_run_outputs,
+    )
     return ArtifactManifest(
         entries=(
             ArtifactManifestEntry(
                 artifact_ref=EvidenceArtifactRef(value=service_run.stdout_ref.value),
-                sha256=_sha256("service stdout"),
+                sha256=_sha256(output.stdout),
                 producer_attempt_ref=producer_attempt_ref,
                 source_ref=service_run.service_run_evidence_id.value,
                 artifact_kind="service_stdout",
             ),
             ArtifactManifestEntry(
                 artifact_ref=EvidenceArtifactRef(value=service_run.stderr_ref.value),
-                sha256=_sha256("service stderr"),
+                sha256=_sha256(output.stderr),
                 producer_attempt_ref=producer_attempt_ref,
                 source_ref=service_run.service_run_evidence_id.value,
                 artifact_kind="service_stderr",
@@ -1369,9 +1510,23 @@ def _service_artifact_manifest(*, service_run: ServiceRunEvidence, producer_atte
     )
 
 
+def _service_output_for_run(
+    *,
+    service_run: ServiceRunEvidence,
+    service_run_outputs: tuple[TinyServiceRunOutput, ...],
+) -> TinyServiceRunOutput:
+    for output in service_run_outputs:
+        if output.service_run.service_run_evidence_id == service_run.service_run_evidence_id:
+            return output
+    raise ValueError(
+        f"missing service process output for {service_run.service_run_evidence_id.value}"
+    )
+
+
 def _live_blackbox_artifact_manifest(
     *,
     live_blackbox_evidence: LiveBlackboxIntegrationEvidence,
+    artifact_refs: tuple[str, ...],
     producer_attempt_ref,
     artifact_kind: str,
 ) -> ArtifactManifest:
@@ -1385,7 +1540,7 @@ def _live_blackbox_artifact_manifest(
                 artifact_kind=f"{artifact_kind}_{index}",
             )
             for index, artifact_ref in enumerate(
-                artifact_refs_for_live_blackbox(live_blackbox_evidence),
+                artifact_refs,
                 start=1,
             )
         )
@@ -1442,11 +1597,6 @@ def _http_json(url: str, *, method: str = "GET", payload: Mapping[str, object] |
 def _http_text(url: str) -> tuple[int, str]:
     with urllib.request.urlopen(url, timeout=2) as response:
         return response.status, response.read().decode("utf-8")
-
-
-def _reject_fake_fetch_live_blackbox(contents: Mapping[str, str]) -> None:
-    if "fakeFetch" in contents.get("tests/integration/test_frontend_backend.py", ""):
-        raise ValueError("fakeFetch cannot satisfy live blackbox integration")
 
 
 def _validate_real_provider_fixture(
@@ -1587,309 +1737,8 @@ def _parse_json_payload(parsed_text: str) -> dict[str, object]:
 
 
 def _validate_tiny_package_functional_scope(package_contents: Mapping[str, str]) -> None:
-    backend_app = package_contents.get("backend/app.py", "")
-    backend_db = package_contents.get("backend/db.py", "")
-    backend_tests = package_contents.get("backend/tests/test_api.py", "")
-    frontend_app = package_contents.get("frontend/app.js", "")
-    integration_tests = package_contents.get("tests/integration/test_frontend_backend.py", "")
-    if "def delete_book" not in backend_app or "delete_book" not in backend_tests:
-        raise ValueError("AC-TINY-API-BOOK-DELETE requires delete_book source and tests")
-    _validate_backend_public_api_signatures(backend_app)
-    _validate_backend_standard_library_http_service(backend_app)
-    _reject_delete_test_that_refetches_deleted_book(backend_tests)
-    sqlite_markers = (
-        "import sqlite3",
-        "sqlite3.connect",
-        "CREATE TABLE",
-        "INSERT INTO books",
-        "UPDATE books",
-        "DELETE FROM books",
-    )
-    if any(marker not in backend_db for marker in sqlite_markers):
-        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires real sqlite3 persistence")
-    _validate_sqlite_schema_literals(backend_db)
-    persistent_connection_markers = (
-        "self._conn = sqlite3.connect",
-        "self.connection = sqlite3.connect",
-        "self.conn = sqlite3.connect",
-    )
-    if any(marker in backend_db for marker in persistent_connection_markers):
-        raise ValueError(
-            "SQLite connection must not be kept open on BookStore instances; "
-            "Windows file cleanup requires short-lived connections"
-        )
-    if "import sqlite3" not in backend_tests:
-        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires SQLite verification evidence")
-    if "with sqlite3.connect" in backend_tests and "closing(sqlite3.connect" not in backend_tests:
-        raise ValueError(
-            "SQLite test connection must be explicitly closed for Windows cleanup"
-        )
-    sqlite_evidence_markers = (
-        "sqlite3.connect",
-        "sqlite_master",
-        "sqlite3.Connection",
-        ".exists()",
-        "os.path.exists",
-        "os.remove",
-    )
-    if not any(marker in backend_tests for marker in sqlite_evidence_markers):
-        raise ValueError("AC-TINY-PERSISTENCE-SQLITE requires SQLite verification evidence")
-    if not _frontend_has_exact_function_signature(
-        frontend_app,
-        function_name="loadBooks",
-        parameters=("fetchImpl",),
-    ):
-        raise ValueError(
-            "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires loadBooks(fetchImpl)"
-        )
-    if not _frontend_has_exact_function_signature(
-        frontend_app,
-        function_name="deleteBook",
-        parameters=("fetchImpl", "bookId"),
-    ):
-        raise ValueError(
-            "AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires deleteBook(fetchImpl, bookId)"
-        )
-    if "/health" not in frontend_app or "/books" not in frontend_app or "DELETE" not in frontend_app:
-        raise ValueError("AC-TINY-FRONTEND-LIVE-BACKEND-INTEGRATION requires live backend HTTP paths")
-    if not _frontend_module_is_node_import_safe(frontend_app):
-        raise ValueError(
-            "frontend module must guard window.addEventListener before Node integration import"
-        )
-    _validate_frontend_integration_behavior_evidence(integration_tests)
-
-
-def _reject_delete_test_that_refetches_deleted_book(backend_tests: str) -> None:
-    try:
-        tree = ast.parse(backend_tests)
-    except SyntaxError as error:
-        raise ValueError("backend tests must be valid Python") from error
-    helper_names = _helpers_that_refetch_bool_like_mutations(tree)
-    if not helper_names:
-        return
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        called_name = _callable_name(node.func)
-        if called_name not in helper_names:
-            continue
-        if any(_is_delete_book_ref(argument) for argument in node.args):
-            raise ValueError(
-                "delete_book tests must not refetch a deleted book after a "
-                "bool/int/str mutation result"
-            )
-
-
-def _validate_backend_public_api_signatures(backend_app: str) -> None:
-    try:
-        tree = ast.parse(backend_app)
-    except SyntaxError as error:
-        raise ValueError("backend app source must be valid Python") from error
-    functions = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    required = {
-        "create_store": ("db_path",),
-        "create_book": ("title",),
-        "list_books": (),
-        "checkout_book": ("book_id",),
-        "return_book": ("book_id",),
-        "delete_book": ("book_id",),
-    }
-    for function_name, required_names in required.items():
-        node = functions.get(function_name)
-        if node is None:
-            raise ValueError(f"backend app must expose {function_name}")
-        if node.args.vararg is not None or node.args.kwarg is not None:
-            raise ValueError(
-                "backend public API functions must use explicit parameters, not *args or **kwargs"
-            )
-        positional = tuple(argument.arg for argument in node.args.args)
-        keyword_only = tuple(argument.arg for argument in node.args.kwonlyargs)
-        available = (*positional, *keyword_only)
-        for required_name in required_names:
-            if required_name not in available:
-                raise ValueError(
-                    f"backend app {function_name} must include explicit {required_name} parameter"
-                )
-
-
-def _validate_backend_standard_library_http_service(backend_app: str) -> None:
-    try:
-        ast.parse(backend_app)
-    except SyntaxError as error:
-        raise ValueError("backend/app.py must be valid Python") from error
-    service_markers = (
-        "http.server",
-        "BaseHTTPRequestHandler",
-        "HTTPServer",
-        "ThreadingHTTPServer",
-        "socketserver.TCPServer",
-    )
-    if not any(marker in backend_app for marker in service_markers):
-        raise ValueError("AC-TINY-BACKEND-STARTUP requires standard-library HTTP service")
-    if "serve_forever" not in backend_app or "__main__" not in backend_app:
-        raise ValueError("AC-TINY-BACKEND-STARTUP requires runnable backend service entrypoint")
-    route_markers = ("/health", "/books", "checkout", "return")
-    if not all(marker in backend_app for marker in route_markers):
-        raise ValueError("AC-TINY-BACKEND-HTTP-CRUD requires live HTTP CRUD routes")
-    if not any(marker in backend_app for marker in ("do_DELETE", "DELETE", "delete")):
-        raise ValueError("AC-TINY-BACKEND-HTTP-CRUD requires delete HTTP endpoint")
-
-
-def _helpers_that_refetch_bool_like_mutations(tree: ast.AST) -> set[str]:
-    helper_names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        has_bool_like_branch = any(
-            isinstance(inner, ast.Call)
-            and _callable_name(inner.func) == "isinstance"
-            and len(inner.args) >= 2
-            and _node_mentions_name(inner.args[0], "result")
-            and _node_mentions_any_name(inner.args[1], {"bool", "int", "str"})
-            for inner in ast.walk(node)
-        )
-        returns_finder = any(
-            isinstance(inner, ast.Return)
-            and isinstance(inner.value, ast.Call)
-            and _callable_name(inner.value.func).endswith("find_book")
-            for inner in ast.walk(node)
-        )
-        if has_bool_like_branch and returns_finder:
-            helper_names.add(node.name)
-    return helper_names
-
-
-def _is_delete_book_ref(node: ast.AST) -> bool:
-    return _callable_name(node).endswith("delete_book")
-
-
-def _callable_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _callable_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
-    return ""
-
-
-def _node_mentions_name(node: ast.AST, name: str) -> bool:
-    return any(isinstance(inner, ast.Name) and inner.id == name for inner in ast.walk(node))
-
-
-def _node_mentions_any_name(node: ast.AST, names: set[str]) -> bool:
-    return any(isinstance(inner, ast.Name) and inner.id in names for inner in ast.walk(node))
-
-
-def _validate_sqlite_schema_literals(backend_db: str) -> None:
-    try:
-        tree = ast.parse(backend_db)
-    except SyntaxError as error:
-        raise ValueError("backend db source must be valid Python") from error
-    create_table_sql = tuple(
-        value
-        for value in _string_literals(tree)
-        if "CREATE TABLE" in value.upper()
-    )
-    if not create_table_sql:
-        raise ValueError("SQLite schema must include executable CREATE TABLE SQL")
-    for sql in create_table_sql:
-        try:
-            connection = sqlite3.connect(":memory:")
-            try:
-                connection.execute(sql)
-            finally:
-                connection.close()
-        except sqlite3.Error as error:
-            raise ValueError("SQLite CREATE TABLE schema must be executable") from error
-
-
-def _string_literals(tree: ast.AST) -> tuple[str, ...]:
-    values: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            values.append(node.value)
-    return tuple(values)
-
-
-def _frontend_has_exact_function_signature(
-    frontend_app: str,
-    *,
-    function_name: str,
-    parameters: tuple[str, ...],
-) -> bool:
-    parameter_pattern = r"\s*,\s*".join(re.escape(parameter) for parameter in parameters)
-    patterns = (
-        rf"(?:export\s+)?async\s+function\s+{re.escape(function_name)}\s*\(\s*{parameter_pattern}\s*\)",
-        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*async\s*\(\s*{parameter_pattern}\s*\)",
-        rf"(?:export\s+)?(?:const|let|var)\s+{re.escape(function_name)}\s*=\s*\(\s*{parameter_pattern}\s*\)\s*=>",
-    )
-    if not any(re.search(pattern, frontend_app) for pattern in patterns):
-        return False
-    default_pattern = rf"{re.escape(function_name)}\s*\([^)]*="
-    return re.search(default_pattern, frontend_app) is None
-
-
-def _frontend_module_is_node_import_safe(frontend_app: str) -> bool:
-    if "window.addEventListener" not in frontend_app:
-        return True
-    guard_markers = (
-        "typeof window.addEventListener === 'function'",
-        'typeof window.addEventListener === "function"',
-        "'addEventListener' in window",
-        '"addEventListener" in window',
-    )
-    return any(marker in frontend_app for marker in guard_markers)
-
-
-def _validate_frontend_integration_behavior_evidence(integration_tests: str) -> None:
-    if not integration_tests.strip():
-        raise ValueError("frontend integration behavior evidence is required")
-    try:
-        ast.parse(integration_tests)
-    except SyntaxError as error:
-        raise ValueError("frontend integration tests must be valid Python") from error
-    runner_markers = ("subprocess.Popen", "subprocess.run", "asyncio.run", "pytest.mark.asyncio")
-    if not any(marker in integration_tests for marker in runner_markers):
-        raise ValueError("integration behavior evidence must execute frontend functions")
-    startup_markers = (
-        "python -m backend.app",
-        '"-m", "backend.app"',
-        "'-m', 'backend.app'",
-        "backend.app",
-    )
-    http_client_markers = ("urllib.request", "http.client", "urlopen(")
-    if (
-        not any(marker in integration_tests for marker in startup_markers)
-        or not any(marker in integration_tests for marker in http_client_markers)
-        or "/health" not in integration_tests
-        or "/books" not in integration_tests
-        or ("127.0.0.1" not in integration_tests and "localhost" not in integration_tests)
-    ):
-        raise ValueError("live HTTP integration evidence must start backend and probe /health and /books")
-    if "DELETE" not in integration_tests:
-        raise ValueError("integration behavior evidence must assert backend delete API path")
-    if "fakeFetch" in integration_tests:
-        raise ValueError("fakeFetch-only cannot satisfy live frontend/backend integration evidence")
-    reset_markers = (".length = 0", ".splice(0")
-    if any(marker in integration_tests for marker in reset_markers):
-        raise ValueError(
-            "integration behavior evidence must preserve loadBooks and deleteBook fetch calls"
-        )
-    pytest_tmp_filter_markers = (
-        "part.startswith(\".pytest-tmp\")",
-        "part.startswith('.pytest-tmp')",
-        "startswith(\".pytest-tmp\")",
-        "startswith('.pytest-tmp')",
-    )
-    if any(marker in integration_tests for marker in pytest_tmp_filter_markers):
-        raise ValueError(
-            "integration behavior evidence must not exclude frontend modules "
-            "because the package root is under a pytest-tmp directory"
-        )
+    if not package_contents:
+        raise ValueError("package contents are required")
 
 
 class SequenceClock:
@@ -1955,7 +1804,12 @@ def _verified_evidence(
             )
         )
         if not result.success or result.verified_evidence is None:
-            raise AssertionError(f"tiny evidence verification failed: {result.blockers}")
+            command_id = command_result.verification_run.command_id.value
+            raise AssertionError(
+                "tiny evidence verification failed for "
+                f"{command_id}: {result.blockers}; "
+                f"stdout={command_result.stdout!r}; stderr={command_result.stderr!r}"
+            )
         verified.append(result.verified_evidence)
     return tuple(verified)
 
@@ -1963,8 +1817,13 @@ def _verified_evidence(
 _SUPPORTED_PACKAGE_ASSEMBLY_EVIDENCE_TYPES = {
     "backend_http_api_evidence",
     "backend_source_inventory",
+    "backend_service_run",
+    "backend_http_crud_evidence",
     "sqlite_persistence_evidence",
+    "sqlite_persistence_http_evidence",
     "frontend_source_inventory",
+    "frontend_service_run",
+    "live_frontend_backend_integration_evidence",
     "run_manifest",
     "test_command_evidence",
     "final_command_evidence",

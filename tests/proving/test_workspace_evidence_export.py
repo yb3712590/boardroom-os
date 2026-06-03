@@ -19,11 +19,9 @@ from boardroom_os.contracts.source_surface import OwnerSeatRef, RequiredTestRef,
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
 from boardroom_os.evidence.claim import EvidenceArtifactRef, EvidenceClaimRef, EvidenceClaimSourceKind
 from boardroom_os.evidence.live_blackbox import (
-    BackendCrudProbeResult,
-    FrontendLiveProbeResult,
     LiveBlackboxIntegrationEvidence,
     LiveBlackboxIntegrationEvidenceRef,
-    SQLitePersistenceProbeResult,
+    LiveBlackboxProbeResult,
 )
 from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.evidence.table import (
@@ -356,35 +354,19 @@ def _live_blackbox_evidence(ref: str = "live-blackbox.app") -> LiveBlackboxInteg
         frontend_command_id=ContractId(value="run-frontend"),
         backend_service_run_ref="service-run.backend",
         frontend_service_run_ref="service-run.frontend",
-        backend_probe=BackendCrudProbeResult(
-            backend_url="http://127.0.0.1:8000/health",
-            created_book_id=1,
-            create_status=201,
-            list_status=200,
-            checkout_status=200,
-            checkout_state="CHECKED_OUT",
-            return_status=200,
-            return_state="IN_LIBRARY",
-            delete_status=200,
-            delete_confirmed=True,
-            probed_at=_NOW,
-        ),
-        sqlite_probe=SQLitePersistenceProbeResult(
-            db_path="books.sqlite3",
-            table_names=("books",),
-            observed_states=("CHECKED_OUT", "IN_LIBRARY"),
-            deleted_book_absent=True,
-            source="http_workflow",
-            probed_at=_NOW,
-        ),
-        frontend_probe=FrontendLiveProbeResult(
-            frontend_url="http://127.0.0.1:5173/index.html",
-            backend_url="http://127.0.0.1:8000/health",
-            fetched_paths=("/health", "/books", "/books/1"),
-            fetched_methods=("GET", "GET", "DELETE"),
-            used_fake_fetch=False,
-            response_body_sha256="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            probed_at=_NOW,
+        probes=(
+            LiveBlackboxProbeResult(
+                probe_ref="frontend-live",
+                acceptance_refs=(AcceptanceRef(value="AC-APP-LIVE"),),
+                service_run_refs=("service-run.backend", "service-run.frontend"),
+                command_ids=("run-app", "run-frontend"),
+                probe_url="http://127.0.0.1:5173/index.html",
+                status_code=200,
+                passed=True,
+                observed_facts={"live_frontend_backend_probe": True},
+                body_sha256="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                probed_at=_NOW,
+            ),
         ),
         generated_at=_NOW,
     )

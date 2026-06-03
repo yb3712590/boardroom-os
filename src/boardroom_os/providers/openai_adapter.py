@@ -21,6 +21,9 @@ class OpenAIProviderConfigError(ValueError):
     pass
 
 
+DEFAULT_OPENAI_CONTEXT_WINDOW = 400_000
+
+
 class ProviderOutputContentHash(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -138,7 +141,8 @@ class OpenAIProviderSettings(BaseModel):
     text_verbosity: Literal["low", "medium", "high"] = "low"
     response_format: Literal["text", "json_object"] = "text"
     max_output_tokens: int = Field(default=1024, gt=0)
-    timeout_seconds: float = Field(default=60.0, gt=0)
+    context_window: int = Field(default=DEFAULT_OPENAI_CONTEXT_WINDOW, gt=0)
+    timeout_seconds: float = Field(gt=0)
     max_retries: int = Field(default=0, ge=0)
     system_instructions: str = ""
     artifact_store_root: Path | None = None
@@ -168,6 +172,7 @@ class OpenAIProviderSettings(BaseModel):
             "OPENAI_BASE_URL",
             "BOARDROOM_OPENAI_MODEL",
             "BOARDROOM_OPENAI_API_PROTOCOL",
+            "BOARDROOM_OPENAI_TIMEOUT_SECONDS",
         )
         missing_names = tuple(name for name in required_names if not values.get(name, "").strip())
         if missing_names:
@@ -183,7 +188,11 @@ class OpenAIProviderSettings(BaseModel):
             text_verbosity=values.get("BOARDROOM_OPENAI_TEXT_VERBOSITY", "low"),
             response_format=values.get("BOARDROOM_OPENAI_RESPONSE_FORMAT", "text"),
             max_output_tokens=values.get("BOARDROOM_OPENAI_MAX_OUTPUT_TOKENS", "1024"),
-            timeout_seconds=values.get("BOARDROOM_OPENAI_TIMEOUT_SECONDS", "60"),
+            context_window=values.get(
+                "BOARDROOM_OPENAI_CONTEXT_WINDOW",
+                str(DEFAULT_OPENAI_CONTEXT_WINDOW),
+            ),
+            timeout_seconds=values["BOARDROOM_OPENAI_TIMEOUT_SECONDS"],
             max_retries=values.get("BOARDROOM_OPENAI_MAX_RETRIES", "0"),
             system_instructions=values.get("BOARDROOM_OPENAI_SYSTEM_INSTRUCTIONS", ""),
             artifact_store_root=values.get("BOARDROOM_OPENAI_ARTIFACT_STORE_ROOT") or None,
@@ -389,6 +398,7 @@ class OpenAIProviderTransport:
 
 
 __all__ = [
+    "DEFAULT_OPENAI_CONTEXT_WINDOW",
     "FileProviderOutputStore",
     "OpenAIProviderConfigError",
     "OpenAIProviderSettings",

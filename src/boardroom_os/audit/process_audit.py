@@ -42,6 +42,8 @@ from boardroom_os.contracts.refs import (
 from boardroom_os.contracts.types import NonEmptyTextValue
 from boardroom_os.evidence.table import FinalEvidenceTable
 from boardroom_os.evidence.verifier import VerifiedEvidence
+from boardroom_os.evidence.live_blackbox import LiveBlackboxIntegrationEvidence
+from boardroom_os.evidence.service_run import ServiceRunEvidence
 from boardroom_os.events.record import EventRecord
 from boardroom_os.events.types import EventType, ProjectRef
 from boardroom_os.execution.context_index import AgentContextIndex, ProviderAttemptRef
@@ -106,6 +108,14 @@ _LINEAGE_EVIDENCE_BINDING_REQUIRED_FIELDS = {
     "verified_evidence_ref",
     "verifier_ref",
     "verification_run_ref",
+    "service_run_refs",
+    "live_blackbox_evidence_refs",
+    "run_manifest_ref",
+}
+_LINEAGE_EVIDENCE_BINDING_REQUIRED_TEXT_FIELDS = {
+    "evidence_claim_ref",
+    "verified_evidence_ref",
+    "verifier_ref",
     "run_manifest_ref",
 }
 _FALLBACK_LINEAGE_REQUIRED_FIELDS = {
@@ -807,6 +817,8 @@ class ProcessAuditBuilderInput(BaseModel):
     final_evidence_table: SkipValidation[FinalEvidenceTable]
     checker_verdict: SkipValidation[CheckerVerdict]
     verification_runs: tuple[SkipValidation[VerificationRun], ...]
+    service_runs: tuple[SkipValidation[ServiceRunEvidence], ...] = ()
+    live_blackbox_evidence: tuple[SkipValidation[LiveBlackboxIntegrationEvidence], ...] = ()
     verified_evidence: tuple[SkipValidation[VerifiedEvidence], ...]
     provider_attempt_refs: tuple[ProviderAttemptRef, ...]
     replay_bundle: SkipValidation[ReplayBundle]
@@ -832,6 +844,8 @@ class ProcessAuditBuilderInput(BaseModel):
             return data
         for field_name in (
             "verification_runs",
+            "service_runs",
+            "live_blackbox_evidence",
             "verified_evidence",
             "provider_attempt_refs",
         ):
@@ -932,6 +946,26 @@ class ProcessAuditBuilderInput(BaseModel):
     ) -> tuple[VerificationRun, ...]:
         if not values:
             raise ProcessAuditError("verification_runs must not be empty")
+        return values
+
+    @field_validator("service_runs")
+    @classmethod
+    def _validate_service_runs(
+        cls, values: tuple[ServiceRunEvidence, ...]
+    ) -> tuple[ServiceRunEvidence, ...]:
+        refs = [service.service_run_evidence_id.value for service in values]
+        if len(set(refs)) != len(refs):
+            raise ProcessAuditError("service_run refs must be unique")
+        return values
+
+    @field_validator("live_blackbox_evidence")
+    @classmethod
+    def _validate_live_blackbox_evidence(
+        cls, values: tuple[LiveBlackboxIntegrationEvidence, ...]
+    ) -> tuple[LiveBlackboxIntegrationEvidence, ...]:
+        refs = [evidence.live_blackbox_evidence_id.value for evidence in values]
+        if len(set(refs)) != len(refs):
+            raise ProcessAuditError("live blackbox evidence refs must be unique")
         return values
 
     @field_validator("verified_evidence")
@@ -1136,20 +1170,87 @@ def _validate_evidence_closure(builder_input: ProcessAuditBuilderInput) -> None:
     if len(verified_refs) != len(builder_input.verified_evidence):
         raise ProcessAuditError("verified_evidence refs must be unique")
     for evidence in builder_input.verified_evidence:
-        _verification_ref_for_evidence(evidence)
+        _evidence_binding_refs_for_evidence(evidence)
     verification_run_refs = {
         run.verification_run_id.value for run in builder_input.verification_runs
     }
+    actual_service_run_refs = {
+        service.service_run_evidence_id.value for service in builder_input.service_runs
+    }
+    actual_live_blackbox_refs = {
+        evidence.live_blackbox_evidence_id.value
+        for evidence in builder_input.live_blackbox_evidence
+    }
+    service_run_refs = {
+        ref.value for ref in builder_input.workspace_evidence_bundle.service_run_refs
+    }
+    live_blackbox_evidence_refs = {
+        ref.value for ref in builder_input.workspace_evidence_bundle.live_blackbox_evidence_refs
+    }
+    if actual_service_run_refs != service_run_refs:
+        raise ProcessAuditError("workspace evidence bundle service_run_refs mismatch")
+    if actual_live_blackbox_refs != live_blackbox_evidence_refs:
+        raise ProcessAuditError("workspace evidence bundle live_blackbox_evidence_refs mismatch")
+    for evidence in builder_input.live_blackbox_evidence:
+        required_service_refs = {
+            evidence.backend_service_run_ref.value,
+            evidence.frontend_service_run_ref.value,
+        }
+        if not required_service_refs.issubset(actual_service_run_refs):
+            raise ProcessAuditError(
+                "live blackbox evidence service run refs must resolve to service runs"
+            )
     linked_run_refs = {
         run_ref.value
         for evidence in builder_input.verified_evidence
         for run_ref in evidence.verification_run_refs
+    }
+    linked_service_run_refs = {
+        service_ref.value
+        for evidence in builder_input.verified_evidence
+        for service_ref in evidence.service_run_refs
+    }
+    linked_live_blackbox_refs = {
+        live_ref.value
+        for evidence in builder_input.verified_evidence
+        for live_ref in evidence.live_blackbox_evidence_refs
     }
     missing_run_refs = linked_run_refs - verification_run_refs
     if missing_run_refs:
         raise ProcessAuditError(
             "verified evidence references missing verification runs: "
             f"{sorted(missing_run_refs)}"
+        )
+    missing_service_refs = linked_service_run_refs - service_run_refs
+    if missing_service_refs:
+        raise ProcessAuditError(
+            "verified evidence references missing service runs: "
+            f"{sorted(missing_service_refs)}"
+        )
+    missing_live_refs = linked_live_blackbox_refs - live_blackbox_evidence_refs
+    if missing_live_refs:
+        raise ProcessAuditError(
+            "verified evidence references missing live blackbox evidence: "
+            f"{sorted(missing_live_refs)}"
+        )
+    unlinked_service_refs = service_run_refs - linked_service_run_refs - {
+        ref
+        for evidence in builder_input.live_blackbox_evidence
+        for ref in (
+            evidence.backend_service_run_ref.value,
+            evidence.frontend_service_run_ref.value,
+        )
+    }
+    if unlinked_service_refs:
+        raise ProcessAuditError(
+            "workspace evidence bundle service_run_refs missing verified evidence: "
+            f"{sorted(unlinked_service_refs)}"
+        )
+    unlinked_live_refs = live_blackbox_evidence_refs - linked_live_blackbox_refs
+    if unlinked_live_refs:
+        raise ProcessAuditError(
+            "workspace evidence bundle live_blackbox_evidence_refs missing verified evidence: "
+            f"{sorted(unlinked_live_refs)}"
         )
 
     final_table_refs = _final_table_verified_evidence_refs(builder_input)
@@ -1763,7 +1864,7 @@ def _ticket_graph_markdown(builder_input: ProcessAuditBuilderInput) -> str:
 def _evidence_bindings_for_entry(
     builder_input: ProcessAuditBuilderInput,
     evidence_refs: tuple[Any, ...],
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     evidence_by_ref = {
         evidence.verified_evidence_id.value: evidence
         for evidence in builder_input.verified_evidence
@@ -1774,13 +1875,15 @@ def _evidence_bindings_for_entry(
         evidence = evidence_by_ref.get(evidence_ref.value)
         if evidence is None:
             raise ProcessAuditError("source inventory evidence_refs missing verified evidence")
-        verification_run_ref = _verification_ref_for_evidence(evidence)
+        binding_refs = _evidence_binding_refs_for_evidence(evidence)
         bindings.append(
             {
                 "evidence_claim_ref": evidence.evidence_claim_ref.value,
                 "verified_evidence_ref": evidence.verified_evidence_id.value,
                 "verifier_ref": _verifier_ref_for_evidence(builder_input, evidence),
-                "verification_run_ref": verification_run_ref,
+                "verification_run_ref": binding_refs["verification_run_ref"],
+                "service_run_refs": binding_refs["service_run_refs"],
+                "live_blackbox_evidence_refs": binding_refs["live_blackbox_evidence_refs"],
                 "run_manifest_ref": run_manifest_ref,
             }
         )
@@ -1850,14 +1953,30 @@ def _artifact_lineage_payload(
     }
 
 
-def _verification_ref_for_evidence(evidence: VerifiedEvidence) -> str:
+def _evidence_binding_refs_for_evidence(evidence: VerifiedEvidence) -> dict[str, Any]:
     if not isinstance(evidence, VerifiedEvidence):
         raise ProcessAuditError("verified evidence must resolve to VerifiedEvidence")
-    if not evidence.verification_run_refs:
+    verification_run_refs = tuple(ref.value for ref in evidence.verification_run_refs)
+    service_run_refs = tuple(ref.value for ref in evidence.service_run_refs)
+    live_blackbox_evidence_refs = tuple(
+        ref.value for ref in evidence.live_blackbox_evidence_refs
+    )
+    if not verification_run_refs and not service_run_refs and not live_blackbox_evidence_refs:
         raise ProcessAuditError(
-            f"verified evidence missing verification_run_refs: {evidence.verified_evidence_id.value}"
+            "verified evidence missing verification_run_refs, service_run_refs, "
+            f"or live_blackbox_evidence_refs: {evidence.verified_evidence_id.value}"
         )
-    return evidence.verification_run_refs[0].value
+    return {
+        "verification_run_ref": verification_run_refs[0] if verification_run_refs else None,
+        "service_run_refs": sorted(service_run_refs),
+        "live_blackbox_evidence_refs": sorted(live_blackbox_evidence_refs),
+    }
+
+
+def _verification_ref_for_evidence(evidence: VerifiedEvidence) -> str | None:
+    binding_refs = _evidence_binding_refs_for_evidence(evidence)
+    verification_run_ref = binding_refs["verification_run_ref"]
+    return verification_run_ref
 
 
 def _verifier_ref_for_evidence(
@@ -1865,6 +1984,12 @@ def _verifier_ref_for_evidence(
     evidence: VerifiedEvidence,
 ) -> str:
     verification_run_ref = _verification_ref_for_evidence(evidence)
+    if verification_run_ref is None:
+        if evidence.service_run_refs:
+            return "service-runner"
+        if evidence.live_blackbox_evidence_refs:
+            return "live-blackbox-verifier"
+        raise ProcessAuditError("verified evidence missing verifier source")
     verification_run = next(
         (
             run
@@ -1891,11 +2016,15 @@ def _evidence_map_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, 
     for row in builder_input.final_evidence_table.rows:
         evidence_refs = [ref.value for ref in row.verified_evidence_refs]
         verification_refs: list[str] = []
+        service_refs: list[str] = []
+        live_refs: list[str] = []
         source_inventory_refs: list[str] = []
         for evidence_ref in evidence_refs:
             evidence = verified_by_ref.get(evidence_ref)
             if evidence is not None:
                 verification_refs.extend(ref.value for ref in evidence.verification_run_refs)
+                service_refs.extend(ref.value for ref in evidence.service_run_refs)
+                live_refs.extend(ref.value for ref in evidence.live_blackbox_evidence_refs)
             source_inventory_refs.extend(source_entries_by_evidence.get(evidence_ref, ()))
         rows.append(
             {
@@ -1905,6 +2034,8 @@ def _evidence_map_payload(builder_input: ProcessAuditBuilderInput) -> dict[str, 
                 "verified_evidence_refs": evidence_refs,
                 "source_inventory_refs": sorted(set(source_inventory_refs)),
                 "verification_run_refs": sorted(set(verification_refs)),
+                "service_run_refs": sorted(set(service_refs)),
+                "live_blackbox_evidence_refs": sorted(set(live_refs)),
                 "checker_verdict_ref": builder_input.checker_verdict.checker_verdict_id.value,
             }
         )
@@ -2026,6 +2157,34 @@ def _checked_refs(builder_input: ProcessAuditBuilderInput) -> tuple[str, ...]:
             for run in canonical_sort_for_hash(
                 builder_input.verification_runs,
                 key=lambda run: run.verification_run_id.value,
+            )
+        ),
+        *(
+            service.service_run_evidence_id.value
+            for service in canonical_sort_for_hash(
+                builder_input.service_runs,
+                key=lambda service: service.service_run_evidence_id.value,
+            )
+        ),
+        *(
+            service.readiness_url.value
+            for service in canonical_sort_for_hash(
+                builder_input.service_runs,
+                key=lambda service: service.service_run_evidence_id.value,
+            )
+        ),
+        *(
+            service.probe_body_sha256.value
+            for service in canonical_sort_for_hash(
+                builder_input.service_runs,
+                key=lambda service: service.service_run_evidence_id.value,
+            )
+        ),
+        *(
+            evidence.live_blackbox_evidence_id.value
+            for evidence in canonical_sort_for_hash(
+                builder_input.live_blackbox_evidence,
+                key=lambda evidence: evidence.live_blackbox_evidence_id.value,
             )
         ),
         *(
@@ -2430,10 +2589,30 @@ def _validate_artifact_lineage_evidence_bindings(lineage: dict[str, Any]) -> Non
             raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
         if any(
             not isinstance(binding[field], str) or not binding[field]
-            for field in _LINEAGE_EVIDENCE_BINDING_REQUIRED_FIELDS
+            for field in _LINEAGE_EVIDENCE_BINDING_REQUIRED_TEXT_FIELDS
         ):
             raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
-        if binding["verifier_ref"] == binding["verification_run_ref"]:
+        verification_run_ref = binding["verification_run_ref"]
+        if verification_run_ref is not None and (
+            not isinstance(verification_run_ref, str) or not verification_run_ref
+        ):
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        for field in ("service_run_refs", "live_blackbox_evidence_refs"):
+            refs = binding[field]
+            if not isinstance(refs, list | tuple):
+                raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+            if any(not isinstance(ref, str) or not ref for ref in refs):
+                raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        if (
+            verification_run_ref is None
+            and not binding["service_run_refs"]
+            and not binding["live_blackbox_evidence_refs"]
+        ):
+            raise ProcessAuditError("artifact lineage missing producer attempt or closeout link")
+        if (
+            verification_run_ref is not None
+            and binding["verifier_ref"] == verification_run_ref
+        ):
             raise ProcessAuditError(
                 "artifact lineage evidence bindings must distinguish verifier and verification run"
             )

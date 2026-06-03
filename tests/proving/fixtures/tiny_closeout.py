@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -84,7 +84,10 @@ from boardroom_os.reducers.closeout_reducer import (
     CloseoutReducerPayloadResolver,
 )
 from boardroom_os.reducers.ticket_reducer import TicketRefPayload
-from boardroom_os.workspace.run_manifest import validate_run_manifest_binding
+from boardroom_os.workspace.run_manifest import (
+    RunManifestCommandKind,
+    validate_run_manifest_binding,
+)
 from boardroom_os.workspace.source_inventory import (
     PackageCommitRef,
     SourceInventory,
@@ -94,6 +97,7 @@ from boardroom_os.workspace.source_inventory import (
 )
 from tests.proving.fixtures.tiny_package_assembly import (
     TinyPackageAssemblyFixture,
+    build_tiny_live_blackbox_fixture,
     build_tiny_package_assembly_fixture,
 )
 from tests.fixtures.execution.role_prompt_hooks import baseline_role_prompt_hook_registry
@@ -101,6 +105,7 @@ from tests.proving.fixtures.tiny_provider_attempts import (
     TinyProviderAttemptFixture,
     build_tiny_provider_attempt_fixture,
     compile_tiny_implementation_execution_packages,
+    openai_settings_from_test_env,
 )
 from tests.proving.fixtures.tiny_ticket_graph import (
     PROJECT_REF,
@@ -303,9 +308,22 @@ def build_tiny_closeout_fixture(
         allow_fake_provider_for_negative_tests=allow_fake_provider_for_negative_tests,
         provider_lock_root=provider_lock_root,
     )
+    return _closeout_fixture_from_gate_fixture(gate_fixture)
+
+
+def _closeout_fixture_from_gate_fixture(
+    gate_fixture: TinyCloseoutGateFixture,
+) -> TinyCloseoutFixture:
     gate_result = gate_fixture.closeout_gate_result
     if gate_result.verdict.value != "passed":
-        raise ValueError("tiny closeout gate result must be passed before CloseoutPackage")
+        blocker_details = "; ".join(
+            f"{blocker.code.value}:{blocker.related_ref}:{blocker.message}"
+            for blocker in gate_result.blockers
+        )
+        raise ValueError(
+            "tiny closeout gate result must be passed before CloseoutPackage"
+            + (f": {blocker_details}" if blocker_details else "")
+        )
     if gate_fixture.process_audit_bundle is None or gate_fixture.process_audit_readiness is None:
         raise ValueError("process audit bundle is required before CloseoutPackage")
     _reject_fake_provider_passed_closeout(gate_fixture.package_fixture)
@@ -395,9 +413,10 @@ def build_tiny_closeout_gate_fixture(
             if provider_lock_root is not None and provider_lock_root.exists()
             else None
         )
-        package_fixture = build_tiny_package_assembly_fixture(
+        package_fixture = build_tiny_live_blackbox_fixture(
             package_root=root,
             provider_fixture=provider_fixture,
+            allow_test_provider_transport=allow_fake_provider_for_negative_tests,
         )
     _reject_fake_provider_attempts(
         package_fixture,
@@ -476,6 +495,13 @@ def build_tiny_closeout_gate_fixture(
                 final_evidence_table=package_fixture.final_evidence_table,
                 checker_verdict=checker_verdict,
                 verification_runs=verification_runs,
+                service_runs=tuple(getattr(package_fixture, "service_runs", ())),
+                live_blackbox_evidence=(
+                    (package_fixture.live_blackbox_evidence,)
+                    if getattr(package_fixture, "live_blackbox_evidence", None)
+                    is not None
+                    else ()
+                ),
                 verified_evidence=package_fixture.verified_evidence,
                 provider_attempt_refs=provider_attempt_refs,
                 replay_bundle=replay_bundle,
@@ -541,26 +567,52 @@ def materialize_tiny_closeout_sample(
     if resolved_root.exists() and not resolved_root.is_dir():
         raise ValueError("sample output_root must be a directory")
     _reject_existing_v2_080_failure_sample(resolved_root)
-    if not (resolved_root / _PROVIDER_ATTEMPTS_SAMPLE_PATH).exists():
-        raise ValueError(
-            "V2-090B blocks tiny closeout sample rebuild until V2-090F golden sample rebuild"
-        )
-    with tempfile.TemporaryDirectory(prefix="boardroom-os-v2080f-fixture-") as temp_dir:
+    _reject_unregistered_sample_runtime_files(resolved_root)
+    with tempfile.TemporaryDirectory(prefix="boardroom-os-v2090f-fixture-") as temp_dir:
         package_root = Path(temp_dir) / "physical-package-root"
         provider_fixture = _locked_provider_fixture_from_sample(resolved_root)
-        package_fixture = None
-        if provider_fixture is not None:
-            package_fixture = build_tiny_package_assembly_fixture(
+        package_fixture = (
+            build_tiny_live_blackbox_fixture(
                 package_root=package_root,
                 provider_fixture=provider_fixture,
             )
+            if provider_fixture is not None
+            else build_tiny_live_blackbox_fixture(
+                package_root=package_root,
+                provider_fixture=build_tiny_provider_attempt_fixture(
+                    settings=_sample_provider_settings(resolved_root),
+                    source_delivery_attempt_limit=1,
+                ),
+            )
+        )
         gate_fixture = build_tiny_closeout_gate_fixture(
             package_root=package_root,
             package_fixture=package_fixture,
             provider_lock_root=resolved_root,
         )
-    _raise_if_tiny_closeout_gate_blocked(gate_fixture)
-    raise ValueError("V2-090B blocks V2-080 tiny sample rebuild until V2-090F")
+        _raise_if_tiny_closeout_gate_blocked(gate_fixture)
+        closeout_fixture = _closeout_fixture_from_gate_fixture(gate_fixture)
+        files = _tiny_closeout_sample_files(closeout_fixture)
+    if clean:
+        _clean_tiny_closeout_sample(resolved_root)
+    for relative_path, content in files.items():
+        _write_sample_file(resolved_root, relative_path, content)
+    manifest = _sample_manifest(
+        resolved_root,
+        logical_output_root=logical_output_root,
+    )
+    _write_sample_file(resolved_root, "sample-manifest.json", _stable_json(asdict(manifest)))
+    return manifest
+
+
+def _sample_provider_settings(output_root: Path):
+    settings = openai_settings_from_test_env()
+    return settings.model_copy(
+        update={
+            "artifact_store_root": output_root / _PROVIDER_ARTIFACTS_SAMPLE_DIR,
+            "max_retries": 0,
+        }
+    )
 
 
 def _raise_if_tiny_closeout_gate_blocked(fixture: TinyCloseoutGateFixture) -> None:
@@ -620,6 +672,19 @@ def _validate_existing_provider_artifact_lock(output_root: Path) -> None:
             )
 
 
+def _reject_unregistered_sample_runtime_files(output_root: Path) -> None:
+    if not output_root.exists():
+        return
+    for path in output_root.rglob("*"):
+        relative_path = path.relative_to(output_root).as_posix()
+        if path.name == "__pycache__" or "__pycache__/" in relative_path:
+            raise ValueError(f"unregistered runtime file in sample tree: {relative_path}")
+        if path.name.startswith(".pytest") or "/.pytest" in relative_path:
+            raise ValueError(f"unregistered runtime file in sample tree: {relative_path}")
+        if path.suffix in {".pyc", ".sqlite3"}:
+            raise ValueError(f"unregistered runtime file in sample tree: {relative_path}")
+
+
 def _tiny_closeout_sample_files(
     fixture: TinyCloseoutFixture,
 ) -> dict[str, str]:
@@ -641,6 +706,12 @@ def _tiny_closeout_sample_files(
             ),
             "20-evidence/tests/verification-runs.json": _stable_json(
                 [run.model_dump(mode="json") for run in fixture.verification_runs]
+            ),
+            "20-evidence/tests/service-runs.json": _stable_json(
+                _stable_service_run_payloads(fixture)
+            ),
+            "20-evidence/tests/live-blackbox.json": _stable_json(
+                _stable_live_blackbox_payloads(fixture)
             ),
             _PROVIDER_ATTEMPTS_SAMPLE_PATH.as_posix(): _stable_json(
                 [
@@ -689,6 +760,37 @@ def _tiny_closeout_sample_files(
             files[artifact.path.value] = _stable_json(content)
     files.update(_provider_artifact_sample_files(fixture))
     return dict(sorted(files.items()))
+
+
+def _stable_service_run_payloads(fixture: TinyCloseoutFixture) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for index, service in enumerate(
+        sorted(
+            getattr(fixture.package_fixture, "service_runs", ()),
+            key=lambda item: item.service_run_evidence_id.value,
+        ),
+        start=1,
+    ):
+        payload = service.model_dump(mode="json")
+        payload["process_id"] = index
+        if service.command_id.value == "run-backend":
+            overrides = dict(payload["environment_overrides"])
+            overrides["BOOKS_DB_PATH"] = "10-project/20-evidence-runtime/books.blackbox.sqlite3"
+            payload["environment_overrides"] = overrides
+        payloads.append(payload)
+    return payloads
+
+
+def _stable_live_blackbox_payloads(fixture: TinyCloseoutFixture) -> list[dict[str, Any]]:
+    evidence = getattr(fixture.package_fixture, "live_blackbox_evidence", None)
+    if evidence is None:
+        return []
+    payload = evidence.model_dump(mode="json")
+    for probe in payload["probes"]:
+        facts = probe.get("observed_facts", {})
+        if "db_path" in facts:
+            facts["db_path"] = "10-project/20-evidence-runtime/books.blackbox.sqlite3"
+    return [payload]
 
 
 def _project_file_content(fixture: TinyCloseoutFixture, relative_path: str) -> str:
@@ -761,6 +863,10 @@ def _locked_provider_fixture_from_sample(
     return _provider_fixture_from_locked_attempts(
         attempts=attempts,
         artifact_root=artifacts_root,
+        context_window=_locked_context_window_from_sample(
+            output_root=output_root,
+            attempts=attempts,
+        ),
     )
 
 
@@ -768,9 +874,11 @@ def _provider_fixture_from_locked_attempts(
     *,
     attempts: tuple[ProviderAttempt, ...],
     artifact_root: Path,
+    context_window: int | None = None,
 ) -> TinyProviderAttemptFixture:
     compiled = compile_tiny_implementation_execution_packages(
         model=attempts[0].model,
+        context_window=context_window,
     )
     attempts_by_input_ref = {
         attempt.input_package_ref.value: attempt
@@ -809,6 +917,42 @@ def _provider_fixture_from_locked_attempts(
         },
         provider_artifact_root=artifact_root,
     )
+
+
+def _locked_context_window_from_sample(
+    *,
+    output_root: Path,
+    attempts: tuple[ProviderAttempt, ...],
+) -> int | None:
+    context_index_path = output_root / "30-audit/agent-context-index.json"
+    if not context_index_path.exists():
+        return None
+    data = json.loads(context_index_path.read_text(encoding="utf-8"))
+    attempt_refs = {attempt.provider_attempt_id.value for attempt in attempts}
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("provider lock agent context index entries are required")
+    locked_windows: set[int] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("provider lock agent context index entry must be an object")
+        entry_attempt_refs = entry.get("provider_attempt_refs")
+        if not isinstance(entry_attempt_refs, list):
+            raise ValueError("provider lock agent context index provider_attempt_refs are required")
+        if not any(str(ref) in attempt_refs for ref in entry_attempt_refs):
+            continue
+        model_profile = entry.get("model_execution_profile")
+        if not isinstance(model_profile, dict):
+            raise ValueError("provider lock agent context index model profile is required")
+        context_window = model_profile.get("context_window")
+        if not isinstance(context_window, int) or context_window <= 0:
+            raise ValueError("provider lock context_window must be positive")
+        locked_windows.add(context_window)
+    if not locked_windows:
+        return None
+    if len(locked_windows) != 1:
+        raise ValueError("provider lock context_window must be consistent")
+    return next(iter(locked_windows))
 
 
 def _execute_locked_provider_package(
@@ -1624,9 +1768,16 @@ def _closeout_gate_input(
     git_audit_readiness: Any,
     process_readiness: Any,
 ) -> CloseoutGateInput:
-    command_bindings = tuple(
-        _closeout_command_binding(package_fixture, run)
-        for run in verification_runs
+    service_runs = tuple(getattr(package_fixture, "service_runs", ()))
+    command_bindings = (
+        *(
+            _closeout_command_binding_for_service(package_fixture, service)
+            for service in service_runs
+        ),
+        *(
+            _closeout_command_binding(package_fixture, run)
+            for run in verification_runs
+        ),
     )
     workspace_evidence_bundle = (
         package_fixture.workspace_evidence_bundle.model_copy(
@@ -1643,6 +1794,7 @@ def _closeout_gate_input(
         final_evidence_table=package_fixture.final_evidence_table,
         checker_verdict=checker_verdict,
         verification_runs=verification_runs,
+        service_run_evidence=service_runs,
         verified_evidence=package_fixture.verified_evidence,
         provider_attempt_refs=provider_attempt_refs,
         final_command_bindings=command_bindings,
@@ -1663,6 +1815,26 @@ def _closeout_command_binding(
     )
     return CloseoutCommandEvidenceBinding(
         verification_run_ref=run.verification_run_id,
+        run_manifest_ref=binding.run_manifest_ref,
+        package_contract_ref=binding.package_contract_ref,
+        command_id=binding.command_id,
+        binding_kind=binding.kind,
+    )
+
+
+def _closeout_command_binding_for_service(
+    package_fixture: TinyPackageAssemblyFixture,
+    service,
+) -> CloseoutCommandEvidenceBinding:
+    binding = validate_run_manifest_binding(
+        run_manifest=package_fixture.run_manifest,
+        package_contract=package_fixture.package_contract,
+        command_id=ContractId(value=service.command_id.value),
+    )
+    if binding.kind is not RunManifestCommandKind.RUN:
+        raise ValueError("service run evidence must bind a RUN command")
+    return CloseoutCommandEvidenceBinding(
+        verification_run_ref=service.service_run_evidence_id.value,
         run_manifest_ref=binding.run_manifest_ref,
         package_contract_ref=binding.package_contract_ref,
         command_id=binding.command_id,

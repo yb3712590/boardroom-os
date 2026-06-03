@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -90,12 +91,13 @@ def _build_negative_package_fixture(tmp_path: Path):
     )
 
     fake_provider_fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
-    return build_tiny_package_assembly_fixture(
+    fixture = build_tiny_package_assembly_fixture(
         package_root=tmp_path / "physical-package-root",
         package_contents=TINY_PACKAGE_CONTENTS,
         provider_fixture=fake_provider_fixture,
-        allow_fake_provider_for_negative_tests=True,
+        allow_test_provider_transport=True,
     )
+    return replace(fixture, workspace_evidence_bundle=None)
 
 
 def _closeout_package_payload(fixture, **overrides):
@@ -129,6 +131,82 @@ def _copy_existing_tiny_sample(output_root: Path) -> None:
     if not _EXISTING_TINY_SAMPLE_ROOT.exists():
         raise AssertionError("existing V2-080 tiny sample is required as regression negative material")
     shutil.copytree(_EXISTING_TINY_SAMPLE_ROOT, output_root)
+
+
+def _write_valid_provider_lock(output_root: Path) -> None:
+    from tests.proving.fixtures.tiny_closeout import (
+        _PROVIDER_ARTIFACTS_SAMPLE_DIR,
+        _PROVIDER_ATTEMPTS_SAMPLE_PATH,
+        _provider_artifact_sample_path,
+    )
+    from tests.proving.fixtures.tiny_package_assembly import TINY_PACKAGE_CONTENTS
+    from tests.proving.fixtures.tiny_provider_attempts import (
+        build_tiny_provider_attempt_fixture,
+    )
+
+    fixture = build_tiny_provider_attempt_fixture(use_fake_results=True)
+    attempts_path = output_root / _PROVIDER_ATTEMPTS_SAMPLE_PATH
+    attempts_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_root = output_root / _PROVIDER_ARTIFACTS_SAMPLE_DIR
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    attempts = []
+    for ticket_id, attempt in fixture.provider_attempts_by_ticket_id.items():
+        suffix = ticket_id.value.replace("ticket-tiny-", "")
+        raw_payload = f"locked provider output for {ticket_id.value}"
+        parsed_payload = _locked_parsed_payload(fixture.execution_packages[ticket_id])
+        raw_ref = _locked_artifact_ref(kind="raw", suffix=suffix, payload=raw_payload)
+        parsed_ref = _locked_artifact_ref(
+            kind="parsed",
+            suffix=suffix,
+            payload=parsed_payload,
+        )
+        for artifact_ref, payload in (
+            (raw_ref, raw_payload),
+            (parsed_ref, parsed_payload),
+        ):
+            artifact_path = output_root / _provider_artifact_sample_path(artifact_ref)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(payload, encoding="utf-8")
+        attempt_payload = attempt.model_dump(mode="json")
+        attempt_payload["provider_attempt_id"]["value"] = (
+            f"provider-attempt.openai.locked.{suffix}"
+        )
+        attempt_payload["raw_output_ref"]["value"] = raw_ref
+        attempt_payload["parsed_output_ref"]["value"] = parsed_ref
+        attempts.append((ticket_id.value, attempt_payload))
+    attempts_path.write_text(
+        json.dumps(
+            [payload for _ticket_id, payload in sorted(attempts)],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _locked_parsed_payload(execution_package) -> str:
+    from tests.proving.fixtures.tiny_package_assembly import TINY_PACKAGE_CONTENTS
+
+    files = {
+        path.value: TINY_PACKAGE_CONTENTS[path.value]
+        for path in execution_package.allowed_write_set
+        if path.value
+        not in {
+            "package-contract.json",
+            "run-manifest.json",
+        }
+    }
+    return json.dumps({"files": files}, ensure_ascii=False, sort_keys=True)
+
+
+def _locked_artifact_ref(
+    *,
+    kind: str,
+    suffix: str,
+    payload: str,
+) -> str:
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"provider-artifact.openai.{kind}.locked-{suffix}.{digest}"
 
 
 def test_tiny_closeout_rejects_missing_replay_bundle(tmp_path: Path) -> None:
@@ -454,6 +532,95 @@ def test_tiny_closeout_blocks_v2_080_failure_package_missing_run_command_evidenc
     assert fixture.audit_answers is None
 
 
+def test_tiny_closeout_fixture_passes_with_live_blackbox_command_evidence(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_fixture
+
+    provider_lock_root = tmp_path / "provider-lock"
+    provider_lock_root.mkdir()
+    _write_valid_provider_lock(provider_lock_root)
+
+    fixture = build_tiny_closeout_fixture(
+        package_root=tmp_path / "physical-package-root",
+        provider_lock_root=provider_lock_root,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+    )
+
+    assert fixture.closeout_gate_result.verdict is CloseoutGateVerdict.PASSED
+    assert fixture.closeout_package.verdict.value == "passed"
+    assert {
+        binding.command_id.value
+        for binding in fixture.closeout_gate_input.final_command_bindings
+    } == {
+        "run-backend",
+        "run-frontend",
+        "test-backend",
+        "test-integration",
+    }
+    assert {
+        service.command_id.value
+        for service in fixture.closeout_gate_input.service_run_evidence
+    } == {"run-backend", "run-frontend"}
+    assert fixture.package_fixture.workspace_evidence_bundle is not None
+    assert fixture.package_fixture.workspace_evidence_bundle.service_run_refs
+    assert fixture.package_fixture.workspace_evidence_bundle.live_blackbox_evidence_refs
+    assert fixture.process_audit_bundle is not None
+    assert fixture.audit_answers is not None
+
+
+def test_tiny_closeout_gate_blocks_when_live_service_evidence_removed(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
+    from tests.proving.fixtures.tiny_package_assembly import (
+        TINY_PACKAGE_CONTENTS,
+        build_tiny_live_blackbox_fixture,
+    )
+    from tests.proving.fixtures.tiny_provider_attempts import (
+        build_tiny_provider_attempt_fixture,
+    )
+
+    package_fixture = build_tiny_live_blackbox_fixture(
+        package_root=tmp_path / "physical-package-root",
+        package_contents=TINY_PACKAGE_CONTENTS,
+        provider_fixture=build_tiny_provider_attempt_fixture(use_fake_results=True),
+        allow_test_provider_transport=True,
+    )
+    fixture = build_tiny_closeout_gate_fixture(
+        package_root=package_fixture.package_root_path,
+        package_fixture=package_fixture,
+        git_transport=_FakeGitTransport(),
+        base_commit_sha=_BASE_COMMIT_SHA,
+        allow_fake_provider_for_negative_tests=True,
+    )
+    remaining_services = tuple(
+        service
+        for service in fixture.closeout_gate_input.service_run_evidence
+        if service.command_id.value != "run-backend"
+    )
+    tampered_input = fixture.closeout_gate_input.model_copy(
+        update={
+            "service_run_evidence": remaining_services,
+            "final_command_bindings": tuple(
+                binding
+                for binding in fixture.closeout_gate_input.final_command_bindings
+                if binding.command_id.value != "run-backend"
+            ),
+        }
+    )
+
+    result = CloseoutGate().evaluate(tampered_input)
+
+    assert result.verdict is CloseoutGateVerdict.BLOCKED
+    assert any(
+        blocker.code is CloseoutGateBlockerCode.COMMAND_EVIDENCE_NOT_FINAL
+        and blocker.related_ref == "run-backend"
+        for blocker in result.blockers
+    )
+
+
 def test_tiny_closeout_does_not_write_repo_root_audit_dirs(tmp_path: Path) -> None:
     from tests.proving.fixtures.tiny_closeout import build_tiny_closeout_gate_fixture
 
@@ -571,6 +738,484 @@ def test_tiny_closeout_sample_materializer_rejects_tampered_provider_hook_lineag
 
     with pytest.raises(ValueError, match="role prompt hook lineage"):
         _locked_provider_fixture_from_sample(output_root)
+
+
+def test_tiny_closeout_sample_build_copy_fails_closed_on_invalid_legacy_provider_lock(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_tiny_closeout_sample import _copy_valid_provider_lock_if_available
+
+    source_root = tmp_path / "source" / "tiny-fullstack"
+    target_root = tmp_path / "target" / "tiny-fullstack"
+    source_root.mkdir(parents=True)
+    attempts_path = source_root / "20-evidence/provider-attempts/provider-attempts.json"
+    attempts_path.parent.mkdir(parents=True)
+    attempts_path.write_text(
+        json.dumps(
+            [
+                {
+                    "provider_attempt_id": {"value": "provider-attempt.openai.legacy"},
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "input_package_ref": {"value": "execution-package.legacy"},
+                    "seat_ref": {"value": "seat.worker.legacy"},
+                    "status": "succeeded",
+                    "outcome": "primary_provider_output",
+                    "started_at": "2026-06-03T00:00:00Z",
+                    "finished_at": "2026-06-03T00:00:01Z",
+                    "raw_output_ref": {"value": "provider-artifact.openai.raw.legacy"},
+                    "parsed_output_ref": {
+                        "value": "provider-artifact.openai.parsed.legacy"
+                    },
+                    "version": 1,
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    artifact_root = source_root / "20-evidence/provider-artifacts"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "provider-artifact.openai.raw.legacy.txt").write_text(
+        "raw",
+        encoding="utf-8",
+    )
+    (artifact_root / "provider-artifact.openai.parsed.legacy.txt").write_text(
+        '{"files":{}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="provider lock is invalid|role prompt hook"):
+        _copy_valid_provider_lock_if_available(source_root, target_root)
+    assert not (target_root / "20-evidence/provider-attempts").exists()
+    assert not (target_root / "20-evidence/provider-artifacts").exists()
+
+
+def test_tiny_closeout_sample_build_uses_v2_080_failure_package_as_regression_negative(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from scripts import build_tiny_closeout_sample
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    _copy_existing_tiny_sample(output_root)
+    observed: list[tuple[Path, float]] = []
+
+    def fake_provider_build(generated_root: Path, *, timeout_seconds: float):
+        observed.append((generated_root, timeout_seconds))
+        generated_root.mkdir(parents=True, exist_ok=True)
+        return SimpleNamespace(
+            sample_root=generated_root.as_posix(),
+            generated_at="2026-06-03T00:00:00Z",
+            run_id="run-test",
+            file_count=1,
+            total_bytes=1,
+            sha256="0" * 64,
+            files=("sample-manifest.json",),
+        )
+
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_materialize_provider_backed_sample_with_deadline",
+        fake_provider_build,
+    )
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_replace_output_root",
+        lambda *, source_root, output_root: None,
+    )
+
+    build_tiny_closeout_sample._build_sample(
+        output_root,
+        provider_deadline_seconds=600,
+    )
+
+    assert len(observed) == 1
+    assert observed[0][1] == 600
+
+
+def test_tiny_closeout_sample_build_keeps_valid_v2_090_service_lock(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_tiny_closeout_sample import (
+        _build_sample,
+        _copy_valid_provider_lock_if_available,
+    )
+
+    source_root = tmp_path / "source" / "tiny-fullstack"
+    target_root = tmp_path / "target" / "tiny-fullstack"
+    source_root.mkdir(parents=True)
+    _write_valid_provider_lock(source_root)
+    _build_sample(source_root)
+
+    assert _copy_valid_provider_lock_if_available(source_root, target_root) is True
+    assert (target_root / "20-evidence/provider-attempts").exists()
+    assert (target_root / "20-evidence/provider-artifacts").exists()
+
+
+def test_tiny_closeout_sample_check_copy_requires_valid_provider_lock(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_tiny_closeout_sample import _copy_required_provider_lock
+
+    source_root = tmp_path / "source" / "tiny-fullstack"
+    target_root = tmp_path / "target" / "tiny-fullstack"
+    _copy_existing_tiny_sample(source_root)
+
+    with pytest.raises(ValueError, match="provider lock|role prompt hook"):
+        _copy_required_provider_lock(source_root, target_root)
+
+
+def test_tiny_closeout_sample_copy_provider_lock_preserves_context_index(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_tiny_closeout_sample import _copy_provider_lock
+    from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
+
+    source_root = tmp_path / "source" / "tiny-fullstack"
+    target_root = tmp_path / "target" / "tiny-fullstack"
+    _write_valid_provider_lock(source_root)
+    materialize_tiny_closeout_sample(
+        source_root,
+        clean=True,
+        allow_absolute_output_root=True,
+    )
+    context_index_path = source_root / "30-audit/agent-context-index.json"
+    context_index = json.loads(context_index_path.read_text(encoding="utf-8"))
+    for entry in context_index["entries"]:
+        entry["model_execution_profile"]["context_window"] = 300000
+    context_index_path.write_text(
+        json.dumps(context_index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    _copy_provider_lock(source_root, target_root)
+
+    copied_context_index = json.loads(
+        (target_root / "30-audit/agent-context-index.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert {
+        entry["model_execution_profile"]["context_window"]
+        for entry in copied_context_index["entries"]
+    } == {300000}
+
+
+def test_tiny_closeout_sample_provider_settings_disable_transport_retries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from boardroom_os.providers.openai_adapter import OpenAIProviderSettings
+    from tests.proving.fixtures import tiny_closeout
+
+    monkeypatch.setattr(
+        tiny_closeout,
+        "openai_settings_from_test_env",
+        lambda: OpenAIProviderSettings(
+            api_key="sk-test-secret",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+            timeout_seconds=120,
+            max_retries=7,
+        ),
+    )
+
+    settings = tiny_closeout._sample_provider_settings(tmp_path)
+
+    assert settings.max_retries == 0
+    assert settings.timeout_seconds == 120
+    assert (
+        settings.artifact_store_root
+        == tmp_path / "20-evidence/provider-artifacts"
+    )
+
+
+def test_tiny_closeout_sample_build_deadline_uses_provider_env_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from boardroom_os.providers.openai_adapter import OpenAIProviderSettings
+    from scripts import build_tiny_closeout_sample
+
+    observed_timeouts: list[float] = []
+
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_copy_valid_provider_lock_if_available",
+        lambda _source_root, _target_root: False,
+    )
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "openai_settings_from_test_env",
+        lambda: OpenAIProviderSettings(
+            api_key="sk-test-secret",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-5.5",
+            api_protocol="chat_completions",
+            reasoning_effort="high",
+            text_verbosity="low",
+            timeout_seconds=600,
+            max_retries=0,
+        ),
+        raising=False,
+    )
+
+    def fake_provider_build(generated_root: Path, *, timeout_seconds: float):
+        observed_timeouts.append(timeout_seconds)
+        generated_root.mkdir(parents=True, exist_ok=True)
+        return SimpleNamespace(
+            sample_root=generated_root.as_posix(),
+            generated_at="2026-06-03T00:00:00Z",
+            run_id="run-test",
+            file_count=1,
+            total_bytes=1,
+            sha256="0" * 64,
+            files=("sample-manifest.json",),
+        )
+
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_materialize_provider_backed_sample_with_deadline",
+        fake_provider_build,
+    )
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_replace_output_root",
+        lambda *, source_root, output_root: None,
+    )
+
+    build_tiny_closeout_sample._build_sample(
+        tmp_path / "generated-workspaces" / "tiny-fullstack"
+    )
+
+    assert observed_timeouts == [600]
+
+
+def test_tiny_closeout_sample_materializer_rejects_unregistered_runtime_files(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.mkdir(parents=True)
+    _write_valid_provider_lock(output_root)
+    cache_dir = output_root / "10-project/backend/__pycache__"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "app.cpython-312.pyc").write_bytes(b"cache")
+
+    with pytest.raises(ValueError, match="unregistered runtime file|__pycache__"):
+        materialize_tiny_closeout_sample(
+            output_root,
+            allow_absolute_output_root=True,
+        )
+
+
+def test_tiny_closeout_sample_materializes_live_blackbox_evidence_bundle(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import materialize_tiny_closeout_sample
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.mkdir(parents=True)
+    _write_valid_provider_lock(output_root)
+
+    manifest = materialize_tiny_closeout_sample(
+        output_root,
+        allow_absolute_output_root=True,
+    )
+
+    files = set(manifest.files)
+    assert "20-evidence/tests/service-runs.json" in files
+    assert "20-evidence/tests/live-blackbox.json" in files
+    assert "20-evidence/closeout/final-evidence-table.json" in files
+    assert "closeout-package.json" in files
+    assert "replay-bundle.json" in files
+    assert "git-version-audit-bundle.json" in files
+    assert "30-audit/process-audit.md" in files
+    assert not any("__pycache__" in path for path in files)
+    assert not any(path.endswith(".sqlite3") for path in files)
+
+    closeout = json.loads((output_root / "closeout-package.json").read_text())
+    evidence_bundle = json.loads(
+        (
+            output_root
+            / "20-evidence/closeout/evidence-bundle-manifest.json"
+        ).read_text()
+    )
+    assert closeout["verdict"] == "passed"
+    assert evidence_bundle["service_run_refs"]
+    assert evidence_bundle["live_blackbox_evidence_refs"]
+
+
+def test_tiny_closeout_sample_script_rebuild_is_stable(
+    tmp_path: Path,
+) -> None:
+    from scripts.build_tiny_closeout_sample import _build_sample
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.mkdir(parents=True)
+    _write_valid_provider_lock(output_root)
+
+    first = _build_sample(output_root)
+    first_files = _read_file_tree(output_root)
+    second = _build_sample(output_root)
+    second_files = _read_file_tree(output_root)
+
+    assert second.sha256 == first.sha256
+    assert second.file_count == first.file_count
+    assert second.total_bytes == first.total_bytes
+    assert second.file_count == len(second.files)
+    assert second.file_count < 80
+    assert second.total_bytes < 500_000
+    assert second_files == first_files
+
+
+def test_locked_provider_replay_uses_sample_context_window(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import (
+        _locked_provider_fixture_from_sample,
+        materialize_tiny_closeout_sample,
+    )
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    _write_valid_provider_lock(output_root)
+    materialize_tiny_closeout_sample(
+        output_root,
+        clean=True,
+        allow_absolute_output_root=True,
+    )
+    context_index_path = output_root / "30-audit/agent-context-index.json"
+    context_index = json.loads(context_index_path.read_text(encoding="utf-8"))
+    for entry in context_index["entries"]:
+        entry["model_execution_profile"]["context_window"] = 300000
+    context_index_path.write_text(
+        json.dumps(context_index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    fixture = _locked_provider_fixture_from_sample(output_root)
+
+    assert fixture is not None
+    assert {
+        package.model_execution_profile.context_window
+        for package in fixture.execution_packages.values()
+    } == {300000}
+
+
+def test_locked_provider_replay_rejects_inconsistent_context_window(
+    tmp_path: Path,
+) -> None:
+    from tests.proving.fixtures.tiny_closeout import (
+        _locked_provider_fixture_from_sample,
+        materialize_tiny_closeout_sample,
+    )
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    _write_valid_provider_lock(output_root)
+    materialize_tiny_closeout_sample(
+        output_root,
+        clean=True,
+        allow_absolute_output_root=True,
+    )
+    context_index_path = output_root / "30-audit/agent-context-index.json"
+    context_index = json.loads(context_index_path.read_text(encoding="utf-8"))
+    context_index["entries"][0]["model_execution_profile"]["context_window"] = 300000
+    context_index["entries"][1]["model_execution_profile"]["context_window"] = 400000
+    context_index_path.write_text(
+        json.dumps(context_index, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="context_window.*consistent"):
+        _locked_provider_fixture_from_sample(output_root)
+
+
+def test_tiny_closeout_sample_check_does_not_write_output_root(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts.build_tiny_closeout_sample import _build_sample, _check_sample
+
+    output_root = tmp_path / "generated-workspaces" / "tiny-fullstack"
+    output_root.mkdir(parents=True)
+    _write_valid_provider_lock(output_root)
+    _build_sample(output_root)
+    before = _read_file_tree(output_root)
+
+    result = _check_sample(output_root)
+    after = _read_file_tree(output_root)
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert before == after
+    assert "check passed" in captured.out
+
+
+def test_tiny_closeout_sample_provider_subprocess_deadline_terminates_hangs() -> None:
+    import sys
+
+    from scripts.build_tiny_closeout_sample import _run_subprocess_with_deadline
+
+    with pytest.raises(TimeoutError, match="provider-backed sample generation.*deadline"):
+        _run_subprocess_with_deadline(
+            (
+                sys.executable,
+                "-c",
+                "import time; time.sleep(5)",
+            ),
+            timeout_seconds=0.2,
+            error_context="provider-backed sample generation",
+        )
+
+
+def test_tiny_closeout_sample_deadline_cleanup_targets_process_tree(monkeypatch) -> None:
+    import subprocess
+
+    from scripts import build_tiny_closeout_sample
+
+    cleaned: list[int] = []
+
+    class FakePopen:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.pid = 4242
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=("python", "-c", "sleep"), timeout=timeout)
+
+    monkeypatch.setattr(build_tiny_closeout_sample.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(
+        build_tiny_closeout_sample,
+        "_terminate_process_tree",
+        lambda process: cleaned.append(process.pid),
+    )
+
+    with pytest.raises(TimeoutError, match="deadline"):
+        build_tiny_closeout_sample._run_subprocess_with_deadline(
+            ("python", "-c", "sleep"),
+            timeout_seconds=1,
+            error_context="provider-backed sample generation",
+        )
+
+    assert cleaned == [4242]
+
+
+def _read_file_tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 @pytest.mark.parametrize(
