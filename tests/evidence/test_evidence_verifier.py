@@ -827,6 +827,7 @@ def test_verified_evidence_serializes_as_audit_friendly_json() -> None:
         ],
         "verification_run_refs": [],
         "service_run_refs": [],
+        "live_blackbox_evidence_refs": [],
         "fallback_decision_record_ref": None,
         "fallback_decision_recorded_ref": None,
         "verified_at": "2026-05-20T09:02:00Z",

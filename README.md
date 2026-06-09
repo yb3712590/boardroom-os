@@ -80,3 +80,29 @@ git commit -m "docs: establish Boardroom OS V2 clean foundation"
 
 详细文档目录见 `doc/README.md`。
 
+## atomic-agent 本地集成
+
+V2-090G 起，Boardroom OS 通过外部 `atomic-agent`（原子智能体）Python package（Python 包）执行 implementation ticket（实施任务）的受控 agent loop（智能体循环）。Boardroom OS 不复制 `atomic-agent` 源码，也不要求 `atomic-agent` 作为 HTTP/gRPC service（服务）运行。
+
+推荐本地目录布局：
+
+```text
+~/projects/boardroom-os
+~/projects/atomic-agent
+```
+
+在 Boardroom OS 的 Python 环境中安装 atomic-agent：
+
+```bash
+cd ~/projects/boardroom-os
+python -m pip install -e ../atomic-agent
+python -c "from atomic_agent import AgentRuntimePort; print('atomic-agent import ok')"
+```
+
+`.worktrees/atomic-agent/` 仅是历史探索副本，不得用于 V2-090G 实施安装、import 验证或契约检查。
+
+职责边界：
+
+- `atomic-agent` 负责 agent loop（智能体循环）、tool dispatch（工具调度）、permission policy（权限策略）、event stream（事件流）和 workspace mutation（工作区变更）。
+- Boardroom OS 继续负责 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）、Checker（检查者）和 CloseoutGate（收尾门禁）。
+- `AgentRunResult.status == completed`（原子智能体运行完成）不等于 `TICKET_COMPLETED`（任务完成）或 `CloseoutPackage.passed`（收尾包通过）。缺 event stream、workspace mutation、command evidence 或 source inventory lineage 时必须 fail closed（失败关闭）。

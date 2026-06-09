@@ -34,6 +34,17 @@ from boardroom_os.execution.package import (
     FallbackPolicyRef,
     RequiredOutput,
 )
+from boardroom_os.execution.atomic_agent import (
+    AtomicAgentAdapterError,
+    AtomicAgentDependencyInfo,
+    AtomicAgentPackageAdapter,
+    AtomicAgentPort,
+    AtomicAgentResultValidator,
+    AtomicAgentValidatedResult,
+    AtomicInvocationCompiler,
+    AtomicResultProjection,
+    AtomicResultProjector,
+)
 from boardroom_os.execution.verification_run import (
     CommandOutputRef,
     EnvironmentProfileRef,
@@ -88,6 +99,15 @@ __all__ = [
     "AgentContextSnapshotId",
     "AllowedReadRef",
     "AllowedWritePath",
+    "AtomicAgentAdapterError",
+    "AtomicAgentDependencyInfo",
+    "AtomicAgentPackageAdapter",
+    "AtomicAgentPort",
+    "AtomicAgentResultValidator",
+    "AtomicAgentValidatedResult",
+    "AtomicInvocationCompiler",
+    "AtomicResultProjection",
+    "AtomicResultProjector",
     "AuditRequirement",
     "ContextRef",
     "EvidencePurpose",

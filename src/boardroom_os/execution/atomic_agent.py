@@ -1,0 +1,675 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version
+import json
+from pathlib import Path, PurePosixPath
+import re
+from types import ModuleType
+from typing import Any, Callable, Protocol
+
+from boardroom_os.execution.package import ExecutionPackage, ExecutionPackageRef
+from boardroom_os.execution.work_product import (
+    WorkProduct,
+    WorkProductArtifactRef,
+    WorkProductClaimDraft,
+    WorkProductClaimDraftRef,
+    WorkProductRef,
+    WorkProductSubmission,
+)
+from boardroom_os.providers.attempt import ProviderAttempt
+from boardroom_os.providers.attempt import ProviderAttemptOutcome, ProviderAttemptStatus
+
+
+class AtomicAgentAdapterError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class AtomicAgentDependencyInfo:
+    package_name: str
+    package_version: str
+    source_path: str | None
+    runtime_port_contract_ref: str
+
+
+class AtomicAgentPort(Protocol):
+    def invoke(self, invocation: Any) -> Any:
+        ...
+
+
+def _default_import_atomic_agent(name: str) -> ModuleType:
+    return import_module(name)
+
+
+class AtomicAgentPackageAdapter:
+    def __init__(
+        self,
+        *,
+        runtime_port: AtomicAgentPort | None = None,
+        dependency_info: AtomicAgentDependencyInfo | None = None,
+        import_atomic_agent: Callable[[str], ModuleType] = _default_import_atomic_agent,
+    ) -> None:
+        self._runtime_port = runtime_port
+        self._dependency_info = dependency_info
+        self._import_atomic_agent = import_atomic_agent
+
+    def dependency_info(self) -> AtomicAgentDependencyInfo:
+        if self._dependency_info is not None:
+            return self._dependency_info
+        try:
+            module = self._import_atomic_agent("atomic_agent")
+        except ImportError as exc:
+            raise AtomicAgentAdapterError("atomic-agent package is not importable") from exc
+        try:
+            package_version = version("atomic-agent")
+        except PackageNotFoundError as exc:
+            package_version = getattr(module, "__version__", None)
+            if (
+                not isinstance(package_version, str)
+                or not package_version.strip()
+                or package_version.strip().lower() == "unknown"
+            ):
+                raise AtomicAgentAdapterError(
+                    "atomic-agent package version is not auditable"
+                ) from exc
+        module_file = getattr(module, "__file__", None)
+        source_path = str(Path(module_file).resolve().parents[1]) if module_file else None
+        return AtomicAgentDependencyInfo(
+            package_name="atomic-agent",
+            package_version=package_version,
+            source_path=source_path,
+            runtime_port_contract_ref="atomic-agent.docs.agent-runtime-port.v1",
+        )
+
+    def invoke(self, invocation: Any) -> Any:
+        runtime_port = self._runtime_port
+        if runtime_port is None:
+            raise AtomicAgentAdapterError("atomic-agent runtime_port is required")
+        result = runtime_port.invoke(invocation)
+        try:
+            agent_models = import_module("atomic_agent.models")
+        except ImportError as exc:
+            raise AtomicAgentAdapterError("atomic-agent package is not importable") from exc
+        AgentRunResult = getattr(agent_models, "AgentRunResult")
+        if not isinstance(result, AgentRunResult):
+            raise AtomicAgentAdapterError("AgentRuntimePort returned non-AgentRunResult")
+        return result
+
+
+class AtomicInvocationCompiler:
+    def __init__(
+        self,
+        *,
+        workspace_root: str | Path,
+        enabled_tools: tuple[str, ...] = (
+            "list_files",
+            "read_file",
+            "search_files",
+            "write_file",
+            "apply_patch",
+            "run_command",
+            "submit_result",
+        ),
+        max_steps: int = 20,
+        wall_time_seconds: int = 600,
+    ) -> None:
+        self.workspace_root = Path(workspace_root)
+        self.enabled_tools = enabled_tools
+        self.max_steps = max_steps
+        self.wall_time_seconds = wall_time_seconds
+
+    def compile(self, execution_package: ExecutionPackage) -> Any:
+        try:
+            agent_models = import_module("atomic_agent.models")
+        except ImportError as exc:
+            raise AtomicAgentAdapterError("atomic-agent package is not importable") from exc
+        agent_invocation = getattr(agent_models, "AgentInvocation")
+        allowed_write_set = _validate_relative_paths(
+            tuple(_ref_value(path) for path in execution_package.allowed_write_set),
+            error_message="allowed_write_set must contain relative paths",
+        )
+        evidence_obligations = [
+            obligation.model_dump(mode="json")
+            for obligation in execution_package.evidence_obligations
+        ]
+        permission_commands = [
+            {
+                "command_id": command.command_id.value,
+                "label": command.label,
+                "argv": list(command.command),
+                "cwd": _validate_relative_paths(
+                    (command.cwd,),
+                    error_message="command cwd must contain relative paths",
+                )[0],
+            }
+            for command in execution_package.commands
+        ]
+        task = "\n".join(
+            (
+                execution_package.objective,
+                "",
+                "Constraints:",
+                *[f"- {constraint}" for constraint in execution_package.constraints],
+                "",
+                "Required outputs:",
+                *[f"- {output.value}" for output in execution_package.required_outputs],
+                "",
+                "Evidence obligations:",
+                *[
+                    "- "
+                    + json.dumps(obligation, sort_keys=True, separators=(",", ":"))
+                    for obligation in evidence_obligations
+                ],
+            )
+        )
+        hook = execution_package.role_prompt_hook
+        role_context = "\n".join(
+            (
+                f"RolePromptHook ref: {hook.hook_ref.value}",
+                f"RolePromptHook version: {hook.hook_version}",
+                f"RolePromptHook sha256: {hook.content_sha256.value}",
+                "",
+                hook.prompt_text,
+            )
+        )
+        return agent_invocation(
+            invocation_id=(
+                f"atomic-invocation.{execution_package.execution_package_id.value}"
+            ),
+            task=task,
+            workspace_root=str(self.workspace_root),
+            allowed_write_set=list(allowed_write_set),
+            tools=list(self.enabled_tools),
+            permission_policy={
+                "commands": permission_commands,
+                "network": {"default": "deny"},
+                "filesystem": {"allowed_write_set": list(allowed_write_set)},
+            },
+            provider_profile={
+                "provider": execution_package.model_execution_profile.provider,
+                "model": execution_package.model_execution_profile.model,
+                "reasoning_effort": execution_package.model_execution_profile.reasoning_effort,
+                "temperature": execution_package.model_execution_profile.temperature,
+                "context_window": execution_package.model_execution_profile.context_window,
+            },
+            budgets={
+                "max_steps": self.max_steps,
+                "wall_time_seconds": self.wall_time_seconds,
+            },
+            output_requirements={
+                "require_event_stream": True,
+                "require_tool_attempts": True,
+                "require_workspace_mutations": True,
+                "require_artifacts": True,
+                "evidence_obligations": evidence_obligations,
+            },
+            role_context=role_context,
+            skill_context={
+                "audit_requirements": [
+                    item.value for item in execution_package.audit_requirements
+                ]
+            },
+            initial_files=[ref.value for ref in execution_package.context_refs],
+            metadata={
+                "execution_package_ref": execution_package.execution_package_id.value,
+                "ticket_ref": execution_package.ticket_ref.value,
+                "seat_ref": execution_package.seat_ref.value,
+                "graph_version": execution_package.graph_version,
+                "acceptance_refs": [
+                    ref.value for ref in execution_package.acceptance_refs
+                ],
+                "source_surface_refs": [
+                    ref.value for ref in execution_package.source_surface_refs
+                ],
+            },
+        )
+
+
+_GOVERNANCE_FORBIDDEN_KEYS = {
+    "ticket_completed",
+    "closeout_committed",
+    "governance_status",
+    "evidence_verified",
+    "source_inventory_accepted",
+}
+_SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class AtomicAgentValidatedResult:
+    result: Any
+    events: tuple[dict[str, Any], ...]
+    events_hash: str
+    evidence_summary: dict[str, Any]
+
+
+class AtomicAgentResultValidator:
+    def __init__(
+        self,
+        *,
+        allowed_write_set: tuple[str, ...],
+        declared_command_ids: tuple[str, ...],
+        event_stream_root: str | Path | None = None,
+        require_workspace_mutation: bool = True,
+    ) -> None:
+        self.allowed_write_set = _validate_relative_paths(
+            allowed_write_set,
+            error_message="allowed_write_set must contain relative paths",
+        )
+        self.declared_command_ids = set(declared_command_ids)
+        if event_stream_root is None:
+            raise ValueError("event_stream_root is required")
+        self.event_stream_root = Path(event_stream_root).resolve()
+        self.require_workspace_mutation = require_workspace_mutation
+
+    def validate(self, result: Any) -> AtomicAgentValidatedResult:
+        status = getattr(result, "status", None)
+        if getattr(status, "value", status) != "completed":
+            raise ValueError("atomic-agent result must be completed")
+        self._reject_governance_fields(result)
+        if not getattr(result, "event_stream_ref", None):
+            raise ValueError("event_stream_ref is required")
+        if not getattr(result, "events_hash", None):
+            raise ValueError("events_hash is required")
+        if not getattr(result, "tool_attempts", None):
+            raise ValueError("tool_attempts are required")
+        if not getattr(result, "artifacts", None):
+            raise ValueError("artifacts are required")
+        workspace_mutations = getattr(result, "workspace_mutations", None)
+        if self.require_workspace_mutation and not workspace_mutations:
+            raise ValueError("workspace mutation is required")
+        self._validate_tool_attempt_commands(tuple(getattr(result, "tool_attempts", ())))
+        self._validate_workspace_mutations(tuple(workspace_mutations or ()))
+        self._validate_artifacts(tuple(getattr(result, "artifacts", ())))
+        event_stream_path = self._resolve_event_stream_path(result.event_stream_ref)
+        events, evidence_summary = self._read_events_and_summary(
+            event_stream_path,
+            result,
+        )
+        self._validate_result_matches_event_summary(result, evidence_summary)
+        return AtomicAgentValidatedResult(
+            result=result,
+            events=events,
+            events_hash=result.events_hash,
+            evidence_summary=evidence_summary,
+        )
+
+    def _reject_governance_fields(self, value: Any) -> None:
+        if isinstance(value, dict):
+            if _GOVERNANCE_FORBIDDEN_KEYS.intersection(value):
+                raise ValueError("atomic-agent result must not contain governance field")
+            for nested in value.values():
+                self._reject_governance_fields(nested)
+            return
+        if isinstance(value, (list, tuple)):
+            for nested in value:
+                self._reject_governance_fields(nested)
+            return
+        if hasattr(value, "model_dump"):
+            self._reject_governance_fields(value.model_dump(mode="json"))
+
+    def _validate_workspace_mutations(
+        self,
+        mutations: tuple[dict[str, Any], ...],
+    ) -> None:
+        known_tool_attempt_ids = {
+            attempt.get("tool_attempt_id")
+            for attempt in getattr(self, "_current_tool_attempts", ())
+            if isinstance(attempt, dict)
+        }
+        for mutation in mutations:
+            path = mutation.get("path")
+            if not isinstance(path, str) or not path:
+                raise ValueError("workspace mutation path is required")
+            _validate_relative_paths(
+                (path,),
+                error_message="workspace mutation path is outside allowed_write_set",
+            )
+            if not _path_is_in_allowed_write_set(path, self.allowed_write_set):
+                raise ValueError("workspace mutation path is outside allowed_write_set")
+            if not _is_sha256(mutation.get("sha256")):
+                raise ValueError("workspace mutation sha256 is required")
+            tool_attempt_id = mutation.get("tool_attempt_id")
+            if not isinstance(tool_attempt_id, str) or not tool_attempt_id:
+                raise ValueError("workspace mutation tool_attempt_id is required")
+            if known_tool_attempt_ids and tool_attempt_id not in known_tool_attempt_ids:
+                raise ValueError("workspace mutation tool_attempt_id is not present in tool_attempts")
+
+    def _validate_tool_attempt_commands(
+        self,
+        tool_attempts: tuple[dict[str, Any], ...],
+    ) -> None:
+        self._current_tool_attempts = tool_attempts
+        for attempt in tool_attempts:
+            if attempt.get("action") != "run_command":
+                continue
+            if attempt.get("command_id") not in self.declared_command_ids:
+                raise ValueError("command_id is not declared")
+
+    def _validate_artifacts(self, artifacts: tuple[dict[str, Any], ...]) -> None:
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise ValueError("artifact must be a dict")
+            if not artifact.get("artifact_ref"):
+                raise ValueError("artifact_ref is required")
+            if not _is_sha256(artifact.get("sha256")):
+                raise ValueError("artifact sha256 is required")
+            path = artifact.get("path")
+            if path is None:
+                continue
+            if not isinstance(path, str) or not path:
+                raise ValueError("artifact path must be non-empty when provided")
+            _validate_relative_paths(
+                (path,),
+                error_message="artifact path is outside allowed_write_set",
+            )
+            if not _path_is_in_allowed_write_set(path, self.allowed_write_set):
+                raise ValueError("artifact path is outside allowed_write_set")
+
+    def _resolve_event_stream_path(self, event_stream_ref: str) -> Path:
+        path = Path(event_stream_ref)
+        resolved = path if path.is_absolute() else self.event_stream_root / path
+        resolved = resolved.resolve()
+        try:
+            resolved.relative_to(self.event_stream_root)
+        except ValueError as exc:
+            raise ValueError("event_stream_ref is outside event_stream_root") from exc
+        return resolved
+
+    def _read_events_and_summary(
+        self,
+        event_stream_path: Path,
+        result: Any,
+    ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+        try:
+            atomic_evidence = import_module("atomic_agent.evidence")
+        except ImportError as exc:
+            raise AtomicAgentAdapterError("atomic-agent package is not importable") from exc
+        integrity = atomic_evidence.verify_event_stream(
+            event_stream_path,
+            expected_events_hash=result.events_hash,
+        )
+        if not integrity["ok"]:
+            failure_kind = integrity.get("failure_kind", "event_stream_invalid")
+            message = integrity.get("message", "event stream is invalid")
+            if failure_kind == "events_hash_mismatch":
+                raise ValueError("events_hash does not match event stream content")
+            raise ValueError(f"{failure_kind}: {message}")
+        content = event_stream_path.read_bytes()
+        events = tuple(
+            json.loads(line)
+            for line in content.decode("utf-8").splitlines()
+            if line.strip()
+        )
+        if events[0].get("type") != "run.started":
+            raise ValueError("event stream must start with run.started")
+        if events[-1].get("type") != "run.completed":
+            raise ValueError("completed atomic-agent result must end with run.completed")
+        if any(event.get("run_id") != result.run_id for event in events):
+            raise ValueError("event stream run_id must match result.run_id")
+        self._reject_governance_fields(events)
+        try:
+            evidence_summary = atomic_evidence.build_evidence_summary(result, event_stream_path)
+        except Exception as exc:
+            raise ValueError(f"event stream evidence summary is invalid: {exc}") from exc
+        evidence_summary = dict(evidence_summary)
+        evidence_summary["_events"] = list(events)
+        self._reject_governance_fields(evidence_summary)
+        return events, evidence_summary
+
+    def _validate_result_matches_event_summary(
+        self,
+        result: Any,
+        evidence_summary: dict[str, Any],
+    ) -> None:
+        summary_mutations = {
+            (
+                mutation["path"],
+                mutation["tool_attempt_id"],
+                mutation["latest_after_hash"] if "latest_after_hash" in mutation else mutation.get("after_hash"),
+            )
+            for mutation in _summary_workspace_mutations(evidence_summary)
+        }
+        result_mutations = {
+            (mutation["path"], mutation["tool_attempt_id"], mutation["sha256"])
+            for mutation in result.workspace_mutations
+        }
+        if result_mutations != summary_mutations:
+            raise ValueError("workspace mutations must match event stream summary")
+
+        summary_artifact_refs = _submitted_artifact_refs(evidence_summary)
+        result_artifact_refs = {
+            artifact["artifact_ref"]
+            for artifact in result.artifacts
+            if isinstance(artifact, dict)
+        }
+        if result_artifact_refs != summary_artifact_refs:
+            raise ValueError("artifacts must match event stream summary")
+
+        for command_result in evidence_summary.get("command_results", ()):
+            command_id = command_result.get("command_id") if isinstance(command_result, dict) else None
+            if command_id not in self.declared_command_ids:
+                raise ValueError("command_id is not declared")
+
+
+@dataclass(frozen=True)
+class AtomicResultProjection:
+    atomic_run_id: str
+    work_product_submission: WorkProductSubmission
+    source_lineage_inputs: tuple[dict[str, Any], ...]
+    event_stream_ref: str
+    events_hash: str
+
+
+class AtomicResultProjector:
+    def project(
+        self,
+        *,
+        execution_package: ExecutionPackage,
+        provider_attempt: ProviderAttempt,
+        validated_result: AtomicAgentValidatedResult,
+    ) -> AtomicResultProjection:
+        _validate_provider_attempt_binding(
+            execution_package=execution_package,
+            provider_attempt=provider_attempt,
+        )
+        result = validated_result.result
+        artifact_refs = tuple(
+            WorkProductArtifactRef(value=artifact["artifact_ref"])
+            for artifact in result.artifacts
+            if isinstance(artifact, dict) and artifact.get("artifact_ref")
+        )
+        if not artifact_refs:
+            raise ValueError("atomic-agent artifacts are required for work product")
+
+        execution_package_ref = ExecutionPackageRef(
+            value=execution_package.execution_package_id.value
+        )
+        claim_draft_ref = WorkProductClaimDraftRef(
+            value=f"claim-draft.atomic.{provider_attempt.provider_attempt_id.value}"
+        )
+        claim_draft = WorkProductClaimDraft(
+            claim_draft_ref=claim_draft_ref,
+            producer_attempt_ref=provider_attempt.provider_attempt_id,
+            execution_package_ref=execution_package_ref,
+            ticket_ref=execution_package.ticket_ref,
+            acceptance_refs=execution_package.acceptance_refs,
+            source_surface_refs=execution_package.source_surface_refs,
+            artifact_refs=artifact_refs,
+            summary=result.summary,
+        )
+        work_product = WorkProduct(
+            work_product_id=WorkProductRef(
+                value=f"work-product.atomic.{provider_attempt.provider_attempt_id.value}"
+            ),
+            execution_package_ref=execution_package_ref,
+            ticket_ref=execution_package.ticket_ref,
+            producer_attempt_ref=provider_attempt.provider_attempt_id,
+            artifact_refs=artifact_refs,
+            claim_refs=(claim_draft_ref,),
+            summary=result.summary,
+        )
+        source_lineage_inputs = tuple(
+            {
+                "path": lineage["path"],
+                "sha256": lineage["latest_after_hash"],
+                "producer_ticket_ref": execution_package.ticket_ref.value,
+                "producer_attempt_ref": provider_attempt.provider_attempt_id.value,
+                "atomic_run_id": result.run_id,
+                "tool_attempt_id": lineage["mutation_refs"][-1]["tool_attempt_id"],
+                "acceptance_refs": [
+                    ref.value for ref in execution_package.acceptance_refs
+                ],
+                "source_surface_refs": [
+                    ref.value for ref in execution_package.source_surface_refs
+                ],
+                "evidence_refs": [ref.value for ref in artifact_refs],
+            }
+            for lineage in validated_result.evidence_summary["source_inventory_lineage"]
+            if lineage["lineage_status"] == "traceable"
+        )
+        if not source_lineage_inputs:
+            raise ValueError("source inventory lineage input is required")
+        return AtomicResultProjection(
+            atomic_run_id=result.run_id,
+            work_product_submission=WorkProductSubmission(
+                work_product=work_product,
+                claim_drafts=(claim_draft,),
+            ),
+            source_lineage_inputs=source_lineage_inputs,
+            event_stream_ref=result.event_stream_ref,
+            events_hash=result.events_hash,
+        )
+
+
+def _validate_relative_paths(
+    paths: tuple[str, ...],
+    *,
+    error_message: str,
+) -> tuple[str, ...]:
+    if not paths:
+        raise ValueError(error_message)
+    for path in paths:
+        parsed = PurePosixPath(path)
+        if (
+            parsed.is_absolute()
+            or ".." in parsed.parts
+            or _looks_like_windows_absolute_path(path)
+        ):
+            raise ValueError(error_message)
+    return paths
+
+
+def _looks_like_windows_absolute_path(path: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:[/\\]", path)) or path.startswith(("\\\\", "//"))
+
+
+def _path_is_in_allowed_write_set(path: str, allowed_write_set: tuple[str, ...]) -> bool:
+    for allowed_path in allowed_write_set:
+        if path == allowed_path:
+            return True
+        if allowed_path.endswith("/**"):
+            prefix = allowed_path.removesuffix("/**").rstrip("/")
+            if path.startswith(prefix + "/"):
+                return True
+            continue
+        if "/" not in allowed_path and path.startswith(allowed_path + "/"):
+            return True
+    return False
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and _SHA256_PATTERN.fullmatch(value) is not None
+
+
+def _ref_value(value: Any) -> str:
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _summary_workspace_mutations(evidence_summary: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    lineage = evidence_summary.get("source_inventory_lineage")
+    if not isinstance(lineage, list):
+        raise ValueError("event stream summary source_inventory_lineage is required")
+    mutations: list[dict[str, Any]] = []
+    for item in lineage:
+        if not isinstance(item, dict):
+            raise ValueError("event stream summary source_inventory_lineage item is invalid")
+        if item.get("lineage_status") != "traceable":
+            continue
+        mutation_refs = item.get("mutation_refs")
+        if not isinstance(mutation_refs, list) or not mutation_refs:
+            raise ValueError("traceable source lineage requires mutation_refs")
+        latest = mutation_refs[-1]
+        mutations.append(
+            {
+                "path": item["path"],
+                "tool_attempt_id": latest["tool_attempt_id"],
+                "latest_after_hash": item["latest_after_hash"],
+            }
+        )
+    if not mutations:
+        raise ValueError("event stream summary must contain traceable workspace mutations")
+    return tuple(mutations)
+
+
+def _submitted_artifact_refs(evidence_summary: dict[str, Any]) -> set[str]:
+    events = evidence_summary.get("_events")
+    if isinstance(events, list):
+        for event in reversed(events):
+            if event.get("type") == "result.submitted":
+                return {
+                    artifact["artifact_ref"]
+                    for artifact in event["payload"].get("artifact_refs", ())
+                    if isinstance(artifact, dict) and artifact.get("artifact_ref")
+                }
+    # build_evidence_summary does not expose events; callers attach them after construction.
+    return {
+        artifact["artifact_ref"]
+        for artifact in evidence_summary.get("result_artifacts", ())
+        if isinstance(artifact, dict) and artifact.get("artifact_ref")
+    }
+
+
+def _validate_provider_attempt_binding(
+    *,
+    execution_package: ExecutionPackage,
+    provider_attempt: ProviderAttempt,
+) -> None:
+    if provider_attempt.status is not ProviderAttemptStatus.SUCCEEDED:
+        raise ValueError("provider_attempt.status must be succeeded")
+    if provider_attempt.outcome is not ProviderAttemptOutcome.PRIMARY_PROVIDER_OUTPUT:
+        raise ValueError("provider_attempt.outcome must be primary_provider_output")
+    if provider_attempt.input_package_ref != ExecutionPackageRef(
+        value=execution_package.execution_package_id.value
+    ):
+        raise ValueError("provider_attempt.input_package_ref must match execution_package")
+    if provider_attempt.provider != execution_package.model_execution_profile.provider:
+        raise ValueError("provider_attempt.provider must match execution_package")
+    if provider_attempt.model != execution_package.model_execution_profile.model:
+        raise ValueError("provider_attempt.model must match execution_package")
+    if provider_attempt.reasoning_effort != execution_package.model_execution_profile.reasoning_effort:
+        raise ValueError("provider_attempt.reasoning_effort must match execution_package")
+    if provider_attempt.seat_ref != execution_package.seat_ref:
+        raise ValueError("provider_attempt.seat_ref must match execution_package")
+    if provider_attempt.role_prompt_hook_ref != execution_package.role_prompt_hook.hook_ref:
+        raise ValueError("provider_attempt.role_prompt_hook_ref must match execution_package")
+    if provider_attempt.role_prompt_hook_version != execution_package.role_prompt_hook.hook_version:
+        raise ValueError("provider_attempt.role_prompt_hook_version must match execution_package")
+    if provider_attempt.role_prompt_hook_sha256 != execution_package.role_prompt_hook.content_sha256:
+        raise ValueError("provider_attempt.role_prompt_hook_sha256 must match execution_package")
+
+
+__all__ = [
+    "AtomicAgentAdapterError",
+    "AtomicAgentDependencyInfo",
+    "AtomicAgentPackageAdapter",
+    "AtomicAgentPort",
+    "AtomicAgentResultValidator",
+    "AtomicAgentValidatedResult",
+    "AtomicInvocationCompiler",
+    "AtomicResultProjection",
+    "AtomicResultProjector",
+]
