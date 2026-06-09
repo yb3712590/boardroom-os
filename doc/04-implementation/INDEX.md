@@ -55,6 +55,8 @@
 | `v2-071f-fact-chain-regression-spec.md` | V2-071F V2-070 fact-chain（事实链）端到端回归与 Phase 7 重锁 spec |
 | `v2-080cd-provider-evidence-repair-spec.md` | V2-080C/D ProviderAttempt（模型调用尝试记录）与 EvidenceVerifier（证据验证器）修补 spec |
 | `v2-090-tiny-fullstack-blackbox-recovery-plan.md` | V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）计划 |
+| `v2-090g-atomic-agent-package-integration-spec.md` | V2-090G atomic-agent（原子智能体）package/import 集成规范 |
+| `v2-090g-atomic-agent-package-integration-implementation-plan.md` | V2-090G atomic-agent（原子智能体）package/import 集成实施计划 |
 
 ## AI 启动入口
 

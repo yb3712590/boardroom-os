@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090F`（BLOCKED）
+**当前未完成工作包**：`V2-090G`（TODO，spec/plan 待人工评审后实施）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）与 `V2-090E Live blackbox integration`（真实黑盒集成）已完成。`V2-090F Golden sample rebuild`（黄金样例重建）已启动但 BLOCKED：真实 provider-backed source delivery（模型供应商支撑的源码交付）当前只是每个 ticket（任务）一次 LLM request（大模型请求）返回 JSON 文件内容，不具备 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）应有的 workspace 读写、工具调用、命令运行、多轮修复和证据归档能力，因此不能把 ProviderAttempt（模型调用尝试记录）误判为自主 agent work（智能体工作）完成。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）与 `V2-090E Live blackbox integration`（真实黑盒集成）已完成。`V2-090F Golden sample rebuild`（黄金样例重建）已启动但 BLOCKED：真实 provider-backed source delivery（模型供应商支撑的源码交付）当前只是每个 ticket（任务）一次 LLM request（大模型请求）返回 JSON 文件内容，不具备 agent loop executor（智能体循环执行器）应有的 workspace 读写、工具调用、命令运行、多轮修复和证据归档能力。由于外部 `atomic-agent`（原子智能体）项目已经完成，V2-090G 改为通过同级目录安装并 import 该外部 Python package（Python 包），以 `AgentRuntimePort`（智能体运行端口）替代 Boardroom OS 中单次 JSON source delivery（JSON 源码交付）式 ticket 执行路径；当前只写入 spec/plan 并等待人工评审，不直接修复 V2-090F。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 5 / 6 | 阻塞 |
-| **合计** | **V2-000 ~ V2-090** | **64 / 65** | **V2-090A ~ V2-090E 完成，V2-090F BLOCKED，Phase 9 未闭合** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 5 / 7 | 阻塞；V2-090G spec/plan 待评审 |
+| **合计** | **V2-000 ~ V2-090** | **64 / 66** | **V2-090A ~ V2-090E 完成，V2-090F BLOCKED，V2-090G 已立项待评审，Phase 9 未闭合** |
 
 ## 当前约束摘要
 
@@ -1117,7 +1117,19 @@ RoleProfile（角色模板）
 - 必须证明的 happy path：样例可在 clean worktree 上重生成；连续两次 hash 稳定；文件数量固定；总大小在上限内；`--check` 只比较不写文件；CloseoutPackage / ReplayBundle / GitVersionAuditBundle / ProcessAuditBundle 均绑定黑盒证据。
 - 验收口径：golden sample 不再只是 deterministic fixture，而是 blackbox-evidence-backed sample。
 - 阻塞证据：2026-06-03 V2-090F 真实 provider-backed（模型供应商支撑）路径暴露出系统缺少 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）。当前 `ProviderAttempt`（模型调用尝试记录）只能证明 `OpenAIProviderTransport`（OpenAI 模型传输）发起了 LLM request（大模型请求）并记录 raw/parsed artifact（原始/解析产物）；它不会自主读取 workspace（工作区）、写入文件、运行命令、观察失败、循环修复或归档 command evidence（命令证据）。`scripts/build_tiny_closeout_sample.py`（构建微型收尾样例脚本）已有 locked replay（锁定重放）、provider lock（模型产物锁）和 V2-080 failure package（失败包）阻断路径的阶段性改动，但 provider-backed sample generation（模型供应商支撑样例生成）在 600 秒配置下仍未形成可验收的 passed golden sample（通过黄金样例），且后续失败显示单次 JSON source delivery（源码交付）并不是 agent team（智能体团队）自治实施。
-- 解阻条件：先设计并实现显式 AgentWorkExecutor（智能体工作执行器）或等价 agent loop executor（智能体循环执行器）边界，使 agent 能接收 ExecutionPackage（执行包）、在受控 workspace（工作区）内读写文件、运行允许命令、记录 ProviderAttempt / ToolAttempt / CommandEvidence（模型调用尝试 / 工具尝试 / 命令证据）、多轮处理失败并把产物交给 reducer（归约器）/ validator（校验器）/ EvidenceVerifier（证据验证器）；之后才能重新启动 V2-090F 并恢复 golden sample rebuild（黄金样例重建）验收。
+- 解阻条件：先完成 V2-090G Atomic-agent package/import integration（原子智能体包导入集成），使 Boardroom OS 能把 ExecutionPackage（执行包）编译为 atomic-agent `AgentInvocation`（智能体调用），通过外部 `AgentRuntimePort`（智能体运行端口）在受控 workspace（工作区）内读写文件、运行允许命令、记录 ProviderAttempt / ToolAttempt / CommandEvidence（模型调用尝试 / 工具尝试 / 命令证据）、多轮处理失败，并把 `AgentRunResult`（智能体运行结果）投影回 reducer（归约器）/ validator（校验器）/ EvidenceVerifier（证据验证器）可消费的事实；之后才能重新启动 V2-090F 并恢复 golden sample rebuild（黄金样例重建）验收。
+
+### V2-090G: Atomic-agent package/import integration
+
+- 状态：TODO（spec/plan 已起草，待人工评审后实施）
+- 目标：通过同级目录安装并 import 外部 `atomic-agent` Python package（Python 包），替代 Boardroom OS 中单次 provider JSON source delivery（模型供应商 JSON 源码交付）式 ticket 执行路径；Boardroom OS 只通过 `AgentRuntimePort`（智能体运行端口）调用 atomic-agent，并把 `AgentRunResult`（智能体运行结果）投影回 Boardroom evidence chain（证据链）。
+- 输入文档：`doc/04-implementation/v2-090g-atomic-agent-package-integration-spec.md`、`doc/04-implementation/v2-090g-atomic-agent-package-integration-implementation-plan.md`、`../atomic-agent/docs/03-contracts/agent-runtime-port.md`、`../atomic-agent/docs/03-contracts/agent-action-protocol.md`、`../atomic-agent/docs/03-contracts/event-stream-protocol.md`、`../atomic-agent/docs/00-overview/boardroom-os-integration-summary.md`、`doc/03-architecture/execution-and-runtime-boundary.md`、`doc/03-architecture/contract-and-evidence-model.md`。
+- 依赖：V2-090E、V2-090F 阻塞复盘、外部 `atomic-agent` 可通过 `python -m pip install -e ../atomic-agent` 安装。
+- 输出文件：`src/boardroom_os/execution/atomic_agent.py`、`tests/execution/test_atomic_agent_invocation_compiler.py`、`tests/execution/test_atomic_agent_result_projection.py`、`tests/negative/test_atomic_agent_integration_fail_closed.py`、`tests/proving/test_tiny_atomic_agent_bridge.py`、`README.md`、必要时 `src/boardroom_os/execution/__init__.py`。
+- 必须先写的 negative tests：缺 `atomic-agent` package 不得 fallback；`AgentRunResult.status != completed` 不得生成 successful WorkProduct（成功工作产物）；缺 event stream/hash/tool attempts/workspace mutations/artifacts 必须失败；event stream hash mismatch（事件流哈希不一致）必须失败；atomic-agent 返回 `ticket_completed` / `closeout_committed` / `evidence_verified` 等治理字段必须失败；workspace mutation path（工作区变更路径）超出 `allowed_write_set` 必须失败；command_id 未在 ExecutionPackage.commands 声明必须失败。
+- 必须证明的 happy path：ExecutionPackage 可确定性编译为 atomic-agent `AgentInvocation`；fake `AgentRuntimePort` 返回 completed `AgentRunResult` 后，Boardroom 可验证 event stream hash，投影 workspace mutations/artifacts 为 WorkProductSubmission（工作产物提交）和 SourceInventory lineage input（源码清单来源链输入）；README 说明同级目录安装和 import 验证命令。
+- 验收口径：atomic-agent 作为外部 package/import 执行边界接入，Boardroom 不复制源码、不调用不稳定示例 CLI、不服务化；atomic-agent completed 只作为 execution evidence（执行证据），后续仍由 EvidenceVerifier / Checker / Reducer / CloseoutGate 决定完成和收尾。V2-090G DONE 后不得自动恢复 V2-090F；必须先由人工评审 V2-090G 证据，再明确确认是否将 V2-090F 从 BLOCKED 恢复为 TODO/IN_PROGRESS 重新重建 golden sample。
+
 
 ---
 

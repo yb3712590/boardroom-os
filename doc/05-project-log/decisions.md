@@ -440,4 +440,26 @@ V2-090F Golden sample rebuild（黄金样例重建）期间，真实 provider-ba
 - `examples/generated-workspaces/tiny-fullstack/` 在 V2-090F 解阻前不得被宣称为 passed golden sample（通过黄金样例）。
 - `scripts/build_tiny_closeout_sample.py`（构建微型收尾样例脚本）的 provider-backed generation subprocess deadline（模型供应商生成子进程期限）只能作为临时执行保护，不是 agent task deadline（智能体任务期限）。
 - `.env.example` / `.env.template` 记录 provider request timeout（模型请求超时）和 context window（上下文窗口）默认值，但后续必须新增独立 agent loop deadline（智能体循环期限）配置后才能实施 autonomous agent execution（自主智能体执行）。
-- 后续工作包必须先补 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器），再恢复 V2-090F golden sample rebuild（黄金样例重建）验收。
+- 后续工作包必须先补 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）等价边界；当前立项为 V2-090G，通过外部 atomic-agent（原子智能体）package/import 集成来提供受控 agent loop（智能体循环），再恢复 V2-090F golden sample rebuild（黄金样例重建）验收。
+
+## DEC-0022: atomic-agent 以外部 Python package 接入 Boardroom OS
+
+- 状态：Accepted
+- 日期：2026-06-09
+
+### 决策
+
+V2-090G 采用外部 Python package import（Python 包导入）方式接入 `atomic-agent`（原子智能体）。Boardroom OS 不复制 atomic-agent 源码，不把 atomic-agent 封装为 HTTP/gRPC service（服务），也不把 atomic-agent examples CLI（示例命令行）当作稳定集成协议。
+
+Boardroom OS 新增 `AtomicAgentPort`（原子智能体端口）/ `AtomicAgentPackageAdapter`（原子智能体包适配器）防腐层，只调用 atomic-agent 公开 `AgentRuntimePort.invoke(AgentInvocation) -> AgentRunResult`（智能体运行端口）边界。开发安装采用同级目录 checkout（检出）后执行 `python -m pip install -e ../atomic-agent`；运行和审计必须记录 atomic-agent package version（包版本）、source path（源码路径）或等价 provenance（来源）。
+
+### 理由
+
+V2-090F 证明 ProviderAttempt（模型调用尝试记录）不是自主 agent work（智能体工作）。atomic-agent 已经在独立项目中提供受控 agent loop（智能体循环）、tool dispatch（工具调度）、permission policy（权限策略）、event stream（事件流）和 workspace mutation（工作区变更）能力；直接复用其公开端口比在 Boardroom OS 内复制或重写执行循环更符合 no duplicate implementations（禁止重复实现）和 contract-first/evidence-first（合同优先/证据优先）原则。
+
+### 影响
+
+- V2-090G 成为 V2-090F 解阻前置。
+- Boardroom OS 的 README 必须说明 atomic-agent 同级目录安装和 import 验证方式。
+- `AgentRunResult.status == completed`（智能体运行完成）不得直接映射为 `TICKET_COMPLETED`（任务完成）或 `CloseoutPackage.passed`（收尾通过）。
+- 缺 atomic-agent package、缺 event stream、缺 workspace mutation、越权 command/path 或返回治理字段时必须 fail closed（失败关闭）。
