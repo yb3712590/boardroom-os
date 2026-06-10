@@ -9,6 +9,7 @@
 | 文件 | 职责 |
 |---|---|
 | `audit-summary.md` | 外部审计短版结论 |
+| `atomic-agent-contract-lock.md` | V2-090H atomic-agent（原子智能体）外部契约哈希与字段锁定清单 |
 | `legacy-boundary.md` | 旧实现使用边界 |
 | `v2-030-phase-audit.md` | V2-030 阶段审计：PRD 一致性与延期风险登记 |
 
@@ -16,9 +17,9 @@
 
 1. `legacy-boundary.md`
 2. `audit-summary.md`
-3. `v2-030-phase-audit.md`
+3. `atomic-agent-contract-lock.md`
+4. `v2-030-phase-audit.md`
 
 ## 更新触发条件
 
 当旧实现边界、forensic policy、审计结论摘要或阶段性审计结论变化时，必须更新本目录。
-

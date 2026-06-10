@@ -227,6 +227,129 @@ class AtomicInvocationCompiler:
             },
         )
 
+    def compile_with_settings(
+        self,
+        *,
+        execution_package: ExecutionPackage,
+        settings: Any,
+        seat_ref: str,
+    ) -> Any:
+        role_slot = settings.role_slot_by_seat(seat_ref)
+        if role_slot.seat_ref != execution_package.seat_ref.value:
+            raise ValueError("role slot seat_ref must match execution_package.seat_ref")
+        provider_config = settings.provider_by_id(role_slot.provider_profile_ref)
+        profile = execution_package.model_execution_profile
+        if (
+            profile.provider != "openai-compatible"
+            or profile.model != provider_config.model
+            or profile.reasoning_effort != (provider_config.reasoning_effort or profile.reasoning_effort)
+            or profile.context_window != provider_config.context_window_tokens
+        ):
+            raise ValueError("provider profile does not match execution package")
+        provider_options = settings.openai_compatible_options(provider_config.provider_profile_id)
+        allowed_write_set = _validate_relative_paths(
+            tuple(_ref_value(path) for path in execution_package.allowed_write_set),
+            error_message="allowed_write_set must contain relative paths",
+        )
+        tools = AtomicToolPolicyResolver().resolve_tools(
+            runtime_tools=tuple(settings.runtime.atomic_agent.default_tools),
+            role_tools=tuple(role_slot.default_tools),
+            tool_permissions=tuple(execution_package.model_execution_profile.tool_permissions),
+            skill_refs=tuple(role_slot.skill_refs),
+            requires_command_evidence=True,
+            requires_workspace_mutation=True,
+        )
+        resolved_budget = settings.budgets_for_seat(role_slot.seat_ref)
+        base_invocation = self.compile(execution_package)
+        budget_payload = {
+            key: resolved_budget[key]
+            for key in ("max_steps", "max_parse_failures", "max_observation_chars", "max_wall_seconds")
+        }
+        output_requirements = {
+            **base_invocation.output_requirements,
+            "require_command_evidence": True,
+            "require_source_lineage": True,
+            "declared_command_ids": list(declared_command_ids_from_execution_package(execution_package)),
+        }
+        metadata = {
+            **base_invocation.metadata,
+            "provider_profile_ref": provider_config.provider_profile_id,
+            "role_slot_ref": role_slot.seat_ref,
+            "budget_profile_ref": resolved_budget["budget_profile_ref"],
+            "resolved_budget_hash": stable_hash(resolved_budget),
+            "resolved_tool_policy_hash": stable_hash({"tools": tools}),
+            "runtime_config_hash": settings.config_hashes.runtime_config_hash,
+            "providers_config_hash": settings.config_hashes.providers_config_hash,
+            "roles_config_hash": settings.config_hashes.roles_config_hash,
+            "event_stream_format": "jsonl-utf8-lf-canonical-json-v1",
+            "execution_policy": settings.runtime.atomic_agent.execution_policy.model_dump(mode="json"),
+        }
+        return base_invocation.model_copy(
+            update={
+                "tools": list(tools),
+                "permission_policy": {
+                    "policy_ref": f"policy://boardroom/atomic-agent/{execution_package.execution_package_id.value}",
+                    "commands": [
+                        {
+                            "command_id": command.command_id.value,
+                            "label": command.label,
+                            "argv": list(command.command),
+                            "cwd": _validate_relative_paths(
+                                (command.cwd,),
+                                error_message="command cwd must contain relative paths",
+                            )[0],
+                        }
+                        for command in execution_package.commands
+                    ],
+                    "network": settings.runtime.atomic_agent.network.model_dump(mode="json"),
+                    "filesystem": {"allowed_write_set": list(allowed_write_set)},
+                },
+                "provider_profile": provider_options.to_provider_profile(),
+                "budgets": budget_payload,
+                "output_requirements": output_requirements,
+                "skill_context": {
+                    "skill_refs": list(role_slot.skill_refs),
+                    "audit_requirements": [item.value for item in execution_package.audit_requirements],
+                },
+                "metadata": metadata,
+            }
+        )
+
+
+class AtomicToolPolicyResolver:
+    def resolve_tools(
+        self,
+        *,
+        runtime_tools: tuple[str, ...],
+        role_tools: tuple[str, ...],
+        tool_permissions: tuple[str, ...],
+        skill_refs: tuple[str, ...],
+        requires_command_evidence: bool,
+        requires_workspace_mutation: bool,
+    ) -> tuple[str, ...]:
+        allowed = [tool for tool in role_tools if tool in set(runtime_tools)]
+        if requires_command_evidence and "run_command" not in allowed:
+            raise ValueError("resolved tools must include run_command for command evidence")
+        if requires_workspace_mutation and not {"write_file", "apply_patch"}.intersection(allowed):
+            raise ValueError("resolved tools must include write_file or apply_patch for workspace mutation")
+        if "submit_result" not in allowed:
+            raise ValueError("resolved tools must include submit_result")
+        permission_tools: set[str] = {"submit_result"}
+        if "filesystem.read" in tool_permissions:
+            permission_tools.update({"list_files", "read_file", "search_files"})
+        if "filesystem.write" in tool_permissions or any(ref == "skill.filesystem.patch" for ref in skill_refs):
+            permission_tools.update({"write_file", "apply_patch"})
+        if "command.execute" in tool_permissions or any(ref == "skill.command.test" for ref in skill_refs):
+            permission_tools.add("run_command")
+        resolved = tuple(tool for tool in allowed if tool in permission_tools)
+        if requires_command_evidence and "run_command" not in resolved:
+            raise ValueError("resolved tools must include run_command for command evidence")
+        if requires_workspace_mutation and not {"write_file", "apply_patch"}.intersection(resolved):
+            raise ValueError("resolved tools must include write_file or apply_patch for workspace mutation")
+        if "submit_result" not in resolved:
+            raise ValueError("resolved tools must include submit_result")
+        return resolved
+
 
 _GOVERNANCE_FORBIDDEN_KEYS = {
     "ticket_completed",
@@ -330,7 +453,8 @@ class AtomicAgentResultValidator:
             )
             if not _path_is_in_allowed_write_set(path, self.allowed_write_set):
                 raise ValueError("workspace mutation path is outside allowed_write_set")
-            if not _is_sha256(mutation.get("sha256")):
+            mutation_hash = _mutation_after_hash(mutation)
+            if not _is_sha256(mutation_hash):
                 raise ValueError("workspace mutation sha256 is required")
             tool_attempt_id = mutation.get("tool_attempt_id")
             if not isinstance(tool_attempt_id, str) or not tool_attempt_id:
@@ -434,7 +558,7 @@ class AtomicAgentResultValidator:
             for mutation in _summary_workspace_mutations(evidence_summary)
         }
         result_mutations = {
-            (mutation["path"], mutation["tool_attempt_id"], mutation["sha256"])
+            (mutation["path"], mutation["tool_attempt_id"], _mutation_after_hash(mutation))
             for mutation in result.workspace_mutations
         }
         if result_mutations != summary_mutations:
@@ -446,7 +570,7 @@ class AtomicAgentResultValidator:
             for artifact in result.artifacts
             if isinstance(artifact, dict)
         }
-        if result_artifact_refs != summary_artifact_refs:
+        if not summary_artifact_refs.issubset(result_artifact_refs):
             raise ValueError("artifacts must match event stream summary")
 
         for command_result in evidence_summary.get("command_results", ()):
@@ -569,6 +693,10 @@ def _looks_like_windows_absolute_path(path: str) -> bool:
 
 def _path_is_in_allowed_write_set(path: str, allowed_write_set: tuple[str, ...]) -> bool:
     for allowed_path in allowed_write_set:
+        if allowed_path.endswith("/"):
+            prefix = allowed_path.rstrip("/")
+            if path == prefix or path.startswith(prefix + "/"):
+                return True
         if path == allowed_path:
             return True
         if allowed_path.endswith("/**"):
@@ -583,6 +711,19 @@ def _path_is_in_allowed_write_set(path: str, allowed_write_set: tuple[str, ...])
 
 def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and _SHA256_PATTERN.fullmatch(value) is not None
+
+
+def _mutation_after_hash(mutation: dict[str, Any]) -> object:
+    return mutation.get("sha256") or mutation.get("after_hash")
+
+
+def stable_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def declared_command_ids_from_execution_package(execution_package: ExecutionPackage) -> tuple[str, ...]:
+    return tuple(command.command_id.value for command in execution_package.commands)
 
 
 def _ref_value(value: Any) -> str:

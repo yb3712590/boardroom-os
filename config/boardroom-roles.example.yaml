@@ -1,0 +1,40 @@
+version: 1
+role_slots:
+  - seat_ref: seat.worker.implementation
+    role_profile_ref: role.worker.implementation
+    role_category: worker
+    model_execution_profile_id: model-profile.worker.implementation.primary
+    provider_profile_ref: provider.openai-compatible.primary
+    skill_refs:
+      - skill.filesystem.patch
+      - skill.command.test
+    default_tools:
+      - list_files
+      - read_file
+      - search_files
+      - write_file
+      - apply_patch
+      - run_command
+      - submit_result
+    budget_profile_ref: worker.implementation.default
+    budgets_override:
+      max_steps: 128
+      max_parse_failures: 6
+      max_wall_seconds: 5400
+  - seat_ref: seat.worker.fast-fix
+    role_profile_ref: role.worker.implementation
+    role_category: worker
+    model_execution_profile_id: model-profile.worker.fast-fix
+    provider_profile_ref: provider.openai-compatible.fast-worker
+    skill_refs:
+      - skill.filesystem.patch
+      - skill.command.test
+    default_tools:
+      - read_file
+      - apply_patch
+      - run_command
+      - submit_result
+    budget_profile_ref: atomic.proving.minimal
+    budgets_override:
+      max_steps: 48
+      max_wall_seconds: 1800

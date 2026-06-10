@@ -45,6 +45,12 @@ from boardroom_os.execution.atomic_agent import (
     AtomicResultProjection,
     AtomicResultProjector,
 )
+from boardroom_os.execution.atomic_executor import (
+    AtomicAgentExecutor,
+    AtomicExecutionRequest,
+    AtomicExecutionResult,
+    reject_provider_executor_for_implementation,
+)
 from boardroom_os.execution.verification_run import (
     CommandOutputRef,
     EnvironmentProfileRef,
@@ -101,6 +107,7 @@ __all__ = [
     "AllowedWritePath",
     "AtomicAgentAdapterError",
     "AtomicAgentDependencyInfo",
+    "AtomicAgentExecutor",
     "AtomicAgentPackageAdapter",
     "AtomicAgentPort",
     "AtomicAgentResultValidator",
@@ -108,6 +115,8 @@ __all__ = [
     "AtomicInvocationCompiler",
     "AtomicResultProjection",
     "AtomicResultProjector",
+    "AtomicExecutionRequest",
+    "AtomicExecutionResult",
     "AuditRequirement",
     "ContextRef",
     "EvidencePurpose",
@@ -151,4 +160,5 @@ __all__ = [
     "build_provider_attempt_recorded_event",
     "evaluate_fallback_evidence",
     "render_prompt_from_snapshot",
+    "reject_provider_executor_for_implementation",
 ]

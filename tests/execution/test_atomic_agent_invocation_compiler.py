@@ -208,3 +208,122 @@ def test_atomic_invocation_compiler_rejects_parent_command_cwd(tmp_path):
         assert "command cwd must contain relative paths" in str(exc)
     else:
         raise AssertionError("expected command cwd relative path validation failure")
+
+
+def test_atomic_invocation_compiler_consumes_runtime_provider_and_role_config(tmp_path, monkeypatch):
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from tests.config.test_boardroom_config import _write_config_files
+
+    paths = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(paths, env_values={})
+    package = _execution_package()
+    execution_package = package.model_copy(
+        update={
+            "seat_ref": AgentSeatRef(value="seat.worker.implementation"),
+            "model_execution_profile": package.model_execution_profile.model_copy(
+                update={
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "context_window": 400000,
+                    "temperature": 0.0,
+                    "model_execution_profile_id": "model-profile.worker.implementation.primary",
+                    "tool_permissions": ("filesystem.read", "filesystem.write", "command.execute"),
+                }
+            ),
+        }
+    )
+
+    invocation = AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+        execution_package=execution_package,
+        settings=settings,
+        seat_ref="seat.worker.implementation",
+    )
+
+    assert invocation.permission_policy["policy_ref"] == "policy://boardroom/atomic-agent/exec.ticket.backend.1"
+    assert invocation.provider_profile["provider"] == "openai-compatible"
+    assert invocation.provider_profile["model"] == "gpt-5.5"
+    assert "api_key" not in invocation.provider_profile
+    assert invocation.budgets == {
+        "max_steps": 128,
+        "max_parse_failures": 3,
+        "max_observation_chars": 24000,
+        "max_wall_seconds": 5400,
+    }
+    assert invocation.metadata["budget_profile_ref"] == "worker.implementation.default"
+    assert invocation.metadata["resolved_budget_hash"].startswith("sha256:")
+    assert invocation.metadata["resolved_tool_policy_hash"].startswith("sha256:")
+    assert "submit_result" in invocation.tools
+    assert "run_command" in invocation.tools
+    assert invocation.output_requirements["require_command_evidence"] is True
+    assert invocation.output_requirements["require_source_lineage"] is True
+    assert invocation.metadata["runtime_config_hash"].startswith("sha256:")
+    assert invocation.metadata["providers_config_hash"].startswith("sha256:")
+    assert invocation.metadata["roles_config_hash"].startswith("sha256:")
+    assert invocation.metadata["provider_profile_ref"] == "provider.openai-compatible.primary"
+    assert invocation.metadata["event_stream_format"] == "jsonl-utf8-lf-canonical-json-v1"
+
+
+def test_atomic_tool_policy_resolver_derives_tools_from_permissions():
+    from boardroom_os.execution.atomic_agent import AtomicToolPolicyResolver
+
+    tools = AtomicToolPolicyResolver().resolve_tools(
+        runtime_tools=("list_files", "read_file", "search_files", "write_file", "apply_patch", "run_command", "submit_result"),
+        role_tools=("read_file", "apply_patch", "run_command", "submit_result"),
+        tool_permissions=("filesystem.read", "filesystem.write", "command.execute"),
+        skill_refs=("skill.filesystem.patch", "skill.command.test"),
+        requires_command_evidence=True,
+        requires_workspace_mutation=True,
+    )
+
+    assert tools == ("read_file", "apply_patch", "run_command", "submit_result")
+
+
+def test_declared_command_ids_are_extracted_from_execution_package_only():
+    from boardroom_os.execution.atomic_agent import declared_command_ids_from_execution_package
+
+    assert declared_command_ids_from_execution_package(_execution_package()) == ("cmd.test",)
+
+
+def test_atomic_invocation_compiler_rejects_provider_profile_mismatch(tmp_path, monkeypatch):
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from tests.config.test_boardroom_config import _write_config_files
+
+    paths = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(paths, env_values={})
+    execution_package = _execution_package().model_copy(
+        update={"seat_ref": AgentSeatRef(value="seat.worker.implementation")}
+    )
+
+    try:
+        AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+            execution_package=execution_package,
+            settings=settings,
+            seat_ref="seat.worker.implementation",
+        )
+    except ValueError as exc:
+        assert "provider profile does not match execution package" in str(exc)
+    else:
+        raise AssertionError("expected provider mismatch failure")
+
+
+def test_atomic_invocation_compiler_rejects_role_slot_seat_mismatch(tmp_path, monkeypatch):
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from tests.config.test_boardroom_config import _write_config_files
+
+    paths = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(paths, env_values={})
+
+    try:
+        AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+            execution_package=_execution_package(),
+            settings=settings,
+            seat_ref="seat.worker.implementation",
+        )
+    except ValueError as exc:
+        assert "role slot seat_ref must match execution_package.seat_ref" in str(exc)
+    else:
+        raise AssertionError("expected seat mismatch failure")

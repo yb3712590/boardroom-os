@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090H`（TODO，切换 implementation ticket 主执行路径到 atomic-agent executor）
+**当前未完成工作包**：`V2-090F`（BLOCKED，待 V2-090H 真实执行证据人工评审后决定是否恢复）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）与 `V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）已完成。V2-090G 只完成外部 `atomic-agent`（原子智能体）`AgentRuntimePort`（智能体运行端口）执行边界、防腐适配层、调用编译器、结果校验器和证据链投影输入；当前主执行路径仍是 `ProviderExecutor`（模型供应商执行器）+ `OpenAIProviderTransport`（OpenAI 模型传输）的单次 LLM request（大模型请求），不能视为 agent loop executor（智能体循环执行器）已接入。下一工作包 `V2-090H Atomic-agent executor switch`（原子智能体执行器切换）必须构造并派发 atomic implementation ticket（原子实施任务），由接入真实 provider（模型供应商）的 atomic-agent executor 产生 workspace mutation（工作区变更）、command evidence（命令证据）和 event stream（事件流）。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先完成 V2-090H 并经人工评审后，才允许决定是否恢复 V2-090F 重建 golden sample。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）、`V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）与 `V2-090H Atomic-agent executor switch`（原子智能体执行器切换）已完成。V2-090H 已证明最小 implementation ticket（实施任务）可经真实 provider-backed atomic-agent executor（模型供应商支撑的原子智能体执行器）产生 event stream（事件流）、workspace mutation（工作区变更）、command evidence（命令证据）和 source lineage input（源码来源链输入）。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先经人工评审 V2-090H 真实执行证据后，才允许决定是否恢复 V2-090F 重建 golden sample。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 6 / 8 | 阻塞；V2-090H 待实施，V2-090F 待 V2-090H 人工评审后决定是否恢复 |
-| **合计** | **V2-000 ~ V2-090** | **65 / 67** | **V2-090A ~ V2-090E 与 V2-090G 完成，V2-090H TODO，V2-090F BLOCKED，Phase 9 未闭合** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 7 / 8 | 阻塞；V2-090H 完成，V2-090F 待 V2-090H 人工评审后决定是否恢复 |
+| **合计** | **V2-000 ~ V2-090** | **66 / 67** | **V2-090A ~ V2-090E、V2-090G 与 V2-090H 完成，V2-090F BLOCKED，Phase 9 未闭合** |
 
 ## 当前约束摘要
 
@@ -1133,7 +1133,7 @@ RoleProfile（角色模板）
 
 ### V2-090H: Atomic-agent executor switch
 
-- 状态：TODO
+- 状态：DONE
 - 目标：新增 Boardroom OS implementation execution path（实施执行路径），使用外部 atomic-agent executor（原子智能体执行器）替代 `ProviderExecutor`（模型供应商执行器）单次 LLM request（大模型请求）作为 implementation ticket（实施任务）的主执行器；构造并派发一个 atomic implementation ticket（原子实施任务），由接入真实 provider（模型供应商）的 atomic-agent executor 在受控 workspace（工作区）内读写文件、运行允许命令、观察失败并提交结果。
 - 输入文档：`doc/04-implementation/v2-090g-atomic-agent-package-integration-spec.md`、`doc/04-implementation/v2-090g-atomic-agent-package-integration-implementation-plan.md`、`../atomic-agent/docs/03-contracts/agent-runtime-port.md`、`../atomic-agent/docs/03-contracts/agent-action-protocol.md`、`../atomic-agent/docs/03-contracts/event-stream-protocol.md`、`../atomic-agent/docs/00-overview/boardroom-os-integration-summary.md`、`doc/03-architecture/execution-and-runtime-boundary.md`、`doc/03-architecture/contract-and-evidence-model.md`、`doc/04-implementation/acceptance-criteria.md`。
 - 依赖：V2-090G、外部 `atomic-agent` 可通过 `python -m pip install -e ../atomic-agent` 安装并具备真实 provider-backed executor（模型供应商支撑执行器）。
@@ -1141,6 +1141,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：implementation category（实施类别）ticket 仍走 `ProviderExecutor.execute`（模型供应商执行器执行）必须失败；缺 `AtomicAgentPackageAdapter` / `AgentRuntimePort` / `event_stream_root` / active `ExecutionPackage`（执行包）必须失败；atomic result 缺 ProviderAttempt（模型调用尝试记录）、ToolAttempt（工具尝试）、CommandEvidence（命令证据）、workspace mutation（工作区变更）或 source lineage input（源码来源链输入）必须失败；fake provider transport（模拟模型传输）不得满足本工作包真实 executor happy path；atomic-agent completed（运行完成）不得直接触发 `TICKET_COMPLETED`（任务完成）或 closeout passed（收尾通过）。
 - 必须证明的 happy path：构造一个最小 atomic implementation ticket（原子实施任务），由真实 provider-backed atomic-agent executor 通过 `AgentRuntimePort.invoke(AgentInvocation)`（智能体运行端口调用）写入预期文件、运行声明命令、产出 event stream（事件流）和 command evidence（命令证据）；Boardroom OS 通过 `AtomicAgentResultValidator`（原子结果校验器）与 `AtomicResultProjector`（原子结果投影器）生成 `WorkProductSubmission`（工作产物提交）和 source lineage input（源码来源链输入），且后续仍由 EvidenceVerifier（证据验证器）/ Checker（检查者）/ Reducer（归约器）/ CloseoutGate（收尾门禁）决策。
 - 验收口径：implementation ticket 主执行路径必须可配置或明确切换到 atomic-agent executor；老 `ProviderExecutor` 单次 LLM JSON source delivery（源码交付）不得再被用于证明 implementation work（实施工作）完成，只能保留为非实施类 provider attempt（模型调用尝试）或显式标记的 legacy-blocked path（遗留阻塞路径）。完成 V2-090H 后仍不得自动恢复 V2-090F；必须先由人工评审 V2-090H 真实执行证据，再明确确认是否将 V2-090F 从 BLOCKED 恢复为 TODO / IN_PROGRESS。
+- 完成证据：2026-06-10 新增三文件配置模型（runtime/providers/roles，运行时/供应商/角色配置）、`AtomicAgentExecutor`（原子智能体执行器）、`AtomicAgentRuntimeFactory`（原子智能体运行时工厂）、provider attempt projection（模型调用尝试投影）和真实 proving helper（证明辅助脚本）。真实 provider-backed proving（模型供应商支撑证明）通过 `tests/proving/test_tiny_atomic_agent_executor.py`，由外部 atomic-agent `AgentRuntimePort.invoke(AgentInvocation)`（智能体运行端口调用）写入 `work/real-provider-output.txt`、执行声明命令 `cmd.check-output`、产生 canonical event stream（规范事件流）、workspace mutation（工作区变更）、command evidence（命令证据）、provider turn facts（模型轮次事实）和 source lineage input（源码来源链输入）。Negative tests 覆盖 `ProviderExecutor` 不得满足 implementation ticket evidence（实施任务证据）、缺 runtime port（运行时端口）、缺 provider turn facts、缺 command evidence、fake provider transport（模拟供应商传输）、治理字段注入、CRLF event stream（CRLF 事件流）、retry after workspace mutation（工作区变更后重试）、相对 event stream ref（事件流引用）解析、目录 allowed_write_set（允许写入集合）策略、`after_hash` 写后哈希和 extra audit artifacts（额外审计产物）。V2-090H 不直接触发 `TICKET_COMPLETED`（任务完成）或 closeout passed（收尾通过），V2-090F 仍需人工评审后决定是否恢复。
 
 
 ---

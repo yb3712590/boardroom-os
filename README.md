@@ -106,3 +106,13 @@ python -c "from atomic_agent import AgentRuntimePort; print('atomic-agent import
 - `atomic-agent` 负责 agent loop（智能体循环）、tool dispatch（工具调度）、permission policy（权限策略）、event stream（事件流）和 workspace mutation（工作区变更）。
 - Boardroom OS 继续负责 AcceptanceContract（验收合同）、PackageContract（包合同）、reducer（归约器）、EvidenceVerifier（证据验证器）、Checker（检查者）和 CloseoutGate（收尾门禁）。
 - `AgentRunResult.status == completed`（原子智能体运行完成）不等于 `TICKET_COMPLETED`（任务完成）或 `CloseoutPackage.passed`（收尾包通过）。缺 event stream、workspace mutation、command evidence 或 source inventory lineage 时必须 fail closed（失败关闭）。
+
+### V2-090H atomic-agent executor config
+
+Boardroom OS 现在分离 runtime（运行时）、provider（供应商）和 role-slot（角色席位）配置：
+
+- `config/boardroom-runtime.example.yaml` — atomic executor mode（原子执行器模式）、event/artifact roots（事件/产物根目录）、tool limits（工具限制）、budgets（预算）和 default-deny network policy（默认拒绝网络策略）。
+- `config/boardroom-providers.example.yaml` — OpenAI-compatible provider profiles（OpenAI 兼容供应商配置档）。模型、base URL、timeout、stream 和 request 参数只放在这里。
+- `config/boardroom-roles.example.yaml` — Boardroom seats（董事会席位）到 provider profile refs（供应商配置档引用）、skills（技能）、tools（工具）和 budget overrides（预算覆盖）的绑定。
+
+`.env` / `.env.template` 只承载 config paths（配置路径）、secrets（密钥）和 local bootstrap paths（本地启动路径）。旧 `BOARDROOM_OPENAI_*` 模型参数在新配置路径存在时会被拒绝。

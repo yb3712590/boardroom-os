@@ -17,7 +17,7 @@ from boardroom_os.providers.attempt import (
 from tests.execution.test_atomic_agent_invocation_compiler import _execution_package
 
 
-def _write_event_stream(path, *, command_id=None):
+def _write_event_stream(path, *, command_id=None, include_provider_turn=False):
     artifact = {
         "artifact_ref": "artifact://run.atomic.1/results/step-0002.json",
         "sha256": "sha256:" + "0" * 64,
@@ -36,20 +36,57 @@ def _write_event_stream(path, *, command_id=None):
         "size_bytes": 10,
         "truncated_in_observation": False,
     }
+    sequence = 1
     events_without_hash = [
         {
             "event_id": "evt-1",
             "run_id": "run.atomic.1",
-            "sequence": 1,
+            "sequence": sequence,
             "type": "run.started",
             "timestamp": "2026-06-10T00:00:00Z",
             "payload": {"event_protocol_version": 1, "invocation_id": "inv.atomic.1"},
             "previous_event_hash": None,
         },
-        {
+    ]
+    sequence += 1
+    if include_provider_turn:
+        events_without_hash.extend(
+            [
+                {
+                    "event_id": "evt-provider-start",
+                    "run_id": "run.atomic.1",
+                    "sequence": sequence,
+                    "type": "provider.turn.started",
+                    "timestamp": "2026-06-10T00:00:00Z",
+                    "payload": {"provider_turn_id": "provider_turn_000001"},
+                    "previous_event_hash": None,
+                },
+                {
+                    "event_id": "evt-provider-completed",
+                    "run_id": "run.atomic.1",
+                    "sequence": sequence + 1,
+                    "type": "provider.turn.completed",
+                    "timestamp": "2026-06-10T00:00:01Z",
+                    "payload": {
+                        "provider_turn_id": "provider_turn_000001",
+                        "output": {
+                            "artifact_ref": "artifact://run.atomic.1/provider/turn_000001.txt",
+                            "sha256": "sha256:" + "5" * 64,
+                            "size_bytes": 80,
+                            "truncated_in_observation": False,
+                        },
+                    },
+                    "previous_event_hash": None,
+                },
+            ]
+        )
+        sequence += 2
+    events_without_hash.extend(
+        [
+            {
             "event_id": "evt-2",
             "run_id": "run.atomic.1",
-            "sequence": 2,
+            "sequence": sequence,
             "type": "tool.attempt.started",
             "timestamp": "2026-06-10T00:00:01Z",
             "payload": {
@@ -62,7 +99,7 @@ def _write_event_stream(path, *, command_id=None):
         {
             "event_id": "evt-3",
             "run_id": "run.atomic.1",
-            "sequence": 3,
+            "sequence": sequence + 1,
             "type": "tool.attempt.completed",
             "timestamp": "2026-06-10T00:00:02Z",
             "payload": {
@@ -76,7 +113,7 @@ def _write_event_stream(path, *, command_id=None):
         {
             "event_id": "evt-4",
             "run_id": "run.atomic.1",
-            "sequence": 4,
+            "sequence": sequence + 2,
             "type": "workspace.mutation.recorded",
             "timestamp": "2026-06-10T00:00:03Z",
             "payload": {
@@ -93,7 +130,7 @@ def _write_event_stream(path, *, command_id=None):
                 {
                     "event_id": "evt-4-command",
                     "run_id": "run.atomic.1",
-                    "sequence": 5,
+                    "sequence": sequence + 3,
                     "type": "command.completed",
                     "timestamp": "2026-06-10T00:00:03Z",
                     "payload": {
@@ -122,7 +159,7 @@ def _write_event_stream(path, *, command_id=None):
         {
             "event_id": "evt-5",
             "run_id": "run.atomic.1",
-            "sequence": 6 if command_id is not None else 5,
+            "sequence": sequence + 4 if command_id is not None else sequence + 3,
             "type": "result.submitted",
             "timestamp": "2026-06-10T00:00:04Z",
             "payload": {
@@ -135,13 +172,13 @@ def _write_event_stream(path, *, command_id=None):
         {
             "event_id": "evt-6",
             "run_id": "run.atomic.1",
-            "sequence": 7 if command_id is not None else 6,
+            "sequence": sequence + 5 if command_id is not None else sequence + 4,
             "type": "run.completed",
             "timestamp": "2026-06-10T00:00:05Z",
             "payload": {"summary": "Updated backend/app.py"},
             "previous_event_hash": None,
         },
-    ]
+    ])
     events = []
     previous_hash = None
     for event in events_without_hash:
@@ -203,6 +240,95 @@ def test_atomic_result_validator_recomputes_event_stream_hash(tmp_path):
 
     assert validated.events_hash == events_hash
     assert len(validated.events) == 6
+
+
+def test_atomic_result_validator_allows_directory_write_policy_with_trailing_slash(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    _write_event_stream(event_stream, command_id="cmd.test", include_provider_turn=True)
+    events = [json.loads(line) for line in event_stream.read_text(encoding="utf-8").splitlines()]
+    previous_hash = None
+    for event in events:
+        payload = event.get("payload", {})
+        if payload.get("path") == "backend/app.py":
+            payload["path"] = "work/real-provider-output.txt"
+        if payload.get("produced_paths") == ["backend/app.py"]:
+            payload["produced_paths"] = ["work/real-provider-output.txt"]
+        event["previous_event_hash"] = previous_hash
+        event.pop("event_hash", None)
+        event["event_hash"] = _event_hash(event)
+        previous_hash = event["event_hash"]
+    content = "".join(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n" for event in events).encode("utf-8")
+    event_stream.write_bytes(content)
+    events_hash = "sha256:" + hashlib.sha256(content).hexdigest()
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "work/real-provider-output.txt", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "0" * 64}
+            ],
+            "artifacts": [
+                {
+                    "artifact_ref": "artifact://run.atomic.1/results/step-0002.json",
+                    "path": "work/real-provider-output.txt",
+                    "sha256": "sha256:" + "0" * 64,
+                }
+            ],
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("work/",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert validated.evidence_summary["source_inventory_lineage"][0]["path"] == "work/real-provider-output.txt"
+
+
+def test_atomic_result_validator_accepts_result_mutation_after_hash(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_event_stream(event_stream, command_id="cmd.test", include_provider_turn=True)
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "backend/app.py", "tool_attempt_id": "tool.1", "after_hash": "sha256:" + "0" * 64}
+            ],
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("backend",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert validated.events_hash == events_hash
+
+
+def test_atomic_result_validator_allows_extra_audit_artifacts(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_event_stream(event_stream, command_id="cmd.test", include_provider_turn=True)
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "artifacts": [
+                *_completed_result(event_stream, events_hash).artifacts,
+                {
+                    "artifact_ref": "artifact://run.atomic.1/provider/turn_000001.txt",
+                    "sha256": "sha256:" + "5" * 64,
+                },
+            ],
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("backend",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert len(validated.result.artifacts) == 2
 
 
 def test_atomic_result_validator_rejects_event_stream_hash_mismatch(tmp_path):

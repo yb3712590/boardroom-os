@@ -1,0 +1,85 @@
+version: 1
+runtime_id: boardroom-runtime.local
+execution:
+  implementation_executor: atomic_agent
+  reject_provider_executor_for_implementation: true
+atomic_agent:
+  package_name: atomic-agent
+  import_name: atomic_agent
+  runtime_port_contract_ref: atomic-agent.docs.agent-runtime-port.v1
+  event_stream_root: .evidence/atomic-agent/events
+  artifact_root: .evidence/atomic-agent/artifacts
+  run_id_prefix: boardroom-atomic
+  dependency:
+    atomic_agent_path_env: BOARDROOM_ATOMIC_AGENT_PATH
+    default_atomic_agent_path: ../atomic-agent
+    contract_lock_ref: doc/06-reference/atomic-agent-contract-lock.md
+    require_contract_hash_match: true
+  execution_policy:
+    wall_time_seconds: 900
+    retry_on_provider_timeout: false
+    retry_on_runtime_crash: true
+    max_retries: 1
+    interrupt_grace_period_seconds: 30
+    retry_requires_no_workspace_mutation: true
+  concurrency:
+    mode: serial_per_workspace
+    workspace_lock_root: .evidence/atomic-agent/locks
+    require_run_scoped_event_artifact_roots: true
+  default_tools:
+    - list_files
+    - read_file
+    - search_files
+    - write_file
+    - apply_patch
+    - run_command
+    - submit_result
+  required_tools:
+    - submit_result
+  tool_permission_map:
+    filesystem.read:
+      - list_files
+      - read_file
+      - search_files
+    filesystem.write:
+      - write_file
+      - apply_patch
+    command.execute:
+      - run_command
+    network.fetch:
+      - web_fetch
+  budget_profiles:
+    atomic.proving.minimal:
+      max_steps: 32
+      max_parse_failures: 2
+      max_observation_chars: 16000
+      max_wall_seconds: 1200
+    worker.implementation.default:
+      max_steps: 96
+      max_parse_failures: 3
+      max_observation_chars: 24000
+      max_wall_seconds: 3600
+    worker.implementation.large:
+      max_steps: 160
+      max_parse_failures: 4
+      max_observation_chars: 32000
+      max_wall_seconds: 7200
+  budget_caps:
+    max_steps: 240
+    max_parse_failures: 6
+    max_observation_chars: 64000
+    max_wall_seconds: 10800
+  filesystem:
+    default_read_limit: 12000
+    max_read_limit: 50000
+    default_max_entries: 200
+    max_entries_limit: 1000
+    default_max_matches: 50
+    max_matches_limit: 500
+  commands:
+    default_timeout_seconds: 60
+    max_timeout_seconds: 300
+    max_output_bytes: 200000
+  network:
+    default: deny
+    allow_rules: []

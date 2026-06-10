@@ -1,0 +1,44 @@
+version: 1
+providers:
+  - provider_profile_id: provider.openai-compatible.primary
+    provider_type: openai_compatible
+    provider_label: truerealbill-openai-compatible
+    base_url: https://api.truerealbill.com/v1
+    api_key_env: OPENAI_API_KEY
+    model: gpt-5.5
+    context_window_tokens: 400000
+    max_output_tokens: 128000
+    stream_idle_timeout_seconds: 120
+    total_timeout_seconds: 600
+    reasoning_effort: high
+    temperature: null
+    top_p: null
+    presence_penalty: null
+    frequency_penalty: null
+    seed: null
+    stop: null
+    response_format: null
+    stream_options: null
+    service_tier: null
+    user: boardroom-os
+  - provider_profile_id: provider.openai-compatible.fast-worker
+    provider_type: openai_compatible
+    provider_label: fast-worker-openai-compatible
+    base_url: https://api.truerealbill.com/v1
+    api_key_env: OPENAI_API_KEY
+    model: gpt-5.5-fast
+    context_window_tokens: 400000
+    max_output_tokens: 64000
+    stream_idle_timeout_seconds: 90
+    total_timeout_seconds: 420
+    reasoning_effort: medium
+    temperature: null
+    top_p: null
+    presence_penalty: null
+    frequency_penalty: null
+    seed: null
+    stop: null
+    response_format: null
+    stream_options: null
+    service_tier: null
+    user: boardroom-os-fast-worker
