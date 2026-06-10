@@ -33,3 +33,35 @@ PowerShell 示例：
 $env:PYTHONPATH='src;.'; python scripts/build_tiny_closeout_sample.py
 $env:PYTHONPATH='src;.'; python scripts/build_tiny_closeout_sample.py --check
 ```
+
+## V2-090I medium scenario runner
+
+`scripts/run_v2_090i_medium_scenario.py` 运行 V2-090I Resettable Medium Scenario（可重置中等复杂场景）。它派发一个 real provider-backed atomic-agent implementation ticket（真实模型供应商支撑的原子智能体实施任务），要求在标记 workspace（工作区）下创建多文件 `forecast_engine` Python package（Python 包）和 CLI（命令行工具）。
+
+- Default workspace（默认工作区）：`.evidence/atomic-agent/v2-090i-medium-scenario-workspace/`
+- `--reset`：只删除并重建带 V2-090I marker（标记文件）的 workspace；若目录存在但缺 `.boardroom-v2-090i-workspace.json`，脚本 fail closed（失败关闭）而不是删除目录。
+- Provider/runtime/role configuration（模型供应商 / 运行时 / 角色配置）仍只来自 `.env` config paths（配置路径）以及 `config/boardroom-runtime.example.yaml`、`config/boardroom-providers.example.yaml`、`config/boardroom-roles.example.yaml`。
+- 完整 pytest 默认跳过真实 provider test（模型供应商测试），除非同时设置 `BOARDROOM_RUN_REAL_PROVIDER_PROVING=1` 和 `OPENAI_API_KEY`。
+- 当前状态：三次 real-provider attempts（真实模型供应商尝试）后仍为 BLOCKED（阻塞）。runner（运行器）与 fail-closed tests（失败关闭测试）是评审产物；只有 real provider proving test（真实供应商证明测试）通过后，V2-090I 才能被接受。
+
+PowerShell example:
+
+```powershell
+$env:PYTHONPATH='src;.'; $env:BOARDROOM_RUN_REAL_PROVIDER_PROVING='1'; python -m pytest tests/proving/test_v2_090i_medium_scenario.py -q --tb=short
+```
+
+POSIX shell example:
+
+```bash
+set -a; source .env; set +a; BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090i_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090i-medium-real
+```
+
+## V2-090J medium scenario runner（planned）
+
+V2-090J Atomic action protocol repair（原子动作协议修复）计划新增 `scripts/run_v2_090j_medium_scenario.py`。该 runner（运行器）尚未实现；当前只有 spec/plan（规范/计划）。实施后它应复用 V2-090I medium scenario（中等场景）目标，但允许显式 `AgentActionBatch`（智能体动作批次）或等价 structured output（结构化输出），并要求 resolved `max_actions_per_turn`（解析后每轮最大动作数）大于 1、required-output checkpoint（必需产物检查点）的 `max_auto_runs` 来自 runtime config（运行时配置）。
+
+Planned POSIX shell example after implementation:
+
+```bash
+set -a; source .env; set +a; BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090j_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090j-medium-real
+```
