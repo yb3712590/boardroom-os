@@ -57,6 +57,8 @@
 | `v2-090-tiny-fullstack-blackbox-recovery-plan.md` | V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）计划 |
 | `v2-090g-atomic-agent-package-integration-spec.md` | V2-090G atomic-agent（原子智能体）package/import 集成规范 |
 | `v2-090g-atomic-agent-package-integration-implementation-plan.md` | V2-090G atomic-agent（原子智能体）package/import 集成实施计划 |
+| `v2-090h-atomic-agent-executor-switch-spec.md` | V2-090H atomic-agent（原子智能体）executor switch（执行器切换）规范 |
+| `v2-090h-atomic-agent-executor-switch-implementation-plan.md` | V2-090H atomic-agent（原子智能体）executor switch（执行器切换）实施计划 |
 
 ## AI 启动入口
 
