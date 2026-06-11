@@ -143,9 +143,10 @@ class AtomicAgentRuntimeFactory:
             workspace_root,
             [path.value for path in execution_package.allowed_write_set],
         )
+        filesystem_config = runtime.filesystem.model_dump(exclude={"allow_apply_patch"})
         filesystem_tools = FilesystemTools(
             guard,
-            FilesystemToolConfig(**runtime.filesystem.model_dump()),
+            FilesystemToolConfig(**filesystem_config),
         )
         command_policy = CommandPolicy(
             {

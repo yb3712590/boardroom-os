@@ -36,6 +36,7 @@ from boardroom_os.execution.atomic_executor import (
     AtomicAgentRuntimeFactory,
     AtomicExecutionRequest,
 )
+from boardroom_os.execution.atomic_agent import AtomicInvocationCompiler
 from boardroom_os.execution.package import (
     AllowedReadRef,
     AllowedWritePath,
@@ -48,9 +49,9 @@ from boardroom_os.execution.package import (
 )
 from boardroom_os.graph.ticket import TicketId
 
-MEDIUM_SCENARIO_MARKER_FILENAME = ".boardroom-v2-090i-workspace.json"
-MEDIUM_SCENARIO_MARKER = {"scenario": "v2-090i-medium", "version": 1}
-MEDIUM_SCENARIO_TICKET_REF = "ticket.medium.forecast-engine"
+MEDIUM_SCENARIO_MARKER_FILENAME = ".boardroom-v2-090j-workspace.json"
+MEDIUM_SCENARIO_MARKER = {"scenario": "v2-090j-medium", "version": 1}
+MEDIUM_SCENARIO_TICKET_REF = "ticket.medium.forecast-engine.protocol-repair"
 MEDIUM_SCENARIO_COMMAND_ID = "cmd.check-medium-scenario"
 REQUIRED_OUTPUT_PATHS = (
     "work/forecast_engine/__init__.py",
@@ -75,7 +76,7 @@ def initialize_medium_scenario_workspace(workspace_root: Path, *, reset: bool) -
     workspace_root = workspace_root.resolve()
     marker_path = workspace_root / MEDIUM_SCENARIO_MARKER_FILENAME
     if workspace_root.exists() and not marker_path.exists():
-        raise MediumScenarioResetError(f"refusing to reset workspace missing V2-090I marker: {workspace_root}")
+        raise MediumScenarioResetError(f"refusing to reset workspace missing V2-090J marker: {workspace_root}")
     if workspace_root.exists() and reset:
         shutil.rmtree(workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)
@@ -98,22 +99,22 @@ def _execution_package(settings: Any) -> ExecutionPackage:
         fallback_policy_ref="fallback.default",
     )
     evidence_obligation = EvidenceObligation(
-        evidence_obligation_id=EvidenceObligationRef(value="evidence.v2-090i.medium-scenario.source"),
-        acceptance_refs=(AcceptanceRef(value="AC-V2-090I-MEDIUM-SCENARIO"),),
-        source_surface_refs=(SourceSurfaceRef(value="surface.v2-090i.forecast-engine"),),
+        evidence_obligation_id=EvidenceObligationRef(value="evidence.v2-090j.medium-scenario.source"),
+        acceptance_refs=(AcceptanceRef(value="AC-V2-090J-MEDIUM-SCENARIO"),),
+        source_surface_refs=(SourceSurfaceRef(value="surface.v2-090j.forecast-engine"),),
         required_artifact_type=RequiredArtifactType(value="source_patch"),
         required_verifier=RequiredVerifier(value="checker"),
         blocking=True,
     )
     command = PackageCommand(
         command_id=ContractId(value=MEDIUM_SCENARIO_COMMAND_ID),
-        label="Check V2-090I medium forecast engine package",
+        label="Check V2-090J medium forecast engine package",
         command=(sys.executable, "-c", _medium_scenario_check_code()),
         cwd=".",
     )
     produced_paths_json = json.dumps(list(REQUIRED_OUTPUT_PATHS), ensure_ascii=False)
     return ExecutionPackage(
-        execution_package_id=ExecutionPackageId(value="exec.ticket.v2-090i.medium-scenario.1"),
+        execution_package_id=ExecutionPackageId(value="exec.ticket.v2-090j.medium-scenario.1"),
         ticket_ref=TicketId(value=MEDIUM_SCENARIO_TICKET_REF),
         graph_version=1,
         seat_ref=AgentSeatRef(value="seat.worker.implementation"),
@@ -127,38 +128,40 @@ def _execution_package(settings: Any) -> ExecutionPackage:
             "and analyze_series(values). risk.py must import and reuse statistics.py. cli.py must read a JSON file "
             "containing a series array and print a JSON risk report. Add unittest tests under work/tests. "
             f"Run {MEDIUM_SCENARIO_COMMAND_ID}, fix any failures, then submit the result. "
-            "Every provider response must be exactly one valid JSON object representing one action. "
-            "Do not output Markdown, code fences, explanations, arrays, multiple JSON objects, or action_envelope. "
-            "Use top-level action_id, action, reason_summary, and input fields for every action. "
+            "Provider responses may be either one AgentAction JSON object or one AgentActionBatch JSON object "
+            'with protocol "agent-action-batch-v1". '
+            "Do not output Markdown, code fences, explanations, concatenated JSON objects, bare arrays, or action_envelope. "
+            "Use top-level action_id, action, reason_summary, and input fields for single actions. "
+            "Use top-level batch_id, protocol, reason_summary, and actions fields for action batches. "
             "The final submit_result action must be exactly one JSON object with those same top-level fields. "
             "The final input field must contain summary, produced_paths, and evidence_refs. "
             f"produced_paths must be exactly {produced_paths_json}; evidence_refs must be [\"{MEDIUM_SCENARIO_COMMAND_ID}\"]."
         ),
-        context_refs=(ContextRef(value="context.v2-090i.medium-scenario"),),
+        context_refs=(ContextRef(value="context.v2-090j.medium-scenario"),),
         constraints=(
             "Only write under work/.",
             "Use only the Python standard library; do not install dependencies.",
             "Do not implement placeholder arithmetic; each public function must perform the specified multi-step calculation.",
             "risk.py must import statistics.py rather than duplicating all statistics functions.",
-            "Return only one JSON action object per turn; never concatenate multiple action objects in one response.",
-            "Do not use action_envelope for any action.",
+            'Return either one AgentAction object or one AgentActionBatch object with protocol "agent-action-batch-v1".',
+            "Never concatenate multiple JSON objects, never use a bare JSON array, and never use action_envelope.",
             f"Use run_command with {MEDIUM_SCENARIO_COMMAND_ID} before submit_result.",
             (
                 "For submit_result, do not use action_envelope. Use this shape: "
                 '{"action_id":"act.submit-result","action":"submit_result","reason_summary":"done",'
-                f'"input":{{"summary":"Created and verified V2-090I forecast_engine package",'
+                f'"input":{{"summary":"Created and verified V2-090J forecast_engine package",'
                 f'"produced_paths":{produced_paths_json},"evidence_refs":["{MEDIUM_SCENARIO_COMMAND_ID}"]}}}}'
             ),
         ),
-        acceptance_refs=(AcceptanceRef(value="AC-V2-090I-MEDIUM-SCENARIO"),),
-        source_surface_refs=(SourceSurfaceRef(value="surface.v2-090i.forecast-engine"),),
+        acceptance_refs=(AcceptanceRef(value="AC-V2-090J-MEDIUM-SCENARIO"),),
+        source_surface_refs=(SourceSurfaceRef(value="surface.v2-090j.forecast-engine"),),
         allowed_read_refs=(AllowedReadRef(value="README.md"),),
         allowed_write_set=(AllowedWritePath(value="work/"),),
         required_outputs=tuple(RequiredOutput(value=path) for path in REQUIRED_OUTPUT_PATHS),
         commands=(command,),
         evidence_obligations=(evidence_obligation,),
         fallback_policy_ref=FallbackPolicyRef(value="fallback.default"),
-        audit_requirements=(AuditRequirement(value="record V2-090I medium scenario provider, mutation, command, and lineage evidence"),),
+        audit_requirements=(AuditRequirement(value="record V2-090J medium scenario provider, mutation, command, and lineage evidence"),),
     )
 
 
@@ -174,10 +177,15 @@ def run_medium_scenario(*, reset: bool) -> dict[str, Any]:
     workspace_root = initialize_medium_scenario_workspace(
         Path(os.environ.get("BOARDROOM_EVIDENCE_ROOT", ".evidence"))
         / "atomic-agent"
-        / "v2-090i-medium-scenario-workspace",
+        / "v2-090j-medium-scenario-workspace",
         reset=reset,
     )
     package = _execution_package(settings)
+    audit_invocation = AtomicInvocationCompiler(workspace_root=workspace_root).compile_with_settings(
+        execution_package=package,
+        settings=settings,
+        seat_ref="seat.worker.implementation",
+    )
     run_id = _new_run_id(settings.runtime.atomic_agent.run_id_prefix)
     event_stream_root = Path(settings.runtime.atomic_agent.event_stream_root).resolve()
     runtime_port = AtomicAgentRuntimeFactory(settings=settings).build_runtime_port(
@@ -212,10 +220,15 @@ def run_medium_scenario(*, reset: bool) -> dict[str, Any]:
         work_product_ref=result.projection.work_product_submission.work_product.work_product_id.value,
         source_lineage_inputs=result.projection.source_lineage_inputs,
         event_summary=event_summary,
+        action_protocol=audit_invocation.metadata["action_protocol"],
+        max_actions_per_turn=audit_invocation.budgets["max_actions_per_turn"],
+        checkpoint_max_auto_runs=audit_invocation.output_requirements["required_output_checkpoint"]["max_auto_runs"],
     )
 
 
 def _settings_with_medium_scenario_budget(settings: Any) -> Any:
+    if settings.runtime.atomic_agent.budget_caps.max_actions_per_turn <= 1:
+        raise ValueError("max_actions_per_turn must be greater than 1 for V2-090J")
     role_slots = []
     for slot in settings.roles.role_slots:
         if slot.seat_ref == "seat.worker.implementation":
@@ -226,6 +239,7 @@ def _settings_with_medium_scenario_budget(settings: Any) -> Any:
                             **slot.budgets_override,
                             "max_steps": settings.runtime.atomic_agent.budget_caps.max_steps,
                             "max_parse_failures": settings.runtime.atomic_agent.budget_caps.max_parse_failures,
+                            "max_actions_per_turn": settings.runtime.atomic_agent.budget_caps.max_actions_per_turn,
                         }
                     }
                 )
@@ -272,6 +286,9 @@ def _build_report(
     work_product_ref: str,
     source_lineage_inputs: tuple[dict[str, Any], ...] | tuple[str, ...],
     event_summary: dict[str, Any],
+    action_protocol: str = "agent-action-batch-v1",
+    max_actions_per_turn: int | None = None,
+    checkpoint_max_auto_runs: int | None = None,
 ) -> dict[str, Any]:
     command_exit_codes = event_summary["command_exit_codes"]
     success = (
@@ -282,7 +299,7 @@ def _build_report(
         and bool(source_lineage_inputs)
     )
     return {
-        "scenario": "v2-090i-resettable-medium-scenario",
+        "scenario": "v2-090j-action-protocol-medium-scenario",
         "ticket_ref": ticket_ref,
         "execution_package_id": execution_package_id,
         "atomic_run_id": atomic_run_id,
@@ -300,6 +317,9 @@ def _build_report(
         "retry_rate": event_summary["retry_rate"],
         "command_exit_codes": command_exit_codes,
         "workspace_mutation_paths": event_summary["workspace_mutation_paths"],
+        "action_protocol": action_protocol,
+        "max_actions_per_turn": max_actions_per_turn,
+        "checkpoint_max_auto_runs": checkpoint_max_auto_runs,
         "success": success,
     }
 
@@ -474,7 +494,7 @@ unit_result = subprocess.run(
 if unit_result.returncode != 0:
     fail("unittest failed:\n" + unit_result.stdout + unit_result.stderr)
 
-input_path = WORK / "v2_090i_input_series.json"
+input_path = WORK / "v2_090j_input_series.json"
 input_path.write_text(json.dumps({"series": SERIES}), encoding="utf-8")
 cli_result = subprocess.run(
     [sys.executable, "-m", "forecast_engine.cli", str(input_path)],
@@ -506,7 +526,7 @@ raise SystemExit(0)
 
 def _new_run_id(prefix: str) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"{prefix}.v2-090i.medium.{stamp}.{uuid4().hex[:8]}"
+    return f"{prefix}.v2-090j.medium.{stamp}.{uuid4().hex[:8]}"
 
 
 def _baseline_worker_role_prompt_hook():
@@ -516,8 +536,8 @@ def _baseline_worker_role_prompt_hook():
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run V2-090I resettable medium atomic-agent scenario.")
-    parser.add_argument("--reset", action="store_true", help="Reset the marked V2-090I workspace before running.")
+    parser = argparse.ArgumentParser(description="Run V2-090J atomic action protocol medium scenario.")
+    parser.add_argument("--reset", action="store_true", help="Reset the marked V2-090J workspace before running.")
     args = parser.parse_args(argv)
     try:
         report = run_medium_scenario(reset=args.reset)

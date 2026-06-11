@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090J`（TODO，Atomic action protocol repair 计划已修订；待新会话按 spec/plan 实施）
+**当前未完成工作包**：`V2-090I`（BLOCKED，保留为 V2-090J 前的失败证据）、`V2-090F`（BLOCKED，待人工评审后决定是否恢复 golden sample rebuild）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）、`V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）与 `V2-090H Atomic-agent executor switch`（原子智能体执行器切换）已完成。`V2-090I Resettable medium implementation scenario`（可重置中等复杂实施场景）当前为 BLOCKED：真实 provider-backed atomic-agent executor（模型供应商支撑原子智能体执行器）三次尝试均未完成中等复杂多文件任务，事件流证明可产生 provider turn facts（模型轮次事实）和部分 workspace mutation（工作区变更），但未运行最终 command evidence（命令证据）且最终 `run.failed`。`V2-090J Atomic action protocol repair`（原子动作协议修复）已形成修订 spec/plan，下一步修复 batch action protocol（批量动作协议）、apply_patch 工具策略和 required-output checkpoint（必需产物检查点）。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先经人工评审 V2-090H、V2-090I 与 V2-090J 真实执行证据后，才允许决定是否恢复 V2-090F 重建 golden sample。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）、`V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）、`V2-090H Atomic-agent executor switch`（原子智能体执行器切换）与 `V2-090J Atomic action protocol repair`（原子动作协议修复）已完成。`V2-090I Resettable medium implementation scenario`（可重置中等复杂实施场景）保留为 BLOCKED 失败证据：真实 provider-backed atomic-agent executor（模型供应商支撑原子智能体执行器）三次尝试均未完成中等复杂多文件任务。V2-090J 通过 batch action protocol（批量动作协议）、apply_patch 工具策略、required-output checkpoint（必需产物检查点）和 provider prompt repair（模型提示修复）证明中等复杂 executor path 已恢复。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先经人工评审 V2-090H、V2-090I 与 V2-090J 真实执行证据后，才允许决定是否恢复 V2-090F 重建 golden sample。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 7 / 10 | 阻塞；V2-090H 完成，V2-090I BLOCKED，V2-090J TODO，V2-090F 待人工评审后决定是否恢复 |
-| **合计** | **V2-000 ~ V2-090** | **66 / 69** | **V2-090A ~ V2-090E、V2-090G 与 V2-090H 完成，V2-090I BLOCKED，V2-090J TODO，V2-090F BLOCKED，Phase 9 未闭合** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 8 / 10 | 阻塞；V2-090J 完成，V2-090I 保留 BLOCKED 失败证据，V2-090F 待人工评审后决定是否恢复 |
+| **合计** | **V2-000 ~ V2-090** | **67 / 69** | **V2-090A ~ V2-090E、V2-090G、V2-090H 与 V2-090J 完成，V2-090I BLOCKED，V2-090F BLOCKED，Phase 9 未闭合** |
 
 ## 当前约束摘要
 
@@ -1134,7 +1134,7 @@ RoleProfile（角色模板）
 
 ### V2-090J: Atomic action protocol repair（原子动作协议修复）
 
-- 状态：TODO（计划已形成，尚未实施）
+- 状态：DONE
 - 目标：修复 V2-090I 暴露的 action protocol（动作协议）、tool policy（工具策略）和 validator checkpoint（验证命令检查点）问题，并用中等复杂真实 provider proving test（真实供应商证明测试）复验。
 - 输入文档：`docs/superpowers/specs/2026-06-11-v2-090j-atomic-action-protocol-repair-design.md`、`docs/superpowers/plans/2026-06-11-v2-090j-atomic-action-protocol-repair.md`、`doc/05-project-log/v2-090i-implementation-run-record.md`、外部 atomic-agent action protocol docs（动作协议文档）。
 - 依赖：V2-090H、V2-090I 阻塞证据、外部 atomic-agent 可修改并通过 baseline tests（基线测试）。
@@ -1142,6 +1142,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests（负例测试）：裸数组、串联 JSON、Markdown 包裹 JSON、缺 `protocol` 的 batch-like output（批次形状输出）、`action_envelope`、超过 `max_actions_per_turn`、`apply_patch` 可见但 runtime 不支持、checkpoint 多命令包、缺 command evidence 均必须 fail closed。
 - 必须证明的 happy path（正向路径）：真实 provider-backed executor 通过显式 `agent-action-batch-v1` 或等价 provider-native structured output（结构化输出）完成 medium package/CLI，运行 `cmd.check-medium-scenario` exit 0，并产生 provider turn facts、workspace mutation、command evidence 和 source lineage input。
 - 验收口径：V2-090J 只证明 action protocol repair 后中等复杂 executor path 恢复；不放松 command evidence、workspace mutation、source lineage 或 provider turn facts 门禁；不自动解除 V2-090F BLOCKED。
+- 当前证据：atomic-agent targeted tests `106 passed`；Boardroom targeted tests `81 passed, 1 skipped`；真实 provider proving gate `tests/proving/test_v2_090j_medium_scenario.py` 在显式 opt-in 下通过，耗时 `534.17s`。最新 run `boardroom-atomic.v2-090j.medium.20260610T193727Z.f00e1709` 产生 `run.completed`、5 个 provider turns、10 个 workspace mutations、5 次 `cmd.check-medium-scenario` command evidence（最终 exit 0）和 1 个 `result.submitted`，source lineage input 覆盖 `work/forecast_engine/__init__.py`、`statistics.py`、`risk.py`、`cli.py` 与 `work/tests/test_forecast_engine.py`。早期三次真实 run（`...183832Z.eb20d2d6`、`...185459Z.40fd49fe`、`...191431Z.593beabf`）保留为 protocol/prompt 修复前的失败或不稳定证据。
 
 
 ### V2-090G: Atomic-agent package/import integration

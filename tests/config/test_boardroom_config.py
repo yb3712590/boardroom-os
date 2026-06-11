@@ -46,7 +46,7 @@ atomic_agent:
     mode: serial_per_workspace
     workspace_lock_root: .evidence/atomic-agent/locks
     require_run_scoped_event_artifact_roots: true
-  default_tools: [list_files, read_file, search_files, write_file, apply_patch, run_command, submit_result]
+  default_tools: [list_files, read_file, search_files, write_file, run_command, submit_result]
   required_tools: [submit_result]
   tool_permission_map:
     filesystem.read: [list_files, read_file, search_files]
@@ -59,16 +59,22 @@ atomic_agent:
       max_parse_failures: 2
       max_observation_chars: 16000
       max_wall_seconds: 1200
+      max_actions_per_turn: 4
     worker.implementation.default:
       max_steps: 96
       max_parse_failures: 3
       max_observation_chars: 24000
       max_wall_seconds: 3600
+      max_actions_per_turn: 8
   budget_caps:
     max_steps: 240
     max_parse_failures: 6
     max_observation_chars: 64000
     max_wall_seconds: 10800
+    max_actions_per_turn: 8
+  checkpoints:
+    required_output:
+      max_auto_runs: 3
   filesystem:
     default_read_limit: 12000
     max_read_limit: 50000
@@ -76,6 +82,7 @@ atomic_agent:
     max_entries_limit: 1000
     default_max_matches: 50
     max_matches_limit: 500
+    allow_apply_patch: false
   commands:
     default_timeout_seconds: 60
     max_timeout_seconds: 300
@@ -125,8 +132,8 @@ role_slots:
     role_category: worker
     model_execution_profile_id: model-profile.worker.implementation.primary
     provider_profile_ref: provider.openai-compatible.primary
-    skill_refs: [skill.filesystem.patch, skill.command.test]
-    default_tools: [list_files, read_file, search_files, write_file, apply_patch, run_command, submit_result]
+    skill_refs: [skill.command.test]
+    default_tools: [list_files, read_file, search_files, write_file, run_command, submit_result]
     budget_profile_ref: worker.implementation.default
     budgets_override:
       max_steps: 128
@@ -197,5 +204,6 @@ def test_role_budget_override_merges_with_runtime_defaults(tmp_path, monkeypatch
         "max_parse_failures": 3,
         "max_observation_chars": 24000,
         "max_wall_seconds": 5400,
+        "max_actions_per_turn": 8,
         "budget_profile_ref": "worker.implementation.default",
     }

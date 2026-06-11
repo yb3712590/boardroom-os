@@ -6,14 +6,12 @@ role_slots:
     model_execution_profile_id: model-profile.worker.implementation.primary
     provider_profile_ref: provider.openai-compatible.primary
     skill_refs:
-      - skill.filesystem.patch
       - skill.command.test
     default_tools:
       - list_files
       - read_file
       - search_files
       - write_file
-      - apply_patch
       - run_command
       - submit_result
     budget_profile_ref: worker.implementation.default
@@ -27,11 +25,10 @@ role_slots:
     model_execution_profile_id: model-profile.worker.fast-fix
     provider_profile_ref: provider.openai-compatible.fast-worker
     skill_refs:
-      - skill.filesystem.patch
       - skill.command.test
     default_tools:
       - read_file
-      - apply_patch
+      - write_file
       - run_command
       - submit_result
     budget_profile_ref: atomic.proving.minimal

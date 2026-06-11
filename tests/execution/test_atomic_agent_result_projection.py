@@ -226,9 +226,292 @@ def _completed_result(event_stream, events_hash, *, run_id="run.atomic.1"):
     )
 
 
+def _write_events(path, events_without_hash):
+    events = []
+    previous_hash = None
+    for sequence, event in enumerate(events_without_hash, start=1):
+        resolved_event = {
+            "event_id": event.get("event_id", f"evt-{sequence}"),
+            "run_id": event.get("run_id", "run.atomic.1"),
+            "sequence": sequence,
+            "type": event["type"],
+            "timestamp": event.get("timestamp", "2026-06-10T00:00:00Z"),
+            "payload": event["payload"],
+            "previous_event_hash": previous_hash,
+        }
+        resolved_event["event_hash"] = _event_hash(resolved_event)
+        events.append(resolved_event)
+        previous_hash = resolved_event["event_hash"]
+    content = "".join(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n" for event in events).encode("utf-8")
+    path.write_bytes(content)
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _write_batch_checkpoint_event_stream(path, *, command_id="cmd.test", include_command=True):
+    provider_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/provider/turn_000001.txt",
+        "sha256": "sha256:" + "5" * 64,
+        "size_bytes": 80,
+        "truncated_in_observation": False,
+    }
+    observation_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/observations/tool.1.json",
+        "sha256": "sha256:" + "2" * 64,
+        "size_bytes": 10,
+        "truncated_in_observation": False,
+    }
+    diff_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/diffs/work-output.diff",
+        "sha256": "sha256:" + "1" * 64,
+        "size_bytes": 12,
+        "truncated_in_observation": False,
+    }
+    result_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+        "sha256": "sha256:" + "0" * 64,
+        "size_bytes": 42,
+        "truncated_in_observation": False,
+    }
+    stdout_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/commands/stdout.txt",
+        "sha256": "sha256:" + "3" * 64,
+        "size_bytes": 8,
+        "truncated_in_observation": False,
+    }
+    stderr_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/commands/stderr.txt",
+        "sha256": "sha256:" + "4" * 64,
+        "size_bytes": 0,
+        "truncated_in_observation": False,
+    }
+    events = [
+        {
+            "type": "run.started",
+            "payload": {"event_protocol_version": 1, "invocation_id": "inv.atomic.1"},
+        },
+        {"type": "provider.turn.started", "payload": {"provider_turn_id": "provider_turn_000001"}},
+        {
+            "type": "provider.turn.completed",
+            "payload": {"provider_turn_id": "provider_turn_000001", "output": provider_artifact},
+        },
+        {
+            "type": "action.parsed",
+            "payload": {
+                "action": {
+                    "action_id": "step-0001",
+                    "action": "write_file",
+                    "reason_summary": "Write output.",
+                    "input": {"path": "work/output.txt", "content": "ok"},
+                    "batch_id": "batch-0001",
+                    "protocol": "agent-action-batch-v1",
+                }
+            },
+        },
+        {
+            "type": "tool.attempt.started",
+            "payload": {"tool_attempt_id": "tool.1", "action_id": "step-0001", "tool": "write_file"},
+        },
+        {
+            "type": "tool.attempt.completed",
+            "payload": {
+                "tool_attempt_id": "tool.1",
+                "action_id": "step-0001",
+                "tool": "write_file",
+                "observation": observation_artifact,
+            },
+        },
+        {
+            "type": "workspace.mutation.recorded",
+            "payload": {
+                "tool_attempt_id": "tool.1",
+                "path": "work/output.txt",
+                "before_hash": None,
+                "after_hash": "sha256:" + "0" * 64,
+                "diff": diff_artifact,
+            },
+        },
+    ]
+    if include_command:
+        events.extend(
+            [
+                {
+                    "type": "tool.attempt.started",
+                    "payload": {
+                        "tool_attempt_id": "tool.2",
+                        "action_id": f"checkpoint:{command_id}:1",
+                        "tool": "run_command",
+                    },
+                },
+                {
+                    "type": "tool.attempt.completed",
+                    "payload": {
+                        "tool_attempt_id": "tool.2",
+                        "action_id": f"checkpoint:{command_id}:1",
+                        "tool": "run_command",
+                        "observation": observation_artifact,
+                    },
+                },
+                {
+                    "type": "command.completed",
+                    "payload": {
+                        "tool_attempt_id": "tool.2",
+                        "command_id": command_id,
+                        "exit_code": 0,
+                        "stdout": stdout_artifact,
+                        "stderr": stderr_artifact,
+                    },
+                },
+            ]
+        )
+    events.extend(
+        [
+            {
+                "type": "result.submitted",
+                "payload": {
+                    "summary": "Updated work/output.txt",
+                    "produced_paths": ["work/output.txt"],
+                    "artifact_refs": [result_artifact],
+                },
+            },
+            {"type": "run.completed", "payload": {"summary": "Updated work/output.txt"}},
+        ]
+    )
+    return _write_events(path, events)
+
+
+def _write_rewrite_event_stream(path, *, command_id="cmd.test"):
+    provider_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/provider/turn_000001.txt",
+        "sha256": "sha256:" + "5" * 64,
+        "size_bytes": 80,
+        "truncated_in_observation": False,
+    }
+    observation_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/observations/tool.1.json",
+        "sha256": "sha256:" + "2" * 64,
+        "size_bytes": 10,
+        "truncated_in_observation": False,
+    }
+    result_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+        "sha256": "sha256:" + "0" * 64,
+        "size_bytes": 42,
+        "truncated_in_observation": False,
+    }
+    stdout_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/commands/stdout.txt",
+        "sha256": "sha256:" + "3" * 64,
+        "size_bytes": 8,
+        "truncated_in_observation": False,
+    }
+    stderr_artifact = {
+        "artifact_ref": "artifact://run.atomic.1/commands/stderr.txt",
+        "sha256": "sha256:" + "4" * 64,
+        "size_bytes": 0,
+        "truncated_in_observation": False,
+    }
+    events = [
+        {"type": "run.started", "payload": {"event_protocol_version": 1, "invocation_id": "inv.atomic.1"}},
+        {"type": "provider.turn.started", "payload": {"provider_turn_id": "provider_turn_000001"}},
+        {
+            "type": "provider.turn.completed",
+            "payload": {"provider_turn_id": "provider_turn_000001", "output": provider_artifact},
+        },
+        {
+            "type": "tool.attempt.started",
+            "payload": {"tool_attempt_id": "tool.1", "action_id": "step-0001", "tool": "write_file"},
+        },
+        {
+            "type": "tool.attempt.completed",
+            "payload": {
+                "tool_attempt_id": "tool.1",
+                "action_id": "step-0001",
+                "tool": "write_file",
+                "observation": observation_artifact,
+            },
+        },
+        {
+            "type": "workspace.mutation.recorded",
+            "payload": {
+                "tool_attempt_id": "tool.1",
+                "path": "work/output.txt",
+                "before_hash": None,
+                "after_hash": "sha256:" + "1" * 64,
+                "diff": {
+                    "artifact_ref": "artifact://run.atomic.1/diffs/tool.1.diff",
+                    "sha256": "sha256:" + "6" * 64,
+                    "size_bytes": 12,
+                    "truncated_in_observation": False,
+                },
+            },
+        },
+        {
+            "type": "tool.attempt.started",
+            "payload": {"tool_attempt_id": "tool.2", "action_id": "step-0002", "tool": "write_file"},
+        },
+        {
+            "type": "tool.attempt.completed",
+            "payload": {
+                "tool_attempt_id": "tool.2",
+                "action_id": "step-0002",
+                "tool": "write_file",
+                "observation": observation_artifact,
+            },
+        },
+        {
+            "type": "workspace.mutation.recorded",
+            "payload": {
+                "tool_attempt_id": "tool.2",
+                "path": "work/output.txt",
+                "before_hash": "sha256:" + "1" * 64,
+                "after_hash": "sha256:" + "0" * 64,
+                "diff": {
+                    "artifact_ref": "artifact://run.atomic.1/diffs/tool.2.diff",
+                    "sha256": "sha256:" + "7" * 64,
+                    "size_bytes": 12,
+                    "truncated_in_observation": False,
+                },
+            },
+        },
+        {
+            "type": "tool.attempt.started",
+            "payload": {"tool_attempt_id": "tool.3", "action_id": "checkpoint:cmd.test:1", "tool": "run_command"},
+        },
+        {
+            "type": "tool.attempt.completed",
+            "payload": {
+                "tool_attempt_id": "tool.3",
+                "action_id": "checkpoint:cmd.test:1",
+                "tool": "run_command",
+                "observation": observation_artifact,
+            },
+        },
+        {
+            "type": "command.completed",
+            "payload": {
+                "tool_attempt_id": "tool.3",
+                "command_id": command_id,
+                "exit_code": 0,
+                "stdout": stdout_artifact,
+                "stderr": stderr_artifact,
+            },
+        },
+        {
+            "type": "result.submitted",
+            "payload": {
+                "summary": "Updated work/output.txt",
+                "produced_paths": ["work/output.txt"],
+                "artifact_refs": [result_artifact],
+            },
+        },
+        {"type": "run.completed", "payload": {"summary": "Updated work/output.txt"}},
+    ]
+    return _write_events(path, events)
+
+
 def test_atomic_result_validator_recomputes_event_stream_hash(tmp_path):
     event_stream = tmp_path / "events.jsonl"
-    events_hash = _write_event_stream(event_stream)
+    events_hash = _write_event_stream(event_stream, command_id="test-backend")
     result = _completed_result(event_stream, events_hash)
     validator = AtomicAgentResultValidator(
         allowed_write_set=("backend",),
@@ -239,7 +522,7 @@ def test_atomic_result_validator_recomputes_event_stream_hash(tmp_path):
     validated = validator.validate(result)
 
     assert validated.events_hash == events_hash
-    assert len(validated.events) == 6
+    assert len(validated.events) == 7
 
 
 def test_atomic_result_validator_allows_directory_write_policy_with_trailing_slash(tmp_path):
@@ -304,6 +587,137 @@ def test_atomic_result_validator_accepts_result_mutation_after_hash(tmp_path):
     validated = validator.validate(result)
 
     assert validated.events_hash == events_hash
+
+
+def test_atomic_result_validator_accepts_batch_checkpoint_event_stream(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_batch_checkpoint_event_stream(event_stream, command_id="cmd.test")
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "work/output.txt", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "0" * 64}
+            ],
+            "artifacts": [
+                {
+                    "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+                    "path": "work/output.txt",
+                    "sha256": "sha256:" + "0" * 64,
+                }
+            ],
+            "summary": "Updated work/output.txt",
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("work/",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert validated.evidence_summary["command_results"][0]["command_id"] == "cmd.test"
+    assert validated.evidence_summary["command_results"][0]["exit_code"] == 0
+    assert validated.evidence_summary["source_inventory_lineage"][0]["path"] == "work/output.txt"
+
+
+def test_atomic_result_validator_accepts_rewritten_file_when_latest_lineage_matches(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_rewrite_event_stream(event_stream, command_id="cmd.test")
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "work/output.txt", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "1" * 64},
+                {"path": "work/output.txt", "tool_attempt_id": "tool.2", "sha256": "sha256:" + "0" * 64},
+            ],
+            "tool_attempts": [
+                {"tool_attempt_id": "tool.1", "action": "write_file"},
+                {"tool_attempt_id": "tool.2", "action": "write_file"},
+                {"tool_attempt_id": "tool.3", "action": "run_command", "command_id": "cmd.test"},
+            ],
+            "artifacts": [
+                {
+                    "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+                    "path": "work/output.txt",
+                    "sha256": "sha256:" + "0" * 64,
+                }
+            ],
+            "summary": "Updated work/output.txt",
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("work/",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert len(validated.evidence_summary["workspace_mutations"]) == 2
+    assert validated.evidence_summary["source_inventory_lineage"][0]["latest_after_hash"] == "sha256:" + "0" * 64
+
+
+def test_atomic_result_validator_rejects_batch_without_command_evidence(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_batch_checkpoint_event_stream(event_stream, include_command=False)
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "work/output.txt", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "0" * 64}
+            ],
+            "artifacts": [
+                {
+                    "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+                    "path": "work/output.txt",
+                    "sha256": "sha256:" + "0" * 64,
+                }
+            ],
+            "summary": "Updated work/output.txt",
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("work/",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    try:
+        validator.validate(result)
+    except ValueError as exc:
+        assert "command evidence is required" in str(exc)
+    else:
+        raise AssertionError("expected missing command evidence failure")
+
+
+def test_atomic_result_validator_rejects_checkpoint_command_not_declared(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_batch_checkpoint_event_stream(event_stream, command_id="undeclared-check")
+    result = _completed_result(event_stream, events_hash).model_copy(
+        update={
+            "workspace_mutations": [
+                {"path": "work/output.txt", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "0" * 64}
+            ],
+            "artifacts": [
+                {
+                    "artifact_ref": "artifact://run.atomic.1/results/step-0003.json",
+                    "path": "work/output.txt",
+                    "sha256": "sha256:" + "0" * 64,
+                }
+            ],
+            "summary": "Updated work/output.txt",
+        }
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("work/",),
+        declared_command_ids=("cmd.test",),
+        event_stream_root=tmp_path,
+    )
+
+    try:
+        validator.validate(result)
+    except ValueError as exc:
+        assert "command_id is not declared" in str(exc)
+    else:
+        raise AssertionError("expected undeclared checkpoint command failure")
 
 
 def test_atomic_result_validator_allows_extra_audit_artifacts(tmp_path):
@@ -542,7 +956,7 @@ def test_atomic_result_projector_builds_work_product_submission(tmp_path):
     from boardroom_os.execution.atomic_agent import AtomicResultProjector
 
     event_stream = tmp_path / "events.jsonl"
-    events_hash = _write_event_stream(event_stream)
+    events_hash = _write_event_stream(event_stream, command_id="test-backend")
     result = _completed_result(event_stream, events_hash)
     execution_package = _execution_package()
     provider_attempt = ProviderAttempt(
@@ -598,7 +1012,7 @@ def test_atomic_result_projector_rejects_provider_attempt_package_mismatch(tmp_p
     from boardroom_os.execution.atomic_agent import AtomicResultProjector
 
     event_stream = tmp_path / "events.jsonl"
-    events_hash = _write_event_stream(event_stream)
+    events_hash = _write_event_stream(event_stream, command_id="test-backend")
     result = _completed_result(event_stream, events_hash)
     execution_package = _execution_package()
     provider_attempt = ProviderAttempt(
@@ -641,7 +1055,7 @@ def test_atomic_result_projector_rejects_provider_attempt_model_mismatch(tmp_pat
     from boardroom_os.execution.atomic_agent import AtomicResultProjector
 
     event_stream = tmp_path / "events.jsonl"
-    events_hash = _write_event_stream(event_stream)
+    events_hash = _write_event_stream(event_stream, command_id="test-backend")
     result = _completed_result(event_stream, events_hash)
     execution_package = _execution_package()
     provider_attempt = ProviderAttempt(

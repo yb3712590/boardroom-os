@@ -31,7 +31,6 @@ atomic_agent:
     - read_file
     - search_files
     - write_file
-    - apply_patch
     - run_command
     - submit_result
   required_tools:
@@ -54,21 +53,28 @@ atomic_agent:
       max_parse_failures: 2
       max_observation_chars: 16000
       max_wall_seconds: 1200
+      max_actions_per_turn: 4
     worker.implementation.default:
       max_steps: 96
       max_parse_failures: 3
       max_observation_chars: 24000
       max_wall_seconds: 3600
+      max_actions_per_turn: 8
     worker.implementation.large:
       max_steps: 160
       max_parse_failures: 4
       max_observation_chars: 32000
       max_wall_seconds: 7200
+      max_actions_per_turn: 8
   budget_caps:
     max_steps: 240
     max_parse_failures: 6
     max_observation_chars: 64000
     max_wall_seconds: 10800
+    max_actions_per_turn: 8
+  checkpoints:
+    required_output:
+      max_auto_runs: 3
   filesystem:
     default_read_limit: 12000
     max_read_limit: 50000
@@ -76,6 +82,7 @@ atomic_agent:
     max_entries_limit: 1000
     default_max_matches: 50
     max_matches_limit: 500
+    allow_apply_patch: false
   commands:
     default_timeout_seconds: 60
     max_timeout_seconds: 300

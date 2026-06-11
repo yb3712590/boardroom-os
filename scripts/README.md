@@ -56,11 +56,16 @@ POSIX shell example:
 set -a; source .env; set +a; BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090i_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090i-medium-real
 ```
 
-## V2-090J medium scenario runner（planned）
+## V2-090J medium scenario runner
 
-V2-090J Atomic action protocol repair（原子动作协议修复）计划新增 `scripts/run_v2_090j_medium_scenario.py`。该 runner（运行器）尚未实现；当前只有 spec/plan（规范/计划）。实施后它应复用 V2-090I medium scenario（中等场景）目标，但允许显式 `AgentActionBatch`（智能体动作批次）或等价 structured output（结构化输出），并要求 resolved `max_actions_per_turn`（解析后每轮最大动作数）大于 1、required-output checkpoint（必需产物检查点）的 `max_auto_runs` 来自 runtime config（运行时配置）。
+`scripts/run_v2_090j_medium_scenario.py` 运行 V2-090J Atomic action protocol repair（原子动作协议修复）中等场景。它复用 V2-090I medium scenario（中等场景）目标，但允许显式 `AgentActionBatch`（智能体动作批次）或单个 `AgentAction`（智能体动作），要求 resolved `max_actions_per_turn`（解析后每轮最大动作数）大于 1，且 required-output checkpoint（必需产物检查点）的 `max_auto_runs` 来自 runtime config（运行时配置）。
 
-Planned POSIX shell example after implementation:
+- Default workspace（默认工作区）：`.evidence/atomic-agent/v2-090j-medium-scenario-workspace/`
+- `--reset`：只删除并重建带 V2-090J marker（标记文件）的 workspace；若目录存在但缺 `.boardroom-v2-090j-workspace.json`，脚本 fail closed（失败关闭）。
+- 完整 pytest 默认跳过真实 provider test（模型供应商测试），除非同时设置 `BOARDROOM_RUN_REAL_PROVIDER_PROVING=1` 和 `OPENAI_API_KEY`。
+- 成功报告必须包含 `action_protocol="agent-action-batch-v1"`、`max_actions_per_turn > 1`、`checkpoint_max_auto_runs >= 1`、`cmd.check-medium-scenario` exit 0、workspace mutation（工作区变更）和 source lineage input（源码来源链输入）。
+
+POSIX shell example:
 
 ```bash
 set -a; source .env; set +a; BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090j_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090j-medium-real

@@ -138,3 +138,40 @@ def test_atomic_runtime_factory_rejects_command_executable_not_absolute(tmp_path
             workspace_root=tmp_path,
             run_id="run.atomic.factory.bad-command",
         )
+
+
+def test_atomic_invocation_compiler_rejects_apply_patch_when_runtime_policy_does_not_support_it(
+    tmp_path,
+    monkeypatch,
+):
+    from boardroom_os.execution.atomic_agent import AtomicInvocationCompiler
+
+    settings = _settings(tmp_path, monkeypatch)
+    slot = settings.role_slot_by_seat("seat.worker.implementation")
+    runtime = settings.runtime.atomic_agent
+    patched_slot = slot.model_copy(
+        update={
+            "default_tools": tuple(slot.default_tools) + ("apply_patch",),
+            "skill_refs": tuple(slot.skill_refs) + ("skill.filesystem.patch",),
+        }
+    )
+    patched_runtime = settings.runtime.model_copy(
+        update={
+            "atomic_agent": runtime.model_copy(
+                update={"default_tools": tuple(runtime.default_tools) + ("apply_patch",)}
+            )
+        }
+    )
+    settings = settings.model_copy(
+        update={
+            "runtime": patched_runtime,
+            "roles": settings.roles.model_copy(update={"role_slots": (patched_slot,)})
+        }
+    )
+
+    with pytest.raises(ValueError, match="apply_patch tool is visible but not supported by runtime policy"):
+        AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+            execution_package=_execution_package_for_config(),
+            settings=settings,
+            seat_ref="seat.worker.implementation",
+        )

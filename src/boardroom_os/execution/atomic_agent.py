@@ -258,21 +258,41 @@ class AtomicInvocationCompiler:
             skill_refs=tuple(role_slot.skill_refs),
             requires_command_evidence=True,
             requires_workspace_mutation=True,
+            allow_apply_patch=settings.runtime.atomic_agent.filesystem.allow_apply_patch,
         )
         resolved_budget = settings.budgets_for_seat(role_slot.seat_ref)
         base_invocation = self.compile(execution_package)
         budget_payload = {
             key: resolved_budget[key]
-            for key in ("max_steps", "max_parse_failures", "max_observation_chars", "max_wall_seconds")
+            for key in (
+                "max_steps",
+                "max_parse_failures",
+                "max_observation_chars",
+                "max_wall_seconds",
+                "max_actions_per_turn",
+            )
         }
+        checkpoint = None
+        if execution_package.required_outputs:
+            if len(execution_package.commands) != 1:
+                raise ValueError("required output checkpoint requires exactly one declared command")
+            checkpoint = {
+                "when_all_paths_exist": [output.value for output in execution_package.required_outputs],
+                "run_command_id": execution_package.commands[0].command_id.value,
+                "max_auto_runs": settings.runtime.atomic_agent.checkpoints.required_output.max_auto_runs,
+            }
         output_requirements = {
             **base_invocation.output_requirements,
             "require_command_evidence": True,
             "require_source_lineage": True,
             "declared_command_ids": list(declared_command_ids_from_execution_package(execution_package)),
+            "required_output_checkpoint": checkpoint,
         }
         metadata = {
             **base_invocation.metadata,
+            "action_protocol": "agent-action-batch-v1",
+            "action_protocol_version": "agent-action-batch-v1",
+            "checkpoint_policy": "required-output-single-command-v1",
             "provider_profile_ref": provider_config.provider_profile_id,
             "role_slot_ref": role_slot.seat_ref,
             "budget_profile_ref": resolved_budget["budget_profile_ref"],
@@ -326,6 +346,7 @@ class AtomicToolPolicyResolver:
         skill_refs: tuple[str, ...],
         requires_command_evidence: bool,
         requires_workspace_mutation: bool,
+        allow_apply_patch: bool = True,
     ) -> tuple[str, ...]:
         allowed = [tool for tool in role_tools if tool in set(runtime_tools)]
         if requires_command_evidence and "run_command" not in allowed:
@@ -348,6 +369,8 @@ class AtomicToolPolicyResolver:
             raise ValueError("resolved tools must include write_file or apply_patch for workspace mutation")
         if "submit_result" not in resolved:
             raise ValueError("resolved tools must include submit_result")
+        if "apply_patch" in resolved and not allow_apply_patch:
+            raise ValueError("apply_patch tool is visible but not supported by runtime policy")
         return resolved
 
 
@@ -549,7 +572,19 @@ class AtomicAgentResultValidator:
         result: Any,
         evidence_summary: dict[str, Any],
     ) -> None:
-        summary_mutations = {
+        event_mutations = {
+            (mutation["path"], mutation["tool_attempt_id"], mutation["after_hash"])
+            for mutation in evidence_summary.get("workspace_mutations", ())
+            if isinstance(mutation, dict)
+        }
+        result_mutations = {
+            (mutation["path"], mutation["tool_attempt_id"], _mutation_after_hash(mutation))
+            for mutation in result.workspace_mutations
+        }
+        if result_mutations != event_mutations:
+            raise ValueError("workspace mutations must match event stream summary")
+
+        latest_lineage_mutations = {
             (
                 mutation["path"],
                 mutation["tool_attempt_id"],
@@ -557,11 +592,7 @@ class AtomicAgentResultValidator:
             )
             for mutation in _summary_workspace_mutations(evidence_summary)
         }
-        result_mutations = {
-            (mutation["path"], mutation["tool_attempt_id"], _mutation_after_hash(mutation))
-            for mutation in result.workspace_mutations
-        }
-        if result_mutations != summary_mutations:
+        if not latest_lineage_mutations.issubset(result_mutations):
             raise ValueError("workspace mutations must match event stream summary")
 
         summary_artifact_refs = _submitted_artifact_refs(evidence_summary)
@@ -573,10 +604,15 @@ class AtomicAgentResultValidator:
         if not summary_artifact_refs.issubset(result_artifact_refs):
             raise ValueError("artifacts must match event stream summary")
 
+        observed_command_ids: set[str] = set()
         for command_result in evidence_summary.get("command_results", ()):
             command_id = command_result.get("command_id") if isinstance(command_result, dict) else None
             if command_id not in self.declared_command_ids:
                 raise ValueError("command_id is not declared")
+            observed_command_ids.add(command_id)
+        missing_commands = self.declared_command_ids - observed_command_ids
+        if missing_commands:
+            raise ValueError("command evidence is required")
 
 
 @dataclass(frozen=True)

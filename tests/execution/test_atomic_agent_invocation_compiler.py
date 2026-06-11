@@ -250,6 +250,7 @@ def test_atomic_invocation_compiler_consumes_runtime_provider_and_role_config(tm
         "max_parse_failures": 3,
         "max_observation_chars": 24000,
         "max_wall_seconds": 5400,
+        "max_actions_per_turn": 8,
     }
     assert invocation.metadata["budget_profile_ref"] == "worker.implementation.default"
     assert invocation.metadata["resolved_budget_hash"].startswith("sha256:")
@@ -263,6 +264,90 @@ def test_atomic_invocation_compiler_consumes_runtime_provider_and_role_config(tm
     assert invocation.metadata["roles_config_hash"].startswith("sha256:")
     assert invocation.metadata["provider_profile_ref"] == "provider.openai-compatible.primary"
     assert invocation.metadata["event_stream_format"] == "jsonl-utf8-lf-canonical-json-v1"
+
+
+def test_atomic_invocation_compiler_emits_action_protocol_and_checkpoint_metadata(tmp_path, monkeypatch):
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from tests.config.test_boardroom_config import _write_config_files
+
+    paths = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(paths, env_values={})
+    package = _execution_package()
+    execution_package = package.model_copy(
+        update={
+            "seat_ref": AgentSeatRef(value="seat.worker.implementation"),
+            "model_execution_profile": package.model_execution_profile.model_copy(
+                update={
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "context_window": 400000,
+                    "temperature": 0.0,
+                    "model_execution_profile_id": "model-profile.worker.implementation.primary",
+                    "tool_permissions": ("filesystem.read", "filesystem.write", "command.execute"),
+                }
+            ),
+        }
+    )
+
+    invocation = AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+        execution_package=execution_package,
+        settings=settings,
+        seat_ref="seat.worker.implementation",
+    )
+
+    assert invocation.metadata["action_protocol"] == "agent-action-batch-v1"
+    assert invocation.metadata["action_protocol_version"] == "agent-action-batch-v1"
+    assert invocation.metadata["checkpoint_policy"] == "required-output-single-command-v1"
+    assert invocation.budgets["max_actions_per_turn"] == 8
+    assert invocation.output_requirements["required_output_checkpoint"] == {
+        "when_all_paths_exist": [output.value for output in execution_package.required_outputs],
+        "run_command_id": execution_package.commands[0].command_id.value,
+        "max_auto_runs": settings.runtime.atomic_agent.checkpoints.required_output.max_auto_runs,
+    }
+
+
+def test_atomic_invocation_compiler_rejects_multiple_commands_for_required_output_checkpoint(
+    tmp_path,
+    monkeypatch,
+):
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from tests.config.test_boardroom_config import _write_config_files
+
+    paths = _write_config_files(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(paths, env_values={})
+    package = _execution_package()
+    second_command = package.commands[0].model_copy(update={"command_id": ContractId(value="cmd.second")})
+    execution_package = package.model_copy(
+        update={
+            "seat_ref": AgentSeatRef(value="seat.worker.implementation"),
+            "commands": (package.commands[0], second_command),
+            "model_execution_profile": package.model_execution_profile.model_copy(
+                update={
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "context_window": 400000,
+                    "temperature": 0.0,
+                    "model_execution_profile_id": "model-profile.worker.implementation.primary",
+                    "tool_permissions": ("filesystem.read", "filesystem.write", "command.execute"),
+                }
+            ),
+        }
+    )
+
+    try:
+        AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+            execution_package=execution_package,
+            settings=settings,
+            seat_ref="seat.worker.implementation",
+        )
+    except ValueError as exc:
+        assert "required output checkpoint requires exactly one declared command" in str(exc)
+    else:
+        raise AssertionError("expected multi-command checkpoint failure")
 
 
 def test_atomic_tool_policy_resolver_derives_tools_from_permissions():

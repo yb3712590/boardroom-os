@@ -63,10 +63,23 @@ class AgentExecutionBudgetConfig(BaseModel):
     max_parse_failures: int = Field(ge=0)
     max_observation_chars: int = Field(gt=0)
     max_wall_seconds: float = Field(gt=0)
+    max_actions_per_turn: int = Field(gt=0)
 
 
 class BudgetCapsConfig(AgentExecutionBudgetConfig):
     pass
+
+
+class AtomicRequiredOutputCheckpointConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_auto_runs: int = Field(gt=0)
+
+
+class AtomicCheckpointConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    required_output: AtomicRequiredOutputCheckpointConfig
 
 
 class AtomicDependencyConfig(BaseModel):
@@ -128,6 +141,7 @@ class AtomicFilesystemConfig(BaseModel):
     max_entries_limit: int = Field(gt=0)
     default_max_matches: int = Field(gt=0)
     max_matches_limit: int = Field(gt=0)
+    allow_apply_patch: bool = False
 
     @model_validator(mode="after")
     def _validate_limits(self) -> Self:
@@ -196,6 +210,7 @@ class AtomicAgentRuntimeConfig(BaseModel):
     tool_permission_map: dict[str, tuple[str, ...]]
     budget_profiles: dict[str, AgentExecutionBudgetConfig]
     budget_caps: BudgetCapsConfig
+    checkpoints: AtomicCheckpointConfig
     filesystem: AtomicFilesystemConfig
     commands: AtomicCommandConfig
     network: AtomicNetworkConfig
