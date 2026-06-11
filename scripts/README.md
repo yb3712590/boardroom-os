@@ -64,6 +64,7 @@ set -a; source .env; set +a; BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=sr
 - `--reset`：只删除并重建带 V2-090J marker（标记文件）的 workspace；若目录存在但缺 `.boardroom-v2-090j-workspace.json`，脚本 fail closed（失败关闭）。
 - 完整 pytest 默认跳过真实 provider test（模型供应商测试），除非同时设置 `BOARDROOM_RUN_REAL_PROVIDER_PROVING=1` 和 `OPENAI_API_KEY`。
 - 成功报告必须包含 `action_protocol="agent-action-batch-v1"`、`max_actions_per_turn > 1`、`checkpoint_max_auto_runs >= 1`、`cmd.check-medium-scenario` exit 0、workspace mutation（工作区变更）和 source lineage input（源码来源链输入）。
+- 2026-06-11 复跑结论：一次真实 provider run 因 provider output（模型输出）串联多个 JSON 后又遇到 provider SDK connection error（供应商 SDK 连接错误）失败；随后 `tests/proving/test_v2_090j_medium_scenario.py` 显式 opt-in 通过（`1 passed in 505.05s`），独立 runner report（运行器报告）`boardroom-atomic.v2-090j.medium.20260611T060341Z.b564b20d` 也通过，包含 8 个 provider turns（模型轮次）、11 个 workspace mutations（工作区变更）、6 次 `cmd.check-medium-scenario` command evidence（命令证据，最终 exit 0）、source lineage input（源码来源链输入）和 `run.completed`。
 
 POSIX shell example:
 
