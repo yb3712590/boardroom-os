@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-090I`（BLOCKED，保留为 V2-090J 前的失败证据）、`V2-090F`（BLOCKED，待人工评审后决定是否恢复 golden sample rebuild）
+**当前未完成工作包**：`V2-090F`（BLOCKED，PRD-to-delivery agent team spec/plan 已修订，待人工评审后恢复实施）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）、`V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）、`V2-090H Atomic-agent executor switch`（原子智能体执行器切换）与 `V2-090J Atomic action protocol repair`（原子动作协议修复）已完成。`V2-090I Resettable medium implementation scenario`（可重置中等复杂实施场景）保留为 BLOCKED 失败证据：真实 provider-backed atomic-agent executor（模型供应商支撑原子智能体执行器）三次尝试均未完成中等复杂多文件任务。V2-090J 通过 batch action protocol（批量动作协议）、apply_patch 工具策略、required-output checkpoint（必需产物检查点）和 provider prompt repair（模型提示修复）证明中等复杂 executor path 已恢复；2026-06-11 复跑再次证明该路径可完成同一中等复杂 package/CLI 任务，但仍暴露 provider output steering（模型输出引导）不稳定风险。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先经人工评审 V2-090H、V2-090I 与 V2-090J 真实执行证据后，才允许决定是否恢复 V2-090F 重建 golden sample。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据；两份复审报告指出当前证据链证明的是错误命题：run manifest（运行清单）声明的 backend/frontend run commands（后端/前端运行命令）没有最终证据，frontend integration（前端集成）退化为 fakeFetch（模拟 fetch），golden sample（黄金样例）无法按声明后端命令启动。当前处于 V2-090 Tiny Fullstack Blackbox Recovery（微型全栈黑盒整改）；`V2-090A RolePromptHook`（角色提示词钩子）、`V2-090B Closeout all-command coverage`（收尾全命令覆盖）、`V2-090C ServiceRunEvidence`（服务运行证据）、`V2-090D Tiny contract recovery`（微型合同整改）、`V2-090E Live blackbox integration`（真实黑盒集成）、`V2-090G Atomic-agent package/import integration`（原子智能体包导入集成）、`V2-090H Atomic-agent executor switch`（原子智能体执行器切换）、`V2-090I Resettable medium implementation scenario`（可重置中等复杂实施场景）与 `V2-090J Atomic action protocol repair`（原子动作协议修复）已完成。专家评审已确认 agent team（智能体团队）基础能力具备进入 V2-090F 的条件；当前已将 V2-090F spec/plan 修订为 short PRD（简短产品需求）输入、agent team 自治规划/实施/测试/检查/收尾输出的路线，并新增 required seats（必需席位）、RolePromptHook（角色提示词钩子）、RoleProfile（角色模板）和 skill context（技能上下文）基线门禁。`V2-090F Golden sample rebuild`（黄金样例重建）仍为 BLOCKED：必须先通过本轮修订后的 spec/plan 人工评审，才允许恢复实施并重建 golden sample。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -162,8 +162,8 @@ RoleProfile（角色模板）
 | Phase 7：Closeout + Replay + Audit | V2-070 | 6 / 6 | 完成 |
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
-| Phase 9：Tiny blackbox recovery | V2-090 | 8 / 10 | 阻塞；V2-090J 完成，V2-090I 保留 BLOCKED 失败证据，V2-090F 待人工评审后决定是否恢复 |
-| **合计** | **V2-000 ~ V2-090** | **67 / 69** | **V2-090A ~ V2-090E、V2-090G、V2-090H 与 V2-090J 完成，V2-090I BLOCKED，V2-090F BLOCKED，Phase 9 未闭合** |
+| Phase 9：Tiny blackbox recovery | V2-090 | 9 / 10 | 阻塞；V2-090I 与 V2-090J 完成，V2-090F PRD-to-delivery agent team spec/plan 待评审 |
+| **合计** | **V2-000 ~ V2-090** | **68 / 69** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I 与 V2-090J 完成，V2-090F BLOCKED，Phase 9 未闭合** |
 
 ## 当前约束摘要
 
@@ -1109,19 +1109,20 @@ RoleProfile（角色模板）
 ### V2-090F: Golden sample rebuild
 
 - 状态：BLOCKED
-- 目标：重建 `examples/generated-workspaces/tiny-fullstack/`；新的 CloseoutPackage 只有在黑盒证据齐全时 passed。
-- 输入文档：V2-090A~E 产物。
-- 依赖：V2-090E。
-- 输出文件：`examples/generated-workspaces/tiny-fullstack/`、`scripts/build_tiny_closeout_sample.py`、`examples/README.md`、`scripts/README.md`。
-- 必须先写的 negative tests：当前 V2-080 failure package 必须被 closeout gate 阻断；缺任一 RunManifest command evidence 不得生成 passed sample；golden sample 不得包含未登记的 `__pycache__` 或临时文件。
-- 必须证明的 happy path：样例可在 clean worktree 上重生成；连续两次 hash 稳定；文件数量固定；总大小在上限内；`--check` 只比较不写文件；CloseoutPackage / ReplayBundle / GitVersionAuditBundle / ProcessAuditBundle 均绑定黑盒证据。
-- 验收口径：golden sample 不再只是 deterministic fixture，而是 blackbox-evidence-backed sample。
-- 阻塞证据：2026-06-03 V2-090F 真实 provider-backed（模型供应商支撑）路径暴露出系统缺少 AgentWorkExecutor（智能体工作执行器）/ agent loop executor（智能体循环执行器）。当前 `ProviderAttempt`（模型调用尝试记录）只能证明 `OpenAIProviderTransport`（OpenAI 模型传输）发起了 LLM request（大模型请求）并记录 raw/parsed artifact（原始/解析产物）；它不会自主读取 workspace（工作区）、写入文件、运行命令、观察失败、循环修复或归档 command evidence（命令证据）。`scripts/build_tiny_closeout_sample.py`（构建微型收尾样例脚本）已有 locked replay（锁定重放）、provider lock（模型产物锁）和 V2-080 failure package（失败包）阻断路径的阶段性改动，但 provider-backed sample generation（模型供应商支撑样例生成）在 600 秒配置下仍未形成可验收的 passed golden sample（通过黄金样例），且后续失败显示单次 JSON source delivery（源码交付）并不是 agent team（智能体团队）自治实施。
-- 解阻条件：先完成 V2-090H Atomic-agent executor switch（原子智能体执行器切换）和 V2-090J Atomic action protocol repair（原子动作协议修复），证明 implementation ticket（实施任务）的主执行路径不再是 `ProviderExecutor`（模型供应商执行器）单次 LLM request（大模型请求），而是通过外部 atomic-agent `AgentRuntimePort`（智能体运行端口）稳定执行 agent loop（智能体循环），产生真实 event stream（事件流）、workspace mutation（工作区变更）、tool attempt（工具尝试）、command evidence（命令证据）和 source lineage input（源码来源链输入）；之后才能重新启动 V2-090F 并恢复 golden sample rebuild（黄金样例重建）验收。
+- 目标：编写短 PRD 输入入口，让 agent team（智能体团队）自治产生合同、任务图、实现、测试、检查和收尾产物，并重建 `examples/generated-workspaces/tiny-fullstack/`；新的 CloseoutPackage（收尾包）只有在多角色上下文、atomic-agent implementation evidence（原子智能体实施证据）、黑盒证据和 audit bundles（审计包）齐全时 passed。
+- 输入文档：`docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md`、`docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md`、V2-090A~E、V2-090G~J 产物。
+- 依赖：V2-090A~E、V2-090G、V2-090H、V2-090I、V2-090J；本轮 spec/plan 人工评审通过后才可恢复实施。
+- 输出文件：`examples/directives/tiny-fullstack-prd.md`、`examples/directives/v2-090f-reference-examples.md`、`config/boardroom-runtime.v2-090f.yaml`、`config/boardroom-providers.v2-090f.yaml`、`config/boardroom-roles.v2-090f.yaml`、`src/boardroom_os/proving/v2_090f_prd_agent_team.py`、`scripts/run_v2_090f_prd_agent_team.py`、`scripts/build_tiny_closeout_sample.py`、`examples/generated-workspaces/tiny-fullstack/`、`examples/README.md`、`scripts/README.md`、`tests/negative/test_v2_090f_agent_team_fail_closed.py`、`tests/proving/test_v2_090f_prd_agent_team_script.py`、`tests/proving/test_v2_090f_prd_agent_team_real.py`。
+- 必须先写的 negative tests：缺 PRD、空 PRD、runner 预置固定 ticket graph（任务图）、所有角色复用 `seat.worker.implementation`、缺 CEO/Architect/Worker/Tester/Checker/Closeout required seat、RolePromptHook / skill context mismatch（角色提示词钩子 / 技能上下文不匹配）、非 worker 角色越权写源码、旧 provider lock（模型产物锁）、单 `ProviderAttempt`（模型调用尝试记录）、`ProviderExecutor`（模型供应商执行器）源码交付路径、当前 V2-080 failure package（失败包）、缺 atomic run evidence（原子运行证据）、缺 command/service/live blackbox/source lineage evidence（命令/服务/真实黑盒/来源链证据）均 fail closed。
+- 必须证明的 happy path：入口脚本读取 short PRD，并使用 V2-090F 专用高预算配置基线；CEO/Architect/Tester/Worker/Checker/Closeout agent seats（智能体席位）自治产生 directive（指令）、contracts（合同）、ticket graph（任务图）、implementation tickets（实施任务）、verification plan（验证计划）、checker verdict（检查结论）和 closeout/audit artifacts（收尾/审计产物）。Task 7 分段实施：7A 生成合同和任务图，7B 执行 worker implementation tickets，7C 完成 Tester/Checker/Closeout 与 Boardroom gates。implementation tickets 必须通过真实 provider-backed `AtomicAgentExecutor` 执行并产生 provider turn facts、workspace mutation、declared command evidence 和 source lineage input；最终由既有 `SourceInventory`、`RunManifest`、`VerificationRun`、`ServiceRunEvidence`、`LiveBlackboxIntegrationEvidence`、`FinalEvidenceTable`、`WorkspaceEvidenceBundle`、`ReplayBundle`、`ProcessAuditBundle`、`GitVersionAuditBundle` 和 `CloseoutGate` 生成 passed sample（通过样例）。
+- 验收口径：golden sample 不再是 provider-locked deterministic fixture（模型产物锁定确定性夹具）或 runner 预拆任务流水线，而是 PRD-to-delivery agent team autonomous sample（从 PRD 到交付的智能体团队自治样例）。`AgentRunResult.status == completed` 只能作为 execution facts（执行事实），不得直接触发 `TICKET_COMPLETED` 或 `CloseoutPackage.passed`。
+- 当前阻塞：2026-06-12 已修订 spec/plan 并自审，明确废弃旧 provider-backed generation subprocess、provider artifact lock 和固定三票监督实施作为成功路径。V2-090F 仍保持 BLOCKED，等待本轮修订 spec/plan 人工评审；评审通过后才能进入 implementation。
+- 新 `--check` 语义：`scripts/build_tiny_closeout_sample.py --check` 只能验证已发布样例的 PRD sha256、baseline hash（基线哈希）、角色上下文快照、manifest（清单）、文件 hash、证据引用、closeout payload（收尾载荷）和禁用运行时文件；不得调用 provider（模型供应商），不得写 output root（输出根目录），也不得单独作为 agent team framework 端到端成立证据。
+- 配置基线：V2-090F 使用独立 `config/boardroom-*.v2-090f.yaml`，所有角色采用 high reasoning（高推理）和高预算 `agent_team.v2_090f.fullstack` 或等价 profile；预算、timeout（超时）和 retry policy（重试策略）必须进入 baseline hash，不得通过 `.env` 临时覆盖。允许提高 provider timeout，禁止 workspace mutation 后整票重试。
 
 ### V2-090I: Resettable medium implementation scenario（可重置中等复杂实施场景）
 
-- 状态：BLOCKED
+- 状态：DONE
 - 目标：构造一个可重置的中等复杂 implementation ticket（实施任务），由真实 provider-backed atomic-agent executor（模型供应商支撑原子智能体执行器）生成多文件 Python package/CLI（Python 包/命令行工具），包含文件间 import（导入依赖）、非平凡数学/算法逻辑、真实 unittest/CLI 验证和可审计 JSON report（报告）。
 - 输入文档：`docs/superpowers/specs/2026-06-10-v2-090i-resettable-medium-scenario-design.md`、`docs/superpowers/plans/2026-06-10-v2-090i-resettable-medium-scenario.md`、`config/boardroom-runtime.example.yaml`、`config/boardroom-providers.example.yaml`、`config/boardroom-roles.example.yaml`、`scripts/run_atomic_agent_retry_rate_probe.py`、`scripts/run_tiny_atomic_agent_executor.py`。
 - 依赖：V2-090G、V2-090H。
@@ -1129,8 +1130,9 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests（负例测试）：reset 拒绝删除缺 marker 的既有目录；真实 provider proving test 默认跳过；脚本缺 provider secret 时 fail closed；validator command 拒绝缺文件、缺 import、算法结果错误、unittest/CLI 失败。
 - 必须证明的 happy path（正向路径）：显式 opt-in 后，专项测试先 `--reset` 初始化场景，再通过真实 provider-backed atomic-agent executor 生成 `forecast_engine` 多文件 package，运行 `cmd.check-medium-scenario` exit 0，event stream 包含 provider turn facts、workspace mutation、command evidence 和 source lineage input。
 - 验收口径：V2-090I 只证明中等复杂单 ticket 可信交付能力；不解除 V2-090F BLOCKED，不生成 closeout passed golden sample。
-- 阻塞证据：2026-06-10 三次真实 provider-backed run 均未通过 `tests/proving/test_v2_090i_medium_scenario.py`。第一次 `boardroom-atomic.v2-090i.medium.20260610T145623Z.cbc1565e` 发生多次 invalid JSON / `action_envelope` schema mismatch，写出 `__init__.py` 与 `statistics.py` 后 `run.failed`。第二次 `boardroom-atomic.v2-090i.medium.20260610T150942Z.6856ed07` 已能输出合法 action，但选择 `apply_patch` 一次写多文件，被 permission policy 拒绝为 `invalid_path_type_denied`。第三次 `boardroom-atomic.v2-090i.medium.20260610T151602Z.f22b41dc` 禁用 `apply_patch` 后写出 `__init__.py`、`statistics.py`、`risk.py`、`cli.py`，产生 11 个 provider turns、7 个 action rejections 和 4 个 workspace mutations，但未生成 `work/tests/test_forecast_engine.py`，未运行 `cmd.check-medium-scenario`，最终因 `action_parse_failed` / invalid JSON 失败。
-- 根因结论：V2-090I 不是 Boardroom evidence gates（证据门禁）整体过严，而是 atomic-agent action protocol（原子动作协议）对中等复杂任务过脆、`apply_patch` 工具可见性与权限策略错配、validator command（验证命令）没有作为执行循环 checkpoint（检查点）前置调度。完整流水和外部评审见 `doc/05-project-log/v2-090i-implementation-run-record.md`。
+- 历史阻塞证据：2026-06-10 三次真实 provider-backed run 均未通过 `tests/proving/test_v2_090i_medium_scenario.py`。第一次 `boardroom-atomic.v2-090i.medium.20260610T145623Z.cbc1565e` 发生多次 invalid JSON / `action_envelope` schema mismatch，写出 `__init__.py` 与 `statistics.py` 后 `run.failed`。第二次 `boardroom-atomic.v2-090i.medium.20260610T150942Z.6856ed07` 已能输出合法 action，但选择 `apply_patch` 一次写多文件，被 permission policy 拒绝为 `invalid_path_type_denied`。第三次 `boardroom-atomic.v2-090i.medium.20260610T151602Z.f22b41dc` 禁用 `apply_patch` 后写出 `__init__.py`、`statistics.py`、`risk.py`、`cli.py`，产生 11 个 provider turns、7 个 action rejections 和 4 个 workspace mutations，但未生成 `work/tests/test_forecast_engine.py`，未运行 `cmd.check-medium-scenario`，最终因 `action_parse_failed` / invalid JSON 失败。
+- 完成证据：2026-06-11 在 V2-090J action protocol repair（原子动作协议修复）后复跑 V2-090I 原 runner。`BOARDROOM_RUN_REAL_PROVIDER_PROVING=1 PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090i_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090i-medium-real-rerun` 通过（`1 passed in 222.99s`）；独立 runner `PYTHONPATH=src:. python scripts/run_v2_090i_medium_scenario.py --reset` exit 0，run id `boardroom-atomic.v2-090i.medium.20260611T160350Z.9f07d150`，report（报告）包含 `success=true`、`terminal_event_type="run.completed"`、`provider_turn_completed_count=10`、`command_exit_codes["cmd.check-medium-scenario"]=0`、9 条 workspace mutations（工作区变更）和 5 条 source lineage inputs（源码来源链输入）。非 provider 验证 `PYTHONPATH=src:. python -m pytest tests/proving/test_v2_090i_medium_scenario_script.py tests/proving/test_v2_090i_medium_scenario.py -q --tb=short --basetemp .pytest-tmp-v2090i-non-provider-rerun` 通过（`9 passed, 1 skipped`）。
+- 根因结论：V2-090I 先前失败不是 Boardroom evidence gates（证据门禁）整体过严，而是 atomic-agent action protocol（原子动作协议）对中等复杂任务过脆、`apply_patch` 工具可见性与权限策略错配、validator command（验证命令）没有作为执行循环 checkpoint（检查点）前置调度。V2-090J 修复后，V2-090I 原场景已证明中等复杂单 ticket 可信交付能力；完整流水和外部评审见 `doc/05-project-log/v2-090i-implementation-run-record.md`。
 
 ### V2-090J: Atomic action protocol repair（原子动作协议修复）
 
