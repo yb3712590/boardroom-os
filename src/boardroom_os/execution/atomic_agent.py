@@ -122,6 +122,17 @@ class AtomicInvocationCompiler:
         self.wall_time_seconds = wall_time_seconds
 
     def compile(self, execution_package: ExecutionPackage) -> Any:
+        return self._compile(
+            execution_package,
+            requires_workspace_mutation=True,
+        )
+
+    def _compile(
+        self,
+        execution_package: ExecutionPackage,
+        *,
+        requires_workspace_mutation: bool,
+    ) -> Any:
         try:
             agent_models = import_module("atomic_agent.models")
         except ImportError as exc:
@@ -130,6 +141,7 @@ class AtomicInvocationCompiler:
         allowed_write_set = _validate_relative_paths(
             tuple(_ref_value(path) for path in execution_package.allowed_write_set),
             error_message="allowed_write_set must contain relative paths",
+            allow_empty=not requires_workspace_mutation,
         )
         evidence_obligations = [
             obligation.model_dump(mode="json")
@@ -202,7 +214,7 @@ class AtomicInvocationCompiler:
             output_requirements={
                 "require_event_stream": True,
                 "require_tool_attempts": True,
-                "require_workspace_mutations": True,
+                "require_workspace_mutations": requires_workspace_mutation,
                 "require_artifacts": True,
                 "evidence_obligations": evidence_obligations,
             },
@@ -247,21 +259,30 @@ class AtomicInvocationCompiler:
         ):
             raise ValueError("provider profile does not match execution package")
         provider_options = settings.openai_compatible_options(provider_config.provider_profile_id)
+        role_category = role_slot.role_category
+        role_execution_kind = _role_execution_kind(role_category)
+        requires_workspace_mutation = role_category == "worker"
+        requires_command_evidence = role_category == "worker" or bool(execution_package.commands)
+        requires_source_lineage = role_category == "worker"
         allowed_write_set = _validate_relative_paths(
             tuple(_ref_value(path) for path in execution_package.allowed_write_set),
             error_message="allowed_write_set must contain relative paths",
+            allow_empty=not requires_workspace_mutation,
         )
         tools = AtomicToolPolicyResolver().resolve_tools(
             runtime_tools=tuple(settings.runtime.atomic_agent.default_tools),
             role_tools=tuple(role_slot.default_tools),
             tool_permissions=tuple(execution_package.model_execution_profile.tool_permissions),
             skill_refs=tuple(role_slot.skill_refs),
-            requires_command_evidence=True,
-            requires_workspace_mutation=True,
+            requires_command_evidence=requires_command_evidence,
+            requires_workspace_mutation=requires_workspace_mutation,
             allow_apply_patch=settings.runtime.atomic_agent.filesystem.allow_apply_patch,
         )
         resolved_budget = settings.budgets_for_seat(role_slot.seat_ref)
-        base_invocation = self.compile(execution_package)
+        base_invocation = self._compile(
+            execution_package,
+            requires_workspace_mutation=requires_workspace_mutation,
+        )
         budget_payload = {
             key: resolved_budget[key]
             for key in (
@@ -273,18 +294,18 @@ class AtomicInvocationCompiler:
             )
         }
         checkpoint = None
-        if execution_package.required_outputs:
-            if len(execution_package.commands) != 1:
-                raise ValueError("required output checkpoint requires exactly one declared command")
+        checkpoint_policy = "manual-declared-commands-v1"
+        if execution_package.required_outputs and len(execution_package.commands) == 1:
             checkpoint = {
                 "when_all_paths_exist": [output.value for output in execution_package.required_outputs],
                 "run_command_id": execution_package.commands[0].command_id.value,
                 "max_auto_runs": settings.runtime.atomic_agent.checkpoints.required_output.max_auto_runs,
             }
+            checkpoint_policy = "required-output-single-command-v1"
         output_requirements = {
             **base_invocation.output_requirements,
-            "require_command_evidence": True,
-            "require_source_lineage": True,
+            "require_command_evidence": requires_command_evidence,
+            "require_source_lineage": requires_source_lineage,
             "declared_command_ids": list(declared_command_ids_from_execution_package(execution_package)),
             "required_output_checkpoint": checkpoint,
         }
@@ -292,9 +313,12 @@ class AtomicInvocationCompiler:
             **base_invocation.metadata,
             "action_protocol": "agent-action-batch-v1",
             "action_protocol_version": "agent-action-batch-v1",
-            "checkpoint_policy": "required-output-single-command-v1",
+            "checkpoint_policy": checkpoint_policy,
             "provider_profile_ref": provider_config.provider_profile_id,
             "role_slot_ref": role_slot.seat_ref,
+            "role_profile_ref": role_slot.role_profile_ref,
+            "role_category": role_category,
+            "role_execution_kind": role_execution_kind,
             "budget_profile_ref": resolved_budget["budget_profile_ref"],
             "resolved_budget_hash": stable_hash(resolved_budget),
             "resolved_tool_policy_hash": stable_hash({"tools": tools}),
@@ -604,13 +628,16 @@ class AtomicAgentResultValidator:
         if not summary_artifact_refs.issubset(result_artifact_refs):
             raise ValueError("artifacts must match event stream summary")
 
-        observed_command_ids: set[str] = set()
+        latest_command_results: dict[str, dict[str, Any]] = {}
         for command_result in evidence_summary.get("command_results", ()):
             command_id = command_result.get("command_id") if isinstance(command_result, dict) else None
             if command_id not in self.declared_command_ids:
                 raise ValueError("command_id is not declared")
-            observed_command_ids.add(command_id)
-        missing_commands = self.declared_command_ids - observed_command_ids
+            latest_command_results[command_id] = command_result
+        for command_id, command_result in latest_command_results.items():
+            if command_result.get("exit_code") != 0:
+                raise ValueError("declared command evidence must have exit_code 0")
+        missing_commands = self.declared_command_ids - set(latest_command_results)
         if missing_commands:
             raise ValueError("command evidence is required")
 
@@ -709,8 +736,11 @@ def _validate_relative_paths(
     paths: tuple[str, ...],
     *,
     error_message: str,
+    allow_empty: bool = False,
 ) -> tuple[str, ...]:
     if not paths:
+        if allow_empty:
+            return paths
         raise ValueError(error_message)
     for path in paths:
         parsed = PurePosixPath(path)
@@ -760,6 +790,12 @@ def stable_hash(value: Any) -> str:
 
 def declared_command_ids_from_execution_package(execution_package: ExecutionPackage) -> tuple[str, ...]:
     return tuple(command.command_id.value for command in execution_package.commands)
+
+
+def _role_execution_kind(role_category: str) -> str:
+    if role_category == "worker":
+        return "implementation"
+    return role_category
 
 
 def _ref_value(value: Any) -> str:

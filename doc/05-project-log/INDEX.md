@@ -12,6 +12,7 @@
 | `2026-05.md` | 2026 年 5 月项目日志 |
 | `2026-06.md` | 2026 年 6 月项目日志 |
 | `v2-090i-implementation-run-record.md` | V2-090I 实施流水与外部评审记录 |
+| `v2-090f-implementation-intervention-log.md` | V2-090F 实施流水、真实 provider 证据与介入边界评审记录 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）spec |
 | `../../docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）plan |
 

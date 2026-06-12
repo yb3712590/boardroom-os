@@ -118,6 +118,8 @@ class AtomicAgentRuntimeFactory:
         seat_ref: str,
         workspace_root: Path,
         run_id: str,
+        event_stream_root: Path | None = None,
+        artifact_root: Path | None = None,
     ) -> Any:
         from atomic_agent.agent_loop import AgentLoop, AgentLoopConfig, AgentLoopDependencies
         from atomic_agent.artifacts import ArtifactWriter, ArtifactWriterConfig
@@ -135,8 +137,8 @@ class AtomicAgentRuntimeFactory:
         workspace_root = workspace_root.resolve()
         workspace_root.mkdir(parents=True, exist_ok=True)
         self._ensure_command_cwds(workspace_root, execution_package)
-        event_root = Path(runtime.event_stream_root).resolve()
-        artifact_root = Path(runtime.artifact_root).resolve()
+        event_root = Path(event_stream_root or runtime.event_stream_root).resolve()
+        artifact_root = Path(artifact_root or runtime.artifact_root).resolve()
         event_root.mkdir(parents=True, exist_ok=True)
         artifact_root.mkdir(parents=True, exist_ok=True)
         guard = WorkspacePathGuard(

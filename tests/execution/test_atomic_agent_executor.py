@@ -121,3 +121,27 @@ def test_atomic_runtime_factory_builds_port_with_openai_compatible_provider(tmp_
     )
 
     assert callable(getattr(runtime_port, "invoke", None))
+
+
+def test_atomic_runtime_factory_accepts_run_scoped_event_and_artifact_roots(
+    tmp_path,
+    monkeypatch,
+):
+    from boardroom_os.execution.atomic_executor import AtomicAgentRuntimeFactory
+
+    settings = _settings(tmp_path, monkeypatch)
+    event_root = tmp_path / "events" / "run-a"
+    artifact_root = tmp_path / "artifacts" / "run-a"
+
+    runtime_port = AtomicAgentRuntimeFactory(settings=settings).build_runtime_port(
+        execution_package=_execution_package_for_factory(),
+        seat_ref="seat.worker.implementation",
+        workspace_root=tmp_path,
+        run_id="run.atomic.factory.scoped",
+        event_stream_root=event_root,
+        artifact_root=artifact_root,
+    )
+
+    assert callable(getattr(runtime_port, "invoke", None))
+    assert event_root.is_dir()
+    assert artifact_root.is_dir()

@@ -1,0 +1,24 @@
+version: 1
+providers:
+  - provider_profile_id: provider.openai-compatible.v2-090f-primary
+    provider_type: openai_compatible
+    provider_label: v2-090f-high-budget-openai-compatible
+    base_url: https://api.truerealbill.com/v1
+    api_key_env: OPENAI_API_KEY
+    model: gpt-5.5
+    context_window_tokens: 400000
+    max_output_tokens: 20000
+    stream_idle_timeout_seconds: 180
+    total_timeout_seconds: 900
+    reasoning_effort: high
+    temperature: null
+    top_p: null
+    presence_penalty: null
+    frequency_penalty: null
+    seed: null
+    stop: null
+    response_format:
+      type: json_object
+    stream_options: null
+    service_tier: null
+    user: boardroom-os-v2-090f

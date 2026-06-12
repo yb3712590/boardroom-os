@@ -17,7 +17,13 @@ from boardroom_os.providers.attempt import (
 from tests.execution.test_atomic_agent_invocation_compiler import _execution_package
 
 
-def _write_event_stream(path, *, command_id=None, include_provider_turn=False):
+def _write_event_stream(
+    path,
+    *,
+    command_id=None,
+    include_provider_turn=False,
+    command_exit_code=0,
+):
     artifact = {
         "artifact_ref": "artifact://run.atomic.1/results/step-0002.json",
         "sha256": "sha256:" + "0" * 64,
@@ -136,7 +142,7 @@ def _write_event_stream(path, *, command_id=None, include_provider_turn=False):
                     "payload": {
                         "tool_attempt_id": "tool.1",
                         "command_id": command_id,
-                        "exit_code": 0,
+                        "exit_code": command_exit_code,
                         "stdout": {
                             "artifact_ref": "artifact://run.atomic.1/commands/stdout.txt",
                             "sha256": "sha256:" + "3" * 64,
@@ -205,13 +211,16 @@ def _event_hash(event_without_hash):
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def _completed_result(event_stream, events_hash, *, run_id="run.atomic.1"):
+def _completed_result(event_stream, events_hash, *, run_id="run.atomic.1", extra_tool_attempts=None):
     return AgentRunResult(
         run_id=run_id,
         status=AgentRunStatus.COMPLETED,
         event_stream_ref=str(event_stream),
         events_hash=events_hash,
-        tool_attempts=[{"tool_attempt_id": "tool.1", "action": "write_file"}],
+        tool_attempts=[
+            {"tool_attempt_id": "tool.1", "action": "write_file"},
+            *(extra_tool_attempts or ()),
+        ],
         workspace_mutations=[
             {"path": "backend/app.py", "tool_attempt_id": "tool.1", "sha256": "sha256:" + "0" * 64}
         ],
@@ -950,6 +959,199 @@ def test_atomic_result_validator_rejects_undeclared_command_from_event_stream(tm
         assert "command_id is not declared" in str(exc)
     else:
         raise AssertionError("expected event stream command policy failure")
+
+
+def test_atomic_result_validator_rejects_failed_declared_command_from_event_stream(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_event_stream(
+        event_stream,
+        command_id="test-backend",
+        command_exit_code=2,
+    )
+    result = _completed_result(event_stream, events_hash)
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("backend",),
+        declared_command_ids=("test-backend",),
+        event_stream_root=tmp_path,
+    )
+
+    try:
+        validator.validate(result)
+    except ValueError as exc:
+        assert "declared command evidence must have exit_code 0" in str(exc)
+    else:
+        raise AssertionError("expected failed declared command evidence rejection")
+
+
+def test_atomic_result_validator_accepts_retried_declared_command_when_latest_passes(tmp_path):
+    event_stream = tmp_path / "events.jsonl"
+    events_hash = _write_events(
+        event_stream,
+        [
+            {
+                "type": "run.started",
+                "payload": {"event_protocol_version": 1, "invocation_id": "inv.atomic.1"},
+            },
+            {
+                "type": "tool.attempt.started",
+                "payload": {"tool_attempt_id": "tool.1", "action_id": "action.1", "tool": "write_file"},
+            },
+            {
+                "type": "tool.attempt.completed",
+                "payload": {
+                    "tool_attempt_id": "tool.1",
+                    "action_id": "action.1",
+                    "tool": "write_file",
+                    "observation": {
+                        "artifact_ref": "artifact://run.atomic.1/observations/tool.1.json",
+                        "sha256": "sha256:" + "2" * 64,
+                        "size_bytes": 10,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "workspace.mutation.recorded",
+                "payload": {
+                    "tool_attempt_id": "tool.1",
+                    "path": "backend/app.py",
+                    "before_hash": None,
+                    "after_hash": "sha256:" + "0" * 64,
+                    "diff": {
+                        "artifact_ref": "artifact://run.atomic.1/diffs/backend-app.diff",
+                        "sha256": "sha256:" + "1" * 64,
+                        "size_bytes": 12,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "tool.attempt.started",
+                "payload": {
+                    "tool_attempt_id": "tool.failed",
+                    "action_id": "cmd.failed",
+                    "tool": "run_command",
+                },
+            },
+            {
+                "type": "tool.attempt.completed",
+                "payload": {
+                    "tool_attempt_id": "tool.failed",
+                    "action_id": "cmd.failed",
+                    "tool": "run_command",
+                    "observation": {
+                        "artifact_ref": "artifact://run.atomic.1/observations/tool.failed.json",
+                        "sha256": "sha256:" + "7" * 64,
+                        "size_bytes": 10,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "command.completed",
+                "payload": {
+                    "tool_attempt_id": "tool.failed",
+                    "command_id": "test-backend",
+                    "exit_code": 5,
+                    "stdout": {
+                        "artifact_ref": "artifact://run.atomic.1/commands/failed.stdout.txt",
+                        "sha256": "sha256:" + "3" * 64,
+                        "size_bytes": 0,
+                        "truncated_in_observation": False,
+                    },
+                    "stderr": {
+                        "artifact_ref": "artifact://run.atomic.1/commands/failed.stderr.txt",
+                        "sha256": "sha256:" + "4" * 64,
+                        "size_bytes": 12,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "tool.attempt.started",
+                "payload": {
+                    "tool_attempt_id": "tool.passed",
+                    "action_id": "cmd.passed",
+                    "tool": "run_command",
+                },
+            },
+            {
+                "type": "tool.attempt.completed",
+                "payload": {
+                    "tool_attempt_id": "tool.passed",
+                    "action_id": "cmd.passed",
+                    "tool": "run_command",
+                    "observation": {
+                        "artifact_ref": "artifact://run.atomic.1/observations/tool.passed.json",
+                        "sha256": "sha256:" + "8" * 64,
+                        "size_bytes": 10,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "command.completed",
+                "payload": {
+                    "tool_attempt_id": "tool.passed",
+                    "command_id": "test-backend",
+                    "exit_code": 0,
+                    "stdout": {
+                        "artifact_ref": "artifact://run.atomic.1/commands/passed.stdout.txt",
+                        "sha256": "sha256:" + "5" * 64,
+                        "size_bytes": 2,
+                        "truncated_in_observation": False,
+                    },
+                    "stderr": {
+                        "artifact_ref": "artifact://run.atomic.1/commands/passed.stderr.txt",
+                        "sha256": "sha256:" + "6" * 64,
+                        "size_bytes": 0,
+                        "truncated_in_observation": False,
+                    },
+                },
+            },
+            {
+                "type": "result.submitted",
+                "payload": {
+                    "summary": "Updated backend/app.py after rerunning the declared command.",
+                    "produced_paths": ["backend/app.py"],
+                    "artifact_refs": [
+                        {
+                            "artifact_ref": "artifact://run.atomic.1/results/step-0002.json",
+                            "sha256": "sha256:" + "0" * 64,
+                            "size_bytes": 42,
+                            "truncated_in_observation": False,
+                        }
+                    ],
+                },
+            },
+            {"type": "run.completed", "payload": {"summary": "Updated backend/app.py"}},
+        ],
+    )
+    result = _completed_result(
+        event_stream,
+        events_hash,
+        extra_tool_attempts=[
+            {
+                "tool_attempt_id": "tool.failed",
+                "action": "run_command",
+                "command_id": "test-backend",
+            },
+            {
+                "tool_attempt_id": "tool.passed",
+                "action": "run_command",
+                "command_id": "test-backend",
+            },
+        ],
+    )
+    validator = AtomicAgentResultValidator(
+        allowed_write_set=("backend",),
+        declared_command_ids=("test-backend",),
+        event_stream_root=tmp_path,
+    )
+
+    validated = validator.validate(result)
+
+    assert validated.evidence_summary["command_results"][-1]["exit_code"] == 0
 
 
 def test_atomic_result_projector_builds_work_product_submission(tmp_path):

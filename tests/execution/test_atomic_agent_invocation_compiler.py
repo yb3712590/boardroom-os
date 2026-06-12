@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from atomic_agent.models import AgentInvocation
 
 from boardroom_os.agents.profiles import ModelExecutionProfile
@@ -75,6 +77,34 @@ def _execution_package() -> ExecutionPackage:
         evidence_obligations=(evidence_obligation,),
         fallback_policy_ref=FallbackPolicyRef(value="fallback.default"),
         audit_requirements=(AuditRequirement(value="record received context"),),
+    )
+
+
+def _governance_execution_package() -> ExecutionPackage:
+    package = _execution_package()
+    return package.model_copy(
+        update={
+            "execution_package_id": ExecutionPackageId(value="exec.ticket.ceo.1"),
+            "ticket_ref": TicketId(value="ticket.prd-intake"),
+            "seat_ref": AgentSeatRef(value="seat.ceo.delivery"),
+            "objective": "Summarize PRD and authorize delivery planning",
+            "source_surface_refs": (),
+            "allowed_write_set": (),
+            "required_outputs": (),
+            "commands": (),
+            "evidence_obligations": (),
+            "model_execution_profile": package.model_execution_profile.model_copy(
+                update={
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "context_window": 400000,
+                    "temperature": 0.0,
+                    "model_execution_profile_id": "model-profile.ceo.delivery.v2-090f",
+                    "tool_permissions": ("filesystem.read",),
+                }
+            ),
+        }
     )
 
 
@@ -266,6 +296,120 @@ def test_atomic_invocation_compiler_consumes_runtime_provider_and_role_config(tm
     assert invocation.metadata["event_stream_format"] == "jsonl-utf8-lf-canonical-json-v1"
 
 
+def test_atomic_invocation_compiler_allows_governance_role_without_worker_evidence(
+    tmp_path,
+    monkeypatch,
+):
+    from boardroom_os.config.boardroom import BoardroomConfigPaths, load_boardroom_settings
+
+    runtime = tmp_path / "runtime.yaml"
+    providers = tmp_path / "providers.yaml"
+    roles = tmp_path / "roles.yaml"
+    runtime.write_text(
+        Path("config/boardroom-runtime.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    providers.write_text(
+        Path("config/boardroom-providers.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    roles.write_text(
+        Path("config/boardroom-roles.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(
+        BoardroomConfigPaths(
+            runtime_config=runtime,
+            providers_config=providers,
+            roles_config=roles,
+        ),
+        env_values={},
+    )
+
+    invocation = AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+        execution_package=_governance_execution_package(),
+        settings=settings,
+        seat_ref="seat.ceo.delivery",
+    )
+
+    assert invocation.tools == ["read_file", "submit_result"]
+    assert invocation.output_requirements["require_event_stream"] is True
+    assert invocation.output_requirements["require_command_evidence"] is False
+    assert invocation.output_requirements["require_workspace_mutations"] is False
+    assert invocation.output_requirements["require_source_lineage"] is False
+    assert invocation.metadata["role_slot_ref"] == "seat.ceo.delivery"
+    assert invocation.metadata["role_profile_ref"] == "role.governance.ceo"
+    assert invocation.metadata["role_category"] == "governance"
+    assert invocation.metadata["role_execution_kind"] == "governance"
+
+
+def test_atomic_invocation_compiler_keeps_worker_evidence_requirements(
+    tmp_path,
+    monkeypatch,
+):
+    from boardroom_os.config.boardroom import BoardroomConfigPaths, load_boardroom_settings
+
+    runtime = tmp_path / "runtime.yaml"
+    providers = tmp_path / "providers.yaml"
+    roles = tmp_path / "roles.yaml"
+    runtime.write_text(
+        Path("config/boardroom-runtime.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    providers.write_text(
+        Path("config/boardroom-providers.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    roles.write_text(
+        Path("config/boardroom-roles.v2-090f.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(
+        BoardroomConfigPaths(
+            runtime_config=runtime,
+            providers_config=providers,
+            roles_config=roles,
+        ),
+        env_values={},
+    )
+    package = _execution_package()
+    execution_package = package.model_copy(
+        update={
+            "seat_ref": AgentSeatRef(value="seat.worker.implementation"),
+            "model_execution_profile": package.model_execution_profile.model_copy(
+                update={
+                    "provider": "openai-compatible",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "high",
+                    "context_window": 400000,
+                    "temperature": 0.0,
+                    "model_execution_profile_id": "model-profile.worker.implementation.v2-090f",
+                    "tool_permissions": (
+                        "filesystem.read",
+                        "filesystem.write",
+                        "command.execute",
+                    ),
+                }
+            ),
+        }
+    )
+
+    invocation = AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+        execution_package=execution_package,
+        settings=settings,
+        seat_ref="seat.worker.implementation",
+    )
+
+    assert "write_file" in invocation.tools
+    assert "run_command" in invocation.tools
+    assert invocation.output_requirements["require_command_evidence"] is True
+    assert invocation.output_requirements["require_workspace_mutations"] is True
+    assert invocation.output_requirements["require_source_lineage"] is True
+    assert invocation.metadata["role_execution_kind"] == "implementation"
+
+
 def test_atomic_invocation_compiler_emits_action_protocol_and_checkpoint_metadata(tmp_path, monkeypatch):
     from boardroom_os.config.boardroom import load_boardroom_settings
     from tests.config.test_boardroom_config import _write_config_files
@@ -308,7 +452,7 @@ def test_atomic_invocation_compiler_emits_action_protocol_and_checkpoint_metadat
     }
 
 
-def test_atomic_invocation_compiler_rejects_multiple_commands_for_required_output_checkpoint(
+def test_atomic_invocation_compiler_allows_multiple_declared_commands_without_checkpoint(
     tmp_path,
     monkeypatch,
 ):
@@ -338,16 +482,18 @@ def test_atomic_invocation_compiler_rejects_multiple_commands_for_required_outpu
         }
     )
 
-    try:
-        AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
-            execution_package=execution_package,
-            settings=settings,
-            seat_ref="seat.worker.implementation",
-        )
-    except ValueError as exc:
-        assert "required output checkpoint requires exactly one declared command" in str(exc)
-    else:
-        raise AssertionError("expected multi-command checkpoint failure")
+    invocation = AtomicInvocationCompiler(workspace_root=tmp_path).compile_with_settings(
+        execution_package=execution_package,
+        settings=settings,
+        seat_ref="seat.worker.implementation",
+    )
+
+    assert invocation.output_requirements["required_output_checkpoint"] is None
+    assert invocation.output_requirements["declared_command_ids"] == [
+        "cmd.test",
+        "cmd.second",
+    ]
+    assert invocation.metadata["checkpoint_policy"] == "manual-declared-commands-v1"
 
 
 def test_atomic_tool_policy_resolver_derives_tools_from_permissions():

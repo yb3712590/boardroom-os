@@ -20,7 +20,7 @@ scripts/build_tiny_closeout_sample.py
 
 - 默认输出：`examples/generated-workspaces/tiny-fullstack/`
 - 新 `--check` 目标语义：只验证已发布样例的 PRD sha256、baseline hash（基线哈希）、角色上下文快照、manifest（清单）、文件 hash（哈希）、证据引用、closeout payload（收尾载荷）和禁用运行时文件；不得调用 provider（模型供应商），不得写 output root（输出根目录）
-- 生成逻辑复用 `tests/proving/fixtures/tiny_closeout.py`，不复制测试内部拼装逻辑
+- 默认 build 委托 `scripts/run_v2_090f_prd_agent_team.py`，必须显式 opt-in 真实 provider run（模型供应商运行）；未设置 `BOARDROOM_RUN_REAL_PROVIDER_PROVING=1` 时失败退出，不生成伪样例
 - 默认 build 目标语义：读取 short PRD（简短产品需求），启动 CEO/Architect/Worker/Tester/Checker/Closeout agent seats（决策/架构/实施/测试/检查/收尾智能体席位）自治生成 contracts（合同）、ticket graph（任务图）、implementation tickets（实施任务）、verification plan（验证计划）、evidence（证据）和 closeout artifacts（收尾产物）
 - 旧 provider artifact lock（模型产物锁）、provider-backed generation subprocess（模型供应商支撑生成子进程）、单次 JSON source delivery（源码交付）和 runner 预拆固定 ticket graph（固定任务图）已经降级为腐化边界，不能作为 V2-090F 成功证据
 - 旧 V2-080F failure package（失败包）只能作为 regression negative（回归负例）证明被阻断
