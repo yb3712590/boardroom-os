@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100A`（TODO，Rework domain model，返工领域模型；先把 090K fail-closed 现场转化为可审计返工语言，再实现 CEO-governed rework loop）
+**当前未完成工作包**：`V2-100B`（TODO，Rework event taxonomy + reducer，返工事件分类与归约器；在 V2-100A 强类型返工对象基础上，用事件和 reducer 保护返工状态推进）
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。当前真实失败现场已保留在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，其中包括 BehavioralProbePlan 期待 `$.title` 而 backend 实际返回 `{"book": {...}}`、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用 `run-v2-080f`。V2-100 现在成为当前实施重点：把 090K/090F 暴露的“发现问题后只能 fail closed”升级为 CEO-governed rework loop（项目经理治理返工循环），由 CEO 读取结构化 blocker（阻塞项）、规划返工、更新 TicketGraph（工单图）、组织实施/测试/检查/收尾重验并留痕。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，最终通过必须基于 `V2-090K + V2-100` 后复判，而不是期待 090K single-pass（单轮）直接收敛。
 
@@ -164,8 +164,8 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 0 / 5 | TODO；当前重点，从 V2-100A 开始 |
-| **合计** | **V2-000 ~ V2-100** | **69 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J 与 V2-090K 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100A 为当前未完成工作包** |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 1 / 5 | IN_PROGRESS；V2-100A 完成，当前重点 V2-100B |
+| **合计** | **V2-000 ~ V2-100** | **70 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100B 为当前未完成工作包** |
 
 ## 当前约束摘要
 
@@ -1199,14 +1199,15 @@ RoleProfile（角色模板）
 
 ### V2-100A: Rework domain model（返工领域模型）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：实现 ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）的强类型模型，作为 Checker/Closeout blocker（检查/收尾阻塞项）到 CEO 返工规划的合同边界。
 - 输入文档：`doc/03-architecture/domain-model.md`、`doc/03-architecture/contract-and-evidence-model.md`、`examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/failure-summary.json`、V2-090K 真实 full run 失败证据。
 - 依赖：V2-090K DONE；090K curated failure snapshot（精选失败快照）；V2-050 Evidence/Checker（证据/检查）模型；V2-020 TicketGraph（工单图）。
-- 输出文件：预计 `src/boardroom_os/rework/model.py`、`tests/rework/test_rework_model.py`、`tests/negative/test_rework_model_fail_closed.py`。
+- 输出文件：`src/boardroom_os/rework/model.py`、`src/boardroom_os/rework/blocker_projection.py`、`src/boardroom_os/rework/__init__.py`、`tests/rework/test_rework_model.py`、`tests/rework/test_v2_090k_failure_snapshot_projection.py`、`tests/negative/test_rework_model_fail_closed.py`。
 - 必须先写的 negative tests：缺 verified blocker（已验证阻塞项）不得创建 ReworkRequest；ReworkIssue 缺 acceptance_ref/source_surface_ref/required_artifact_type（验收引用/源码面/必需产物类型）必须失败；ReworkPlan 缺 planner_attempt_ref（规划者模型调用尝试引用）或 ticket_graph_patch_ref（工单图补丁引用）必须失败；ReworkAttempt 缺 ExecutionPackage（执行包）、provider attempt、command evidence 或 source lineage input（源码来源链输入）不得作为返工尝试；只从自由文本 exception（异常）或 reviewer note（评审备注）创建返工请求必须失败。
 - 必须证明的 happy path：由 FinalEvidenceTable missing/failed row（最终证据表缺失/失败行）、Checker blocker（检查阻塞项）或 CloseoutGate failure（收尾门禁失败）构造 ReworkRequest；090K failure snapshot（失败快照）中的 `probe-response-shape-mismatch`、`env-binding-not-converged`、`final-evidence-uses-old-acceptance-refs` 和 `closeout-audit-references-old-run` 可投影为结构化 ReworkIssue（返工问题）；后续 ReworkAttempt 和 ReworkOutcome 可序列化、hash、审计。
 - 验收口径：返工对象是 V2 一等领域模型，不是 Python exception（异常）、自由文本 notes（备注）或 runner helper（运行器辅助器）私有结构。
+- 完成证据：2026-06-14 已实现强类型 ReworkCycle / ReworkRequest / ReworkIssue / ReworkPlan / ReworkAttempt / ReworkOutcome（返工循环/请求/问题/计划/尝试/结果）和 BlockerReport（阻塞报告）投影；090K failure snapshot 可投影为结构化返工请求；缺 verified blocker、缺 blocker source、缺 provider attempt、缺 command/source evidence、自由文本异常/备注创建返工等负例均 fail closed。验证：`PYTHONPATH=src python -m pytest tests/negative/test_rework_model_fail_closed.py tests/rework/test_rework_model.py tests/rework/test_v2_090k_failure_snapshot_projection.py -q` 通过（20 passed）；`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/closeout tests/negative -q` 通过（1463 passed）。
 
 ### V2-100B: Rework event taxonomy + reducer（返工事件分类与归约器）
 

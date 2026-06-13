@@ -561,7 +561,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 
 #### AC 检查清单
 
-- [ ] AC-V2-REWORK-001 / AC-V2-REWORK-002（返工循环由工单图治理，返工请求需要已验证阻塞项）— 由 V2-100A 证明：ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）均为强类型对象；缺 FinalEvidenceTable missing/failed row（最终证据表缺失/失败行）、CheckerVerdict blocker（检查结论阻塞项）或 CloseoutGate failure（收尾门禁失败）不得创建返工请求。
+- [x] AC-V2-REWORK-001 / AC-V2-REWORK-002（返工循环由工单图治理，返工请求需要已验证阻塞项）— 由 V2-100A 证明：ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）均为强类型对象；缺 FinalEvidenceTable missing/failed row（最终证据表缺失/失败行）、CheckerVerdict blocker（检查结论阻塞项）或 CloseoutGate failure（收尾门禁失败）不得创建返工请求。
 - [ ] AC-V2-REWORK-001 / AC-V2-GRAPH-001 / AC-V2-GRAPH-002（返工状态由 TicketGraph 和 reducer 推进）— 由 V2-100B 证明：`REWORK_REQUESTED`、`REWORK_PLANNED`、`REWORK_TICKET_CREATED`、`REWORK_ATTEMPT_SUBMITTED`、`REWORK_REVIEWED`、`REWORK_ACCEPTED` 等事件只能按 reducer（归约器）规则推进；runtime/atomic-agent（运行时/原子智能体）不能直接提交 accepted/completed（接受/完成）。
 - [ ] AC-V2-REWORK-003 / AC-V2-AGENT-001（CEO 返工规划受合同和模型调用审计约束）— 由 V2-100C 证明：CEO（项目经理/治理角色）基于严格 schema（结构）的 BlockerReport（阻塞报告）/ ReworkRequest 生成 ReworkPlan 和 TicketGraphPatch（工单图补丁）；缺 CEO ProviderAttempt（模型调用尝试记录）、缺 blocker_refs（阻塞引用）映射、决策不在 `fix_implementation` / `fix_contract_or_probe` / `split_ticket` / `reorder_dependencies` / `escalate_human_review` 枚举内、绕过 active contract（活跃合同）或要求 runtime 自动修复均 fail closed。
 - [ ] AC-V2-REWORK-004 / AC-V2-EVIDENCE-002 / AC-V2-CHECKER-001（返工每轮重新进入证据和检查门禁）— 由 V2-100D 证明：ReworkAttempt 产物必须重新构造 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）和 CheckerVerdict（检查结论）；旧 satisfied row（已满足行）、旧 Checker approved verdict（检查通过结论）或旧 CloseoutPackage passed（收尾通过包）不得跨轮次复用。
@@ -573,6 +573,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 #### 本批产出
 
 - ReworkCycle / ReworkRequest / ReworkIssue / ReworkPlan / ReworkAttempt / ReworkOutcome（返工循环/请求/问题/计划/尝试/结果）模型
+  - V2-100A 已产出：`src/boardroom_os/rework/model.py`、`src/boardroom_os/rework/blocker_projection.py`、`tests/rework/test_rework_model.py`、`tests/rework/test_v2_090k_failure_snapshot_projection.py`、`tests/negative/test_rework_model_fail_closed.py`
 - Rework event taxonomy（返工事件分类）与 reducer（归约器）门禁
 - CEO rework planner boundary（项目经理返工规划边界）和 TicketGraphPatch（工单图补丁）模型
 - Rework evidence/checker reintegration（返工证据/检查重接入）
