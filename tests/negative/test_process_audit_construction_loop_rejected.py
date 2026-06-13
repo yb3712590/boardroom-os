@@ -1393,9 +1393,22 @@ def test_artifact_lineage_rejects_self_consistent_verifier_run_alias() -> None:
     lineage = _artifact_by_kind(bundle, ProcessAuditArtifactKind.ARTIFACT_LINEAGE)
     content = dict(lineage.content)
     primary_lineages = [dict(item) for item in content["lineages"]]
-    bindings = [dict(item) for item in primary_lineages[0]["evidence_bindings"]]
-    bindings[0]["verifier_ref"] = bindings[0]["verification_run_ref"]
-    primary_lineages[0]["evidence_bindings"] = bindings
+    lineage_index = next(
+        index
+        for index, lineage_row in enumerate(primary_lineages)
+        if any(
+            binding["verification_run_ref"] is not None
+            for binding in lineage_row["evidence_bindings"]
+        )
+    )
+    bindings = [dict(item) for item in primary_lineages[lineage_index]["evidence_bindings"]]
+    binding_index = next(
+        index
+        for index, binding in enumerate(bindings)
+        if binding["verification_run_ref"] is not None
+    )
+    bindings[binding_index]["verifier_ref"] = bindings[binding_index]["verification_run_ref"]
+    primary_lineages[lineage_index]["evidence_bindings"] = bindings
     content["lineages"] = primary_lineages
     artifacts = tuple(
         artifact.model_copy(

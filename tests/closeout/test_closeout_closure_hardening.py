@@ -141,6 +141,18 @@ def _bundle(run_refs: tuple[VerificationRunRef, ...]) -> WorkspaceEvidenceBundle
                     related_refs=related_refs,
                 ),
                 EvidenceBundleArtifact(
+                    relative_path=EvidenceBundleArtifactPath(value="20-evidence/tests/service-runs.json"),
+                    artifact_kind=EvidenceBundleArtifactKind.SERVICE_RUNS,
+                    source_ref=NonEmptyTextValue(value="service-runs"),
+                    related_refs=related_refs,
+                ),
+                EvidenceBundleArtifact(
+                    relative_path=EvidenceBundleArtifactPath(value="20-evidence/tests/live-blackbox.json"),
+                    artifact_kind=EvidenceBundleArtifactKind.LIVE_BLACKBOX,
+                    source_ref=NonEmptyTextValue(value="live-blackbox"),
+                    related_refs=related_refs,
+                ),
+                EvidenceBundleArtifact(
                     relative_path=EvidenceBundleArtifactPath(value="20-evidence/tests/run-manifest.json"),
                     artifact_kind=EvidenceBundleArtifactKind.RUN_MANIFEST,
                     source_ref=NonEmptyTextValue(value="run-manifest.closeout-closure"),

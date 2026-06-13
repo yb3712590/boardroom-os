@@ -60,6 +60,45 @@ def _collect(transport: FakeGitTransport):
     )
 
 
+def _two_verification_runs():
+    first_run = _ready_input().verification_runs[0]
+    second_run = first_run.model_copy(
+        update={
+            "verification_run_id": type(first_run.verification_run_id)(
+                value="verification-run.test-app.extra"
+            ),
+            "stdout_ref": type(first_run.stdout_ref)(
+                value="command-output.verification-run.test-app.extra.stdout"
+            ),
+            "stderr_ref": type(first_run.stderr_ref)(
+                value="command-output.verification-run.test-app.extra.stderr"
+            ),
+            "workspace_snapshot_ref": type(first_run.workspace_snapshot_ref)(
+                value="workspace-snapshot.app.extra"
+            ),
+        }
+    )
+    return first_run, second_run
+
+
+def _two_command_bindings():
+    first_binding = _command_bindings()[0]
+    second_binding = first_binding.model_copy(
+        update={
+            "binding_id": type(first_binding.binding_id)(
+                value="git-command-evidence-binding.verification-run.test-app.extra"
+            ),
+            "verification_run_ref": type(first_binding.verification_run_ref)(
+                value="verification-run.test-app.extra"
+            ),
+            "workspace_snapshot_ref": type(first_binding.workspace_snapshot_ref)(
+                value="workspace-snapshot.app.extra"
+            ),
+        }
+    )
+    return first_binding, second_binding
+
+
 def test_status_z_parses_filename_with_newline_quote_tab_and_arrow_text() -> None:
     facts = _collect(
         FakeGitTransport(
@@ -110,8 +149,8 @@ def test_diff_shortstat_ignores_filename_containing_insertions() -> None:
 
 
 def test_verification_runs_reordering_keeps_command_evidence_refs_and_bundle_hash_stable() -> None:
-    first_run, second_run = _ready_input().verification_runs
-    bindings = _command_bindings()
+    first_run, second_run = _two_verification_runs()
+    bindings = _two_command_bindings()
 
     first_bundle = build_git_version_audit_bundle(
         _builder_input(
@@ -131,8 +170,8 @@ def test_verification_runs_reordering_keeps_command_evidence_refs_and_bundle_has
 
 
 def test_command_bindings_reordering_keeps_checked_refs_and_bundle_hash_stable() -> None:
-    first_run, second_run = _ready_input().verification_runs
-    first_binding, second_binding = _command_bindings()
+    first_run, second_run = _two_verification_runs()
+    first_binding, second_binding = _two_command_bindings()
 
     first_bundle = build_git_version_audit_bundle(
         _builder_input(

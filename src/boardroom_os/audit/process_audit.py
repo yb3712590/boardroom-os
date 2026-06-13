@@ -953,6 +953,8 @@ class ProcessAuditBuilderInput(BaseModel):
     def _validate_service_runs(
         cls, values: tuple[ServiceRunEvidence, ...]
     ) -> tuple[ServiceRunEvidence, ...]:
+        if any(not isinstance(service, ServiceRunEvidence) for service in values):
+            raise ProcessAuditError("builder input fields must be typed model instances")
         refs = [service.service_run_evidence_id.value for service in values]
         if len(set(refs)) != len(refs):
             raise ProcessAuditError("service_run refs must be unique")
@@ -963,6 +965,8 @@ class ProcessAuditBuilderInput(BaseModel):
     def _validate_live_blackbox_evidence(
         cls, values: tuple[LiveBlackboxIntegrationEvidence, ...]
     ) -> tuple[LiveBlackboxIntegrationEvidence, ...]:
+        if any(not isinstance(evidence, LiveBlackboxIntegrationEvidence) for evidence in values):
+            raise ProcessAuditError("builder input fields must be typed model instances")
         refs = [evidence.live_blackbox_evidence_id.value for evidence in values]
         if len(set(refs)) != len(refs):
             raise ProcessAuditError("live blackbox evidence refs must be unique")

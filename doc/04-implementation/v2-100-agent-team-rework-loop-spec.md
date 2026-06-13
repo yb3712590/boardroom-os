@@ -176,7 +176,7 @@ Purpose: one concrete issue to be addressed.
 Required fields:
 
 - `issue_id`
-- `blocker_ref`
+- `blocker_refs`
 - `issue_code`
 - `severity`: `blocking | escalation_required`
 - `acceptance_refs`
@@ -188,6 +188,21 @@ Required fields:
 - `suspected_domains`: `contract | implementation | probe | run_env | evidence_projection | closeout_audit | graph`
 - `required_artifact_types`
 - `description`
+
+V2-100A first defines the normative `ReworkIssueCode` set used by blocker projection. Later V2-100 work packages may add codes only through spec and acceptance update:
+
+- `final_evidence_missing`
+- `final_evidence_failed`
+- `checker_blocker`
+- `contract_mismatch`
+- `work_product_mismatch`
+- `invalid_checker_input`
+- `closeout_gate_failure`
+- `run_manifest_mismatch`
+- `probe_response_shape_mismatch`
+- `env_binding_not_converged`
+- `final_evidence_old_acceptance_refs`
+- `closeout_audit_old_run_refs`
 
 Validation:
 

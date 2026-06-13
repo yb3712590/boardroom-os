@@ -216,16 +216,36 @@ def test_primary_artifact_lineage_closes_source_to_evidence_and_manifest() -> No
     runs_by_ref = {
         run.verification_run_id: run for run in builder_input.verification_runs
     }
+    service_runs_by_ref = {
+        service.service_run_evidence_id: service for service in builder_input.service_runs
+    }
     assert row["evidence_bindings"] == [
         {
             "evidence_claim_ref": evidence.evidence_claim_ref.value,
             "verified_evidence_ref": evidence.verified_evidence_id.value,
-            "verifier_ref": runs_by_ref[evidence.verification_run_refs[0]].runner_ref.value,
-            "verification_run_ref": evidence.verification_run_refs[0].value,
+            "verifier_ref": (
+                runs_by_ref[evidence.verification_run_refs[0]].runner_ref.value
+                if evidence.verification_run_refs
+                else "service-runner"
+            ),
+            "verification_run_ref": (
+                evidence.verification_run_refs[0].value
+                if evidence.verification_run_refs
+                else None
+            ),
+            "service_run_refs": [ref.value for ref in evidence.service_run_refs],
+            "live_blackbox_evidence_refs": [
+                ref.value for ref in evidence.live_blackbox_evidence_refs
+            ],
             "run_manifest_ref": builder_input.run_manifest.run_manifest_id.value,
         }
         for evidence in builder_input.verified_evidence
     ]
+    assert all(
+        ref in service_runs_by_ref
+        for evidence in builder_input.verified_evidence
+        for ref in evidence.service_run_refs
+    )
     for binding in row["evidence_bindings"]:
         assert binding["verifier_ref"] != binding["verification_run_ref"]
 
@@ -307,14 +327,37 @@ def _stable_hash_input_with_order(
     base_input = _process_audit_builder_input()
     provider_alpha = ProviderAttemptRef(value="provider-attempt.alpha")
     provider_beta = ProviderAttemptRef(value="provider-attempt.beta")
-    first_run, second_run = base_input.verification_runs
+    first_run = base_input.verification_runs[0]
+    second_run = first_run.model_copy(
+        update={
+            "verification_run_id": type(first_run.verification_run_id)(
+                value="verification-run.test-app.extra"
+            ),
+            "stdout_ref": type(first_run.stdout_ref)(
+                value="command-output.verification-run.test-app.extra.stdout"
+            ),
+            "stderr_ref": type(first_run.stderr_ref)(
+                value="command-output.verification-run.test-app.extra.stderr"
+            ),
+            "workspace_snapshot_ref": type(first_run.workspace_snapshot_ref)(
+                value="workspace-snapshot.app.extra"
+            ),
+        }
+    )
     first_run_ref = first_run.verification_run_id
     verification_runs = (first_run, second_run)
 
-    first_evidence = base_input.verified_evidence[0].model_copy(
+    verification_evidence = next(
+        evidence
+        for evidence in base_input.verified_evidence
+        if evidence.verification_run_refs
+    )
+    first_evidence = verification_evidence.model_copy(
         update={
+            "verified_evidence_id": VerifiedEvidenceRef(value="verified-evidence.alpha"),
             "producer_attempt_ref": provider_alpha,
             "verification_run_refs": (first_run_ref,),
+            "service_run_refs": (),
             "fallback_decision_record_ref": FallbackDecisionRecordRef(
                 value="fallback-decision.alpha"
             ),
@@ -323,10 +366,12 @@ def _stable_hash_input_with_order(
             ),
         }
     )
-    second_evidence = base_input.verified_evidence[1].model_copy(
+    second_evidence = verification_evidence.model_copy(
         update={
+            "verified_evidence_id": VerifiedEvidenceRef(value="verified-evidence.beta"),
             "producer_attempt_ref": provider_beta,
             "verification_run_refs": (second_run.verification_run_id,),
+            "service_run_refs": (),
             "fallback_decision_record_ref": FallbackDecisionRecordRef(
                 value="fallback-decision.beta"
             ),
@@ -339,7 +384,15 @@ def _stable_hash_input_with_order(
     source_inventory = base_input.source_inventory.model_copy(
         update={
             "entries": tuple(
-                entry.model_copy(update={"producer_attempt_ref": provider_alpha})
+                entry.model_copy(
+                    update={
+                        "producer_attempt_ref": provider_alpha,
+                        "evidence_refs": tuple(
+                            evidence.verified_evidence_id
+                            for evidence in verified_evidence
+                        ),
+                    }
+                )
                 for entry in base_input.source_inventory.entries
             )
         }
@@ -373,6 +426,7 @@ def _stable_hash_input_with_order(
                     key=lambda ref: ref.value,
                 )
             ),
+            "service_run_refs": (),
         }
     )
 
@@ -408,25 +462,24 @@ def _stable_hash_input_with_order(
     git_verification_runs = tuple(
         sorted(verification_runs, key=lambda run: run.verification_run_id.value)
     )
-    run_index_by_ref = {
-        run.verification_run_id: index
-        for index, run in enumerate(base_input.verification_runs)
-    }
     inventory_hash = source_inventory_hash(source_inventory)
     git_bundle = _build_git_version_audit_bundle(
         source_inventory=source_inventory,
         git_facts=_git_facts(source_inventory_hash=inventory_hash),
         verification_runs=git_verification_runs,
         command_evidence_bindings=tuple(
-            _command_binding(
-                run_index=run_index_by_ref[run.verification_run_id],
-                binding_id=f"git-command-evidence-binding.{run.verification_run_id.value}",
-                verification_run_ref=run.verification_run_id,
-                command_id=run.command_id,
-                command=run.command,
-                cwd=run.cwd,
-                workspace_snapshot_ref=run.workspace_snapshot_ref,
-                source_inventory_hash=inventory_hash,
+            _command_bindings()[0].model_copy(
+                update={
+                    "binding_id": type(_command_bindings()[0].binding_id)(
+                        value=f"git-command-evidence-binding.{run.verification_run_id.value}"
+                    ),
+                    "verification_run_ref": run.verification_run_id,
+                    "command_id": run.command_id,
+                    "command": run.command,
+                    "cwd": run.cwd,
+                    "workspace_snapshot_ref": run.workspace_snapshot_ref,
+                    "source_inventory_hash": inventory_hash,
+                }
             )
             for run in git_verification_runs
         ),
@@ -444,6 +497,7 @@ def _stable_hash_input_with_order(
         final_evidence_table=final_evidence_table,
         checker_verdict=base_input.checker_verdict,
         verification_runs=ordered_verification_runs,
+        service_runs=(),
         verified_evidence=tuple(verified_evidence[index] for index in evidence_order),
         provider_attempt_refs=provider_attempt_refs,
         replay_bundle=base_input.replay_bundle,

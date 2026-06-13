@@ -473,6 +473,7 @@ def _process_audit_builder_input(
         final_evidence_table=final_evidence_table if final_evidence_table is not None else gate_input.final_evidence_table,
         checker_verdict=gate_input.checker_verdict,
         verification_runs=gate_input.verification_runs,
+        service_runs=gate_input.service_run_evidence,
         verified_evidence=verified_evidence if verified_evidence is not None else gate_input.verified_evidence,
         provider_attempt_refs=gate_input.provider_attempt_refs,
         replay_bundle=replay_bundle,

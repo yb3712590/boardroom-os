@@ -5,6 +5,7 @@ import http.client
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,19 @@ def _write_health_server(package_root: Path) -> Path:
         encoding="utf-8",
     )
     return script
+
+
+def _wait_for_port(host: str, port: int, *, timeout_seconds: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return
+        except OSError as error:
+            last_error = error
+            time.sleep(0.05)
+    raise AssertionError(f"server did not listen on {host}:{port}") from last_error
 
 
 def test_service_runner_records_http_readiness_evidence(tmp_path: Path) -> None:
@@ -138,8 +152,7 @@ def test_service_runner_rejects_readiness_from_unrelated_running_service(tmp_pat
         stderr=subprocess.PIPE,
     )
     try:
-        with socket.create_connection(("127.0.0.1", external_port), timeout=5):
-            pass
+        _wait_for_port("127.0.0.1", external_port)
         dead_command = _python_command(
             command_id="run-app",
             label="Run app",
@@ -185,8 +198,7 @@ def test_service_runner_rejects_preexisting_readiness_url_before_start(tmp_path:
         stderr=subprocess.PIPE,
     )
     try:
-        with socket.create_connection(("127.0.0.1", external_port), timeout=5):
-            pass
+        _wait_for_port("127.0.0.1", external_port)
         sleeping_command = _python_command(
             command_id="run-app",
             label="Run app",

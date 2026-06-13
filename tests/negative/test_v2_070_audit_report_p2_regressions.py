@@ -5,8 +5,13 @@ import pytest
 
 from boardroom_os.audit.git_version_audit import GitVersionAuditError, build_git_version_audit_bundle
 from tests.closeout.test_closeout_gate import _ready_input
-from tests.closeout.test_git_audit_hardening import FakeGitTransport, _collect
-from tests.closeout.test_git_version_audit import _builder_input, _command_bindings
+from tests.closeout.test_git_audit_hardening import (
+    FakeGitTransport,
+    _collect,
+    _two_command_bindings,
+    _two_verification_runs,
+)
+from tests.closeout.test_git_version_audit import _builder_input
 from tests.closeout.test_process_audit_fact_chain import _stable_hash_input_with_order
 from tests.closeout.test_process_audit_artifacts import _process_audit_builder_input
 from tests.closeout.test_replay_bundle_rereplay import _artifact_manifest_entries, _bundle, _events, _payload_manifest_entries
@@ -16,8 +21,8 @@ from boardroom_os.execution.context_index import ProviderAttemptRef
 
 
 def test_p2_1_git_version_audit_verification_run_order_is_stable_for_fact_chain_readiness() -> None:
-    first_run, second_run = _ready_input().verification_runs
-    bindings = _command_bindings()
+    first_run, second_run = _two_verification_runs()
+    bindings = _two_command_bindings()
 
     first_bundle = build_git_version_audit_bundle(
         _builder_input(verification_runs=(first_run, second_run), command_evidence_bindings=bindings)
