@@ -505,9 +505,13 @@ V2-090F first run（首次运行）证明真实 provider-backed worker implement
 
 新增 Phase 10 / V2-100 Agent-team Rework Loop Hardening（智能体团队返工循环强化）。V2-100 的目标不是继续追求一次性 full run（完整运行）成功，而是把人类团队式的沟通、问题识别、返工规划、TicketGraph（工单图）更新、重新实施、重新验证和审计留痕固化为框架能力。
 
-V2-100 引入 ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）作为一等领域对象。Checker（检查者）或 CloseoutGate（收尾门禁）发现 verified blocker（已验证阻塞项）后，不应只抛 Python exception（异常）或终止流程；系统必须生成结构化 blocker/rework request（阻塞/返工请求），由 CEO（项目经理/治理角色）读取后规划返工路线、生成 TicketGraphPatch（工单图补丁），再交由 Architect/Worker/Tester/Release DevOps/Checker/Closeout（架构/实施/测试/发布运维/检查/收尾）执行和重验。
+V2-100 引入 ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）作为一等领域对象。Checker（检查者）或 CloseoutGate（收尾门禁）发现 verified blocker（已验证阻塞项）后，不应只抛 Python exception（异常）或终止流程；系统必须生成结构化 blocker/rework request（阻塞/返工请求），由 CEO（项目经理/治理角色）读取后规划返工路线、生成 TicketGraphPatch（工单图补丁）提案，再交由 Architect / Checker / Tester / Release DevOps / Closeout（架构 / 检查 / 测试 / 发布运维 / 收尾）按领域审查。图变更只能由治理命令在 reducer / validator（归约器 / 校验器）通过后提交，CEO 不是 graph patch（图补丁）的唯一审查者或提交者。
+
+RunManifest / service / behavioral probe failure（运行清单 / 服务 / 行为探针失败）只有在被 EvidenceVerifier、Checker、CloseoutGate 或等价 governance adapter（治理适配器）投影为 verified blocker（已验证阻塞项）后，才能打开 ReworkRequest（返工请求）；runtime output（运行时输出）本身不得直接触发返工治理。
 
 Runtime（运行时）和 atomic-agent（原子智能体）只能执行 ReworkTicket（返工工单）并记录 provider/tool/command/workspace facts（模型/工具/命令/工作区事实）。它们不得创建 ReworkPlan、修改 AcceptanceContract（验收合同）或 PackageContract（包合同）、放大 allowed_write_set（允许写集合）、复用旧证据结论，或把 `AgentRunResult.status == completed`（智能体运行完成）解释为返工 accepted（已接受）。
+
+Graph patch review policy（图补丁审查策略）属于治理配置，应进入 config bundle（配置包）或显式 governance policy（治理策略）并以 hash 进入 RunManifest / ProcessAudit（运行清单 / 流程审计）。Runtime YAML（运行时 YAML）可以引用该策略用于执行边界，但不能成为图变更治理的第二权威源。
 
 V2-090K 的完成定义采用“理解 A”：090K 解决 runner/helper 外力介入和合同权威源问题，不要求 agent team 在 single-pass（单轮）内自然收敛。090K 真实 full run 若 fail closed 并保留结构化现场，可以标记 090K DONE；V2-090F golden sample（黄金样例）仍保持 BLOCKED / REVIEW_REQUIRED，等待 `V2-090K + V2-100` 后复判。
 

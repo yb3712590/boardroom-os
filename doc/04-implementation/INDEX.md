@@ -64,6 +64,8 @@
 | `../../docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）实施计划 |
 | `../../examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` | V2-090K curated failure snapshot（精选失败快照），作为 V2-100 rework loop（返工循环）真实失败输入 |
+| `current-architecture-review-2026-06-13.md` | 当前项目架构评审、配置体系评估、agent team autonomy（智能体团队自治）阻断项与 V2-100 判断 |
+| `v2-100-agent-team-rework-loop-spec.md` | V2-100 agent-team rework loop（智能体团队返工循环）工作包 spec：返工模型、事件/reducer、多角色 graph patch review（图补丁审查）、证据重验与 proving scenario |
 
 ## AI 启动入口
 
