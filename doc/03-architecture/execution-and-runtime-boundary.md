@@ -38,6 +38,7 @@ runtime 只能执行事实、记录事实、投影事实。runtime 不得创造�
 - 决定项目 completed；
 - 代替 checker 放行；
 - 代替 CEO 发起 closeout。
+- 代替 CEO 创建 rework plan（返工计划）、修改 ticket graph（工单图）或判定返工已解决。
 
 ## ExecutionPackage 必备字段
 
@@ -120,6 +121,8 @@ PROVIDER_ATTEMPT_RECORDED
 TOOL_ATTEMPT_RECORDED
 WORK_PRODUCT_SUBMITTED
 COMMAND_RUN_RECORDED
+REWORK_ATTEMPT_STARTED
+REWORK_ATTEMPT_SUBMITTED
 ```
 
 Executor 不可以直接提交：
@@ -128,11 +131,35 @@ Executor 不可以直接提交：
 TICKET_COMPLETED
 PROJECT_COMPLETED
 CLOSEOUT_COMMITTED
+REWORK_PLANNED
+REWORK_ACCEPTED
+REWORK_ESCALATED
+REWORK_EXHAUSTED
 ```
 
 这些必须由 reducer 在验证 contract/evidence/checker 条件后产生。
 
+## Rework Boundary
+
+atomic-agent（原子智能体）的内部 repair loop（修复循环）只属于单个 ExecutionPackage（执行包）的执行事实。Boardroom OS 的 ReworkCycle（返工循环）是跨 ticket（工单）、角色、证据和检查门禁的治理流程，必须由 TicketGraph（工单图）和 reducer（归约器）表达。
+
+Runtime（运行时）在返工中只负责：
+
+- 装载 CEO/Architect（项目经理/架构师）批准后的 ReworkTicket（返工工单）；
+- 编译 ExecutionPackage（执行包）；
+- 调用 provider、atomic-agent 或本地工具；
+- 记录 ProviderAttempt / ToolAttempt / CommandEvidence（模型调用/工具尝试/命令证据）；
+- 捕获 workspace mutation（工作区变更）、source lineage input（源码来源链输入）和 raw output（原始输出）；
+- 提交执行事实事件。
+
+Runtime 不得：
+
+- 根据错误信息自行创建或改写 ReworkPlan（返工计划）；
+- 放大 allowed_write_set（允许写集合）；
+- 修改 AcceptanceContract（验收合同）或 PackageContract（包合同）；
+- 把 `AgentRunResult.status == completed`（智能体运行完成）解释为返工 accepted（已接受）；
+- 复用上一轮 FinalEvidenceTable（最终证据表）或 CheckerVerdict（检查结论）绕过重验。
+
 ## Ticket Completion Boundary
 
 V2-020D 固化 reducer-level completion boundary（状态归约层完成边界）：`TICKET_COMPLETED` 只能由治理/检查链路提交，executor/runtime actor 不得提交；完成请求必须携带 provider_attempt_count > 0、evidence_complete、checker_approved 且无 blocking_issue_refs。该边界是稳定接入点，不提前定义 V2-050 的 `FinalEvidenceTable`（最终证据表）或 `CheckerVerdict`（检查结论）内部结构。V2-040E 必须继续证明 runtime 不能 emit governance completion events（治理完成事件）；V2-050F 必须把正式 evidence/checker 模型适配到该边界；V2-070F 的 closeout reducer（收尾归约器）应复用同类 gate-passed 才能 terminal success（终态成功）的模式；V2-080 proving scenario（证明场景）必须覆盖完整链路。
-

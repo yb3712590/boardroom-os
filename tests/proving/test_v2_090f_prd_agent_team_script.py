@@ -9,16 +9,13 @@ import pytest
 
 
 def _hard_crud_acceptance_refs() -> list[str]:
-    return ["AC-V2-090F-BACKEND-CRUD"]
+    return ["AC-AGENT-DECLARED-LIBRARY-CRUD"]
 
 
 def _hard_crud_evidence_obligations() -> list[str]:
     return [
         "Backend HTTP API supports add, list, checkout, return, and delete.",
-        (
-            "Backend starts with python -m app.server and reads "
-            "LIBRARY_API_HOST, LIBRARY_API_PORT, and LIBRARY_DB_PATH."
-        ),
+        "RunManifest declares service startup, readiness, and behavioral probes.",
     ]
 
 
@@ -220,6 +217,10 @@ def test_v2_090f_baseline_report_records_required_seats(tmp_path: Path) -> None:
                 "role_profile_ref": "role.verification.tester",
                 "skill_refs": ["skill.verification.tester"],
             },
+            "seat.release.devops": {
+                "role_profile_ref": "role.integration.release-devops",
+                "skill_refs": ["skill.release.run-manifest"],
+            },
             "seat.checker.acceptance": {
                 "role_profile_ref": "role.verification.checker",
                 "skill_refs": ["skill.verification.checker"],
@@ -237,6 +238,7 @@ def test_v2_090f_baseline_report_records_required_seats(tmp_path: Path) -> None:
         "seat.architect.delivery",
         "seat.worker.implementation",
         "seat.tester.integration",
+        "seat.release.devops",
         "seat.checker.acceptance",
         "seat.closeout.package",
     }
@@ -253,6 +255,79 @@ def test_v2_090f_runner_requires_real_provider_opt_in(
     monkeypatch.delenv("BOARDROOM_RUN_REAL_PROVIDER_PROVING", raising=False)
 
     assert main(["--prd", str(prd), "--reset"]) == 2
+
+
+def test_v2_090f_run_manifest_planning_package_requires_prior_artifact_consistency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from boardroom_os.proving.v2_090f_prd_agent_team import (
+        build_v2_090f_planning_execution_package,
+        load_v2_090f_prd,
+        resolve_v2_090f_config_paths_from_env,
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("Build a tiny checkout app.", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    monkeypatch.setenv("BOARDROOM_RUNTIME_CONFIG", "config/boardroom-runtime.v2-090f.yaml")
+    monkeypatch.setenv("BOARDROOM_PROVIDERS_CONFIG", "config/boardroom-providers.v2-090f.yaml")
+    monkeypatch.setenv("BOARDROOM_ROLES_CONFIG", "config/boardroom-roles.v2-090f.yaml")
+    settings = load_boardroom_settings(
+        resolve_v2_090f_config_paths_from_env(dict(os.environ)),
+        env_values=dict(os.environ),
+    )
+
+    package = build_v2_090f_planning_execution_package(
+        settings=settings,
+        seat_ref="seat.release.devops",
+        prd=load_v2_090f_prd(prd),
+        output_name="run-manifest",
+    )
+
+    context_refs = {ref.value for ref in package.context_refs}
+    assert "00-boardroom/generated-contracts.json" in context_refs
+    assert "00-boardroom/generated-ticket-graph.json" in context_refs
+    assert "00-boardroom/generated-verification-plan.json" in context_refs
+    instructions = "\n".join((package.objective, *package.constraints))
+    assert "required_outputs" in instructions
+    assert "service command" in instructions
+    assert "must reference an entrypoint" in instructions
+
+
+def test_v2_090f_ticket_graph_planning_package_requires_workspace_relative_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from boardroom_os.config.boardroom import load_boardroom_settings
+    from boardroom_os.proving.v2_090f_prd_agent_team import (
+        build_v2_090f_planning_execution_package,
+        load_v2_090f_prd,
+        resolve_v2_090f_config_paths_from_env,
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("Build a tiny checkout app.", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    monkeypatch.setenv("BOARDROOM_RUNTIME_CONFIG", "config/boardroom-runtime.v2-090f.yaml")
+    monkeypatch.setenv("BOARDROOM_PROVIDERS_CONFIG", "config/boardroom-providers.v2-090f.yaml")
+    monkeypatch.setenv("BOARDROOM_ROLES_CONFIG", "config/boardroom-roles.v2-090f.yaml")
+    settings = load_boardroom_settings(
+        resolve_v2_090f_config_paths_from_env(dict(os.environ)),
+        env_values=dict(os.environ),
+    )
+
+    package = build_v2_090f_planning_execution_package(
+        settings=settings,
+        seat_ref="seat.architect.delivery",
+        prd=load_v2_090f_prd(prd),
+        output_name="ticket-graph",
+    )
+
+    instructions = "\n".join((package.objective, *package.constraints))
+    assert "full workspace-relative paths" in instructions
+    assert "bare filenames are not enough" in instructions
 
 
 def test_tiny_closeout_wrapper_check_does_not_write_output_root(
@@ -345,6 +420,7 @@ def test_v2_090f_planning_preflight_writes_baseline_and_pending_role_context(
         "seat.architect.delivery",
         "seat.worker.implementation",
         "seat.tester.integration",
+        "seat.release.devops",
         "seat.checker.acceptance",
         "seat.closeout.package",
     }
@@ -483,11 +559,92 @@ def test_v2_090f_provider_planning_stage_records_planning_artifacts_and_context(
         "seat.architect.delivery": ("contracts", {"contracts": ["from-architect"]}),
         "seat.architect.delivery#ticket": (
             "ticket-graph",
-            {"tickets": ["ticket.generated.by.architect"]},
+            {
+                "ticket_graph": {
+                    "nodes": [
+                        {
+                            "node_ref": "ticket.impl.agent_api",
+                            "node_type": "implementation",
+                            "owner_seat_ref": "seat.worker.implementation",
+                            "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY-CRUD"],
+                            "source_surface_refs": ["surface.agent_api"],
+                            "evidence_obligations": [
+                                "Backend HTTP API supports add, list, checkout, return, and delete.",
+                                "RunManifest declares service startup, readiness, and behavioral probes.",
+                            ],
+                            "allowed_write_set": ["service/", "tests/"],
+                            "required_outputs": ["service/main.py", "tests/test_agent_api.py"],
+                            "commands": [
+                                {
+                                    "command_id": "test-agent-api",
+                                    "label": "Run tests",
+                                    "command": [sys.executable, "-m", "pytest", "tests"],
+                                    "cwd": ".",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
         ),
         "seat.tester.integration": (
             "verification-plan",
             {"verification": ["from-tester"]},
+        ),
+        "seat.release.devops": (
+            "run-manifest",
+            {
+                "run_manifest_id": {"value": "run-manifest.agent"},
+                "workspace_manifest_ref": {"value": "workspace-manifest.agent"},
+                "package_contract_ref": {"value": "package-contract.agent"},
+                "package_root": {"value": "10-project"},
+                "commands": [
+                    {
+                        "command_id": {"value": "serve-agent-api"},
+                        "kind": "run",
+                        "label": "Serve agent API",
+                        "command": [sys.executable, "-m", "service.main"],
+                        "cwd": ".",
+                    },
+                    {
+                        "command_id": {"value": "test-agent-api"},
+                        "kind": "test",
+                        "label": "Run tests",
+                        "command": [sys.executable, "-m", "pytest", "tests"],
+                        "cwd": ".",
+                    },
+                ],
+                "service_contracts": [
+                    {
+                        "command_id": {"value": "serve-agent-api"},
+                        "role": "backend",
+                        "env_bindings": [
+                            {"name": "AGENT_HOST", "value_source": "runtime_host"},
+                            {"name": "AGENT_PORT", "value_source": "runtime_port"},
+                        ],
+                        "readiness_probe": {"method": "GET", "path": "/ready", "expect_status": 200},
+                    }
+                ],
+                "frontend_topology": {"mode": "served-by-backend"},
+                "behavioral_probes": [
+                    {
+                        "probe_id": {"value": "probe.agent"},
+                        "service_command_id": {"value": "serve-agent-api"},
+                        "acceptance_refs": [{"value": "AC-AGENT-DECLARED"}],
+                        "steps": [
+                            {
+                                "step_id": "ready",
+                                "method": "GET",
+                                "path": "/ready",
+                                "json_body": None,
+                                "expect_status": 200,
+                                "capture": {},
+                                "assertions": [],
+                            }
+                        ],
+                    }
+                ],
+            },
         ),
     }
     for token, (_, payload) in artifact_payloads.items():
@@ -547,6 +704,7 @@ def test_v2_090f_provider_planning_stage_records_planning_artifacts_and_context(
         ("seat.architect.delivery", "contracts"),
         ("seat.architect.delivery", "ticket-graph"),
         ("seat.tester.integration", "verification-plan"),
+        ("seat.release.devops", "run-manifest"),
     ]
     boardroom_root = output_root / "00-boardroom"
     assert json.loads(
@@ -555,6 +713,7 @@ def test_v2_090f_provider_planning_stage_records_planning_artifacts_and_context(
     assert (boardroom_root / "generated-contracts.json").is_file()
     assert (boardroom_root / "generated-ticket-graph.json").is_file()
     assert (boardroom_root / "generated-verification-plan.json").is_file()
+    assert (boardroom_root / "generated-run-manifest.json").is_file()
 
     role_context = json.loads(
         (boardroom_root / "agent-team-role-context.json").read_text(encoding="utf-8")
@@ -627,6 +786,10 @@ def test_v2_090f_planning_provider_adapter_uses_boardroom_provider_config(
     class _Client:
         def __init__(self) -> None:
             self.chat = _Chat()
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
 
     client = _Client()
 
@@ -680,6 +843,7 @@ def test_v2_090f_planning_provider_adapter_uses_boardroom_provider_config(
     assert attempt.status.value == "succeeded"
     assert attempt.raw_output_ref is not None
     assert attempt.parsed_output_ref is not None
+    assert client.close_count == 1
     artifact_files = sorted((tmp_path / "tiny-fullstack/20-evidence/provider-artifacts").glob("*.txt"))
     assert len(artifact_files) == 2
 
@@ -691,6 +855,7 @@ def test_v2_090f_planning_provider_adapter_uses_boardroom_provider_config(
 
     assert "# RolePromptHook" not in client.chat.completions.calls[-1]["messages"][0]["content"]
     assert payload["provider_output"] == {"directive": "real-provider-shaped"}
+    assert client.close_count == 2
 
 
 def test_v2_090f_extracts_planning_artifact_from_submit_result_wrapper() -> None:
@@ -930,7 +1095,7 @@ def test_v2_090f_rejects_ticket_command_that_references_unwritable_tests() -> No
         validate_v2_090f_generated_ticket_graph_for_worker_execution(graph)
 
 
-def test_v2_090f_rejects_ticket_graph_without_hard_backend_entrypoint() -> None:
+def test_v2_090f_allows_agent_declared_backend_entrypoint() -> None:
     from boardroom_os.proving.v2_090f_prd_agent_team import (
         validate_v2_090f_generated_ticket_graph_for_worker_execution,
     )
@@ -960,11 +1125,12 @@ def test_v2_090f_rejects_ticket_graph_without_hard_backend_entrypoint() -> None:
         }
     }
 
-    with pytest.raises(ValueError, match="hard backend entrypoint"):
-        validate_v2_090f_generated_ticket_graph_for_worker_execution(graph)
+    nodes = validate_v2_090f_generated_ticket_graph_for_worker_execution(graph)
+
+    assert nodes[0]["required_outputs"] == ["app.py", "library_app/api.py", "tests/test_api.py"]
 
 
-def test_v2_090f_rejects_ticket_graph_without_hard_backend_runtime_env_contract() -> None:
+def test_v2_090f_allows_run_manifest_to_own_runtime_env_contract() -> None:
     from boardroom_os.proving.v2_090f_prd_agent_team import (
         validate_v2_090f_generated_ticket_graph_for_worker_execution,
     )
@@ -980,10 +1146,10 @@ def test_v2_090f_rejects_ticket_graph_without_hard_backend_runtime_env_contract(
                     "source_surface_refs": ["surface.backend_api"],
                     "evidence_obligations": [
                         "Backend HTTP API supports add, list, checkout, return, and delete.",
-                        "Backend starts with python -m app.server.",
+                        "Runtime env mapping is declared by RunManifest.",
                     ],
-                    "allowed_write_set": ["app/", "tests/"],
-                    "required_outputs": ["app/server.py", "tests/test_api.py"],
+                    "allowed_write_set": ["service/", "tests/"],
+                    "required_outputs": ["service/main.py", "tests/test_api.py"],
                     "commands": [
                         {
                             "command_id": "backend.unit",
@@ -997,8 +1163,228 @@ def test_v2_090f_rejects_ticket_graph_without_hard_backend_runtime_env_contract(
         }
     }
 
-    with pytest.raises(ValueError, match="hard backend runtime environment"):
-        validate_v2_090f_generated_ticket_graph_for_worker_execution(graph)
+    nodes = validate_v2_090f_generated_ticket_graph_for_worker_execution(graph)
+
+    assert nodes[0]["allowed_write_set"] == ["service/", "tests/"]
+
+
+def test_v2_090k_rejects_run_manifest_service_entrypoint_not_declared_by_ticket_graph() -> None:
+    from boardroom_os.proving.v2_090f_prd_agent_team import (
+        _load_v2_090k_run_manifest_artifact,
+        validate_v2_090k_run_manifest_planning_consistency,
+    )
+
+    ticket_graph = {
+        "ticket_graph": {
+            "nodes": [
+                {
+                    "node_ref": "ticket.impl.backend_api",
+                    "node_type": "implementation",
+                    "owner_seat_ref": "seat.worker.implementation",
+                    "acceptance_refs": _hard_crud_acceptance_refs(),
+                    "source_surface_refs": ["surface.backend_api"],
+                    "evidence_obligations": _hard_crud_evidence_obligations(),
+                    "allowed_write_set": ["backend/", "tests/"],
+                    "required_outputs": ["backend/app.py", "tests/test_api.py"],
+                    "commands": [
+                        {
+                            "command_id": "backend.unit",
+                            "label": "Run backend API tests",
+                            "command": ["python", "-m", "unittest", "discover", "-s", "tests"],
+                            "cwd": ".",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    run_manifest = _load_v2_090k_run_manifest_artifact(
+        {
+            "run_manifest_id": "runmanifest.entrypoint-mismatch",
+            "workspace_manifest_ref": "workspacemanifest.entrypoint-mismatch",
+            "package_contract_ref": "packagecontract.entrypoint-mismatch",
+            "package_root": ".",
+            "commands": [
+                {
+                    "command_id": "cmd.run.backend",
+                    "command_type": "service_run",
+                    "label": "Run backend",
+                    "command": ["python", "backend/server.py"],
+                    "cwd": ".",
+                },
+                {
+                    "command_id": "cmd.test.backend",
+                    "command_type": "finite_verification",
+                    "label": "Run tests",
+                    "command": ["python", "-m", "unittest", "discover", "-s", "tests"],
+                    "cwd": ".",
+                },
+            ],
+            "service_contracts": [
+                {
+                    "service_contract_id": "svc.backend",
+                    "run_command_id": "cmd.run.backend",
+                    "role": "backend",
+                    "env_bindings": {
+                        "HOST": {"value_source": "runtime_host"},
+                        "PORT": {"value_source": "runtime_port"},
+                        "DATABASE_PATH": {"value_source": "temp_sqlite_path"},
+                    },
+                    "readiness_probe": {"method": "GET", "path": "/health", "expect_status": 200},
+                }
+            ],
+            "behavioral_probes": [
+                {
+                    "probe_id": "probe.health",
+                    "service_contract_id": "svc.backend",
+                    "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY-CRUD"],
+                    "steps": [
+                        {
+                            "step_id": "health",
+                            "method": "GET",
+                            "path": "/health",
+                            "json_body": None,
+                            "expect_status": 200,
+                            "assertions": [{"type": "body_contains", "value": "ok"}],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="RunManifest service entrypoint is not declared"):
+        validate_v2_090k_run_manifest_planning_consistency(
+            run_manifest=run_manifest,
+            ticket_graph_artifact=ticket_graph,
+        )
+
+
+def test_v2_090k_accepts_run_manifest_service_entrypoint_declared_by_ticket_graph() -> None:
+    from boardroom_os.proving.v2_090f_prd_agent_team import (
+        _load_v2_090k_run_manifest_artifact,
+        validate_v2_090k_run_manifest_planning_consistency,
+    )
+
+    ticket_graph = {
+        "ticket_graph": {
+            "nodes": [
+                {
+                    "node_ref": "ticket.impl.backend_api",
+                    "node_type": "implementation",
+                    "owner_seat_ref": "seat.worker.implementation",
+                    "acceptance_refs": _hard_crud_acceptance_refs(),
+                    "source_surface_refs": ["surface.backend_api"],
+                    "evidence_obligations": _hard_crud_evidence_obligations(),
+                    "allowed_write_set": ["backend/"],
+                    "required_outputs": ["backend/app.py", "tests/test_api.py"],
+                    "commands": [
+                        {
+                            "command_id": "backend.unit",
+                            "label": "Run backend API tests",
+                            "command": ["python", "-m", "unittest", "discover", "-s", "tests"],
+                            "cwd": ".",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    run_manifest = _load_v2_090k_run_manifest_artifact(
+        {
+            "run_manifest_id": "runmanifest.entrypoint-match",
+            "workspace_manifest_ref": "workspacemanifest.entrypoint-match",
+            "package_contract_ref": "packagecontract.entrypoint-match",
+            "package_root": ".",
+            "commands": [
+                {
+                    "command_id": "cmd.run.backend",
+                    "command_type": "service_run",
+                    "label": "Run backend",
+                    "command": ["python", "-m", "backend.app"],
+                    "cwd": ".",
+                },
+                {
+                    "command_id": "cmd.test.backend",
+                    "command_type": "finite_verification",
+                    "label": "Run tests",
+                    "command": ["python", "-m", "unittest", "discover", "-s", "tests"],
+                    "cwd": ".",
+                },
+            ],
+            "service_contracts": [
+                {
+                    "service_contract_id": "svc.backend",
+                    "run_command_id": "cmd.run.backend",
+                    "role": "backend",
+                    "env_bindings": {
+                        "HOST": {"value_source": "runtime_host"},
+                        "PORT": {"value_source": "runtime_port"},
+                        "DATABASE_PATH": {"value_source": "temp_sqlite_path"},
+                    },
+                    "readiness_probe": {"method": "GET", "path": "/health", "expect_status": 200},
+                }
+            ],
+            "behavioral_probes": [
+                {
+                    "probe_id": "probe.health",
+                    "service_contract_id": "svc.backend",
+                    "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY-CRUD"],
+                    "steps": [
+                        {
+                            "step_id": "health",
+                            "method": "GET",
+                            "path": "/health",
+                            "json_body": None,
+                            "expect_status": 200,
+                            "assertions": [{"type": "body_contains", "value": "ok"}],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    validate_v2_090k_run_manifest_planning_consistency(
+        run_manifest=run_manifest,
+        ticket_graph_artifact=ticket_graph,
+    )
+
+
+def test_v2_090f_accepts_worker_test_command_id_ending_in_run() -> None:
+    from boardroom_os.proving.v2_090f_prd_agent_team import (
+        validate_v2_090f_generated_ticket_graph_for_worker_execution,
+    )
+
+    nodes = validate_v2_090f_generated_ticket_graph_for_worker_execution(
+        {
+            "ticket_graph": {
+                "nodes": [
+                    {
+                        "node_ref": "ticket.impl.tests",
+                        "node_type": "implementation",
+                        "title": "Implement finite tests",
+                        "owner_seat_ref": "seat.worker.implementation",
+                        "acceptance_refs": _hard_crud_acceptance_refs(),
+                        "source_surface_refs": ["surface.tests"],
+                        "evidence_obligations": _hard_crud_evidence_obligations(),
+                        "allowed_write_set": ["tests/"],
+                        "required_outputs": ["tests/test_backend.py"],
+                        "commands": [
+                            {
+                                "command_id": "cmd.impl.tests.run",
+                                "label": "Run finite unittest suite",
+                                "command": ["python", "-m", "unittest", "discover", "-s", "tests"],
+                                "cwd": ".",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+
+    assert nodes[0]["node_ref"] == "ticket.impl.tests"
 
 
 def test_v2_090f_direct_planning_prompt_forbids_service_commands_in_worker_tickets() -> None:
@@ -1008,12 +1394,42 @@ def test_v2_090f_direct_planning_prompt_forbids_service_commands_in_worker_ticke
 
     assert "worker implementation commands must be bounded finite verification commands" in prompt
     assert "do not include long-running service startup, run, serve, watch, or dev commands" in prompt
-    assert "service startup, readiness, and live probes belong to the verification plan" in prompt
-    assert "python -m app.server" in prompt
-    assert "required_outputs must include app/server.py" in prompt
-    assert "LIBRARY_API_HOST" in prompt
-    assert "LIBRARY_API_PORT" in prompt
-    assert "LIBRARY_DB_PATH" in prompt
+    assert "Service startup, readiness, live behavior probes" in prompt
+    assert "python -m app.server" not in prompt
+    assert "app/server.py" not in prompt
+    assert "LIBRARY_API_HOST" not in prompt
+    assert "LIBRARY_API_PORT" not in prompt
+    assert "LIBRARY_DB_PATH" not in prompt
+
+
+def test_v2_090f_direct_planning_prompt_preserves_execution_package_constraints() -> None:
+    from boardroom_os.proving.v2_090f_prd_agent_team import _direct_planning_prompt
+
+    prompt = _direct_planning_prompt(
+        "# RolePromptHook\n"
+        "Release DevOps\n"
+        "# ExecutionPackageFacts\n"
+        + json.dumps(
+            {
+                "objective": "Produce V2-090F planning artifact run-manifest",
+                "context_refs": [
+                    "00-boardroom/generated-contracts.json",
+                    "00-boardroom/generated-ticket-graph.json",
+                ],
+                "constraints": [
+                    "Every service command must reference an entrypoint from required_outputs.",
+                ],
+                "allowed_read_refs": [
+                    "00-boardroom/generated-contracts.json",
+                    "00-boardroom/generated-ticket-graph.json",
+                ],
+            }
+        )
+    )
+
+    assert "Every service command must reference an entrypoint from required_outputs" in prompt
+    assert "00-boardroom/generated-ticket-graph.json" in prompt
+    assert "Directory-only required_outputs are not enough for service entrypoints" in prompt
 
 
 def test_v2_090f_worker_constraints_forbid_empty_search_files_query(

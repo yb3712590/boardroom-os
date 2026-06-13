@@ -6,6 +6,114 @@ from pathlib import Path
 import pytest
 
 
+def _agent_declared_run_manifest_payload() -> dict[str, object]:
+    return {
+        "run_manifest_id": {"value": "run-manifest.agent"},
+        "workspace_manifest_ref": {"value": "workspace-manifest.agent"},
+        "package_contract_ref": {"value": "package-contract.agent"},
+        "package_root": {"value": "10-project"},
+        "commands": [
+            {
+                "command_id": {"value": "serve-agent-api"},
+                "kind": "run",
+                "label": "Serve agent API",
+                "command": [os.sys.executable, "-m", "service.main"],
+                "cwd": ".",
+            },
+            {
+                "command_id": {"value": "test-agent-api"},
+                "kind": "test",
+                "label": "Run tests",
+                "command": [os.sys.executable, "-m", "pytest", "tests"],
+                "cwd": ".",
+            },
+        ],
+        "service_contracts": [
+            {
+                "command_id": {"value": "serve-agent-api"},
+                "role": "backend",
+                "env_bindings": [
+                    {"name": "AGENT_HOST", "value_source": "runtime_host"},
+                    {"name": "AGENT_PORT", "value_source": "runtime_port"},
+                    {"name": "AGENT_DB_FILE", "value_source": "temp_sqlite_path"},
+                ],
+                "readiness_probe": {"method": "GET", "path": "/ready", "expect_status": 200},
+            }
+        ],
+        "frontend_topology": {"mode": "served-by-backend"},
+        "behavioral_probes": [
+            {
+                "probe_id": {"value": "probe.agent-items"},
+                "service_command_id": {"value": "serve-agent-api"},
+                "acceptance_refs": [{"value": "AC-AGENT-DECLARED-LIBRARY"}],
+                "steps": [
+                    {
+                        "step_id": "create",
+                        "method": "POST",
+                        "path": "/items",
+                        "json_body": {"name": "Agent Item"},
+                        "expect_status": 201,
+                        "capture": {"item_id": "$.item.id"},
+                        "assertions": [],
+                    },
+                    {
+                        "step_id": "list",
+                        "method": "GET",
+                        "path": "/items",
+                        "json_body": None,
+                        "expect_status": 200,
+                        "capture": {},
+                        "assertions": [
+                            {
+                                "kind": "json_contains",
+                                "target": "$.items[*].id",
+                                "expected": "${item_id}",
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def _agent_declared_ticket_graph_payload() -> dict[str, object]:
+    return {
+        "ticket_graph": {
+            "nodes": [
+                {
+                    "node_ref": "ticket.impl.agent_service",
+                    "node_type": "implementation",
+                    "title": "Implement agent-declared service API",
+                    "depends_on": [],
+                    "owner_seat_ref": "seat.worker.implementation",
+                    "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY"],
+                    "source_surface_refs": ["surface.agent-service"],
+                    "evidence_obligations": [
+                        "Service supports add, list, checkout, return, and delete operations.",
+                        "RunManifest declares service startup, readiness, and behavioral probes.",
+                    ],
+                    "allowed_write_set": ["service/", "tests/"],
+                    "required_outputs": ["service/main.py", "tests/test_agent_api.py"],
+                    "commands": [
+                        {
+                            "command_id": "test-agent-api",
+                            "label": "Run agent service tests",
+                            "command": [
+                                os.sys.executable,
+                                "-m",
+                                "pytest",
+                                "tests/test_agent_api.py",
+                            ],
+                            "cwd": ".",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+
 @pytest.mark.skipif(
     os.environ.get("BOARDROOM_RUN_REAL_PROVIDER_PROVING") != "1"
     or not os.environ.get("OPENAI_API_KEY"),
@@ -129,9 +237,15 @@ def test_v2_090f_real_opt_in_records_preflight_before_blocking(
         "contracts",
         "ticket-graph",
         "verification-plan",
+        "run-manifest",
     ):
+        payload = {"status": "planned"}
+        if output_name == "run-manifest":
+            payload = _agent_declared_run_manifest_payload()
+        elif output_name == "ticket-graph":
+            payload = _agent_declared_ticket_graph_payload()
         (artifact_root / f"{output_name}.json").write_text(
-            '{"status":"planned"}',
+            __import__("json").dumps(payload),
             encoding="utf-8",
         )
 
@@ -233,7 +347,7 @@ def test_v2_090f_runner_worker_stage_records_worker_evidence_with_injected_execu
                 ),
                 projection=FakeProjection(
                     source_lineage_inputs=(
-                        {"path": "app/server.py", "producer_ticket_ref": ticket},
+                        {"path": "service/main.py", "producer_ticket_ref": ticket},
                     ),
                     event_stream_ref=f"{ticket}.jsonl",
                     events_hash="sha256:" + "b" * 64,
@@ -249,39 +363,9 @@ def test_v2_090f_runner_worker_stage_records_worker_evidence_with_injected_execu
     planning_payloads = {
         "board-directive": {"artifact_type": "board_directive"},
         "contracts": {"artifact_type": "contracts"},
-        "ticket-graph": {
-            "ticket_graph": {
-                "nodes": [
-                    {
-                        "node_ref": "ticket.impl.backend_api",
-                        "node_type": "implementation",
-                        "title": "Implement backend API",
-                        "depends_on": [],
-                        "owner_seat_ref": "seat.worker.implementation",
-                        "acceptance_refs": ["AC-V2-090F-BACKEND-CRUD"],
-                        "source_surface_refs": ["surface.backend-api"],
-                        "evidence_obligations": [
-                            "Backend HTTP API supports add, list, checkout, return, and delete.",
-                            (
-                                "Backend starts with python -m app.server and reads "
-                                "LIBRARY_API_HOST, LIBRARY_API_PORT, and LIBRARY_DB_PATH."
-                            ),
-                        ],
-                        "allowed_write_set": ["app/", "tests/"],
-                        "required_outputs": ["app/server.py", "tests/test_api.py"],
-                        "commands": [
-                            {
-                                "command_id": "cmd.backend.tests",
-                                "label": "Run backend tests",
-                                "command": ["python", "-m", "pytest", "tests/test_api.py"],
-                                "cwd": ".",
-                            }
-                        ],
-                    }
-                ]
-            }
-        },
+        "ticket-graph": _agent_declared_ticket_graph_payload(),
         "verification-plan": {"artifact_type": "verification_plan"},
+        "run-manifest": _agent_declared_run_manifest_payload(),
     }
     for output_name, payload in planning_payloads.items():
         (artifact_root / f"{output_name}.json").write_text(
@@ -368,14 +452,19 @@ def test_v2_090f_runner_full_stage_writes_closeout_with_injected_executor(
     def fake_planning_stage(*, prd, output_root, settings, provider_adapter_factory):
         boardroom = output_root / "00-boardroom"
         boardroom.mkdir(parents=True, exist_ok=True)
-        for name in ("board-directive", "contracts", "ticket-graph", "verification-plan"):
+        for name in ("board-directive", "contracts", "ticket-graph", "verification-plan", "run-manifest"):
             (boardroom / f"generated-{name}.json").write_text(
                 json.dumps({"provider_output": {"artifact_type": name}}),
                 encoding="utf-8",
             )
         role_context_path = boardroom / "agent-team-role-context.json"
         role_context = json.loads(role_context_path.read_text(encoding="utf-8"))
-        for seat in ("seat.ceo.delivery", "seat.architect.delivery", "seat.tester.integration"):
+        for seat in (
+            "seat.ceo.delivery",
+            "seat.architect.delivery",
+            "seat.tester.integration",
+            "seat.release.devops",
+        ):
             role_context["entries"][seat]["invocation_status"] = "planning_provider_succeeded"
             role_context["entries"][seat]["provider_attempt_refs"] = [f"provider-attempt.v2-090f.{seat}"]
         role_context["entries"]["seat.worker.implementation"]["invocation_status"] = "pending_worker_implementation"
@@ -391,31 +480,66 @@ def test_v2_090f_runner_full_stage_writes_closeout_with_injected_executor(
             "Run tests with python -m pytest tests\n",
             encoding="utf-8",
         )
-        (workspace_root / "app").mkdir()
-        (workspace_root / "app/__init__.py").write_text("", encoding="utf-8")
-        (workspace_root / "app/server.py").write_text(
+        (workspace_root / "service").mkdir()
+        (workspace_root / "service/__init__.py").write_text("", encoding="utf-8")
+        (workspace_root / "service/main.py").write_text(
             "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n"
             "import json, os\n"
             "class H(BaseHTTPRequestHandler):\n"
             "    def _send(self, code, data):\n"
             "        body=json.dumps(data).encode(); self.send_response(code); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)\n"
-            "    def do_GET(self): self._send(200, {'books': []})\n"
-            "    def do_POST(self): self._send(201 if self.path == '/books' else 200, {'book': {'id': 1, 'checked_out': self.path.endswith('checkout')}})\n"
+            "    def do_GET(self): self._send(200, {'ready': True} if self.path == '/ready' else {'items': [{'id': 'agent-1'}]})\n"
+            "    def do_POST(self): self._send(201, {'item': {'id': 'agent-1'}})\n"
             "    def do_DELETE(self): self._send(200, {'deleted': True, 'id': 1})\n"
             "    def log_message(self, *args): pass\n"
             "def run():\n"
-            "    open(os.environ['LIBRARY_DB_PATH'], 'a').close()\n"
-            "    ThreadingHTTPServer(('127.0.0.1', int(os.environ['LIBRARY_API_PORT'])), H).serve_forever()\n"
+            "    open(os.environ['AGENT_DB_FILE'], 'a').close()\n"
+            "    ThreadingHTTPServer((os.environ['AGENT_HOST'], int(os.environ['AGENT_PORT'])), H).serve_forever()\n"
             "if __name__ == '__main__': run()\n",
             encoding="utf-8",
         )
-        (workspace_root / "static").mkdir()
-        (workspace_root / "static/index.html").write_text("<script src='app.js'></script>", encoding="utf-8")
-        (workspace_root / "static/app.js").write_text("fetch('/books')", encoding="utf-8")
         (workspace_root / "tests").mkdir()
         (workspace_root / "tests/test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
         evidence = output_root / "20-evidence"
-        evidence.mkdir(parents=True)
+        (evidence / "tests").mkdir(parents=True)
+        source_lineage_inputs = [
+            {
+                "path": "README.md",
+                "sha256": "sha256:" + __import__("hashlib").sha256((workspace_root / "README.md").read_bytes()).hexdigest(),
+                "producer_ticket_ref": "ticket.impl.docs",
+                "producer_attempt_ref": "provider-attempt.real.backend",
+                "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY"],
+                "source_surface_refs": ["surface.agent.package"],
+                "evidence_refs": ["verified-evidence.agent.package"],
+            },
+            {
+                "path": "service/__init__.py",
+                "sha256": "sha256:" + __import__("hashlib").sha256((workspace_root / "service/__init__.py").read_bytes()).hexdigest(),
+                "producer_ticket_ref": "ticket.impl.backend",
+                "producer_attempt_ref": "provider-attempt.real.backend",
+                "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY"],
+                "source_surface_refs": ["surface.agent.package"],
+                "evidence_refs": ["verified-evidence.agent.package"],
+            },
+            {
+                "path": "service/main.py",
+                "sha256": "sha256:" + __import__("hashlib").sha256((workspace_root / "service/main.py").read_bytes()).hexdigest(),
+                "producer_ticket_ref": "ticket.impl.backend",
+                "producer_attempt_ref": "provider-attempt.real.backend",
+                "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY"],
+                "source_surface_refs": ["surface.agent.package"],
+                "evidence_refs": ["verified-evidence.agent.package"],
+            },
+            {
+                "path": "tests/test_ok.py",
+                "sha256": "sha256:" + __import__("hashlib").sha256((workspace_root / "tests/test_ok.py").read_bytes()).hexdigest(),
+                "producer_ticket_ref": "ticket.impl.tests",
+                "producer_attempt_ref": "provider-attempt.real.backend",
+                "acceptance_refs": ["AC-AGENT-DECLARED-LIBRARY"],
+                "source_surface_refs": ["surface.agent.package"],
+                "evidence_refs": ["verified-evidence.agent.package"],
+            },
+        ]
         (evidence / "worker-execution.json").write_text(
             json.dumps(
                 {
@@ -425,10 +549,15 @@ def test_v2_090f_runner_full_stage_writes_closeout_with_injected_executor(
                             "ticket_ref": "ticket.impl.backend",
                             "provider_attempt_ref": "provider-attempt.real.backend",
                             "declared_command_ids": ["cmd.tests"],
+                            "source_lineage_inputs": source_lineage_inputs,
                         }
                     ],
                 }
             ),
+            encoding="utf-8",
+        )
+        (evidence / "tests/run-manifest.json").write_text(
+            json.dumps(_agent_declared_run_manifest_payload()),
             encoding="utf-8",
         )
         return {"status": "worker_execution_succeeded", "blocker": "closeout pending"}

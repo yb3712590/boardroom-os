@@ -1,0 +1,129 @@
+{
+  "snapshot_id": "v2-090k-failure-snapshot.tiny-fullstack.2026-06-13",
+  "snapshot_kind": "curated_real_provider_failure",
+  "project_ref": "project-tiny-fullstack",
+  "captured_at": "2026-06-13",
+  "purpose": "Preserve V2-090K fail-closed evidence as input for V2-100 CEO-governed rework loop proving.",
+  "status": {
+    "v2_090k_semantics": "autonomy_remediation_can_be_done_with_fail_closed_evidence",
+    "v2_090f_golden_sample": "blocked_until_v2_090k_plus_v2_100_re_evaluation",
+    "closeout_claim": "not_a_passed_golden_sample"
+  },
+  "preserved_file_count": 29,
+  "excluded_material": [
+    "full 20-evidence/provider-artifacts raw and parsed provider text",
+    "SQLite database runtime state",
+    "WAL/SHM runtime files"
+  ],
+  "primary_failures": [
+    {
+      "failure_id": "probe-response-shape-mismatch",
+      "category": "contract_implementation_probe_mismatch",
+      "severity": "P0",
+      "agent_declared_source": "00-boardroom/generated-run-manifest.json",
+      "implementation_source": "10-project/backend/server.py",
+      "expected": {
+        "create_book_assertions": [
+          "$.title",
+          "$.author",
+          "$.checked_out"
+        ],
+        "capture": {
+          "book_id": "$.id"
+        }
+      },
+      "actual": {
+        "create_book_response_shape": {
+          "ok": true,
+          "book": {
+            "id": "number",
+            "title": "string",
+            "author": "string",
+            "checked_out": "boolean"
+          },
+          "id": "number"
+        },
+        "title_path": "$.book.title",
+        "author_path": "$.book.author",
+        "checked_out_path": "$.book.checked_out"
+      },
+      "v2_100_expected_use": "Generate a BlockerReport issue that lets CEO choose fix_implementation or fix_contract_or_probe."
+    },
+    {
+      "failure_id": "env-binding-not-converged",
+      "category": "contract_implementation_mismatch",
+      "severity": "P1",
+      "agent_declared_source": "00-boardroom/generated-run-manifest.json",
+      "implementation_source": "10-project/backend/server.py",
+      "declared_env_names": [
+        "HOST",
+        "PORT",
+        "DATABASE_PATH"
+      ],
+      "implementation_env_names": [
+        "HOST",
+        "PORT",
+        "LIBRARY_HOST",
+        "LIBRARY_PORT",
+        "LIBRARY_DB_PATH",
+        "LIBRARY_STATIC_DIR",
+        "STATIC_DIR"
+      ],
+      "v2_100_expected_use": "Generate a rework ticket constrained to the active RunManifest env contract and package contract."
+    },
+    {
+      "failure_id": "final-evidence-uses-old-acceptance-refs",
+      "category": "evidence_authority_mismatch",
+      "severity": "P0",
+      "agent_artifacts": [
+        "acceptance.add_book",
+        "AC.add_book",
+        "AC.add-book"
+      ],
+      "final_evidence_refs": [
+        "AC-TINY-API-BOOK-CREATE",
+        "AC-TINY-API-BOOK-LIST",
+        "AC-TINY-API-CHECKOUT-RETURN",
+        "AC-TINY-API-BOOK-DELETE",
+        "AC-TINY-PERSISTENCE-SQLITE",
+        "AC-TINY-UI-FETCH-BACKEND",
+        "AC-TINY-RUN-TEST-COMMANDS"
+      ],
+      "evidence_source": "20-evidence/closeout/final-evidence-table.json",
+      "v2_100_expected_use": "Prevent closeout from treating stale evidence rows as coverage of active agent-generated acceptance criteria."
+    },
+    {
+      "failure_id": "closeout-audit-references-old-run",
+      "category": "closeout_lineage_mismatch",
+      "severity": "P0",
+      "evidence_sources": [
+        "30-audit/process-audit.md",
+        "30-audit/replay-bundle-report.json",
+        "30-audit/git-version-audit.md"
+      ],
+      "observed_old_run_ref": "run-v2-080f",
+      "v2_100_expected_use": "Create a blocker that requires closeout and replay artifacts to be regenerated from the current run before terminal success."
+    }
+  ],
+  "non_failures_or_caveats": [
+    {
+      "topic": "domain_terms",
+      "statement": "The library/books vocabulary is PRD-derived and is not by itself proof of runner hardcoding."
+    },
+    {
+      "topic": "single_pass_limit",
+      "statement": "A first-pass contract/implementation/probe mismatch is expected input for V2-100, not proof that V2-090K's hardcoding-removal work is conceptually wrong."
+    }
+  ],
+  "recommended_v2_100_fixture_strategy": {
+    "real_snapshot": "Use this directory as the immutable real failure snapshot.",
+    "resettable_fixture": "Create a smaller synthetic fixture from the same failure taxonomy so tests do not depend on mutable real provider output."
+  },
+  "key_hashes": {
+    "00-boardroom/generated-run-manifest.json": "3fcafccdfb05b06f31d86640885802d5ab1554abb36bbc4ab2780bea945fa798",
+    "10-project/backend/server.py": "81b2eff66688c13416e23cfa70e2ed4488f1029ba75b2303ead7dd99145dc385",
+    "20-evidence/closeout/final-evidence-table.json": "274b04230c8029287fc9a2c83be4cff5a06c2229e4a4d0b37b2f5669cec71f01",
+    "30-audit/process-audit.md": "472925d91b04422a2947dbc9ba828ac1c55b7e740f212ff90f3a872ab5c17262",
+    "30-audit/git-version-audit.md": "d930d109b225e54b7059a2baa2f2ca7dafb9e82eb7f6cff1242d2dad62bd344d"
+  }
+}

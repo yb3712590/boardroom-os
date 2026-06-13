@@ -51,6 +51,7 @@ def test_v2_090f_rejects_all_roles_reusing_worker_seat() -> None:
             "seat.architect.delivery",
             "seat.worker.implementation",
             "seat.tester.integration",
+            "seat.release.devops",
             "seat.checker.acceptance",
             "seat.closeout.package",
         )
@@ -77,6 +78,7 @@ def test_v2_090f_rejects_non_worker_reusing_worker_role_profile() -> None:
             default_tools=("read_file", "write_file", "run_command", "submit_result"),
         ),
         _slot("seat.tester.integration", "role.verification.tester", "verification"),
+        _slot("seat.release.devops", "role.integration.release-devops", "integration"),
         _slot("seat.checker.acceptance", "role.verification.checker", "verification"),
         _slot("seat.closeout.package", "role.audit.closeout", "audit"),
     ]
@@ -107,6 +109,7 @@ def test_v2_090f_rejects_non_high_budget_or_provider_profile() -> None:
             default_tools=("read_file", "write_file", "run_command", "submit_result"),
         ),
         _slot("seat.tester.integration", "role.verification.tester", "verification"),
+        _slot("seat.release.devops", "role.integration.release-devops", "integration"),
         _slot("seat.checker.acceptance", "role.verification.checker", "verification"),
         _slot(
             "seat.closeout.package",
@@ -138,6 +141,7 @@ def test_v2_090f_rejects_non_worker_source_write_tools() -> None:
             default_tools=("read_file", "write_file", "run_command", "submit_result"),
         ),
         _slot("seat.tester.integration", "role.verification.tester", "verification"),
+        _slot("seat.release.devops", "role.integration.release-devops", "integration"),
         _slot(
             "seat.checker.acceptance",
             "role.verification.checker",

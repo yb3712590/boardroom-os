@@ -463,3 +463,68 @@ V2-090F 证明 ProviderAttempt（模型调用尝试记录）不是自主 agent w
 - Boardroom OS 的 README 必须说明 atomic-agent 同级目录安装和 import 验证方式。
 - `AgentRunResult.status == completed`（智能体运行完成）不得直接映射为 `TICKET_COMPLETED`（任务完成）或 `CloseoutPackage.passed`（收尾通过）。
 - 缺 atomic-agent package、缺 event stream、缺 workspace mutation、越权 command/path 或返回治理字段时必须 fail closed（失败关闭）。
+
+## DEC-0023: Agent-generated contracts 是 closeout 运行与证据权威源
+
+- 状态：Accepted
+- 日期：2026-06-12
+
+### 决策
+
+V2-090K 起，generated package（生成项目包）的可启动性、运行环境映射、readiness probe（就绪探针）和 frontend/backend topology（前后端拓扑）必须由 agent team（智能体团队）生成的 PackageContract（包合同）/ RunManifest（运行清单）声明。Runner（运行器）和 Closeout helper（收尾辅助器）不得把固定源码布局、固定模块名、固定启动命令或固定环境变量名作为 planning prompt（规划提示词）或 ticket graph validator（任务图校验器）的隐含成功条件。
+
+Closeout runner（收尾运行器）只能消费 agent-generated RunManifest（智能体生成运行清单）来启动服务、绑定动态端口/临时 SQLite path（SQLite 路径）和执行 readiness/live probes（就绪/真实探针）。业务行为探针必须由 Tester / Release DevOps（测试 / 发布运维）生成的 BehavioralProbePlan（行为探针计划）或 RunManifest.behavioral_probes（运行清单行为探针）声明；runner 不得内置 `/books`、seed data（种子数据）、响应形状或 CRUD workflow（增删改查工作流）。缺 RunManifest service contract（运行清单服务合同）、缺 env binding（环境绑定）、缺 readiness probe（就绪探针）、缺 frontend/backend topology（前后端拓扑）、缺 behavioral probes（行为探针）或 RunManifest 与 PackageContract（包合同）不一致时必须 fail closed（失败关闭）。
+
+FinalEvidenceTable（最终证据表）和 SourceInventory（源码清单）也必须消费 agent-generated AcceptanceContract（智能体生成验收合同）和 PackageContract.source_surfaces（包合同源码面）作为唯一权威源。Agent JSON artifact（智能体 JSON 产物）只允许作为输入格式，进入 gate（门禁）前必须解析为现有强类型 AcceptanceContract（验收合同）、PackageContract（包合同）、SourceSurface（源码面）、RunManifest（运行清单）和 SourceLineageRecord（源码来源链记录），并通过 validate_contract_gate（合同门禁校验）。Runner 不得维护 `AC-V2-090F-*` 静态验收列表、`_statement_for_acceptance_ref` 类平行声明，或 `app/` / `static/` / `tests/` 路径前缀源码面映射；也不得新增 dict-only（仅字典）FinalEvidenceTable / SourceInventory helper（最终证据表 / 源码清单辅助器）复制现有 FinalEvidenceTableBuilder（最终证据表构建器）、build_source_inventory（源码清单构建器）或 ID/path matching（ID/路径匹配）规则。未被 active PackageContract.source_surfaces 覆盖的 materialized source file（物化源码文件）必须 fail closed，不能默认归入 docs（文档）或 integration（集成）面。
+
+Behavioral probe runner（行为探针运行器）必须有明确执行语义：capture（捕获）从 HTTP JSON response（响应）按受限 JSON path（JSON 路径）提取；`${name}` interpolation（占位符替换）可用于后续 path/body/expected（路径/请求体/期望值）；`json_equals`、`json_contains`、`field_equals`、`field_absent` 断言必须 fail closed。缺 capture、JSON path 不存在、状态码不符、断言失败或 unsupported assertion（不支持断言）不得写成成功 live evidence（真实证据）。
+
+Checker（检查者）和 Closeout（收尾者）仍是 provider-backed agent roles（模型支撑智能体角色）。程序化 helper 可以验证结构、引用和证据完整性，但不能直接生成 approved checker verdict（通过检查结论）或 passed closeout package（通过收尾包）来替代角色 ProviderAttempt（模型调用尝试记录）。
+
+### 理由
+
+V2-090F first run（首次运行）证明真实 provider-backed worker implementation chain（模型供应商支撑工人实施链路）可以完成 tiny fullstack package（微型全栈包）并通过一次 live closeout probe（真实收尾探针）。但专家评审指出，runner/prompt/validator（运行器/提示词/校验器）把 `app/server.py`、`python -m app.server`、`LIBRARY_API_HOST`、`LIBRARY_API_PORT` 和 `LIBRARY_DB_PATH` 前置为 planning requirement（规划要求），Checker/Closeout（检查/收尾）也没有各自 provider attempt（模型调用尝试记录）。这证明的是 worker implementation（工人实施）和程序化探针链路，而不是 agent team autonomy（智能体团队自治）。
+
+“必须能启动”是 DevOps/Release（运维/发布）职责和 PackageContract/RunManifest 协议职责；“必须用某个文件名、模块名或环境变量名启动”除非来自用户需求或 agent-generated contract（智能体生成合同），否则属于 runner 介入。
+
+后续评审又确认，090F first run 的介入不仅限于启动接口。`_probe_v2_090f_crud_workflow`（硬编码增删改查探针）、`_v2_090f_acceptance_refs`（静态验收引用）、`_acceptance_refs_for_project_path`（路径到验收引用映射）和 `_source_surface_for_project_path`（路径到源码面映射）让 runner 继续知道这是 library/books（图书馆/图书）域，并让 runner 成为 AcceptanceContract / PackageContract 之外的第二权威源。这违反 dynamic acceptance contract（动态验收合同）、runtime bounded（运行时有界）和 no second source of truth（无第二权威源）原则。
+
+### 影响
+
+- V2-090K 必须新增或强化 Release/DevOps role responsibility（发布/运维角色职责），推荐使用 `seat.release.devops`（发布运维席位）。
+- `src/boardroom_os/workspace/run_manifest.py` 应扩展 service contract（服务合同）、env binding（环境绑定）、readiness probe（就绪探针）、frontend topology（前端拓扑）和 behavioral probes（行为探针）语义。
+- V2-090F runner（运行器）必须移除固定 backend entrypoint（后端入口）、固定 env names（环境变量名）、业务域 HTTP workflow（HTTP 工作流）、静态 acceptance refs（验收引用）和路径前缀 source surface（源码面）校验，改为验证 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划），并复用现有强类型 Contract/Evidence（契约/证据）构建器。
+- V2-090F 不得因为 first run passed（首次运行通过）而标记 DONE；必须等待 V2-090K 消除 runner/helper 外力介入并完成真实 provider full run（完整真实模型运行）复判。若该 full run fail closed（失败关闭）地暴露 agent-generated contract / implementation / probe / closeout projection（智能体生成合同 / 实现 / 探针 / 收尾投影）不一致，且失败现场可审计保留，则该失败进入 V2-100 返工循环，不再要求 090K 自身 single-pass passed（单轮通过）。
+
+## DEC-0024: V2-100 将 agent team 升级为 CEO-governed rework loop
+
+- 状态：Accepted
+- 日期：2026-06-13
+
+### 决策
+
+新增 Phase 10 / V2-100 Agent-team Rework Loop Hardening（智能体团队返工循环强化）。V2-100 的目标不是继续追求一次性 full run（完整运行）成功，而是把人类团队式的沟通、问题识别、返工规划、TicketGraph（工单图）更新、重新实施、重新验证和审计留痕固化为框架能力。
+
+V2-100 引入 ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）作为一等领域对象。Checker（检查者）或 CloseoutGate（收尾门禁）发现 verified blocker（已验证阻塞项）后，不应只抛 Python exception（异常）或终止流程；系统必须生成结构化 blocker/rework request（阻塞/返工请求），由 CEO（项目经理/治理角色）读取后规划返工路线、生成 TicketGraphPatch（工单图补丁），再交由 Architect/Worker/Tester/Release DevOps/Checker/Closeout（架构/实施/测试/发布运维/检查/收尾）执行和重验。
+
+Runtime（运行时）和 atomic-agent（原子智能体）只能执行 ReworkTicket（返工工单）并记录 provider/tool/command/workspace facts（模型/工具/命令/工作区事实）。它们不得创建 ReworkPlan、修改 AcceptanceContract（验收合同）或 PackageContract（包合同）、放大 allowed_write_set（允许写集合）、复用旧证据结论，或把 `AgentRunResult.status == completed`（智能体运行完成）解释为返工 accepted（已接受）。
+
+V2-090K 的完成定义采用“理解 A”：090K 解决 runner/helper 外力介入和合同权威源问题，不要求 agent team 在 single-pass（单轮）内自然收敛。090K 真实 full run 若 fail closed 并保留结构化现场，可以标记 090K DONE；V2-090F golden sample（黄金样例）仍保持 BLOCKED / REVIEW_REQUIRED，等待 `V2-090K + V2-100` 后复判。
+
+### 理由
+
+V2-090K 的核心整改使 runner/helper（运行器/辅助器）不再硬编码业务域、启动接口、静态验收引用和源码面映射；真实 provider full run 也能 fail closed（失败关闭）地暴露 contract / implementation / probe（合同/实现/探针）不一致。但这仍是 single-pass fail-closed（单轮失败关闭）架构：系统能发现问题，却没有把问题交回 CEO 主导的返工闭环。
+
+用户明确指出，agent team（智能体团队）的核心不在单 ticket（工单）一次执行能力，而在团队能否像人类团队一样默认局部产物可能不达标，并通过沟通、返工、重验收敛。此前人工频繁介入修代码、门禁和配置的过程，应被建设成 agent team 自身的框架能力。
+
+2026-06-13 的 090K 真实失败现场已作为 curated failure snapshot（精选失败快照）保存在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`。该现场证明：PRD-derived（需求派生）的 library/books 业务词本身不是问题；问题是 BehavioralProbePlan（行为探针计划）与 backend response shape（后端响应形状）不一致、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用旧 run。V2-100 必须把这类现场变成结构化 BlockerReport（阻塞报告）和可审计返工路线。
+
+### 影响
+
+- `doc/03-architecture/domain-model.md` 增加 ReworkCycle / ReworkRequest / ReworkPlan / ReworkAttempt / ReworkOutcome（返工循环/请求/计划/尝试/结果）对象。
+- `doc/03-architecture/contract-and-evidence-model.md` 增加返工与 EvidenceVerifier / FinalEvidenceTableBuilder / Checker / CloseoutGate（证据验证器/最终证据表构建器/检查/收尾门禁）的重验关系。
+- `doc/03-architecture/execution-and-runtime-boundary.md` 明确 runtime 不能规划或接受返工，atomic-agent 内部 repair loop（修复循环）不能替代 Boardroom OS 跨角色返工循环。
+- `doc/04-implementation/backlog.md` 新增 Phase 10 / V2-100A~E，共 5 个工作包。
+- `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-001~005 和 Phase 10 验收段。
+- `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` 成为 V2-100 的真实失败输入；V2-100E 还必须构造 resettable failing fixture（可重置失败夹具），避免端到端证明只依赖不可重置的真实 provider 现场。
+- V2-100 不替代 V2-090K 的去硬编码整改；V2-090K 已可按 fail-closed 证据语义闭合。V2-100 的完成用于复判 V2-090F golden sample 是否可从 BLOCKED 转为 DONE。

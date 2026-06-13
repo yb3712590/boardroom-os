@@ -53,6 +53,18 @@ role_slots:
       - submit_result
     budget_profile_ref: agent_team.v2_090f.fullstack
     budgets_override: {}
+  - seat_ref: seat.release.devops
+    role_profile_ref: role.integration.release-devops
+    role_category: integration
+    model_execution_profile_id: model-profile.release.devops.v2-090f
+    provider_profile_ref: provider.openai-compatible.v2-090f-primary
+    skill_refs:
+      - skill.release.run-manifest
+    default_tools:
+      - read_file
+      - submit_result
+    budget_profile_ref: agent_team.v2_090f.fullstack
+    budgets_override: {}
   - seat_ref: seat.checker.acceptance
     role_profile_ref: role.verification.checker
     role_category: verification

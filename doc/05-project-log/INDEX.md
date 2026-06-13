@@ -15,6 +15,9 @@
 | `v2-090f-implementation-intervention-log.md` | V2-090F 实施流水、真实 provider 证据与介入边界评审记录 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）spec |
 | `../../docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）plan |
+| `../../docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）spec |
+| `../../docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）plan |
+| `../../examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` | V2-090K curated failure snapshot（精选失败快照）和 V2-100 BlockerReport（阻塞报告）输入 |
 
 ## 推荐阅读顺序
 

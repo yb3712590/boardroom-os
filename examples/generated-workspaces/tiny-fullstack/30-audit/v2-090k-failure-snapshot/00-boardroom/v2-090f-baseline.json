@@ -1,0 +1,136 @@
+{
+  "config_hashes": {
+    "providers_config_hash": "sha256:0acbb888a2016c28ef4b2ec0b13e3f63f0dbdc1ef918bf4ffee611fe9ff3300a",
+    "roles_config_hash": "sha256:0df4ec1c28ac59abcfdcd5ce3dd23121673b85d156e168f655c6dec4a4654098",
+    "runtime_config_hash": "sha256:9d1a3065acc5875f145d17c827ac8ca34bdec063521681e8ce84457ccf771d94"
+  },
+  "prd_sha256": "sha256:e37387a0f99d333bc9104ca45ea703646d0bf4e2b244ad03e98cbb46858971ca",
+  "required_seats": [
+    "seat.ceo.delivery",
+    "seat.architect.delivery",
+    "seat.worker.implementation",
+    "seat.tester.integration",
+    "seat.release.devops",
+    "seat.checker.acceptance",
+    "seat.closeout.package"
+  ],
+  "seats": {
+    "seat.architect.delivery": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "architecture",
+      "role_profile_ref": "role.architecture.lead",
+      "skill_refs": [
+        "skill.architecture.lead"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.ceo.delivery": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "governance",
+      "role_profile_ref": "role.governance.ceo",
+      "skill_refs": [
+        "skill.governance.ceo"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.checker.acceptance": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "verification",
+      "role_profile_ref": "role.verification.checker",
+      "skill_refs": [
+        "skill.verification.checker"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.closeout.package": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "audit",
+      "role_profile_ref": "role.audit.closeout",
+      "skill_refs": [
+        "skill.audit.closeout"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.release.devops": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "integration",
+      "role_profile_ref": "role.integration.release-devops",
+      "skill_refs": [
+        "skill.release.run-manifest"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.tester.integration": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "verification",
+      "role_profile_ref": "role.verification.tester",
+      "skill_refs": [
+        "skill.verification.tester"
+      ],
+      "tools": [
+        "read_file",
+        "run_command",
+        "submit_result"
+      ]
+    },
+    "seat.worker.implementation": {
+      "budget_profile_ref": "agent_team.v2_090f.fullstack",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "resolved_budget_hash": "sha256:3e09934370af810858303ccf2e4b35e798faf978dea3c83b07ba9ef66950a576",
+      "role_category": "worker",
+      "role_profile_ref": "role.worker.implementation",
+      "skill_refs": [
+        "skill.command.test"
+      ],
+      "tools": [
+        "list_files",
+        "read_file",
+        "search_files",
+        "write_file",
+        "run_command",
+        "submit_result"
+      ]
+    }
+  }
+}

@@ -7,7 +7,7 @@
 本文件由两层组成：
 
 1. **抽象原则层（AC-V2-XXX）**：principle-level 验收标准，对应架构主线。`backlog.md` 的工作包必须显式映射到这里的某条 AC。
-2. **分批验收层（Phase 0 ~ Phase 9）**：每个 phase 完成时人类用以验收的 checkbox 清单、产出清单和"进入下一 Phase 前置"。这层是人类视角的 quality gate。
+2. **分批验收层（Phase 0 ~ Phase 10）**：每个 phase 完成时人类用以验收的 checkbox 清单、产出清单和"进入下一 Phase 前置"。这层是人类视角的 quality gate。
 
 使用方式：
 
@@ -48,6 +48,28 @@ Ticket graph 是流程状态源。runtime 不得直接推进 project completed�
 ### AC-V2-GRAPH-002: reducer-protected transitions
 
 所有关键状态变更必须通过 reducer 或 validator。
+
+## AC-V2-REWORK
+
+### AC-V2-REWORK-001: rework cycle is graph-governed
+
+ReworkCycle（返工循环）必须由 TicketGraph（工单图）和 reducer（归约器）表达。runtime（运行时）、executor（执行器）或 atomic-agent（原子智能体）不得直接关闭返工、完成 ticket（工单）或推进 closeout（收尾）。
+
+### AC-V2-REWORK-002: rework request requires verified blocker
+
+没有 FinalEvidenceTable missing/failed row（最终证据表缺失/失败行）、CheckerVerdict blocker（检查结论阻塞项）或 CloseoutGate failure（收尾门禁失败）等 verified blocker（已验证阻塞项）时，不得创建 ReworkRequest（返工请求）。
+
+### AC-V2-REWORK-003: rework scope is contract-bound
+
+ReworkTicket（返工工单）必须绑定 active AcceptanceContract（活跃验收合同）、PackageContract（包合同）、SourceSurface（源码面）和 EvidenceObligation（证据义务）。返工不得引入静态 acceptance refs（验收引用）、路径前缀源码面推断或第二事实源。
+
+### AC-V2-REWORK-004: each rework attempt re-enters evidence and checker gates
+
+每次 ReworkAttempt（返工尝试）产物必须重新经过 EvidenceVerifier（证据验证器）、FinalEvidenceTableBuilder（最终证据表构建器）、SourceInventory（源码清单）和 Checker（检查者）。旧的 satisfied evidence row（已满足证据行）、Checker approved verdict（检查通过结论）或 CloseoutPackage passed（通过收尾包）不得跨轮次复用。
+
+### AC-V2-REWORK-005: rework termination is explicit and auditable
+
+达到预算、重复失败、合同冲突或需要人工澄清时，必须生成可审计 escalation/termination decision（升级/终止决策）。禁止静默失败、无限循环或由 runtime 自动放行。
 
 ## AC-V2-AGENT
 
@@ -178,6 +200,10 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - run manifest 中任一 declared command 缺最终证据；
 - fakeFetch-only integration 被当作 full-stack acceptance；
 - service command 缺 startup/readiness probe；
+- 无 verified blocker 创建返工；
+- runtime 或 atomic-agent 直接判定返工 accepted；
+- 返工复用旧 FinalEvidenceTable / CheckerVerdict / CloseoutPackage 作为新轮次通过证据；
+- 返工耗尽预算但缺 escalation/termination decision；
 - replay bundle 缺失；
 - closeout 阶段才首次发现 implementation 缺口。
 
@@ -185,7 +211,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 
 ## 分批验收
 
-下面 10 段对应 `backlog.md` 的 Phase 0 ~ Phase 9。每段固定结构：
+下面 11 段对应 `backlog.md` 的 Phase 0 ~ Phase 10。每段固定结构：
 
 - **AC 检查清单**：本 phase 需要勾选的项；每项标注由哪个工作包的 negative / happy test 提供证据，并显式绑定到 AC-V2-XXX。
 - **本批产出**：本 phase 完成时仓库内应存在的文件、模块或文档同步项。
@@ -489,10 +515,14 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - [x] AC-V2-EXECUTION-001 / AC-V2-EXECUTION-002 / AC-V2-EVIDENCE-001 / AC-V2-EVIDENCE-002（atomic-agent 主执行路径）— 由 V2-090H 证明：implementation ticket（实施任务）不再由 `ProviderExecutor`（模型供应商执行器）单次 LLM request（大模型请求）冒充 agent work（智能体工作），而是通过真实 provider-backed atomic-agent executor（模型供应商支撑的原子智能体执行器）产生 event stream（事件流）、workspace mutation（工作区变更）、command evidence（命令证据）和 source lineage input（源码来源链输入）
 - [x] V2-090I：真实 provider-backed atomic-agent executor（模型供应商支撑原子智能体执行器）可在 reset workspace（重置工作区）中完成中等复杂多文件 Python package/CLI（Python 包/命令行工具），并产生 command evidence（命令证据）、workspace mutation（工作区变更）和 source lineage input（源码来源链输入）— 2026-06-11 在 V2-090J action protocol repair（原子动作协议修复）后复跑通过：pytest gate `1 passed in 222.99s`，独立 runner `boardroom-atomic.v2-090i.medium.20260611T160350Z.9f07d150` 包含 10 个 provider turns（模型轮次）、9 条 workspace mutations、`cmd.check-medium-scenario` command evidence 最终 exit 0、5 条 source lineage inputs 和 `run.completed`
 - [x] V2-090J：atomic-agent action protocol repair（原子动作协议修复）后，真实 provider-backed executor 可通过显式 `AgentActionBatch`（智能体动作批次）或等价 provider-native structured output（供应商原生结构化输出）完成中等复杂多文件任务，并保留 command evidence / workspace mutation / source lineage / provider turn facts 硬门禁 — 初次由 `boardroom-atomic.v2-090j.medium.20260610T193727Z.f00e1709` 证明；2026-06-11 复跑由 `boardroom-atomic.v2-090j.medium.20260611T055454Z.016a2a2a`（pytest gate，`1 passed in 505.05s`）和 `boardroom-atomic.v2-090j.medium.20260611T060341Z.b564b20d`（runner report，8 个 provider turns、11 个 workspace mutations、6 次 `cmd.check-medium-scenario` command evidence，最终 exit 0，`run.completed`）再次证明
+- [x] V2-090K：Agent team autonomy remediation（智能体团队自治整改）— 按 `docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` 和 `docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` 移除 V2-090F first run（首次运行）中的固定源码布局、固定启动命令、固定环境变量名、固定五票任务图、runner-owned `/books` 业务行为探针、`AC-V2-090F-*` 静态验收引用、`app/` / `static/` 路径前缀源码面映射和 helper-written checker/closeout verdict（辅助器写检查/收尾结论）；由角色提示词强化 DevOps/Release（运维/发布）职责，由 AcceptanceContract（验收合同）/PackageContract（包合同）/RunManifest（运行清单）/BehavioralProbePlan（行为探针计划）承载可启动、可验证、可审计合同，并要求 Checker/Closeout（检查/收尾）各自产生 ProviderAttempt（模型调用尝试记录）。090K 通过标准允许真实 provider full run fail closed（失败关闭）并输出结构化失败现场；它不要求 single-pass full run passed（单轮完整运行通过）
 - [ ] AC-V2-PACKAGE-001 / AC-V2-CLOSEOUT-001~003 / AC-V2-CLOSEOUT-011（package + closeout + audit）— 由 V2-090F 证明：按 `docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` 和 `docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` 从 short PRD（简短产品需求）触发 agent team autonomous delivery（智能体团队自治交付），只有多角色上下文、implementation evidence（实施证据）、黑盒证据和 audit bundles（审计包）齐全时 CloseoutPackage（收尾包）passed
 
 > V2-090I 的 2026-06-10 三次失败保留为 pre-repair failure evidence（修复前失败证据）：当时真实 provider run 未完成中等复杂多文件任务，暴露 action protocol（动作协议）、tool policy（工具策略）和 validator checkpoint（验证命令检查点）问题。V2-090J 已完成 action protocol repair（原子动作协议修复）和真实 provider proving（证明运行）；2026-06-11 V2-090I 原 runner 复跑通过，证明修复后 executor path（执行路径）可完成同一中等复杂任务。
 > 2026-06-12：V2-090H、V2-090I 与 V2-090J 前置专家评审已通过，但旧 V2-090F 文档/代码因 provider lock（模型产物锁）、单次 JSON source delivery（源码交付）、固定三票监督实施和 atomic-agent（原子智能体）接口改造而腐化。当前只完成 V2-090F PRD-to-delivery agent team spec/plan（从 PRD 到交付的智能体团队规格/计划）修订与自审，尚未恢复实施，故本 checkbox 保持未勾选。
+> 2026-06-12 补充：V2-090F first run（首次运行）真实 provider worker implementation chain（工人实施链路）已通过一次，且用户人工验证基础功能可用；但专家评审确认 planning prompt（规划提示词）、ticket graph validator（任务图校验器）和 closeout helper（收尾辅助器）存在外部介入，不能判定 agent team autonomy（智能体团队自治）成立。V2-090K 必须先完成整改并重跑真实 provider full test（完整真实模型测试）；若重跑 fail closed 并暴露 agent-generated contract / implementation / probe（智能体生成合同 / 实现 / 探针）不一致，则该失败进入 V2-100 返工循环，不再倒推 090K 未完成。
+> 2026-06-12 修订：V2-090K 范围已扩展为同时消除 runtime（运行时）对业务域和证据权威源的硬编码认知。BehavioralProbePlan（行为探针计划）必须由 Tester/Release DevOps（测试/发布运维）声明，且执行器必须定义 capture（捕获）、`${}` interpolation（占位符替换）和 `json_equals` / `json_contains` / `field_equals` / `field_absent` 断言语义。Agent JSON artifact（智能体 JSON 产物）进入 closeout（收尾）前必须强类型解析为 AcceptanceContract（验收合同）、PackageContract（包合同）、RunManifest（运行清单）和 SourceLineageRecord（源码来源链记录），通过 validate_contract_gate（合同门禁校验），再由现有 FinalEvidenceTableBuilder（最终证据表构建器）和 build_source_inventory（源码清单构建器）生成证据；不得用 dict-only（仅字典）平行 helper（辅助器）替代。
+> 2026-06-13 修订：V2-090K 已完成“去外力介入 + 合同权威源 + fail-closed 现场”目标。真实 provider full run 产生的失败现场已归档到 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，包含行为探针响应 shape（形状）错配、环境变量绑定未收敛、最终证据表旧 AC 引用和 closeout/audit 旧 run 引用。该现场是 V2-100 输入；V2-090F golden sample 仍保持未勾选。
 
 #### 本批产出
 
@@ -505,14 +535,17 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - Atomic-agent executor switch（原子智能体执行器切换）主执行路径与最小 atomic implementation ticket（原子实施任务）证明
 - Resettable medium implementation scenario（可重置中等复杂实施场景）runner（运行器）、非 provider 测试、三次历史阻塞证据与修复后真实 provider 通过证据
 - Atomic action protocol repair（原子动作协议修复）spec/plan（规范/计划）、runner/proving 产物与真实 provider event stream（模型供应商事件流）证据
+- Agent team autonomy remediation（智能体团队自治整改）spec/plan（规范/计划），用于消除 V2-090F first run 的 runner/prompt/validator/helper 介入、业务域行为探针硬编码和验收/源码面第二权威源
+- V2-090K curated failure snapshot（精选失败快照）：`examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，用于后续 V2-100 返工循环 proving（证明）
 - 待 V2-090F 实施生成的 `examples/generated-workspaces/tiny-fullstack/` PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）
 
-> 当前 `examples/generated-workspaces/tiny-fullstack/` 仍不得被当作 V2-090F passed golden sample（通过黄金样例）。已完成的 V2-090A~E 与 V2-090G~J 证明提示词钩子、命令覆盖、服务运行证据、合同整改、真实黑盒集成基础能力、atomic-agent 执行边界、中等复杂实施能力和 action protocol repair（动作协议修复）；尚未证明 tiny-fullstack golden sample 已由 short PRD 触发 agent team 自治规划/实施/测试/检查/收尾后产出。
+> 当前 `examples/generated-workspaces/tiny-fullstack/` 仍不得被当作 V2-090F passed golden sample（通过黄金样例）。已完成的 V2-090A~E、V2-090G~K 证明提示词钩子、命令覆盖、服务运行证据、合同整改、真实黑盒集成基础能力、atomic-agent 执行边界、中等复杂实施能力、action protocol repair（动作协议修复）和 agent team autonomy remediation（智能体团队自治整改）；尚未证明 tiny-fullstack golden sample 已经通过 CEO-governed rework loop（项目经理治理返工循环）收敛到完整 package/closeout/audit（包/收尾/审计）验收。
 
 #### 进入下一阶段前置
 
-- [x] V2-090A~E、V2-090G、V2-090H、V2-090I、V2-090J 已 DONE（专家评审已确认可进入 V2-090F；V2-090F PRD-to-delivery agent team spec/plan 待人工评审后恢复实施）
+- [x] V2-090A~E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 已 DONE（专家评审已确认 agent team 基础能力和 090K 自治整改可进入 V2-100 返工循环证明；V2-090F golden sample 仍需 V2-100 后复判）
 - [x] 当前 V2-080 failure package（失败包）作为 regression negative（回归负例）被 CloseoutGate 阻断
+- [x] V2-090K 已移除固定运行接口、业务域探针、静态验收/源码面第二权威源、dict-only 契约/证据平行链路和 helper-written checker/closeout；真实 provider full run fail closed 现场已保留为 V2-100 输入
 - [ ] V2-090F golden sample（黄金样例）中每个 declared run/test command 均有 final evidence
 - [x] backend/frontend 均有 startup/readiness evidence
 - [x] HTTP CRUD、delete book（删除图书）、SQLite persistence 和 frontend-to-backend live probe 均通过
@@ -522,3 +555,34 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 > V2-090F 实施完成前不得把 `scripts/build_tiny_closeout_sample.py --check`（构建脚本检查模式）、provider artifact lock（模型产物锁）、ProviderAttempt（模型调用尝试记录）、`AgentRunResult.status == completed`（智能体运行完成）或 V2-090J 单元测试替身单独作为 agent team framework（智能体团队框架）端到端成立证据。
 > V2-090F 也不得把 runner 预置的 backend/frontend/integration 固定 ticket graph（固定任务图）或所有角色共用 `seat.worker.implementation` 当作 agent team autonomy（智能体团队自治）证据。
 > V2-090F 必须使用独立 high-budget config baseline（高预算配置基线），并将 runtime/providers/roles YAML hash、resolved budgets（解析后预算）、provider timeout（模型供应商超时）和 retry policy（重试策略）写入 `00-boardroom/v2-090f-baseline.json`；预算或超时不得通过 `.env` 临时调参绕过。
+> Phase 9 可启动 V2-100，但不可宣称端到端 golden sample DONE。090F 的最终解阻条件是 `V2-090K + V2-100` 后重新证明 package + closeout + audit（包/收尾/审计）完整闭合。
+
+### Phase 10 验收 — V2-100 Agent-team Rework Loop Hardening
+
+#### AC 检查清单
+
+- [ ] AC-V2-REWORK-001 / AC-V2-REWORK-002（返工循环由工单图治理，返工请求需要已验证阻塞项）— 由 V2-100A 证明：ReworkCycle（返工循环）、ReworkRequest（返工请求）、ReworkIssue（返工问题）、ReworkPlan（返工计划）、ReworkAttempt（返工尝试）和 ReworkOutcome（返工结果）均为强类型对象；缺 FinalEvidenceTable missing/failed row（最终证据表缺失/失败行）、CheckerVerdict blocker（检查结论阻塞项）或 CloseoutGate failure（收尾门禁失败）不得创建返工请求。
+- [ ] AC-V2-REWORK-001 / AC-V2-GRAPH-001 / AC-V2-GRAPH-002（返工状态由 TicketGraph 和 reducer 推进）— 由 V2-100B 证明：`REWORK_REQUESTED`、`REWORK_PLANNED`、`REWORK_TICKET_CREATED`、`REWORK_ATTEMPT_SUBMITTED`、`REWORK_REVIEWED`、`REWORK_ACCEPTED` 等事件只能按 reducer（归约器）规则推进；runtime/atomic-agent（运行时/原子智能体）不能直接提交 accepted/completed（接受/完成）。
+- [ ] AC-V2-REWORK-003 / AC-V2-AGENT-001（CEO 返工规划受合同和模型调用审计约束）— 由 V2-100C 证明：CEO（项目经理/治理角色）基于严格 schema（结构）的 BlockerReport（阻塞报告）/ ReworkRequest 生成 ReworkPlan 和 TicketGraphPatch（工单图补丁）；缺 CEO ProviderAttempt（模型调用尝试记录）、缺 blocker_refs（阻塞引用）映射、决策不在 `fix_implementation` / `fix_contract_or_probe` / `split_ticket` / `reorder_dependencies` / `escalate_human_review` 枚举内、绕过 active contract（活跃合同）或要求 runtime 自动修复均 fail closed。
+- [ ] AC-V2-REWORK-004 / AC-V2-EVIDENCE-002 / AC-V2-CHECKER-001（返工每轮重新进入证据和检查门禁）— 由 V2-100D 证明：ReworkAttempt 产物必须重新构造 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）和 CheckerVerdict（检查结论）；旧 satisfied row（已满足行）、旧 Checker approved verdict（检查通过结论）或旧 CloseoutPackage passed（收尾通过包）不得跨轮次复用。
+- [ ] AC-V2-REWORK-005 / AC-V2-CLOSEOUT-001~003 / AC-V2-CLOSEOUT-011（多轮返工可审计收敛或升级）— 由 V2-100E 证明：090K 真实失败快照和一个可重置 failing fixture（失败夹具）都能被转化为结构化 blocker，CEO 自治规划返工，worker/tester/release-devops（实施/测试/发布运维）执行返工，checker/closeout（检查/收尾）重验；成功时 closeout passed（收尾通过），失败耗尽时生成 escalation/termination decision（升级/终止决策）。
+
+> Phase 10 的核心负例是“命令通过但证明命题错误”：`AgentRunResult.status == completed`（智能体运行完成）、ProviderAttempt（模型调用尝试记录）、`--check`、一次 live probe（真实探针）或 CRUD 可用，都不能单独推出 CloseoutPackage.passed（收尾包通过）。系统必须拒绝 runner/helper（运行器/辅助器）代替 agent team（智能体团队）自治规划、检查和收尾的交付。
+> PRD（产品需求文档）明确要求的业务行为不算硬编码；问题在于 runner 不得内置业务探针。BehavioralProbePlan（行为探针计划）和 RunManifest（运行清单）可以声明 `/api/books` 等路径，但声明必须来自 agent-generated contract（智能体生成合同）并通过强类型 gate（门禁）。
+
+#### 本批产出
+
+- ReworkCycle / ReworkRequest / ReworkIssue / ReworkPlan / ReworkAttempt / ReworkOutcome（返工循环/请求/问题/计划/尝试/结果）模型
+- Rework event taxonomy（返工事件分类）与 reducer（归约器）门禁
+- CEO rework planner boundary（项目经理返工规划边界）和 TicketGraphPatch（工单图补丁）模型
+- Rework evidence/checker reintegration（返工证据/检查重接入）
+- Multi-round rework proving scenario（多轮返工证明场景）和 process audit/replay（流程审计/重放）证据
+- Resettable failing fixture（可重置失败夹具），从 090K failure taxonomy（失败分类）抽象而来，避免端到端证明只依赖不可重置的真实 provider 现场
+
+#### 进入下一阶段前置
+
+- [ ] V2-100A ~ V2-100E 状态全部 DONE
+- [ ] `backlog.md` 进度总览 Phase 10 显示 5 / 5
+- [ ] 返工循环负例覆盖无 blocker 返工、runtime 直接关闭、旧 evidence 复用、越权写入、无限循环和 helper-written verdict（辅助器写结论）
+- [ ] 多轮返工 proving scenario（证明场景）同时消费 090K curated failure snapshot（精选失败快照）和 resettable failing fixture（可重置失败夹具），并在真实 provider opt-in（真实模型供应商显式启用）下产出完整 event/evidence/audit（事件/证据/审计）链
+- [ ] `doc/05-project-log/2026-06.md` 或对应月份日志记录 V2-100 完成证据

@@ -1,0 +1,301 @@
+{
+  "execution_package_ref": "exec.ticket.v2-090f.seat-release-devops.run-manifest",
+  "parsed_artifact_ref": "provider-artifact.openai.parsed.exec_ticket_v2-090f_seat-release-devops_run-manifest_1781314633263292.7656443773db6fced267dab3e8fddd66f54f923bcbc0673ef351d568c576fc60",
+  "provider_attempt_ref": "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-release-devops_run-manifest_1781314633263292",
+  "provider_output": {
+    "behavioral_probes": [
+      {
+        "acceptance_refs": [
+          "acceptance.add_book",
+          "acceptance.list_books"
+        ],
+        "probe_id": "probe.add_and_list_book",
+        "service_contract_id": "service.backend",
+        "steps": [
+          {
+            "assertions": [
+              {
+                "path": "$.title",
+                "type": "json_field_equals",
+                "value": "V2-090F Generated Book"
+              },
+              {
+                "path": "$.author",
+                "type": "json_field_equals",
+                "value": "Boardroom OS"
+              },
+              {
+                "path": "$.checked_out",
+                "type": "json_field_equals",
+                "value": false
+              }
+            ],
+            "capture": {
+              "book_id": "$.id"
+            },
+            "expect_status": 201,
+            "json_body": {
+              "author": "Boardroom OS",
+              "title": "V2-090F Generated Book"
+            },
+            "method": "POST",
+            "path": "/api/books",
+            "step_id": "step.add_book"
+          },
+          {
+            "assertions": [
+              {
+                "path": "$",
+                "type": "json_array_contains_object",
+                "where": {
+                  "author": "Boardroom OS",
+                  "checked_out": false,
+                  "id": "$captures.book_id",
+                  "title": "V2-090F Generated Book"
+                }
+              }
+            ],
+            "capture": {},
+            "expect_status": 200,
+            "json_body": null,
+            "method": "GET",
+            "path": "/api/books",
+            "step_id": "step.list_books_after_add"
+          }
+        ]
+      },
+      {
+        "acceptance_refs": [
+          "acceptance.checkout_book",
+          "acceptance.return_book"
+        ],
+        "probe_id": "probe.checkout_and_return_book",
+        "service_contract_id": "service.backend",
+        "steps": [
+          {
+            "assertions": [
+              {
+                "path": "$.checked_out",
+                "type": "json_field_equals",
+                "value": false
+              }
+            ],
+            "capture": {
+              "book_id": "$.id"
+            },
+            "expect_status": 201,
+            "json_body": {
+              "author": "Boardroom OS",
+              "title": "V2-090F Checkout Target"
+            },
+            "method": "POST",
+            "path": "/api/books",
+            "step_id": "step.create_book_for_checkout"
+          },
+          {
+            "assertions": [
+              {
+                "path": "$.id",
+                "type": "json_field_equals",
+                "value": "$captures.book_id"
+              },
+              {
+                "path": "$.checked_out",
+                "type": "json_field_equals",
+                "value": true
+              }
+            ],
+            "capture": {},
+            "expect_status": 200,
+            "json_body": {},
+            "method": "POST",
+            "path": "/api/books/$captures.book_id/checkout",
+            "step_id": "step.checkout_book"
+          },
+          {
+            "assertions": [
+              {
+                "path": "$.id",
+                "type": "json_field_equals",
+                "value": "$captures.book_id"
+              },
+              {
+                "path": "$.checked_out",
+                "type": "json_field_equals",
+                "value": false
+              }
+            ],
+            "capture": {},
+            "expect_status": 200,
+            "json_body": {},
+            "method": "POST",
+            "path": "/api/books/$captures.book_id/return",
+            "step_id": "step.return_book"
+          }
+        ]
+      },
+      {
+        "acceptance_refs": [
+          "acceptance.delete_book"
+        ],
+        "probe_id": "probe.delete_book",
+        "service_contract_id": "service.backend",
+        "steps": [
+          {
+            "assertions": [
+              {
+                "path": "$.title",
+                "type": "json_field_equals",
+                "value": "V2-090F Delete Target"
+              }
+            ],
+            "capture": {
+              "book_id": "$.id"
+            },
+            "expect_status": 201,
+            "json_body": {
+              "author": "Boardroom OS",
+              "title": "V2-090F Delete Target"
+            },
+            "method": "POST",
+            "path": "/api/books",
+            "step_id": "step.create_book_for_delete"
+          },
+          {
+            "assertions": [],
+            "capture": {},
+            "expect_status": 204,
+            "json_body": {},
+            "method": "DELETE",
+            "path": "/api/books/$captures.book_id",
+            "step_id": "step.delete_book"
+          },
+          {
+            "assertions": [
+              {
+                "path": "$",
+                "type": "json_array_not_contains_object",
+                "where": {
+                  "id": "$captures.book_id"
+                }
+              }
+            ],
+            "capture": {},
+            "expect_status": 200,
+            "json_body": null,
+            "method": "GET",
+            "path": "/api/books",
+            "step_id": "step.list_books_after_delete"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": [
+          "python3",
+          "backend/server.py"
+        ],
+        "command_id": "cmd.run.backend",
+        "cwd": ".",
+        "label": "Run standard-library Python backend service"
+      },
+      {
+        "command": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests"
+        ],
+        "command_id": "cmd.test.unit",
+        "cwd": ".",
+        "label": "Run finite backend and behavior unit tests"
+      }
+    ],
+    "frontend_topology": {
+      "document_path": "/",
+      "frontend_type": "static",
+      "required_ui_capabilities": [
+        {
+          "acceptance_refs": [
+            "acceptance.add_book"
+          ],
+          "capability_id": "ui.add_book",
+          "description": "Users can enter a title and author, submit the book, and see the list update from the backend."
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.list_books"
+          ],
+          "capability_id": "ui.list_books",
+          "description": "Users can see books returned by the backend without relying on hardcoded catalog data."
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.checkout_book"
+          ],
+          "capability_id": "ui.checkout_book",
+          "description": "Users can mark an available book as checked out and see that state update."
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.return_book"
+          ],
+          "capability_id": "ui.return_book",
+          "description": "Users can return a checked-out book and see it become available."
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.delete_book"
+          ],
+          "capability_id": "ui.delete_book",
+          "description": "Users can delete a book and see it removed from the backend-backed list."
+        }
+      ],
+      "served_by_service_contract_id": "service.backend",
+      "source_surface_refs": [
+        "surface.frontend.static"
+      ]
+    },
+    "package_contract_ref": "package_contract.v2_090f.tiny_library_checkout",
+    "package_root": ".",
+    "run_manifest_id": "run_manifest.v2_090f.tiny_library_checkout",
+    "service_contracts": [
+      {
+        "env_bindings": [
+          {
+            "default": "127.0.0.1",
+            "name": "HOST",
+            "required": false
+          },
+          {
+            "default": "8000",
+            "name": "PORT",
+            "required": false
+          },
+          {
+            "default": "library.sqlite3",
+            "name": "DATABASE_PATH",
+            "required": false
+          }
+        ],
+        "readiness_probe": {
+          "expect_status": 200,
+          "interval_seconds": 1,
+          "method": "GET",
+          "path": "/api/books",
+          "timeout_seconds": 10,
+          "type": "http"
+        },
+        "role": "backend_api_and_static_frontend",
+        "run_command_id": "cmd.run.backend",
+        "service_contract_id": "service.backend"
+      }
+    ],
+    "workspace_manifest_ref": "workspace_manifest.v2_090f.tiny_library_checkout"
+  },
+  "role_prompt_hook_ref": "role-prompt-hook.baseline.release-devops.v1",
+  "seat_ref": "seat.release.devops"
+}

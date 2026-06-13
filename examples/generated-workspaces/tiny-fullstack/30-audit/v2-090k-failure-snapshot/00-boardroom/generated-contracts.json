@@ -1,0 +1,736 @@
+{
+  "execution_package_ref": "exec.ticket.v2-090f.seat-architect-delivery.contracts",
+  "parsed_artifact_ref": "provider-artifact.openai.parsed.exec_ticket_v2-090f_seat-architect-delivery_contracts_1781314383361675.0287e2822ae2304fe0dc1a00a4951fd8f8c6f8489e002b15f44dfec763635fd0",
+  "provider_attempt_ref": "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-architect-delivery_contracts_1781314383361675",
+  "provider_output": {
+    "acceptance_contract": {
+      "acceptance_refs": [
+        {
+          "acceptance_ref": "acceptance.book.add",
+          "description": "A user can add a book through the backend API and the created book is persisted with title, author, availability, and id."
+        },
+        {
+          "acceptance_ref": "acceptance.book.list",
+          "description": "A user can list books from the backend API and receive the current persisted collection."
+        },
+        {
+          "acceptance_ref": "acceptance.book.checkout",
+          "description": "A user can checkout an available book and the backend marks it unavailable."
+        },
+        {
+          "acceptance_ref": "acceptance.book.return",
+          "description": "A user can return a checked-out book and the backend marks it available."
+        },
+        {
+          "acceptance_ref": "acceptance.book.delete",
+          "description": "A user can delete a book and the backend removes it from subsequent list results."
+        },
+        {
+          "acceptance_ref": "acceptance.ui.backend_updates",
+          "description": "The static frontend communicates with the real backend and reflects add, list, checkout, return, and delete state changes."
+        },
+        {
+          "acceptance_ref": "acceptance.persistence.sqlite",
+          "description": "Book data is stored in SQLite and remains available after backend process restart when using the same database path."
+        },
+        {
+          "acceptance_ref": "acceptance.instructions.tests",
+          "description": "The package includes run instructions and finite tests for the backend behavior."
+        }
+      ],
+      "contract_id": "acceptance.v2-090f.tiny-library-checkout",
+      "evidence_obligations": [
+        {
+          "acceptance_refs": [
+            "acceptance.book.add"
+          ],
+          "description": "Demonstrate POST creation of a book and verify returned id, title, author, and available=true.",
+          "evidence_ref": "evidence.add.api"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.list"
+          ],
+          "description": "Demonstrate GET list includes a previously added book.",
+          "evidence_ref": "evidence.list.api"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.checkout"
+          ],
+          "description": "Demonstrate checkout changes a book from available=true to available=false.",
+          "evidence_ref": "evidence.checkout.api"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.return"
+          ],
+          "description": "Demonstrate return changes a book from available=false to available=true.",
+          "evidence_ref": "evidence.return.api"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.delete"
+          ],
+          "description": "Demonstrate delete removes a created book from list results.",
+          "evidence_ref": "evidence.delete.api"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.ui.backend_updates"
+          ],
+          "description": "Demonstrate frontend files call backend API endpoints and update rendered book state.",
+          "evidence_ref": "evidence.ui.real_backend"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.persistence.sqlite"
+          ],
+          "description": "Demonstrate SQLite-backed storage path is configurable and persisted data can be read from the database.",
+          "evidence_ref": "evidence.sqlite.persistence"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.instructions.tests"
+          ],
+          "description": "Demonstrate README run instructions and finite automated tests exist.",
+          "evidence_ref": "evidence.tests.instructions"
+        }
+      ]
+    },
+    "allowed_read_refs": [
+      "examples/directives/tiny-fullstack-prd.md",
+      "examples/directives/v2-090f-reference-examples.md"
+    ],
+    "artifact_id": "planning.v2-090f.tiny-library-checkout",
+    "artifact_type": "boardroom_os_v2_090f_planning_artifact",
+    "completion_gate": {
+      "gate_id": "completion-gate.v2-090f.tiny-library-checkout",
+      "required_acceptance_refs": [
+        "acceptance.book.add",
+        "acceptance.book.list",
+        "acceptance.book.checkout",
+        "acceptance.book.return",
+        "acceptance.book.delete",
+        "acceptance.ui.backend_updates",
+        "acceptance.persistence.sqlite",
+        "acceptance.instructions.tests"
+      ],
+      "required_artifacts": [
+        "acceptance.v2-090f.tiny-library-checkout",
+        "package.v2-090f.tiny-library-checkout",
+        "run-manifest.v2-090f.tiny-library-checkout",
+        "verification.v2-090f.tiny-library-checkout",
+        "ticket-graph.v2-090f.tiny-library-checkout"
+      ],
+      "required_evidence_refs": [
+        "evidence.add.api",
+        "evidence.list.api",
+        "evidence.checkout.api",
+        "evidence.return.api",
+        "evidence.delete.api",
+        "evidence.ui.real_backend",
+        "evidence.sqlite.persistence",
+        "evidence.tests.instructions"
+      ],
+      "status": "planned"
+    },
+    "constraints": [
+      "Use the PRD as the source of truth.",
+      "Do not predefine runner-owned implementation ticket refs.",
+      "Do not write implementation source.",
+      "Do not mark closeout passed."
+    ],
+    "context_refs": [
+      "context.v2-090f.prd",
+      "context.v2-090f.reference-examples"
+    ],
+    "forbidden_claims": [
+      "implementation_complete",
+      "verification_success",
+      "checker_approval",
+      "closeout_passed",
+      "sample_success"
+    ],
+    "package_contract": {
+      "api_contract": {
+        "base_path": "/api",
+        "book_shape": {
+          "author": "string",
+          "available": "boolean",
+          "id": "integer",
+          "title": "string"
+        },
+        "endpoints": [
+          {
+            "method": "GET",
+            "path": "/api/health",
+            "purpose": "Backend readiness check."
+          },
+          {
+            "method": "GET",
+            "path": "/api/books",
+            "purpose": "List persisted books."
+          },
+          {
+            "json_body_schema": {
+              "author": "string",
+              "title": "string"
+            },
+            "method": "POST",
+            "path": "/api/books",
+            "purpose": "Create a book."
+          },
+          {
+            "method": "POST",
+            "path": "/api/books/{book_id}/checkout",
+            "purpose": "Mark an available book checked out."
+          },
+          {
+            "method": "POST",
+            "path": "/api/books/{book_id}/return",
+            "purpose": "Mark a checked-out book returned."
+          },
+          {
+            "method": "DELETE",
+            "path": "/api/books/{book_id}",
+            "purpose": "Delete a book."
+          }
+        ]
+      },
+      "contract_id": "package.v2-090f.tiny-library-checkout",
+      "environment": [
+        {
+          "default": "library.sqlite3",
+          "description": "SQLite database path used by the backend.",
+          "name": "LIBRARY_DB_PATH",
+          "required": false
+        },
+        {
+          "default": "127.0.0.1",
+          "description": "Backend bind host.",
+          "name": "HOST",
+          "required": false
+        },
+        {
+          "default": "8000",
+          "description": "Backend bind port.",
+          "name": "PORT",
+          "required": false
+        }
+      ],
+      "package_root": ".",
+      "runtime": {
+        "frontend": "static_html_css_js",
+        "language": "python",
+        "python_standard_library_only": true,
+        "storage": "sqlite"
+      },
+      "source_surfaces": [
+        {
+          "allowed_directories": [
+            "app/"
+          ],
+          "description": "Standard-library Python HTTP backend and SQLite persistence.",
+          "required_files": [
+            "app/server.py",
+            "app/library_store.py"
+          ],
+          "source_surface_ref": "surface.backend"
+        },
+        {
+          "allowed_directories": [
+            "static/"
+          ],
+          "description": "Static frontend served by the backend and backed by live API calls.",
+          "required_files": [
+            "static/index.html",
+            "static/app.js",
+            "static/styles.css"
+          ],
+          "source_surface_ref": "surface.frontend"
+        },
+        {
+          "allowed_directories": [
+            "tests/"
+          ],
+          "description": "Finite automated tests for API and persistence behavior.",
+          "required_files": [
+            "tests/test_api.py"
+          ],
+          "source_surface_ref": "surface.tests"
+        },
+        {
+          "allowed_directories": [
+            "./"
+          ],
+          "description": "Run and test instructions.",
+          "required_files": [
+            "README.md"
+          ],
+          "source_surface_ref": "surface.docs"
+        }
+      ]
+    },
+    "prd_ref": {
+      "context_ref": "context.v2-090f.prd",
+      "sha256": "sha256:e37387a0f99d333bc9104ca45ea703646d0bf4e2b244ad03e98cbb46858971ca",
+      "title": "Tiny Library Checkout PRD"
+    },
+    "run_manifest": {
+      "behavioral_probes": [
+        {
+          "acceptance_refs": [
+            "acceptance.book.add",
+            "acceptance.book.list",
+            "acceptance.book.checkout",
+            "acceptance.book.return",
+            "acceptance.book.delete"
+          ],
+          "probe_id": "probe.book.lifecycle",
+          "service_contract_ref": "service.backend",
+          "steps": [
+            {
+              "assertions": [
+                {
+                  "field": "ok",
+                  "type": "json_field_equals",
+                  "value": true
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": null,
+              "method": "GET",
+              "path": "/api/health",
+              "step_id": "health"
+            },
+            {
+              "assertions": [
+                {
+                  "field": "title",
+                  "type": "json_field_equals",
+                  "value": "The Left Hand of Darkness"
+                },
+                {
+                  "field": "author",
+                  "type": "json_field_equals",
+                  "value": "Ursula K. Le Guin"
+                },
+                {
+                  "field": "available",
+                  "type": "json_field_equals",
+                  "value": true
+                }
+              ],
+              "capture": {
+                "book_id": "$.id"
+              },
+              "expect_status": 201,
+              "json_body": {
+                "author": "Ursula K. Le Guin",
+                "title": "The Left Hand of Darkness"
+              },
+              "method": "POST",
+              "path": "/api/books",
+              "step_id": "add_book"
+            },
+            {
+              "assertions": [
+                {
+                  "field": "$",
+                  "match": {
+                    "author": "Ursula K. Le Guin",
+                    "available": true,
+                    "id": "${book_id}",
+                    "title": "The Left Hand of Darkness"
+                  },
+                  "type": "json_array_contains_object"
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": null,
+              "method": "GET",
+              "path": "/api/books",
+              "step_id": "list_after_add"
+            },
+            {
+              "assertions": [
+                {
+                  "field": "id",
+                  "type": "json_field_equals",
+                  "value": "${book_id}"
+                },
+                {
+                  "field": "available",
+                  "type": "json_field_equals",
+                  "value": false
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": {},
+              "method": "POST",
+              "path": "/api/books/${book_id}/checkout",
+              "step_id": "checkout_book"
+            },
+            {
+              "assertions": [
+                {
+                  "field": "id",
+                  "type": "json_field_equals",
+                  "value": "${book_id}"
+                },
+                {
+                  "field": "available",
+                  "type": "json_field_equals",
+                  "value": true
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": {},
+              "method": "POST",
+              "path": "/api/books/${book_id}/return",
+              "step_id": "return_book"
+            },
+            {
+              "assertions": [],
+              "capture": {},
+              "expect_status": 204,
+              "json_body": {},
+              "method": "DELETE",
+              "path": "/api/books/${book_id}",
+              "step_id": "delete_book"
+            },
+            {
+              "assertions": [
+                {
+                  "field": "$",
+                  "match": {
+                    "id": "${book_id}"
+                  },
+                  "type": "json_array_not_contains_object"
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": null,
+              "method": "GET",
+              "path": "/api/books",
+              "step_id": "list_after_delete"
+            }
+          ]
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.ui.backend_updates"
+          ],
+          "probe_id": "probe.ui.entrypoint",
+          "service_contract_ref": "service.backend",
+          "steps": [
+            {
+              "assertions": [
+                {
+                  "type": "body_contains",
+                  "value": "Tiny Library"
+                },
+                {
+                  "type": "body_contains",
+                  "value": "static/app.js"
+                }
+              ],
+              "capture": {},
+              "expect_status": 200,
+              "json_body": null,
+              "method": "GET",
+              "path": "/",
+              "step_id": "load_frontend"
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "command": [
+            "python",
+            "app/server.py"
+          ],
+          "command_id": "cmd.run.backend",
+          "command_type": "run_service",
+          "cwd": ".",
+          "env": {
+            "HOST": "127.0.0.1",
+            "LIBRARY_DB_PATH": "library.sqlite3",
+            "PORT": "8000"
+          },
+          "label": "Run backend service"
+        },
+        {
+          "command": [
+            "python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "command_id": "cmd.test.api",
+          "command_type": "finite_test",
+          "cwd": ".",
+          "label": "Run finite API tests"
+        }
+      ],
+      "frontend_topology": {
+        "api_base_path": "/api",
+        "backend_service_ref": "service.backend",
+        "entrypoint": "/",
+        "static_files": [
+          "static/index.html",
+          "static/app.js",
+          "static/styles.css"
+        ],
+        "type": "static_frontend_served_by_backend"
+      },
+      "package_contract_ref": "package.v2-090f.tiny-library-checkout",
+      "package_root": ".",
+      "run_manifest_id": "run-manifest.v2-090f.tiny-library-checkout",
+      "service_contracts": [
+        {
+          "env_bindings": [
+            {
+              "name": "HOST",
+              "value": "127.0.0.1"
+            },
+            {
+              "name": "PORT",
+              "value": "8000"
+            },
+            {
+              "name": "LIBRARY_DB_PATH",
+              "value": "library.sqlite3"
+            }
+          ],
+          "readiness_probe": {
+            "assertions": [
+              {
+                "field": "ok",
+                "type": "json_field_equals",
+                "value": true
+              }
+            ],
+            "expect_status": 200,
+            "method": "GET",
+            "path": "/api/health"
+          },
+          "role": "backend_api_and_static_frontend",
+          "run_command_id": "cmd.run.backend",
+          "service_contract_id": "service.backend"
+        }
+      ],
+      "workspace_manifest_ref": "workspace.v2-090f.tiny-library-checkout"
+    },
+    "ticket_graph": {
+      "graph_id": "ticket-graph.v2-090f.tiny-library-checkout",
+      "nodes": [
+        {
+          "acceptance_refs": [
+            "acceptance.book.add",
+            "acceptance.book.list",
+            "acceptance.book.checkout",
+            "acceptance.book.return",
+            "acceptance.book.delete",
+            "acceptance.persistence.sqlite"
+          ],
+          "allowed_write_set": [
+            "app/",
+            "tests/"
+          ],
+          "commands": [
+            {
+              "command": [
+                "python",
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests"
+              ],
+              "command_id": "cmd.impl.backend.unittest",
+              "cwd": ".",
+              "label": "Run backend unittest suite"
+            }
+          ],
+          "depends_on": [],
+          "evidence_obligations": [
+            "evidence.add.api",
+            "evidence.list.api",
+            "evidence.checkout.api",
+            "evidence.return.api",
+            "evidence.delete.api",
+            "evidence.sqlite.persistence"
+          ],
+          "node_ref": "ticket.impl.backend.sqlite-api",
+          "node_type": "implementation",
+          "owner_seat_ref": "seat.worker.implementation",
+          "required_outputs": [
+            "app/server.py",
+            "app/library_store.py",
+            "tests/test_api.py"
+          ],
+          "source_surface_refs": [
+            "surface.backend",
+            "surface.tests"
+          ],
+          "title": "Implement SQLite library backend API"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.ui.backend_updates",
+            "acceptance.book.add",
+            "acceptance.book.list",
+            "acceptance.book.checkout",
+            "acceptance.book.return",
+            "acceptance.book.delete"
+          ],
+          "allowed_write_set": [
+            "static/"
+          ],
+          "commands": [
+            {
+              "command": [
+                "python",
+                "-c",
+                "from pathlib import Path; required=['static/index.html','static/app.js','static/styles.css']; missing=[p for p in required if not Path(p).is_file()]; raise SystemExit('missing: '+', '.join(missing) if missing else 0)"
+              ],
+              "command_id": "cmd.impl.frontend.static-file-check",
+              "cwd": ".",
+              "label": "Check static frontend files exist"
+            }
+          ],
+          "depends_on": [
+            "ticket.impl.backend.sqlite-api"
+          ],
+          "evidence_obligations": [
+            "evidence.ui.real_backend"
+          ],
+          "node_ref": "ticket.impl.frontend.static-ui",
+          "node_type": "implementation",
+          "owner_seat_ref": "seat.worker.implementation",
+          "required_outputs": [
+            "static/index.html",
+            "static/app.js",
+            "static/styles.css"
+          ],
+          "source_surface_refs": [
+            "surface.frontend"
+          ],
+          "title": "Implement static frontend for live backend updates"
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.instructions.tests"
+          ],
+          "allowed_write_set": [
+            "README.md"
+          ],
+          "commands": [
+            {
+              "command": [
+                "python",
+                "-c",
+                "from pathlib import Path; p=Path('README.md'); raise SystemExit(0 if p.is_file() and p.read_text(encoding='utf-8').strip() else 'README.md missing or empty')"
+              ],
+              "command_id": "cmd.impl.docs.readme-check",
+              "cwd": ".",
+              "label": "Check README exists"
+            }
+          ],
+          "depends_on": [
+            "ticket.impl.backend.sqlite-api",
+            "ticket.impl.frontend.static-ui"
+          ],
+          "evidence_obligations": [
+            "evidence.tests.instructions"
+          ],
+          "node_ref": "ticket.impl.docs.run-tests",
+          "node_type": "implementation",
+          "owner_seat_ref": "seat.worker.implementation",
+          "required_outputs": [
+            "README.md"
+          ],
+          "source_surface_refs": [
+            "surface.docs"
+          ],
+          "title": "Document run and test instructions"
+        }
+      ]
+    },
+    "verification_plan": {
+      "checks": [
+        {
+          "acceptance_refs": [
+            "acceptance.instructions.tests"
+          ],
+          "check_id": "check.source.required-files",
+          "description": "Verify all package contract required files are present.",
+          "evidence_refs": [
+            "evidence.tests.instructions"
+          ]
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.add",
+            "acceptance.book.list",
+            "acceptance.book.checkout",
+            "acceptance.book.return",
+            "acceptance.book.delete",
+            "acceptance.persistence.sqlite"
+          ],
+          "check_id": "check.unit.api",
+          "command_id": "cmd.test.api",
+          "description": "Run finite unittest discovery for API and persistence behavior.",
+          "evidence_refs": [
+            "evidence.add.api",
+            "evidence.list.api",
+            "evidence.checkout.api",
+            "evidence.return.api",
+            "evidence.delete.api",
+            "evidence.sqlite.persistence"
+          ]
+        },
+        {
+          "acceptance_refs": [
+            "acceptance.book.add",
+            "acceptance.book.list",
+            "acceptance.book.checkout",
+            "acceptance.book.return",
+            "acceptance.book.delete",
+            "acceptance.ui.backend_updates"
+          ],
+          "behavioral_probe_refs": [
+            "probe.book.lifecycle",
+            "probe.ui.entrypoint"
+          ],
+          "check_id": "check.live.behavior",
+          "description": "Start the backend service and execute declared behavioral probes.",
+          "evidence_refs": [
+            "evidence.add.api",
+            "evidence.list.api",
+            "evidence.checkout.api",
+            "evidence.return.api",
+            "evidence.delete.api",
+            "evidence.ui.real_backend"
+          ],
+          "service_contract_ref": "service.backend"
+        }
+      ],
+      "package_contract_ref": "package.v2-090f.tiny-library-checkout",
+      "run_manifest_ref": "run-manifest.v2-090f.tiny-library-checkout",
+      "verification_plan_id": "verification.v2-090f.tiny-library-checkout"
+    }
+  },
+  "role_prompt_hook_ref": "role-prompt-hook.baseline.architect.v1",
+  "seat_ref": "seat.architect.delivery"
+}

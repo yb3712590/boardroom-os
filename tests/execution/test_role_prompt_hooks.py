@@ -147,6 +147,7 @@ def test_baseline_role_prompt_hooks_are_versioned_hashed_and_auditable() -> None
         "role-prompt-hook.baseline.tester.v1",
         "role-prompt-hook.baseline.checker.v1",
         "role-prompt-hook.baseline.closeout.v1",
+        "role-prompt-hook.baseline.release-devops.v1",
     }
 
     assert {hook.hook_ref.value for hook in registry.hooks} == expected_refs
@@ -156,6 +157,29 @@ def test_baseline_role_prompt_hooks_are_versioned_hashed_and_auditable() -> None
         assert RolePromptHookSha256.from_text(hook.prompt_text) == hook.content_sha256
         assert hook.policy_refs
         assert hook.required_responsibilities
+
+
+def test_baseline_registry_requires_hook_by_role_kind() -> None:
+    registry = build_baseline_role_prompt_hook_registry()
+
+    hook = registry.require_by_role_kind("release_devops")
+
+    assert hook.hook_ref.value == "role-prompt-hook.baseline.release-devops.v1"
+    assert hook.role_category is RoleCategory.INTEGRATION
+
+
+def test_baseline_hooks_include_release_devops_responsibility() -> None:
+    registry = build_baseline_role_prompt_hook_registry()
+    hook = registry.require_by_role_kind("release_devops")
+
+    responsibilities = " ".join(hook.required_responsibilities).lower()
+    assert "runmanifest" in responsibilities or "run manifest" in responsibilities
+    assert "service startup" in responsibilities
+    assert "environment mapping" in responsibilities
+    assert "readiness" in responsibilities
+    assert "behavioral probe" in responsibilities
+    assert "frontend" in responsibilities and "backend" in responsibilities
+    assert "sample promotion" in responsibilities
 
 
 def test_baseline_registry_builder_is_independent_from_current_working_directory(

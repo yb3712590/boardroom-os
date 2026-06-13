@@ -61,6 +61,9 @@
 | `v2-090h-atomic-agent-executor-switch-implementation-plan.md` | V2-090H atomic-agent（原子智能体）executor switch（执行器切换）实施计划 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）实施计划 |
+| `../../docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）设计规格 |
+| `../../docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）实施计划 |
+| `../../examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` | V2-090K curated failure snapshot（精选失败快照），作为 V2-100 rework loop（返工循环）真实失败输入 |
 
 ## AI 启动入口
 

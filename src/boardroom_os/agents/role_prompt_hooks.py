@@ -113,6 +113,7 @@ _ROLE_KIND_CATEGORY: dict[str, RoleCategory] = {
     "architect": RoleCategory.ARCHITECTURE,
     "worker": RoleCategory.IMPLEMENTATION,
     "tester": RoleCategory.VERIFICATION,
+    "release_devops": RoleCategory.INTEGRATION,
     "checker": RoleCategory.AUDIT,
     "closeout": RoleCategory.AUDIT,
 }
@@ -139,6 +140,15 @@ _ROLE_REQUIRED_RESPONSIBILITY_TERMS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("negative tests first",),
         ("blackbox service probe",),
         ("live integration",),
+    ),
+    "release_devops": (
+        ("RunManifest",),
+        ("service startup",),
+        ("environment mapping",),
+        ("readiness",),
+        ("behavioral probe",),
+        ("frontend", "backend"),
+        ("sample promotion",),
     ),
     "checker": (
         ("evidence gap", "blocker"),
@@ -187,6 +197,17 @@ class RolePromptHookRegistry(BaseModel):
             if hook.hook_ref == hook_ref:
                 return hook
         raise ValueError(f"unknown role_prompt_hook_ref: {hook_ref.value}")
+
+    def require_by_role_kind(self, role_kind: str) -> RolePromptHook:
+        normalized = role_kind.strip()
+        if not normalized:
+            raise ValueError("role_kind must not be empty")
+        matches = tuple(hook for hook in self.hooks if hook.role_kind == normalized)
+        if len(matches) != 1:
+            raise ValueError(
+                f"expected exactly one role prompt hook for role_kind: {normalized}"
+            )
+        return matches[0]
 
     def contains(self, hook_ref: RolePromptHookRef) -> bool:
         return any(hook.hook_ref == hook_ref for hook in self.hooks)
@@ -286,6 +307,21 @@ _BASELINE_HOOK_SPECS = (
             "Write negative tests first.",
             "Run blackbox service probe when services are declared.",
             "Verify live integration when integration is declared.",
+        ),
+    ),
+    (
+        "release_devops",
+        "role-prompt-hook.baseline.release-devops.v1",
+        RoleCategory.INTEGRATION,
+        "release_devops.md",
+        (
+            "Declare RunManifest service commands.",
+            "Prove service startup from declared commands.",
+            "Bind environment mapping without fixed variable names.",
+            "Declare readiness probes for started services.",
+            "Maintain behavioral probe plan for live acceptance claims.",
+            "State frontend and backend topology.",
+            "Record sample promotion evidence.",
         ),
     ),
     (

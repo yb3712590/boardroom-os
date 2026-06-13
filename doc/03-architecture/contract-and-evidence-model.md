@@ -183,6 +183,36 @@ verified evidence complete + non-blocking notes -> APPROVED_WITH_NON_BLOCKING_NO
 verified evidence complete + no notes -> APPROVED
 ```
 
+## Rework 与 Evidence 的关系
+
+Rework（返工）不能由 runtime（运行时）或 atomic-agent（原子智能体）内部完成状态直接触发。返工请求必须由已验证阻塞项驱动：
+
+- FinalEvidenceTable（最终证据表）存在 missing/failed blocking row（缺失/失败阻塞行）；
+- CheckerVerdict（检查结论）存在 blocking issue（阻塞问题）；
+- CloseoutGate（收尾门禁）发现 package/evidence/audit（包/证据/审计）不满足 active contract（活跃合同）。
+
+ReworkRequest（返工请求）至少绑定：
+
+```yaml
+blocker_refs:
+acceptance_refs:
+source_surface_refs:
+required_artifact_types:
+failed_or_missing_evidence_refs:
+```
+
+CEO（项目经理/治理角色）或 Architect（架构师）生成 ReworkPlan（返工计划）时，必须把每个 ReworkTicket（返工工单）重新绑定到 active AcceptanceContract（验收合同）、PackageContract（包合同）、SourceSurface（源码面）和 EvidenceObligation（证据义务）。返工不能引入静态 acceptance refs（验收引用）、第二套 source surface mapping（源码面映射）或 dict-only（仅字典）证据链。
+
+每次 ReworkAttempt（返工尝试）产物都必须重新经过：
+
+1. EvidenceVerifier（证据验证器）；
+2. SourceInventory（源码清单）或对应 source lineage（源码来源链）校验；
+3. FinalEvidenceTableBuilder（最终证据表构建器）；
+4. Checker（检查者）；
+5. 必要时 CloseoutGate（收尾门禁）。
+
+旧的 satisfied evidence row（已满足证据行）、Checker approved verdict（检查通过结论）或 CloseoutPackage passed（通过收尾包）不得跨返工轮次复用为新轮次通过证据。
+
 ## Closeout Gate
 
 Closeout 必须检查：
@@ -198,4 +228,3 @@ Closeout 必须检查：
 9. process audit generated。
 
 Closeout 失败不应是首次发现 implementation 缺口；缺口应在 checker/rework 阶段处理。
-

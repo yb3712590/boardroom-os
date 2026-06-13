@@ -207,3 +207,25 @@ def test_role_budget_override_merges_with_runtime_defaults(tmp_path, monkeypatch
         "max_actions_per_turn": 8,
         "budget_profile_ref": "worker.implementation.default",
     }
+
+
+def test_v2_090f_roles_config_includes_release_devops_high_budget_seat(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    settings = load_boardroom_settings(
+        BoardroomConfigPaths(
+            runtime_config=Path("config/boardroom-runtime.v2-090f.yaml"),
+            providers_config=Path("config/boardroom-providers.v2-090f.yaml"),
+            roles_config=Path("config/boardroom-roles.v2-090f.yaml"),
+        ),
+        env_values={},
+    )
+
+    role = settings.role_slot_by_seat("seat.release.devops")
+
+    assert role.role_profile_ref == "role.integration.release-devops"
+    assert role.role_category == "integration"
+    assert role.provider_profile_ref == "provider.openai-compatible.v2-090f-primary"
+    assert role.budget_profile_ref == "agent_team.v2_090f.fullstack"
+    assert {"read_file", "submit_result"}.issubset(role.default_tools)
+    assert "skill.release.run-manifest" in role.skill_refs
+    assert settings.provider_by_id(role.provider_profile_ref).reasoning_effort == "high"

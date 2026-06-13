@@ -1,0 +1,307 @@
+{
+  "status": "worker_execution_succeeded",
+  "tickets": [
+    {
+      "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api",
+      "declared_command_ids": [
+        "ticket.backend.syntax"
+      ],
+      "event_stream_ref": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api.jsonl",
+      "events_hash": "sha256:4bbccb6578e4d22eb37a720bd14a698d03767323436bf6ac20c513d25fb8cba0",
+      "execution_package_ref": "exec.ticket.implementation.backend_api",
+      "provider_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api.provider_turn_000001",
+      "source_lineage_inputs": [
+        {
+          "acceptance_refs": [
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book",
+            "AC.sqlite_persistence"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/diffs/tool_attempt_000003.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/commands/tool_attempt_000004.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/commands/tool_attempt_000004.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api/results/step-0005.json"
+          ],
+          "path": "backend/server.py",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_backend_api.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.backend_api",
+          "sha256": "sha256:81b2eff66688c13416e23cfa70e2ed4488f1029ba75b2303ead7dd99145dc385",
+          "source_surface_refs": [
+            "surface.backend"
+          ],
+          "tool_attempt_id": "tool_attempt_000003"
+        }
+      ],
+      "ticket_ref": "ticket.implementation.backend_api"
+    },
+    {
+      "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui",
+      "declared_command_ids": [
+        "ticket.frontend.static_files"
+      ],
+      "event_stream_ref": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui.jsonl",
+      "events_hash": "sha256:f3671f98aa53de59e5b0fdff905101d6c0f4dd0d3034ad90a89541698144419d",
+      "execution_package_ref": "exec.ticket.implementation.frontend_ui",
+      "provider_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui.provider_turn_000001",
+      "source_lineage_inputs": [
+        {
+          "acceptance_refs": [
+            "AC.static_frontend",
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000005.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000006.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000005.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000007.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000006.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000006.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000008.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000007.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000007.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000009.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000008.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000008.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000009.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000010.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/results/step-0010.json"
+          ],
+          "path": "frontend/index.html",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.frontend_ui",
+          "sha256": "sha256:8b5f2546c5ed76048323dd740223e051baab82ae49875dc1bce1df718a4b9d19",
+          "source_surface_refs": [
+            "surface.frontend"
+          ],
+          "tool_attempt_id": "tool_attempt_000006"
+        },
+        {
+          "acceptance_refs": [
+            "AC.static_frontend",
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000005.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000006.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000005.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000007.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000006.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000006.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000008.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000007.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000007.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000009.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000008.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000008.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000009.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000010.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/results/step-0010.json"
+          ],
+          "path": "frontend/app.js",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.frontend_ui",
+          "sha256": "sha256:85fc791df1aa9da49dceee768bb8cd9b95dd92948861de119a75f6c79de9134c",
+          "source_surface_refs": [
+            "surface.frontend"
+          ],
+          "tool_attempt_id": "tool_attempt_000007"
+        },
+        {
+          "acceptance_refs": [
+            "AC.static_frontend",
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000005.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000006.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000005.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000007.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000006.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000006.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000008.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000007.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000007.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000009.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000008.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/diffs/tool_attempt_000008.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/observations/tool_attempt_000009.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/commands/tool_attempt_000009.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/provider/turn_000010.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui/results/step-0010.json"
+          ],
+          "path": "frontend/styles.css",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_frontend_ui.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.frontend_ui",
+          "sha256": "sha256:cebb8f8a77d79e0a4e942798bf20bd72903e197e04e8024e4730ae75d2f66f57",
+          "source_surface_refs": [
+            "surface.frontend"
+          ],
+          "tool_attempt_id": "tool_attempt_000008"
+        }
+      ],
+      "ticket_ref": "ticket.implementation.frontend_ui"
+    },
+    {
+      "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs",
+      "declared_command_ids": [
+        "ticket.tests.unittest"
+      ],
+      "event_stream_ref": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs.jsonl",
+      "events_hash": "sha256:7f83b43895cd9ff4fab5fdd243e008fc5441b35473ea8ad97be636c73f54ca31",
+      "execution_package_ref": "exec.ticket.implementation.tests_docs",
+      "provider_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs.provider_turn_000001",
+      "source_lineage_inputs": [
+        {
+          "acceptance_refs": [
+            "AC.tests_and_run_instructions",
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book",
+            "AC.sqlite_persistence"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000005.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000005.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000006.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000006.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000007.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000007.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/diffs/tool_attempt_000007.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000008.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000008.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/diffs/tool_attempt_000008.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000009.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/commands/tool_attempt_000009.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/commands/tool_attempt_000009.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000009.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/results/step-0009.json"
+          ],
+          "path": "tests/test_backend.py",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.tests_docs",
+          "sha256": "sha256:2e906ee3522cb0f9ef2b2a34b61b2feab1c675fac92158eb0a9aeb127d59d49b",
+          "source_surface_refs": [
+            "surface.tests",
+            "surface.docs"
+          ],
+          "tool_attempt_id": "tool_attempt_000007"
+        },
+        {
+          "acceptance_refs": [
+            "AC.tests_and_run_instructions",
+            "AC.add_book",
+            "AC.list_books",
+            "AC.checkout_book",
+            "AC.return_book",
+            "AC.delete_book",
+            "AC.sqlite_persistence"
+          ],
+          "atomic_run_id": "v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs",
+          "evidence_refs": [
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000001.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000001.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000002.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000002.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000003.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000003.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000004.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000004.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000005.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000005.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000006.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000006.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000007.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000007.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/diffs/tool_attempt_000007.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000008.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000008.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/diffs/tool_attempt_000008.diff",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/observations/tool_attempt_000009.json",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/commands/tool_attempt_000009.stdout.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/commands/tool_attempt_000009.stderr.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/provider/turn_000009.txt",
+            "artifact://v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs/results/step-0009.json"
+          ],
+          "path": "docs/run.md",
+          "producer_attempt_ref": "provider-attempt.atomic.v2-090f-run-20260613T013757Z-a2a5c20c-ticket_implementation_tests_docs.provider_turn_000001",
+          "producer_ticket_ref": "ticket.implementation.tests_docs",
+          "sha256": "sha256:b8cfd9cd76488ebbe0dee6ed64bc2b330fbe5c760854b8c4f9ad9faa902a5c7f",
+          "source_surface_refs": [
+            "surface.tests",
+            "surface.docs"
+          ],
+          "tool_attempt_id": "tool_attempt_000008"
+        }
+      ],
+      "ticket_ref": "ticket.implementation.tests_docs"
+    }
+  ]
+}

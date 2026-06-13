@@ -24,8 +24,18 @@ build/
 .audit/
 .docs/
 docs/
-!examples/generated-workspaces/tiny-fullstack/10-project/docs/
-!examples/generated-workspaces/tiny-fullstack/10-project/docs/**
+
+# Generated example workspaces are large runtime outputs. Keep only curated
+# audit fixtures that are intentionally promoted for review.
+examples/*
+!examples/generated-workspaces/
+examples/generated-workspaces/*
+!examples/generated-workspaces/tiny-fullstack/
+examples/generated-workspaces/tiny-fullstack/*
+!examples/generated-workspaces/tiny-fullstack/30-audit/
+examples/generated-workspaces/tiny-fullstack/30-audit/*
+!examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/
+!examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/**
 
 # Local files
 .env

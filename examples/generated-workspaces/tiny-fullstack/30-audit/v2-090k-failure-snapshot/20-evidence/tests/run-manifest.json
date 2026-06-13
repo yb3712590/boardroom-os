@@ -1,0 +1,288 @@
+{
+  "behavioral_probes": [
+    {
+      "acceptance_refs": [
+        {
+          "value": "acceptance.add_book"
+        },
+        {
+          "value": "acceptance.list_books"
+        }
+      ],
+      "probe_id": {
+        "value": "probe.add_and_list_book"
+      },
+      "service_command_id": {
+        "value": "cmd.run.backend"
+      },
+      "steps": [
+        {
+          "assertions": [
+            {
+              "expected": "V2-090F Generated Book",
+              "kind": "json_equals",
+              "target": "$.title"
+            },
+            {
+              "expected": "Boardroom OS",
+              "kind": "json_equals",
+              "target": "$.author"
+            },
+            {
+              "expected": false,
+              "kind": "json_equals",
+              "target": "$.checked_out"
+            }
+          ],
+          "capture": {
+            "book_id": "$.id"
+          },
+          "expect_status": 201,
+          "json_body": {
+            "author": "Boardroom OS",
+            "title": "V2-090F Generated Book"
+          },
+          "method": "POST",
+          "path": "/api/books",
+          "step_id": "step.add_book"
+        },
+        {
+          "assertions": [
+            {
+              "expected": {
+                "author": "Boardroom OS",
+                "checked_out": false,
+                "id": "${book_id}",
+                "title": "V2-090F Generated Book"
+              },
+              "kind": "json_contains",
+              "target": "$"
+            }
+          ],
+          "capture": {},
+          "expect_status": 200,
+          "json_body": null,
+          "method": "GET",
+          "path": "/api/books",
+          "step_id": "step.list_books_after_add"
+        }
+      ]
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "acceptance.checkout_book"
+        },
+        {
+          "value": "acceptance.return_book"
+        }
+      ],
+      "probe_id": {
+        "value": "probe.checkout_and_return_book"
+      },
+      "service_command_id": {
+        "value": "cmd.run.backend"
+      },
+      "steps": [
+        {
+          "assertions": [
+            {
+              "expected": false,
+              "kind": "json_equals",
+              "target": "$.checked_out"
+            }
+          ],
+          "capture": {
+            "book_id": "$.id"
+          },
+          "expect_status": 201,
+          "json_body": {
+            "author": "Boardroom OS",
+            "title": "V2-090F Checkout Target"
+          },
+          "method": "POST",
+          "path": "/api/books",
+          "step_id": "step.create_book_for_checkout"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "${book_id}",
+              "kind": "json_equals",
+              "target": "$.id"
+            },
+            {
+              "expected": true,
+              "kind": "json_equals",
+              "target": "$.checked_out"
+            }
+          ],
+          "capture": {},
+          "expect_status": 200,
+          "json_body": {},
+          "method": "POST",
+          "path": "/api/books/${book_id}/checkout",
+          "step_id": "step.checkout_book"
+        },
+        {
+          "assertions": [
+            {
+              "expected": "${book_id}",
+              "kind": "json_equals",
+              "target": "$.id"
+            },
+            {
+              "expected": false,
+              "kind": "json_equals",
+              "target": "$.checked_out"
+            }
+          ],
+          "capture": {},
+          "expect_status": 200,
+          "json_body": {},
+          "method": "POST",
+          "path": "/api/books/${book_id}/return",
+          "step_id": "step.return_book"
+        }
+      ]
+    },
+    {
+      "acceptance_refs": [
+        {
+          "value": "acceptance.delete_book"
+        }
+      ],
+      "probe_id": {
+        "value": "probe.delete_book"
+      },
+      "service_command_id": {
+        "value": "cmd.run.backend"
+      },
+      "steps": [
+        {
+          "assertions": [
+            {
+              "expected": "V2-090F Delete Target",
+              "kind": "json_equals",
+              "target": "$.title"
+            }
+          ],
+          "capture": {
+            "book_id": "$.id"
+          },
+          "expect_status": 201,
+          "json_body": {
+            "author": "Boardroom OS",
+            "title": "V2-090F Delete Target"
+          },
+          "method": "POST",
+          "path": "/api/books",
+          "step_id": "step.create_book_for_delete"
+        },
+        {
+          "assertions": [],
+          "capture": {},
+          "expect_status": 204,
+          "json_body": {},
+          "method": "DELETE",
+          "path": "/api/books/${book_id}",
+          "step_id": "step.delete_book"
+        },
+        {
+          "assertions": [
+            {
+              "expected": {
+                "id": "${book_id}"
+              },
+              "kind": "json_not_contains",
+              "target": "$"
+            }
+          ],
+          "capture": {},
+          "expect_status": 200,
+          "json_body": null,
+          "method": "GET",
+          "path": "/api/books",
+          "step_id": "step.list_books_after_delete"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": [
+        "python3",
+        "backend/server.py"
+      ],
+      "command_id": {
+        "value": "cmd.run.backend"
+      },
+      "cwd": ".",
+      "kind": "run",
+      "label": "Run standard-library Python backend service"
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests"
+      ],
+      "command_id": {
+        "value": "cmd.test.unit"
+      },
+      "cwd": ".",
+      "kind": "run",
+      "label": "Run finite backend and behavior unit tests"
+    }
+  ],
+  "frontend_topology": {
+    "api_base_binding": null,
+    "mode": "served-by-backend",
+    "service_command_id": null
+  },
+  "package_contract_ref": {
+    "value": "package_contract.v2_090f.tiny_library_checkout"
+  },
+  "package_root": {
+    "value": "10-project"
+  },
+  "run_manifest_id": {
+    "value": "run_manifest.v2_090f.tiny_library_checkout"
+  },
+  "service_contracts": [
+    {
+      "command_id": {
+        "value": "cmd.run.backend"
+      },
+      "env_bindings": [
+        {
+          "literal_value": null,
+          "name": "HOST",
+          "value_source": "runtime_host"
+        },
+        {
+          "literal_value": null,
+          "name": "PORT",
+          "value_source": "runtime_port"
+        },
+        {
+          "literal_value": null,
+          "name": "DATABASE_PATH",
+          "value_source": "temp_sqlite_path"
+        }
+      ],
+      "readiness_probe": {
+        "expect_status": 200,
+        "method": "GET",
+        "path": "/api/books"
+      },
+      "role": "backend_api_and_static_frontend"
+    }
+  ],
+  "workspace_manifest_ref": {
+    "value": "workspace_manifest.v2_090f.tiny_library_checkout"
+  }
+}

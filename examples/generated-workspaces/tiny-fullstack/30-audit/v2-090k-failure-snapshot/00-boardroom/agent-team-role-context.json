@@ -1,0 +1,163 @@
+{
+  "entries": {
+    "seat.architect.delivery": {
+      "invocation_status": "planning_provider_succeeded",
+      "model": "gpt-5.5",
+      "planning_artifact_refs": [
+        "00-boardroom/generated-contracts.json",
+        "00-boardroom/generated-ticket-graph.json"
+      ],
+      "provider_attempt_refs": [
+        "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-architect-delivery_contracts_1781314383361675",
+        "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-architect-delivery_ticket-graph_1781314482345467"
+      ],
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "architecture",
+      "role_profile_ref": "role.architecture.lead",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.architect.v1",
+      "role_prompt_hook_sha256": "8470cd475c25328747c9a0d7a9d8da9dc11f2742eb5507e1221c706ad60d6d64",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.architect.delivery",
+      "skill_refs": [
+        "skill.architecture.lead"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.ceo.delivery": {
+      "invocation_status": "planning_provider_succeeded",
+      "model": "gpt-5.5",
+      "planning_artifact_refs": [
+        "00-boardroom/generated-board-directive.json"
+      ],
+      "provider_attempt_refs": [
+        "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-ceo-delivery_board-directive_1781314268078791"
+      ],
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "governance",
+      "role_profile_ref": "role.governance.ceo",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.ceo.v1",
+      "role_prompt_hook_sha256": "ec54ba2c805a43d7f634990b7a445805aea6b4f0f0f5b9c5c0f2569df73ad0da",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.ceo.delivery",
+      "skill_refs": [
+        "skill.governance.ceo"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.checker.acceptance": {
+      "invocation_status": "pending_checker_review",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "verification",
+      "role_profile_ref": "role.verification.checker",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.checker.v1",
+      "role_prompt_hook_sha256": "7c34262966a8d174487aa5f9a5c15a113335a80a662a34ffed0ee3c2cacfc699",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.checker.acceptance",
+      "skill_refs": [
+        "skill.verification.checker"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.closeout.package": {
+      "invocation_status": "pending_closeout",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "audit",
+      "role_profile_ref": "role.audit.closeout",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.closeout.v1",
+      "role_prompt_hook_sha256": "2786dd840f55abf504321115cff44a3e97c6ff426de12b82ef6165960e3613ca",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.closeout.package",
+      "skill_refs": [
+        "skill.audit.closeout"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.release.devops": {
+      "invocation_status": "pending_real_provider_orchestration",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "integration",
+      "role_profile_ref": "role.integration.release-devops",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.release-devops.v1",
+      "role_prompt_hook_sha256": "60aaae646536f372391f0f8c55fcf81bf18de0a11f042966779d4c74d4e13874",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.release.devops",
+      "skill_refs": [
+        "skill.release.run-manifest"
+      ],
+      "tools": [
+        "read_file",
+        "submit_result"
+      ]
+    },
+    "seat.tester.integration": {
+      "invocation_status": "planning_provider_succeeded",
+      "model": "gpt-5.5",
+      "planning_artifact_refs": [
+        "00-boardroom/generated-verification-plan.json"
+      ],
+      "provider_attempt_refs": [
+        "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-tester-integration_verification-plan_1781314575359740"
+      ],
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "verification",
+      "role_profile_ref": "role.verification.tester",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.tester.v1",
+      "role_prompt_hook_sha256": "8e1798a90880a95e73ab8a723229c9875223dfe9537f7aa09d00811141edc8cc",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.tester.integration",
+      "skill_refs": [
+        "skill.verification.tester"
+      ],
+      "tools": [
+        "read_file",
+        "run_command",
+        "submit_result"
+      ]
+    },
+    "seat.worker.implementation": {
+      "invocation_status": "pending_worker_implementation",
+      "model": "gpt-5.5",
+      "provider_profile_ref": "provider.openai-compatible.v2-090f-primary",
+      "reasoning_effort": "high",
+      "role_category": "worker",
+      "role_profile_ref": "role.worker.implementation",
+      "role_prompt_hook_ref": "role-prompt-hook.baseline.worker.v1",
+      "role_prompt_hook_sha256": "a5af28e2bfd184286d5426ce02b2697fb2d1954d98f1ae523f3384b5e92cb677",
+      "role_prompt_hook_version": "v1",
+      "seat_ref": "seat.worker.implementation",
+      "skill_refs": [
+        "skill.command.test"
+      ],
+      "tools": [
+        "list_files",
+        "read_file",
+        "search_files",
+        "write_file",
+        "run_command",
+        "submit_result"
+      ]
+    }
+  },
+  "status": "planning_stage_succeeded"
+}

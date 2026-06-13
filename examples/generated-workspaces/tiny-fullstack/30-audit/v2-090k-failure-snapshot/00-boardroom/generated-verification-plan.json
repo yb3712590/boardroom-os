@@ -1,0 +1,423 @@
+{
+  "execution_package_ref": "exec.ticket.v2-090f.seat-tester-integration.verification-plan",
+  "parsed_artifact_ref": "provider-artifact.openai.parsed.exec_ticket_v2-090f_seat-tester-integration_verification-plan_1781314575359740.7ba1e2857bbf8cbdc385c65a3831cbb4e31246e588781dfd54734a5bd70369ab",
+  "provider_attempt_ref": "provider-attempt.v2-090f.planning.exec_ticket_v2-090f_seat-tester-integration_verification-plan_1781314575359740",
+  "provider_output": {
+    "acceptance_refs": [
+      {
+        "acceptance_ref": "accept.add_book",
+        "evidence_obligations": [
+          "API or UI evidence shows a create-book request with user-provided book data.",
+          "A subsequent list-books observation includes the added book.",
+          "Persistence evidence shows the behavior is backed by SQLite rather than in-memory-only state."
+        ],
+        "operation": "add_book",
+        "requirement": "A user can add a book through the application and the created book is persisted in SQLite."
+      },
+      {
+        "acceptance_ref": "accept.list_books",
+        "evidence_obligations": [
+          "API or UI evidence shows books are fetched from the backend.",
+          "The UI renders the backend-provided book list.",
+          "The list reflects books created during the verification run."
+        ],
+        "operation": "list_books",
+        "requirement": "A user can list books from the real backend."
+      },
+      {
+        "acceptance_ref": "accept.checkout_book",
+        "evidence_obligations": [
+          "A checkout request targets a real book created or discovered during the run.",
+          "The response or subsequent list shows the book as checked out or unavailable.",
+          "The UI state updates from backend data after checkout."
+        ],
+        "operation": "checkout_book",
+        "requirement": "A user can checkout an available book and see its checked-out state."
+      },
+      {
+        "acceptance_ref": "accept.return_book",
+        "evidence_obligations": [
+          "A return request targets a previously checked-out book.",
+          "The response or subsequent list shows the book as returned or available.",
+          "The UI state updates from backend data after return."
+        ],
+        "operation": "return_book",
+        "requirement": "A user can return a checked-out book and see it become available again."
+      },
+      {
+        "acceptance_ref": "accept.delete_book",
+        "evidence_obligations": [
+          "A delete request targets a book created during the verification run.",
+          "A subsequent list-books observation excludes the deleted book.",
+          "The UI no longer renders the deleted book after backend refresh or update."
+        ],
+        "operation": "delete_book",
+        "requirement": "A user can delete a book and the deleted book no longer appears in the list."
+      },
+      {
+        "acceptance_ref": "accept.sqlite_persistence",
+        "evidence_obligations": [
+          "PackageContract identifies the SQLite database location or environment binding.",
+          "Tests or probes exercise behavior across backend persistence boundaries where practical.",
+          "Source or runtime evidence shows standard SQLite usage."
+        ],
+        "operation": "persistence",
+        "requirement": "Book data is persisted in SQLite."
+      },
+      {
+        "acceptance_ref": "accept.standard_library_backend",
+        "evidence_obligations": [
+          "PackageContract declares backend runtime dependencies and startup command.",
+          "Dependency evidence does not require Flask, FastAPI, Django, or another external backend framework.",
+          "Finite verification checks confirm the backend entrypoint can be imported or syntax-checked."
+        ],
+        "operation": "backend_contract",
+        "requirement": "The backend uses Python standard-library facilities and does not require a non-standard backend framework."
+      },
+      {
+        "acceptance_ref": "accept.static_frontend",
+        "evidence_obligations": [
+          "PackageContract declares static frontend source surface and entry file.",
+          "RunManifest frontend topology identifies how the static frontend is served or opened.",
+          "Behavioral probes or tests confirm frontend-backend integration rather than mocked-only behavior."
+        ],
+        "operation": "frontend_contract",
+        "requirement": "The frontend is static and communicates with the real backend."
+      }
+    ],
+    "artifact_id": "verification-plan.v2-090f.tiny-library-checkout",
+    "artifact_requirements": {
+      "AcceptanceContract": {
+        "must_define_acceptance_refs": [
+          "accept.add_book",
+          "accept.list_books",
+          "accept.checkout_book",
+          "accept.return_book",
+          "accept.delete_book",
+          "accept.sqlite_persistence",
+          "accept.standard_library_backend",
+          "accept.static_frontend"
+        ],
+        "must_map_each_ref_to_evidence_obligations": true,
+        "must_not_replace_add_delete_with_seeded_catalog_only_flow": true
+      },
+      "ImplementationTickets": {
+        "allowed_write_set_must_be_concrete_relative_files_or_directory_prefixes": true,
+        "commands_must_be_finite": true,
+        "commands_must_not_start_services": true,
+        "commands_must_use_argv_arrays": true,
+        "must_include_fields": [
+          "node_ref",
+          "title",
+          "depends_on",
+          "acceptance_refs",
+          "source_surface_refs",
+          "evidence_obligations",
+          "allowed_write_set",
+          "required_outputs",
+          "commands"
+        ],
+        "must_use_node_type": "implementation",
+        "must_use_owner_seat_ref": "seat.worker.implementation",
+        "required_outputs_must_include_concrete_workspace_relative_service_entrypoints": true,
+        "test_discovery_commands_require_tests_write_or_output_surface": true
+      },
+      "PackageContract": {
+        "must_declare_allowed_directories": true,
+        "must_declare_backend_runtime_and_dependency_policy": true,
+        "must_declare_frontend_static_surface": true,
+        "must_declare_package_root": true,
+        "must_declare_required_files_for_service_entrypoints": true,
+        "must_declare_source_surfaces": true,
+        "must_declare_sqlite_storage_contract": true
+      },
+      "RunManifest": {
+        "behavioral_probe_http_step_fields": [
+          "method",
+          "path",
+          "json_body",
+          "expect_status",
+          "capture",
+          "assertions"
+        ],
+        "must_declare_env_bindings_readiness_probe_and_role": true,
+        "must_declare_frontend_topology": true,
+        "must_declare_package_contract_ref": true,
+        "must_declare_package_root": true,
+        "must_declare_run_manifest_id": true,
+        "must_declare_service_contracts_with_run_command_ids": true,
+        "must_declare_workspace_manifest_ref": true,
+        "must_include_backend_run_command": true,
+        "must_include_behavioral_probes_covering": [
+          "accept.add_book",
+          "accept.list_books",
+          "accept.checkout_book",
+          "accept.return_book",
+          "accept.delete_book"
+        ],
+        "must_include_finite_test_command": true
+      }
+    },
+    "artifact_type": "VerificationPlan",
+    "completion_gate": {
+      "forbidden_claims": [
+        "implementation complete",
+        "verification passed",
+        "checker approved",
+        "closeout passed",
+        "sample success",
+        "tests passed without execution evidence"
+      ],
+      "may_pass_only_if": [
+        "All required companion artifacts are generated.",
+        "Acceptance refs cover every PRD operation: add, list, checkout, return, delete.",
+        "RunManifest declares executable backend startup, readiness, finite tests, service contracts, frontend topology, and behavioral probes.",
+        "Behavioral probes use declared HTTP steps and runtime-created data for add and delete behavior.",
+        "Implementation tickets, if present, are implementation nodes with bounded verification commands and concrete write/output surfaces.",
+        "No artifact claims implementation completion, verification success, checker approval, closeout, or sample success before execution evidence exists."
+      ],
+      "status": "not_evaluated"
+    },
+    "constraints": [
+      "Do not predefine runner-owned implementation ticket refs.",
+      "Do not write implementation source.",
+      "Do not mark closeout passed.",
+      "Do not claim implementation success, verification success, checker approval, closeout, or sample success."
+    ],
+    "minimum_evidence_package": [
+      {
+        "description": "AcceptanceContract, PackageContract, RunManifest, and VerificationPlan are present and mutually reference compatible acceptance refs.",
+        "evidence_id": "evidence.contracts.present"
+      },
+      {
+        "description": "At least one finite test command from RunManifest exits and covers backend behavior or API behavior.",
+        "evidence_id": "evidence.finite.tests"
+      },
+      {
+        "description": "Backend service reaches declared readiness through RunManifest service contract.",
+        "evidence_id": "evidence.backend.readiness"
+      },
+      {
+        "description": "Behavioral probe evidence covers add, list, checkout, return, and delete using runtime-created data.",
+        "evidence_id": "evidence.behavior.add_list_checkout_return_delete"
+      },
+      {
+        "description": "Evidence identifies SQLite-backed persistence and does not rely solely on process-local memory.",
+        "evidence_id": "evidence.sqlite.persistence"
+      },
+      {
+        "description": "Evidence identifies static frontend assets that interact with the backend.",
+        "evidence_id": "evidence.static.frontend"
+      }
+    ],
+    "prd": {
+      "allowed_read_refs": [
+        "examples/directives/tiny-fullstack-prd.md",
+        "examples/directives/v2-090f-reference-examples.md"
+      ],
+      "context_refs": [
+        "context.v2-090f.prd",
+        "context.v2-090f.reference-examples"
+      ],
+      "sha256": "sha256:e37387a0f99d333bc9104ca45ea703646d0bf4e2b244ad03e98cbb46858971ca",
+      "source_of_truth": "Use the PRD as the source of truth.",
+      "title": "Tiny Library Checkout PRD"
+    },
+    "required_companion_artifacts": [
+      "AcceptanceContract",
+      "PackageContract",
+      "RunManifest",
+      "VerificationPlan"
+    ],
+    "schema_version": "boardroom-os.v2-090f",
+    "verification_scope": {
+      "application_type": "tiny library checkout web app",
+      "backend": "standard-library Python backend",
+      "frontend": "static frontend",
+      "persistence": "SQLite",
+      "required_quality_attributes": [
+        "UI updates from a real backend",
+        "tests are provided",
+        "run instructions are provided"
+      ],
+      "required_user_operations": [
+        "add_book",
+        "list_books",
+        "checkout_book",
+        "return_book",
+        "delete_book"
+      ]
+    },
+    "verification_stages": [
+      {
+        "checks": [
+          {
+            "acceptance_refs": [
+              "accept.add_book",
+              "accept.list_books",
+              "accept.checkout_book",
+              "accept.return_book",
+              "accept.delete_book"
+            ],
+            "check_id": "check.acceptance_coverage",
+            "description": "Confirm generated acceptance refs and evidence obligations cover add, list, checkout, return, and delete."
+          },
+          {
+            "acceptance_refs": [
+              "accept.add_book",
+              "accept.delete_book"
+            ],
+            "check_id": "check.no_seeded_catalog_substitution",
+            "description": "Confirm checkout and return are not the only mutable behaviors and that create-book and delete-book behavior are explicitly required."
+          },
+          {
+            "check_id": "check.run_manifest_completeness",
+            "description": "Confirm RunManifest contains backend run command, finite test command, service contracts, frontend topology, and behavioral probes."
+          },
+          {
+            "check_id": "check.package_surface_completeness",
+            "description": "Confirm PackageContract source surfaces include backend, frontend, tests, SQLite/persistence contract, and concrete service entrypoint files."
+          },
+          {
+            "check_id": "check.ticket_output_alignment",
+            "description": "Confirm implementation tickets required_outputs include all PackageContract required_files and RunManifest service entrypoint files."
+          }
+        ],
+        "label": "Contract consistency review",
+        "required_inputs": [
+          "AcceptanceContract",
+          "PackageContract",
+          "RunManifest",
+          "implementation_ticket_graph"
+        ],
+        "stage_id": "stage.contract_consistency",
+        "type": "static_artifact_review"
+      },
+      {
+        "checks": [
+          {
+            "check_id": "check.worker_commands_exit",
+            "description": "Each implementation ticket command is a finite verification command such as tests, lint, syntax check, or deterministic file check."
+          },
+          {
+            "check_id": "check.no_worker_service_startup",
+            "description": "Implementation ticket commands do not include long-running run, serve, watch, dev, or service startup commands."
+          },
+          {
+            "check_id": "check.command_argv_shape",
+            "description": "Each command uses an argv array and declares a cwd."
+          },
+          {
+            "check_id": "check.test_discovery_write_set",
+            "description": "Any ticket command that discovers tests includes tests/ in allowed_write_set or required_outputs."
+          }
+        ],
+        "label": "Finite worker verification",
+        "required_inputs": [
+          "implementation_ticket_graph"
+        ],
+        "stage_id": "stage.finite_worker_verification",
+        "type": "bounded_command_review"
+      },
+      {
+        "checks": [
+          {
+            "check_id": "check.backend_service_starts",
+            "description": "Use RunManifest backend run command and service contract readiness_probe to establish backend readiness without relying on undeclared endpoints or environment names."
+          },
+          {
+            "check_id": "check.env_bindings_declared",
+            "description": "Confirm all service environment variables, ports, database paths, and frontend backend URLs used by commands or probes are declared as env_bindings."
+          },
+          {
+            "check_id": "check.sqlite_binding_active",
+            "description": "Confirm runtime configuration points to SQLite persistence as declared by PackageContract and RunManifest."
+          }
+        ],
+        "label": "Runtime readiness verification",
+        "required_inputs": [
+          "RunManifest",
+          "PackageContract"
+        ],
+        "stage_id": "stage.runtime_readiness",
+        "type": "run_manifest_execution"
+      },
+      {
+        "checks": [
+          {
+            "acceptance_refs": [
+              "accept.add_book"
+            ],
+            "check_id": "check.probe_add_book",
+            "description": "Execute the RunManifest HTTP probe steps for creating a book and capture its identifier or unique title."
+          },
+          {
+            "acceptance_refs": [
+              "accept.list_books"
+            ],
+            "check_id": "check.probe_list_books",
+            "description": "Execute the RunManifest HTTP probe steps for listing books and assert the created book appears."
+          },
+          {
+            "acceptance_refs": [
+              "accept.checkout_book"
+            ],
+            "check_id": "check.probe_checkout_book",
+            "description": "Execute the RunManifest HTTP probe steps for checking out the captured book and assert checked-out state."
+          },
+          {
+            "acceptance_refs": [
+              "accept.return_book"
+            ],
+            "check_id": "check.probe_return_book",
+            "description": "Execute the RunManifest HTTP probe steps for returning the captured book and assert available state."
+          },
+          {
+            "acceptance_refs": [
+              "accept.delete_book"
+            ],
+            "check_id": "check.probe_delete_book",
+            "description": "Execute the RunManifest HTTP probe steps for deleting the captured book and assert it is absent from subsequent list results."
+          }
+        ],
+        "label": "Live behavior verification",
+        "required_inputs": [
+          "RunManifest"
+        ],
+        "stage_id": "stage.behavioral_probes",
+        "type": "http_behavioral_probe_execution"
+      },
+      {
+        "checks": [
+          {
+            "acceptance_refs": [
+              "accept.static_frontend"
+            ],
+            "check_id": "check.frontend_static_assets",
+            "description": "Confirm frontend topology points to static assets declared by PackageContract."
+          },
+          {
+            "acceptance_refs": [
+              "accept.add_book",
+              "accept.list_books",
+              "accept.checkout_book",
+              "accept.return_book",
+              "accept.delete_book"
+            ],
+            "check_id": "check.ui_backend_updates",
+            "description": "Confirm frontend behavior uses the real backend contract for add, list, checkout, return, and delete updates rather than hardcoded-only sample data."
+          }
+        ],
+        "label": "Frontend integration verification",
+        "required_inputs": [
+          "RunManifest",
+          "PackageContract"
+        ],
+        "stage_id": "stage.frontend_integration",
+        "type": "static_frontend_and_backend_review"
+      }
+    ]
+  },
+  "role_prompt_hook_ref": "role-prompt-hook.baseline.tester.v1",
+  "seat_ref": "seat.tester.integration"
+}

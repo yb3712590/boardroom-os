@@ -7,13 +7,14 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Mapping
 
 from boardroom_os.agents.role_prompt_hooks import (
     RolePromptHookRef,
@@ -59,6 +60,15 @@ from boardroom_os.execution.atomic_executor import AtomicExecutionRequest
 from boardroom_os.execution.atomic_executor import AtomicAgentExecutor, AtomicAgentRuntimeFactory
 from boardroom_os.providers.attempt import ProviderAttemptStatus
 from boardroom_os.providers.attempt import ProviderAttemptOutcome
+from boardroom_os.workspace.run_manifest import (
+    RunManifest,
+    RunManifestBehaviorAssertion,
+    RunManifestBehaviorAssertionKind,
+    RunManifestBehaviorProbe,
+    RunManifestCommand,
+    RunManifestEnvironmentBinding,
+    RunManifestEnvironmentValueSource,
+)
 
 
 V2_090F_MARKER = ".boardroom-v2-090f-workspace.json"
@@ -69,6 +79,7 @@ REQUIRED_AGENT_TEAM_SEATS = (
     "seat.architect.delivery",
     "seat.worker.implementation",
     "seat.tester.integration",
+    "seat.release.devops",
     "seat.checker.acceptance",
     "seat.closeout.package",
 )
@@ -78,15 +89,16 @@ V2_090F_CONFIG_PATHS = {
     "roles_config": "config/boardroom-roles.v2-090f.yaml",
 }
 V2_090F_HARD_CRUD_OPERATIONS = ("add", "list", "checkout", "return", "delete")
-V2_090F_HARD_ACCEPTANCE_REF = "AC-V2-090F-BACKEND-CRUD"
 _HOOK_REF_BY_SEAT = {
     "seat.ceo.delivery": "role-prompt-hook.baseline.ceo.v1",
     "seat.architect.delivery": "role-prompt-hook.baseline.architect.v1",
     "seat.worker.implementation": "role-prompt-hook.baseline.worker.v1",
     "seat.tester.integration": "role-prompt-hook.baseline.tester.v1",
+    "seat.release.devops": "role-prompt-hook.baseline.release-devops.v1",
     "seat.checker.acceptance": "role-prompt-hook.baseline.checker.v1",
     "seat.closeout.package": "role-prompt-hook.baseline.closeout.v1",
 }
+_CAPTURE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @dataclass(frozen=True)
@@ -320,6 +332,77 @@ def build_v2_090f_planning_execution_package(
     hook = build_baseline_role_prompt_hook_registry().require(
         RolePromptHookRef(value=_HOOK_REF_BY_SEAT[seat_ref])
     )
+    context_refs = [
+        ContextRef(value="context.v2-090f.prd"),
+        ContextRef(value="context.v2-090f.reference-examples"),
+    ]
+    allowed_read_refs = [
+        AllowedReadRef(value=prd.path),
+        AllowedReadRef(value="examples/directives/v2-090f-reference-examples.md"),
+    ]
+    constraints = [
+        "Use the PRD as the source of truth.",
+        "Do not predefine runner-owned implementation ticket refs.",
+        "Do not write implementation source.",
+        "Do not mark closeout passed.",
+    ]
+    if output_name == "run-manifest":
+        context_refs.extend(
+            [
+                ContextRef(value="00-boardroom/generated-contracts.json"),
+                ContextRef(value="00-boardroom/generated-ticket-graph.json"),
+                ContextRef(value="00-boardroom/generated-verification-plan.json"),
+            ]
+        )
+        allowed_read_refs.extend(
+            [
+                AllowedReadRef(value="00-boardroom/generated-contracts.json"),
+                AllowedReadRef(value="00-boardroom/generated-ticket-graph.json"),
+                AllowedReadRef(value="00-boardroom/generated-verification-plan.json"),
+            ]
+        )
+        constraints.extend(
+            [
+                (
+                    "RunManifest must be consistent with generated contracts, "
+                    "ticket graph, verification plan, package source surfaces, "
+                    "and implementation ticket required_outputs."
+                ),
+                (
+                    "Every service command must reference an entrypoint that can "
+                    "be produced by package_contract source surfaces or ticket "
+                    "graph required_outputs; do not invent package/module names "
+                    "that are absent from those artifacts."
+                ),
+                (
+                    "Directory-only required_outputs are not enough for service "
+                    "entrypoints; any service script or python -m module expected "
+                    "by RunManifest must appear as a concrete implementation "
+                    "required_outputs file."
+                ),
+                (
+                    "If required_outputs declare a concrete script path, prefer "
+                    "an argv entrypoint for that script over a guessed python -m "
+                    "module path."
+                ),
+            ]
+        )
+    if output_name == "ticket-graph":
+        constraints.extend(
+            [
+                (
+                    "Implementation ticket required_outputs must use full "
+                    "workspace-relative paths for every concrete file; bare "
+                    "filenames are not enough when a package source surface "
+                    "declares an allowed directory."
+                ),
+                (
+                    "If PackageContract source surfaces declare required_files "
+                    "under an allowed directory, include the joined path in the "
+                    "owning implementation ticket required_outputs."
+                ),
+            ]
+        )
     return ExecutionPackage(
         execution_package_id=ExecutionPackageId(
             value=f"exec.ticket.v2-090f.{_safe_token(seat_ref)}.{output_name}"
@@ -344,22 +427,11 @@ def build_v2_090f_planning_execution_package(
             "checker approval, closeout, or sample success. "
             f"PRD sha256: {prd.sha256}. PRD text: {prd.text}"
         ),
-        context_refs=(
-            ContextRef(value="context.v2-090f.prd"),
-            ContextRef(value="context.v2-090f.reference-examples"),
-        ),
-        constraints=(
-            "Use the PRD as the source of truth.",
-            "Do not predefine runner-owned implementation ticket refs.",
-            "Do not write implementation source.",
-            "Do not mark closeout passed.",
-        ),
+        context_refs=tuple(context_refs),
+        constraints=tuple(constraints),
         acceptance_refs=(AcceptanceRef(value="AC-V2-090F-PLANNING"),),
         source_surface_refs=(SourceSurfaceRef(value="surface.v2-090f.boardroom-planning"),),
-        allowed_read_refs=(
-            AllowedReadRef(value=prd.path),
-            AllowedReadRef(value="examples/directives/v2-090f-reference-examples.md"),
-        ),
+        allowed_read_refs=tuple(allowed_read_refs),
         allowed_write_set=(AllowedWritePath(value="00-boardroom/"),),
         required_outputs=(RequiredOutput(value=f"00-boardroom/generated-{output_name}.json"),),
         commands=(
@@ -481,8 +553,58 @@ def validate_v2_090f_generated_ticket_graph_for_worker_execution(
         _validate_bounded_worker_commands(_node_commands(node))
         _validate_command_test_surface_is_writable(node)
     _validate_v2_090f_hard_crud_acceptance(implementation_nodes)
-    _validate_v2_090f_hard_backend_entrypoint(implementation_nodes)
     return implementation_nodes
+
+
+def validate_v2_090k_run_manifest_planning_consistency(
+    *,
+    run_manifest: RunManifest,
+    ticket_graph_artifact: dict[str, Any],
+) -> None:
+    implementation_nodes = validate_v2_090f_generated_ticket_graph_for_worker_execution(
+        ticket_graph_artifact
+    )
+    declared_outputs = {
+        _normalize_v2_090k_relative_path(value)
+        for node in implementation_nodes
+        for value in _string_list(node, "required_outputs")
+        if not value.endswith("/")
+    }
+    if not declared_outputs:
+        raise ValueError("implementation required_outputs must declare concrete files")
+
+    for service in run_manifest.service_contracts or ():
+        command = _run_manifest_command(run_manifest, service.command_id.value)
+        entrypoint = _v2_090k_service_command_entrypoint(command.command)
+        if entrypoint is None:
+            continue
+        if entrypoint not in declared_outputs:
+            raise ValueError(
+                "RunManifest service entrypoint is not declared by implementation "
+                f"required_outputs: {entrypoint}"
+            )
+
+
+def _normalize_v2_090k_relative_path(value: str) -> str:
+    path = str(value).strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    if path.startswith("10-project/"):
+        path = path.removeprefix("10-project/")
+    return path
+
+
+def _v2_090k_service_command_entrypoint(command: tuple[str, ...]) -> str | None:
+    argv = [part for part in command if isinstance(part, str)]
+    for index, part in enumerate(argv):
+        normalized = _normalize_v2_090k_relative_path(part)
+        if normalized.endswith(".py"):
+            return normalized
+        if part == "-m" and index + 1 < len(argv):
+            module = argv[index + 1].strip()
+            if module and not module.startswith("-"):
+                return _normalize_v2_090k_relative_path(module.replace(".", "/") + ".py")
+    return None
 
 
 def build_v2_090f_worker_execution_packages(
@@ -553,11 +675,18 @@ def build_v2_090f_worker_execution_packages(
                     ContextRef(value="00-boardroom/generated-contracts.json"),
                     ContextRef(value="00-boardroom/generated-ticket-graph.json"),
                     ContextRef(value="00-boardroom/generated-verification-plan.json"),
+                    ContextRef(value="20-evidence/tests/run-manifest.json"),
                 ),
                 constraints=(
                     "Implement only this generated worker ticket.",
                     "Do not claim checker approval, closeout, or project completion.",
                     "Produce real source changes and run declared commands.",
+                    (
+                        "Generated source must satisfy the agent-generated RunManifest "
+                        "at 20-evidence/tests/run-manifest.json, including service "
+                        "command, environment bindings, readiness path, and behavioral "
+                        "probe HTTP paths."
+                    ),
                     (
                         "Return exactly one JSON action object per provider turn. "
                         "Do not append additional JSON objects after that action. "
@@ -629,6 +758,7 @@ def build_v2_090f_worker_execution_packages(
                     AllowedReadRef(value="00-boardroom/generated-contracts.json"),
                     AllowedReadRef(value="00-boardroom/generated-ticket-graph.json"),
                     AllowedReadRef(value="00-boardroom/generated-verification-plan.json"),
+                    AllowedReadRef(value="20-evidence/tests/run-manifest.json"),
                 ),
                 allowed_write_set=tuple(
                     AllowedWritePath(value=value)
@@ -667,6 +797,7 @@ class V2_090FPlanningProviderAdapter:
         self._provider_options = settings.openai_compatible_options(role_slot.provider_profile_ref)
         self._atomic_provider_factory = atomic_provider_factory
         self._client = client
+        self._owns_client = False
         self._artifact_store = FileProviderOutputStore(
             root=output_root / "20-evidence/provider-artifacts"
         )
@@ -730,6 +861,8 @@ class V2_090FPlanningProviderAdapter:
                 finished_at=datetime.now(UTC),
                 failure_kind=f"provider_error.{type(exc).__name__}",
             )
+        finally:
+            self._close_client()
 
     def read_provider_artifact(self, artifact_ref: str) -> str:
         from boardroom_os.providers.attempt import ProviderArtifactRef
@@ -777,7 +910,16 @@ class V2_090FPlanningProviderAdapter:
             base_url=self._provider_config.base_url,
             max_retries=0,
         )
+        self._owns_client = True
         return self._client
+
+    def _close_client(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
+        if self._owns_client:
+            self._client = None
+            self._owns_client = False
 
     @staticmethod
     def _response_text(response: Any) -> str:
@@ -823,6 +965,7 @@ def run_v2_090f_provider_planning_stage(
         ("seat.architect.delivery", "contracts"),
         ("seat.architect.delivery", "ticket-graph"),
         ("seat.tester.integration", "verification-plan"),
+        ("seat.release.devops", "run-manifest"),
     )
     artifacts: dict[str, dict[str, Any]] = {}
     for seat_ref, output_name in planning_steps:
@@ -841,6 +984,25 @@ def run_v2_090f_provider_planning_stage(
             provider_adapter=provider_adapter,
             output_path=boardroom_root / f"generated-{output_name}.json",
         )
+    run_manifest_artifact = extract_v2_090f_planning_artifact(
+        artifacts["run-manifest"].get("provider_output"),
+        expected_artifact_name="run-manifest",
+    )
+    run_manifest = _load_v2_090k_run_manifest_artifact(run_manifest_artifact)
+    ticket_graph_artifact = extract_v2_090f_planning_artifact(
+        artifacts["ticket-graph"].get("provider_output"),
+        expected_artifact_name="ticket-graph",
+    )
+    validate_v2_090k_run_manifest_planning_consistency(
+        run_manifest=run_manifest,
+        ticket_graph_artifact=ticket_graph_artifact,
+    )
+    run_manifest_path = output_root / "20-evidence/tests/run-manifest.json"
+    run_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    run_manifest_path.write_text(
+        json.dumps(run_manifest.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     _mark_planning_role_context_succeeded(
         role_context_path=role_context_path,
@@ -979,8 +1141,10 @@ def run_v2_090f_closeout_stage(
     _reject_v2_090f_forbidden_runtime_files(project_root)
     if not run_live_probe:
         raise ValueError("live blackbox evidence is required before closeout")
+    run_manifest = _load_v2_090k_agent_run_manifest(output_root)
     service_evidence, live_blackbox_evidence = _run_v2_090f_live_blackbox_probe(
         project_root=project_root,
+        run_manifest=run_manifest,
     )
     _clean_v2_090f_runtime_files(project_root)
     _reject_v2_090f_forbidden_runtime_files(project_root)
@@ -1023,7 +1187,8 @@ def run_v2_090f_closeout_stage(
     _write_json(evidence_root / "tests/live-blackbox.json", live_blackbox_evidence)
     _write_json(
         evidence_root / "tests/run-manifest.json",
-        _build_v2_090f_run_manifest_payload(project_root=project_root),
+        run_manifest.model_dump(mode="json")
+        | {"project_tree_hash": _project_tree_hash_ref(project_root)},
     )
     _write_json(evidence_root / "closeout/final-evidence-table.json", final_evidence_table)
     _write_json(evidence_root / "closeout/closeout-gate-result.json", closeout_gate_result)
@@ -1090,6 +1255,712 @@ def _worker_provider_attempt_refs(tickets: list[Any]) -> tuple[str, ...]:
     if len(set(refs)) != len(refs):
         raise ValueError("provider attempt refs must be unique for closeout")
     return tuple(refs)
+
+
+def _load_v2_090k_agent_run_manifest(output_root: Path) -> RunManifest:
+    path = output_root / "20-evidence/tests/run-manifest.json"
+    if not path.is_file():
+        raise ValueError("agent-generated RunManifest is required before V2-090F closeout")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    run_manifest = RunManifest.model_validate(payload)
+    if not run_manifest.service_contracts:
+        raise ValueError("RunManifest service contracts are required before V2-090F closeout")
+    if not run_manifest.behavioral_probes:
+        raise ValueError("RunManifest behavioral probes are required before V2-090F closeout")
+    return run_manifest
+
+
+def _load_v2_090k_run_manifest_artifact(artifact: Mapping[str, Any]) -> RunManifest:
+    try:
+        return RunManifest.model_validate(artifact)
+    except Exception:
+        normalized = _normalize_v2_090k_run_manifest_artifact(artifact)
+        return RunManifest.model_validate(normalized)
+
+
+def _ref_payload(value: Any) -> dict[str, str]:
+    if isinstance(value, dict) and isinstance(value.get("value"), str):
+        return {"value": value["value"]}
+    if isinstance(value, str) and value.strip():
+        return {"value": value.strip()}
+    raise ValueError("reference value is required")
+
+
+def _normalize_v2_090k_run_manifest_artifact(artifact: Mapping[str, Any]) -> dict[str, Any]:
+    commands = artifact.get("commands")
+    if not isinstance(commands, list) or not commands:
+        raise ValueError("RunManifest commands are required")
+    command_env_by_id: dict[str, Mapping[str, Any]] = {}
+    service_contracts = artifact.get("service_contracts")
+    if not isinstance(service_contracts, list) or not service_contracts:
+        raise ValueError("RunManifest service_contracts are required")
+    behavioral_probes = artifact.get("behavioral_probes")
+    if not isinstance(behavioral_probes, list) or not behavioral_probes:
+        raise ValueError("RunManifest behavioral_probes are required")
+
+    normalized_commands = []
+    for command in commands:
+        if not isinstance(command, Mapping):
+            raise ValueError("RunManifest command must be an object")
+        kind = command.get("kind") or command.get("command_type")
+        if kind in {"service", "service_run", "run_service", "long_running_service"}:
+            kind = "run"
+        if kind in {"finite_test", "finite_verification", "verification_test", "verification"}:
+            kind = "test"
+        if kind is None:
+            command_id_for_kind = str(command.get("command_id") or "").lower()
+            label_for_kind = str(command.get("label") or "").lower()
+            lifecycle_for_kind = str(command.get("expected_lifecycle") or "").lower()
+            if (
+                "run" in command_id_for_kind
+                or "backend" in command_id_for_kind
+                or "server" in command_id_for_kind
+                or "run" in label_for_kind
+                or "backend" in label_for_kind
+                or "server" in label_for_kind
+                or "service" in lifecycle_for_kind
+            ):
+                kind = "run"
+            elif (
+                "test" in command_id_for_kind
+                or "tests" in command_id_for_kind
+                or "check" in command_id_for_kind
+                or "test" in label_for_kind
+                or "check" in label_for_kind
+            ):
+                kind = "test"
+        command_id_value = command.get("command_id")
+        if isinstance(command_id_value, str) and isinstance(command.get("env"), Mapping):
+            command_env_by_id[command_id_value] = command["env"]
+        normalized_commands.append(
+            {
+                "command_id": _ref_payload(command_id_value),
+                "kind": kind,
+                "label": command.get("label") or command.get("command_id"),
+                "command": command.get("command"),
+                "cwd": command.get("cwd") or ".",
+            }
+        )
+
+    service_ref_to_command_id: dict[str, str] = {}
+    normalized_services = []
+    for service in service_contracts:
+        if not isinstance(service, Mapping):
+            raise ValueError("RunManifest service_contract must be an object")
+        command_id = service.get("command_id") or service.get("run_command_id")
+        service_ref = service.get("service_ref") or service.get("service_contract_id")
+        if isinstance(service_ref, str) and isinstance(command_id, str):
+            service_ref_to_command_id[service_ref] = command_id
+        for alias_key in ("service_ref", "service_contract_id", "service_id"):
+            alias = service.get(alias_key)
+            if isinstance(alias, str) and isinstance(command_id, str):
+                service_ref_to_command_id[alias] = command_id
+        normalized_services.append(
+            {
+                "command_id": _ref_payload(command_id),
+                "role": service.get("role") or "service",
+                "env_bindings": _normalize_v2_090k_env_bindings(
+                    service.get("env_bindings"),
+                    command_env=command_env_by_id.get(str(command_id), {}),
+                ),
+                "readiness_probe": _normalize_v2_090k_readiness_probe(service.get("readiness_probe")),
+            }
+        )
+
+    return {
+        "run_manifest_id": _ref_payload(artifact.get("run_manifest_id")),
+        "workspace_manifest_ref": _ref_payload(artifact.get("workspace_manifest_ref")),
+        "package_contract_ref": _ref_payload(artifact.get("package_contract_ref")),
+        "package_root": _ref_payload("10-project"),
+        "commands": normalized_commands,
+        "service_contracts": normalized_services,
+        "frontend_topology": _normalize_v2_090k_frontend_topology(artifact.get("frontend_topology"), service_ref_to_command_id),
+        "behavioral_probes": [
+            _normalize_v2_090k_behavior_probe(probe, service_ref_to_command_id)
+            for probe in behavioral_probes
+            if isinstance(probe, Mapping)
+        ],
+    }
+
+
+def _normalize_v2_090k_env_bindings(
+    payload: Any,
+    *,
+    command_env: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    command_env = command_env or {}
+    if isinstance(payload, list):
+        bindings = []
+        for item in payload:
+            if not isinstance(item, Mapping):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("RunManifest env binding name is required")
+            bindings.append(_normalize_v2_090k_env_binding(name, item, command_env=command_env))
+        if not bindings:
+            raise ValueError("RunManifest env_bindings are required")
+        return bindings
+    if not isinstance(payload, Mapping) or not payload:
+        raise ValueError("RunManifest env_bindings are required")
+    bindings: list[dict[str, Any]] = []
+    for name, binding in payload.items():
+        if isinstance(binding, str):
+            if re.fullmatch(r"[A-Z][A-Z0-9_]*", binding):
+                env_name = binding
+                binding = {"env_var": binding}
+            else:
+                env_name = name
+                binding = {"default": binding}
+        elif isinstance(binding, Mapping):
+            env_name = binding.get("env_var") if isinstance(binding.get("env_var"), str) else name
+        else:
+            env_name = name
+            binding = {}
+        bindings.append(_normalize_v2_090k_env_binding(str(env_name), binding, command_env=command_env))
+    return bindings
+
+
+def _normalize_v2_090k_env_binding(
+    name: str,
+    binding: Mapping[str, Any],
+    *,
+    command_env: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_name = name.strip()
+    source = _infer_v2_090k_env_value_source(normalized_name)
+    if "value_source" in binding and isinstance(binding.get("value_source"), str):
+        source = str(binding["value_source"])
+    elif "binding_type" in binding and isinstance(binding.get("binding_type"), str):
+        source = _normalize_v2_090k_env_binding_type(str(binding["binding_type"]))
+    normalized: dict[str, Any] = {"name": normalized_name, "value_source": source}
+    if source == "literal":
+        command_env = command_env or {}
+        literal_value = binding.get("literal_value", binding.get("default", binding.get("value")))
+        if literal_value is None and normalized_name in command_env:
+            literal_value = command_env[normalized_name]
+        if literal_value is None:
+            raise ValueError(f"literal env binding requires literal value: {normalized_name}")
+        normalized["literal_value"] = str(literal_value)
+    return normalized
+
+
+def _normalize_v2_090k_env_binding_type(binding_type: str) -> str:
+    normalized = binding_type.strip().lower().replace("-", "_")
+    if normalized in {"runtime_host", "runner_host", "runner_allocated_host"}:
+        return "runtime_host"
+    if normalized in {
+        "runtime_port",
+        "runner_port",
+        "runner_allocated_port",
+        "runner_allocated_tcp_port",
+        "tcp_port",
+    }:
+        return "runtime_port"
+    if normalized in {
+        "temp_sqlite_path",
+        "runner_temp_sqlite_path",
+        "runner_temp_file",
+        "temp_file",
+        "temporary_file",
+    }:
+        return "temp_sqlite_path"
+    if normalized == "literal":
+        return "literal"
+    raise ValueError(f"unsupported RunManifest env binding_type: {binding_type}")
+
+
+def _infer_v2_090k_env_value_source(name: str) -> str:
+    tokens = set(name.upper().split("_"))
+    upper = name.upper()
+    if "HOST" in tokens or upper.endswith("HOST"):
+        return "runtime_host"
+    if "PORT" in tokens or upper.endswith("PORT"):
+        return "runtime_port"
+    if (
+        (
+            "DB" in tokens
+            or "DATABASE" in tokens
+            or "SQLITE" in tokens
+            or upper in {"DATABASE_URL", "DB_URL", "SQLITE_URL"}
+        )
+        and (
+            "PATH" in tokens
+            or "FILE" in tokens
+            or "URL" in tokens
+            or upper.endswith("PATH")
+            or upper.endswith("URL")
+        )
+    ):
+        return "temp_sqlite_path"
+    return "literal"
+
+
+def _normalize_v2_090k_readiness_probe(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("RunManifest readiness_probe is required")
+    return {
+        "method": payload.get("method") or "GET",
+        "path": payload.get("path"),
+        "expect_status": payload.get("expect_status"),
+    }
+
+
+def _normalize_v2_090k_frontend_topology(payload: Any, service_ref_to_command_id: Mapping[str, str]) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, Mapping):
+        raise ValueError("RunManifest frontend_topology must be an object")
+    if "mode" in payload:
+        return dict(payload)
+    kind = str(payload.get("kind") or payload.get("type") or payload.get("frontend_kind") or "").lower()
+    served_by = (
+        payload.get("served_by_service_ref")
+        or payload.get("served_by_service_contract_ref")
+        or payload.get("served_by_service_contract_id")
+        or payload.get("service_ref")
+    )
+    command_id = service_ref_to_command_id.get(str(served_by)) if served_by is not None else None
+    if kind in {"static", "static_frontend_served_by_backend"} and command_id:
+        return {"mode": "served-by-backend"}
+    return {"mode": "served-by-backend"}
+
+
+def _normalize_v2_090k_behavior_probe(probe: Mapping[str, Any], service_ref_to_command_id: Mapping[str, str]) -> dict[str, Any]:
+    command_id = probe.get("service_command_id")
+    if command_id is None:
+        service_ref = probe.get("service_ref") or probe.get("service_contract_id") or probe.get("service_contract_ref")
+        command_id = service_ref_to_command_id.get(str(service_ref))
+    if command_id is None and len(service_ref_to_command_id) == 1:
+        command_id = next(iter(service_ref_to_command_id.values()))
+    steps = probe.get("steps", probe.get("http_steps"))
+    if not isinstance(steps, list) or not steps:
+        raise ValueError("RunManifest behavioral probe steps are required")
+    return {
+        "probe_id": _ref_payload(probe.get("probe_id")),
+        "service_command_id": _ref_payload(command_id),
+        "acceptance_refs": [_ref_payload(ref) for ref in probe.get("acceptance_refs", ())],
+        "steps": [_normalize_v2_090k_behavior_step(step) for step in steps if isinstance(step, Mapping)],
+    }
+
+
+def _normalize_v2_090k_behavior_step(step: Mapping[str, Any]) -> dict[str, Any]:
+    assertions = []
+    for item in step.get("assertions", ()):
+        assertion = _normalize_v2_090k_behavior_assertion(
+            item,
+            expect_status=step.get("expect_status"),
+        )
+        if assertion is not None:
+            assertions.append(assertion)
+    return {
+        "step_id": str(step.get("step_id")),
+        "method": step.get("method"),
+        "path": _normalize_v2_090k_capture_refs(step.get("path")),
+        "json_body": _normalize_v2_090k_capture_refs(step.get("json_body")),
+        "expect_status": step.get("expect_status"),
+        "capture": _normalize_v2_090k_capture_refs(step.get("capture") or {}),
+        "assertions": assertions,
+    }
+
+
+def _normalize_v2_090k_capture_refs(value: Any) -> Any:
+    if isinstance(value, str):
+        normalized = re.sub(r"\$captures\.([A-Za-z_][A-Za-z0-9_]*)", r"${\1}", value)
+        normalized = re.sub(r"\$capture\.([A-Za-z_][A-Za-z0-9_]*)", r"${\1}", normalized)
+        normalized = re.sub(r"\$\{capture\.([A-Za-z_][A-Za-z0-9_]*)\}", r"${\1}", normalized)
+        normalized = re.sub(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}", r"${\1}", normalized)
+        return re.sub(r"^\{([A-Za-z_][A-Za-z0-9_]*)\}$", r"${\1}", normalized)
+    if isinstance(value, list):
+        return [_normalize_v2_090k_capture_refs(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _normalize_v2_090k_capture_refs(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _normalize_v2_090k_behavior_assertion(
+    assertion: Any,
+    *,
+    expect_status: Any = None,
+) -> dict[str, Any] | None:
+    if not isinstance(assertion, Mapping):
+        return None
+    kind = assertion.get("kind") or assertion.get("type") or assertion.get("operator")
+    target = _normalize_v2_090k_capture_refs(
+        assertion.get("target")
+        or assertion.get("path")
+        or assertion.get("actual")
+        or assertion.get("field")
+        or "$"
+    )
+    if isinstance(target, str) and target and not target.startswith(("$", "/")):
+        target = f"$.{target}"
+    expected = _normalize_v2_090k_capture_refs(assertion.get("expected", assertion.get("value")))
+    expected_from_capture = assertion.get("expected_from_capture")
+    if isinstance(expected_from_capture, str) and expected_from_capture.strip():
+        expected = f"${{{expected_from_capture.strip()}}}"
+    if kind in {"equals", "json_equals", "json_field_equals"} and target is not None:
+        return {"kind": "json_equals", "target": target, "expected": expected}
+    if kind in {"json_array_contains_field_value", "array_contains_field_value"} and target is not None:
+        field = assertion.get("field")
+        if not isinstance(field, str) or not field.strip():
+            raise ValueError(f"{kind} assertion requires field")
+        return {"kind": "json_contains", "target": target, "expected": {field.strip(): expected}}
+    if kind in {
+        "array_contains_object",
+        "array_contains",
+        "json_array_contains",
+        "json_array_contains_object",
+        "json_contains",
+        "contains",
+    } and target is not None:
+        expected_value = _normalize_v2_090k_capture_refs(_v2_090k_assertion_match_value(assertion, expected))
+        return {"kind": "json_contains", "target": target, "expected": expected_value}
+    if kind in {"json_array_not_contains_field_value", "array_not_contains_field_value"} and target is not None:
+        field = assertion.get("field")
+        if not isinstance(field, str) or not field.strip():
+            raise ValueError(f"{kind} assertion requires field")
+        return {"kind": "json_not_contains", "target": target, "expected": {field.strip(): expected}}
+    if kind in {
+        "array_not_contains_object",
+        "array_not_contains",
+        "json_array_not_contains",
+        "json_array_not_contains_object",
+        "json_array_excludes",
+        "json_array_excludes_object",
+        "json_not_contains",
+        "not_contains",
+    } and target is not None:
+        expected_value = _normalize_v2_090k_capture_refs(_v2_090k_assertion_match_value(assertion, expected))
+        return {"kind": "json_not_contains", "target": target, "expected": expected_value}
+    if kind in {"field_equals"} and target is not None:
+        return {"kind": "field_equals", "target": target, "expected": expected}
+    if kind in {"exists", "field_present", "json_field_present", "json_field_exists", "json_present", "json_path_exists"} and target is not None:
+        return {"kind": "field_present", "target": target}
+    if kind in {"field_absent"} and target is not None:
+        return {"kind": "field_absent", "target": target}
+    if kind in {"empty_body", "empty_response_body", "response_body_empty"}:
+        return {"kind": "empty_body", "target": "$"}
+    if kind in {"body_contains", "response_body_contains", "response_text_contains"}:
+        return {"kind": "body_contains", "target": "$", "expected": expected}
+    if kind in {"body_contains_any", "response_body_contains_any"}:
+        expected_any = assertion.get("expected_any", assertion.get("values", expected))
+        return {
+            "kind": "body_contains_any",
+            "target": "$",
+            "expected": _normalize_v2_090k_capture_refs(expected_any),
+        }
+    if kind in {"json_type", "json_field_type"} and target is not None:
+        return {"kind": "json_type", "target": target, "expected": expected}
+    if kind in {"is_array", "json_is_array"} and target is not None:
+        return {"kind": "json_type", "target": target, "expected": "array"}
+    if kind == "status_equals":
+        actual_status = assertion.get("expected", assertion.get("value", assertion.get("status", assertion.get("expect_status"))))
+        if actual_status is None:
+            raise ValueError("status_equals assertion requires expected status")
+        try:
+            normalized_actual = int(actual_status)
+            normalized_expected = int(expect_status)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("status_equals assertion requires numeric status") from exc
+        if normalized_actual != normalized_expected:
+            raise ValueError(
+                f"status_equals assertion {normalized_actual} does not match step expect_status {normalized_expected}"
+            )
+        return None
+    raise ValueError(f"unsupported RunManifest behavior assertion type: {kind}")
+
+
+def _v2_090k_assertion_match_value(assertion: Mapping[str, Any], expected: Any) -> Any:
+    if "where" in assertion:
+        return assertion["where"]
+    if "match" in assertion:
+        return assertion["match"]
+    return expected
+
+
+def resolve_v2_090k_service_environment(
+    *,
+    bindings: tuple[RunManifestEnvironmentBinding, ...],
+    host: str,
+    port: int,
+    temp_sqlite_path: Path,
+) -> dict[str, str]:
+    dynamic_values = {
+        RunManifestEnvironmentValueSource.RUNTIME_HOST: host,
+        RunManifestEnvironmentValueSource.RUNTIME_PORT: str(port),
+        RunManifestEnvironmentValueSource.TEMP_SQLITE_PATH: str(temp_sqlite_path),
+    }
+    resolved: dict[str, str] = {}
+    for binding in bindings:
+        if binding.value_source is RunManifestEnvironmentValueSource.LITERAL:
+            if binding.literal_value is None:
+                raise ValueError("literal env binding requires literal_value")
+            resolved[binding.name] = binding.literal_value
+            continue
+        resolved[binding.name] = dynamic_values[binding.value_source]
+    return resolved
+
+
+def extract_v2_090k_json_path(payload: Any, path: str) -> Any:
+    if path == "$":
+        return payload
+    if not path.startswith("$."):
+        raise ValueError(f"unsupported JSON path: {path}")
+    current: Any = payload
+    for token in path[2:].split("."):
+        if token.endswith("[*]"):
+            key = token[:-3]
+            if not isinstance(current, dict) or key not in current or not isinstance(current[key], list):
+                raise ValueError(f"JSON path not found: {path}")
+            current = current[key]
+            continue
+        if "[*]" in token:
+            key, child = token.split("[*]", 1)
+            child = child.lstrip(".")
+            if not isinstance(current, dict) or key not in current or not isinstance(current[key], list):
+                raise ValueError(f"JSON path not found: {path}")
+            if child:
+                values = []
+                for item in current[key]:
+                    if not isinstance(item, dict) or child not in item:
+                        raise ValueError(f"JSON path not found: {path}")
+                    values.append(item[child])
+                current = values
+            else:
+                current = current[key]
+            continue
+        if isinstance(current, list):
+            values = []
+            for item in current:
+                if not isinstance(item, dict) or token not in item:
+                    raise ValueError(f"JSON path not found: {path}")
+                values.append(item[token])
+            current = values
+            continue
+        if not isinstance(current, dict) or token not in current:
+            raise ValueError(f"JSON path not found: {path}")
+        current = current[token]
+    return current
+
+
+def interpolate_v2_090k_value(value: Any, captures: Mapping[str, Any]) -> Any:
+    if isinstance(value, str):
+        exact = _CAPTURE_PATTERN.fullmatch(value)
+        if exact:
+            key = exact.group(1)
+            if key not in captures:
+                raise ValueError(f"capture {key} is required")
+            return captures[key]
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key not in captures:
+                raise ValueError(f"capture {key} is required")
+            return str(captures[key])
+
+        return _CAPTURE_PATTERN.sub(replace, value)
+    if isinstance(value, list):
+        return [interpolate_v2_090k_value(item, captures) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: interpolate_v2_090k_value(item, captures)
+            for key, item in value.items()
+        }
+    return value
+
+
+def evaluate_v2_090k_behavior_assertion(
+    *,
+    payload: Any,
+    assertion: RunManifestBehaviorAssertion,
+    captures: Mapping[str, Any],
+    body_text: str | None = None,
+) -> None:
+    expected = interpolate_v2_090k_value(assertion.expected, captures)
+    if assertion.kind is RunManifestBehaviorAssertionKind.BODY_CONTAINS:
+        if not isinstance(expected, str):
+            raise ValueError("body_contains assertion requires string expected")
+        if body_text is not None and expected in body_text:
+            return
+        if isinstance(payload, str) and expected in payload:
+            return
+        raise ValueError(f"assertion failed: response body does not contain {expected!r}")
+
+    if assertion.kind is RunManifestBehaviorAssertionKind.BODY_CONTAINS_ANY:
+        if not isinstance(expected, list) or not all(isinstance(item, str) for item in expected):
+            raise ValueError("body_contains_any assertion requires string list expected")
+        actual_body = body_text if body_text is not None else payload
+        if isinstance(actual_body, str) and any(item in actual_body for item in expected):
+            return
+        raise ValueError(f"assertion failed: response body does not contain any of {expected!r}")
+
+    if assertion.kind is RunManifestBehaviorAssertionKind.EMPTY_BODY:
+        if payload is None:
+            return
+        raise ValueError("assertion failed: response body must be empty")
+
+    if assertion.kind is RunManifestBehaviorAssertionKind.FIELD_ABSENT:
+        try:
+            extract_v2_090k_json_path(payload, assertion.target)
+        except ValueError:
+            return
+        raise ValueError(f"assertion failed: field must be absent at {assertion.target}")
+
+    if assertion.kind is RunManifestBehaviorAssertionKind.FIELD_PRESENT:
+        extract_v2_090k_json_path(payload, assertion.target)
+        return
+
+    actual = extract_v2_090k_json_path(payload, assertion.target)
+    if assertion.kind is RunManifestBehaviorAssertionKind.JSON_TYPE:
+        if _v2_090k_json_type_matches(actual, expected):
+            return
+        raise ValueError(
+            f"assertion failed: {assertion.target} expected JSON type {expected!r} got {type(actual).__name__}"
+        )
+    if assertion.kind in {
+        RunManifestBehaviorAssertionKind.JSON_EQUALS,
+        RunManifestBehaviorAssertionKind.FIELD_EQUALS,
+    }:
+        if actual != expected:
+            raise ValueError(
+                f"assertion failed: {assertion.target} expected {expected!r} got {actual!r}"
+            )
+        return
+    if assertion.kind is RunManifestBehaviorAssertionKind.JSON_CONTAINS:
+        if _v2_090k_payload_contains(actual, expected):
+            return
+        raise ValueError(f"assertion failed: {assertion.target} does not contain {expected!r}")
+    if assertion.kind is RunManifestBehaviorAssertionKind.JSON_NOT_CONTAINS:
+        if not _v2_090k_payload_contains(actual, expected):
+            return
+        raise ValueError(f"assertion failed: {assertion.target} contains {expected!r}")
+    raise ValueError(f"unsupported behavior assertion kind: {assertion.kind}")
+
+
+def _v2_090k_payload_contains(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, list):
+        for item in actual:
+            if item == expected:
+                return True
+            if isinstance(item, dict) and isinstance(expected, dict) and all(
+                item.get(key) == value for key, value in expected.items()
+            ):
+                return True
+        return False
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return all(actual.get(key) == value for key, value in expected.items())
+    if isinstance(actual, str) and isinstance(expected, str):
+        return expected in actual
+    return actual == expected
+
+
+def _v2_090k_json_type_matches(actual: Any, expected: Any) -> bool:
+    if not isinstance(expected, str):
+        raise ValueError("json_type assertion requires string expected")
+    normalized = expected.strip().lower()
+    if normalized in {"integer", "int"}:
+        return isinstance(actual, int) and not isinstance(actual, bool)
+    if normalized in {"number", "float"}:
+        return (isinstance(actual, int | float) and not isinstance(actual, bool))
+    if normalized in {"string", "str"}:
+        return isinstance(actual, str)
+    if normalized in {"boolean", "bool"}:
+        return isinstance(actual, bool)
+    if normalized in {"array", "list"}:
+        return isinstance(actual, list)
+    if normalized in {"object", "dict"}:
+        return isinstance(actual, dict)
+    if normalized in {"null", "none"}:
+        return actual is None
+    raise ValueError(f"unsupported json_type expected value: {expected}")
+
+
+def execute_v2_090k_behavior_probe(
+    *,
+    probe: RunManifestBehaviorProbe,
+    base_url: str,
+    http_client: Any,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    captures: dict[str, Any] = {}
+    step_results: list[dict[str, Any]] = []
+    base = base_url.rstrip("/")
+    for step in probe.steps:
+        path = interpolate_v2_090k_value(step.path, captures)
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise ValueError(f"behavioral probe step path must start with /: {step.step_id}")
+        body = interpolate_v2_090k_value(step.json_body, captures)
+        response = http_client.request(
+            step.method,
+            f"{base}{path}",
+            json=body,
+            timeout=timeout_seconds,
+        )
+        if response.status_code != step.expect_status:
+            raise ValueError(
+                f"behavioral probe step {step.step_id} expected status "
+                f"{step.expect_status} got {response.status_code}"
+            )
+        body_text = getattr(response, "text", None)
+        payload: Any = None
+        if any(
+            assertion.kind in {
+                RunManifestBehaviorAssertionKind.BODY_CONTAINS,
+                RunManifestBehaviorAssertionKind.BODY_CONTAINS_ANY,
+            }
+            for assertion in step.assertions
+        ):
+            if body_text is None:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = None
+            else:
+                payload = body_text
+        elif not any(assertion.kind is RunManifestBehaviorAssertionKind.EMPTY_BODY for assertion in step.assertions):
+            payload = response.json()
+        else:
+            try:
+                payload = response.json()
+            except Exception:
+                payload = None
+        for capture_name, capture_path in step.capture.items():
+            try:
+                if capture_path == "$body":
+                    captures[capture_name] = body_text
+                elif capture_path == "$status":
+                    captures[capture_name] = response.status_code
+                else:
+                    captures[capture_name] = extract_v2_090k_json_path(payload, capture_path)
+            except ValueError as exc:
+                raise ValueError(f"capture {capture_name} failed") from exc
+        for assertion in step.assertions:
+            evaluate_v2_090k_behavior_assertion(
+                payload=payload,
+                assertion=assertion,
+                captures=captures,
+                body_text=body_text,
+            )
+        step_results.append(
+            {
+                "step_id": step.step_id,
+                "method": step.method,
+                "path": path,
+                "status_code": response.status_code,
+            }
+        )
+    return {
+        "probe_id": probe.probe_id.value,
+        "service_command_id": probe.service_command_id.value,
+        "acceptance_refs": [ref.value for ref in probe.acceptance_refs],
+        "passed": True,
+        "captures": captures,
+        "steps": step_results,
+    }
 
 
 def _materialize_v2_090f_project_workspace(
@@ -1187,141 +2058,105 @@ def _run_v2_090f_final_test_command(*, project_root: Path) -> dict[str, Any]:
 def _run_v2_090f_live_blackbox_probe(
     *,
     project_root: Path,
+    run_manifest: RunManifest,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    backend_port = _free_tcp_port()
-    frontend_port = _free_tcp_port()
+    service_contract = run_manifest.service_contracts[0]
+    runtime_port = _free_tcp_port()
     with tempfile.TemporaryDirectory(prefix="boardroom-v2090f-live-") as temp_dir:
-        db_path = Path(temp_dir) / "library.sqlite3"
+        db_path = Path(temp_dir) / "service.sqlite3"
         env = dict(os.environ)
+        service_env = resolve_v2_090k_service_environment(
+            bindings=service_contract.env_bindings,
+            host="127.0.0.1",
+            port=runtime_port,
+            temp_sqlite_path=db_path,
+        )
         env.update(
             {
                 "PYTHONPATH": str(project_root),
-                "LIBRARY_API_HOST": "127.0.0.1",
-                "LIBRARY_API_PORT": str(backend_port),
-                "LIBRARY_DB_PATH": str(db_path),
+                **service_env,
             }
         )
-        backend_started = datetime.now(UTC)
-        backend = subprocess.Popen(
-            (sys.executable, "-m", "app.server"),
-            cwd=project_root,
+        service_command = _run_manifest_command(run_manifest, service_contract.command_id.value)
+        service_started = datetime.now(UTC)
+        command_argv = _interpolate_v2_090k_command_argv(service_command.command, service_env)
+        service = subprocess.Popen(
+            command_argv,
+            cwd=project_root / service_command.cwd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        frontend_started = datetime.now(UTC)
-        frontend = subprocess.Popen(
-            (
-                sys.executable,
-                "-m",
-                "http.server",
-                str(frontend_port),
-                "--bind",
-                "127.0.0.1",
-                "--directory",
-                "static",
-            ),
-            cwd=project_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
         try:
-            backend_body = _wait_http_json("127.0.0.1", backend_port, "/books")
-            frontend_body = _wait_http_text("127.0.0.1", frontend_port, "/")
-            backend_ready = datetime.now(UTC)
-            frontend_ready = datetime.now(UTC)
-            observed = _probe_v2_090f_crud_workflow("127.0.0.1", backend_port)
+            readiness_body = _wait_http_text(
+                "127.0.0.1",
+                runtime_port,
+                service_contract.readiness_probe.path,
+                expected_status=service_contract.readiness_probe.expect_status,
+            )
+            ready_at = datetime.now(UTC)
+            http_client = _V2_090KHttpClient()
+            probe_results = [
+                execute_v2_090k_behavior_probe(
+                    probe=probe,
+                    base_url=f"http://127.0.0.1:{runtime_port}",
+                    http_client=http_client,
+                )
+                for probe in run_manifest.behavioral_probes
+                if probe.service_command_id == service_contract.command_id
+            ]
+            if not probe_results:
+                raise ValueError("RunManifest behavioral probes must target service command")
             persisted = db_path.is_file()
         finally:
-            backend_stopped, backend_stdout, backend_stderr = _terminate_process(backend)
-            frontend_stopped, frontend_stdout, frontend_stderr = _terminate_process(frontend)
-    backend_service_id = "service-run.v2-090f.backend"
-    frontend_service_id = "service-run.v2-090f.frontend"
+            service_stopped, service_stdout, service_stderr = _terminate_process(service)
+    service_id = "service-run.v2-090f.agent-declared"
     services = [
         {
-            "service_run_evidence_id": backend_service_id,
-            "execution_package_ref": "exec.v2-090f.closeout.backend-service",
+            "service_run_evidence_id": service_id,
+            "execution_package_ref": "exec.v2-090f.closeout.agent-declared-service",
             "ticket_ref": "ticket.v2-090f.closeout.live-probe",
-            "command_id": "cmd.v2-090f.run-backend",
-            "command": [sys.executable, "-m", "app.server"],
-            "cwd": "10-project",
-            "process_id": backend.pid,
-            "readiness_url": f"http://127.0.0.1:{backend_port}/books",
-            "probe_status_code": 200,
-            "probe_body_sha256": hashlib.sha256(backend_body.encode("utf-8")).hexdigest(),
-            "stdout_ref": f"command-output.{backend_service_id}.stdout",
-            "stderr_ref": f"command-output.{backend_service_id}.stderr",
-            "stdout": backend_stdout,
-            "stderr": backend_stderr,
-            "started_at": backend_started.isoformat(),
-            "ready_at": backend_ready.isoformat(),
-            "stopped_at": backend_stopped.isoformat(),
+            "command_id": service_contract.command_id.value,
+            "command": list(command_argv),
+            "cwd": service_command.cwd,
+            "process_id": service.pid,
+            "readiness_url": f"http://127.0.0.1:{runtime_port}{service_contract.readiness_probe.path}",
+            "probe_status_code": service_contract.readiness_probe.expect_status,
+            "probe_body_sha256": hashlib.sha256(readiness_body.encode("utf-8")).hexdigest(),
+            "stdout_ref": f"command-output.{service_id}.stdout",
+            "stderr_ref": f"command-output.{service_id}.stderr",
+            "stdout": service_stdout,
+            "stderr": service_stderr,
+            "started_at": service_started.isoformat(),
+            "ready_at": ready_at.isoformat(),
+            "stopped_at": service_stopped.isoformat(),
             "runner_ref": "runner.v2-090f.closeout",
             "environment_profile_ref": "environment.v2-090f.local",
             "workspace_snapshot_ref": _project_tree_hash_ref(project_root),
-            "environment_overrides": {
-                "LIBRARY_API_HOST": "127.0.0.1",
-                "LIBRARY_API_PORT": str(backend_port),
-                "LIBRARY_DB_PATH": "temporary-live-probe-sqlite",
-            },
-        },
-        {
-            "service_run_evidence_id": frontend_service_id,
-            "execution_package_ref": "exec.v2-090f.closeout.frontend-service",
-            "ticket_ref": "ticket.v2-090f.closeout.live-probe",
-            "command_id": "cmd.v2-090f.run-frontend",
-            "command": [
-                sys.executable,
-                "-m",
-                "http.server",
-                str(frontend_port),
-                "--bind",
-                "127.0.0.1",
-                "--directory",
-                "static",
-            ],
-            "cwd": "10-project",
-            "process_id": frontend.pid,
-            "readiness_url": f"http://127.0.0.1:{frontend_port}/",
-            "probe_status_code": 200,
-            "probe_body_sha256": hashlib.sha256(frontend_body.encode("utf-8")).hexdigest(),
-            "stdout_ref": f"command-output.{frontend_service_id}.stdout",
-            "stderr_ref": f"command-output.{frontend_service_id}.stderr",
-            "stdout": frontend_stdout,
-            "stderr": frontend_stderr,
-            "started_at": frontend_started.isoformat(),
-            "ready_at": frontend_ready.isoformat(),
-            "stopped_at": frontend_stopped.isoformat(),
-            "runner_ref": "runner.v2-090f.closeout",
-            "environment_profile_ref": "environment.v2-090f.local",
-            "workspace_snapshot_ref": _project_tree_hash_ref(project_root),
-            "environment_overrides": {},
+            "environment_overrides": service_env,
         },
     ]
     evidence = {
-        "live_blackbox_evidence_id": "live-blackbox.v2-090f.frontend-backend",
-        "package_contract_ref": "package-contract.v2-090f.generated",
-        "backend_command_id": "cmd.v2-090f.run-backend",
-        "frontend_command_id": "cmd.v2-090f.run-frontend",
-        "backend_service_run_ref": backend_service_id,
-        "frontend_service_run_ref": frontend_service_id,
-        "passed": bool(observed["workflow_passed"] and observed["frontend_references_api"] and persisted),
+        "live_blackbox_evidence_id": "live-blackbox.v2-090f.agent-declared",
+        "package_contract_ref": run_manifest.package_contract_ref.value,
+        "service_command_id": service_contract.command_id.value,
+        "service_run_ref": service_id,
+        "passed": bool(probe_results),
         "probes": [
             {
-                "probe_ref": "probe.v2-090f.frontend-backend-crud",
-                "acceptance_refs": _v2_090f_acceptance_refs(),
-                "service_run_refs": [backend_service_id, frontend_service_id],
-                "command_ids": ["cmd.v2-090f.run-backend", "cmd.v2-090f.run-frontend"],
-                "probe_url": f"http://127.0.0.1:{backend_port}/books",
-                "status_code": 200,
-                "passed": bool(observed["workflow_passed"]),
-                "observed_facts": observed,
-                "body_sha256": hashlib.sha256(json.dumps(observed, sort_keys=True).encode("utf-8")).hexdigest(),
+                "probe_ref": result["probe_id"],
+                "acceptance_refs": result["acceptance_refs"],
+                "service_run_refs": [service_id],
+                "command_ids": [service_contract.command_id.value],
+                "passed": bool(result["passed"]),
+                "observed_facts": result,
+                "body_sha256": hashlib.sha256(json.dumps(result, sort_keys=True).encode("utf-8")).hexdigest(),
                 "probed_at": datetime.now(UTC).isoformat(),
             }
+            for result in probe_results
         ],
+        "persistent_runtime_file_observed": persisted,
         "generated_at": datetime.now(UTC).isoformat(),
     }
     return services, evidence
@@ -1333,19 +2168,13 @@ def _free_tcp_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_http_json(host: str, port: int, path: str) -> str:
-    body = _wait_http_text(host, port, path)
-    json.loads(body)
-    return body
-
-
-def _wait_http_text(host: str, port: int, path: str) -> str:
+def _wait_http_text(host: str, port: int, path: str, *, expected_status: int = 200) -> str:
     deadline = time.monotonic() + 15
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
             status, body = _http_request(host, port, "GET", path)
-            if 200 <= status < 300:
+            if status == expected_status:
                 return body
             last_error = ValueError(f"HTTP {status}")
         except Exception as exc:  # readiness polling records the final failure explicitly
@@ -1376,48 +2205,52 @@ def _http_request(
         connection.close()
 
 
-def _probe_v2_090f_crud_workflow(host: str, port: int) -> dict[str, Any]:
-    facts: dict[str, Any] = {}
-    status, body = _http_request(host, port, "GET", "/books")
-    facts["initial_list_status"] = status
-    facts["initial_list"] = json.loads(body)
-    status, body = _http_request(
-        host,
-        port,
-        "POST",
-        "/books",
-        {"title": "Dune", "author": "Frank Herbert"},
+class _V2_090KHttpResponse:
+    def __init__(self, *, status_code: int, body: str) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> Any:
+        return json.loads(self._body)
+
+    @property
+    def text(self) -> str:
+        return self._body
+
+
+class _V2_090KHttpClient:
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: object | None = None,
+        timeout: float = 10.0,
+    ) -> _V2_090KHttpResponse:
+        del timeout
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.hostname is None or parsed.port is None:
+            raise ValueError("behavior probe URL must include host and port")
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        status, body = _http_request(parsed.hostname, parsed.port, method, path, json)
+        return _V2_090KHttpResponse(status_code=status, body=body)
+
+
+def _run_manifest_command(run_manifest: RunManifest, command_id: str) -> RunManifestCommand:
+    matches = tuple(
+        command for command in run_manifest.commands if command.command_id.value == command_id
     )
-    facts["create_status"] = status
-    created = json.loads(body)["book"]
-    facts["created_book_id"] = created["id"]
-    status, body = _http_request(host, port, "POST", f"/books/{created['id']}/checkout")
-    checked_out = json.loads(body)["book"]
-    facts["checkout_status"] = status
-    facts["checked_out"] = checked_out["checked_out"]
-    status, body = _http_request(host, port, "POST", f"/books/{created['id']}/return")
-    returned = json.loads(body)["book"]
-    facts["return_status"] = status
-    facts["returned_checked_out"] = returned["checked_out"]
-    status, body = _http_request(host, port, "DELETE", f"/books/{created['id']}")
-    facts["delete_status"] = status
-    facts["delete_payload"] = json.loads(body)
-    status, body = _http_request(host, port, "GET", "/books")
-    facts["final_list_status"] = status
-    facts["final_list"] = json.loads(body)
-    facts["workflow_passed"] = (
-        facts["initial_list_status"] == 200
-        and facts["create_status"] == 201
-        and facts["checkout_status"] == 200
-        and facts["checked_out"] is True
-        and facts["return_status"] == 200
-        and facts["returned_checked_out"] is False
-        and facts["delete_status"] == 200
-        and facts["final_list_status"] == 200
-        and facts["final_list"] == {"books": []}
-    )
-    facts["frontend_references_api"] = True
-    return facts
+    if len(matches) != 1:
+        raise ValueError(f"RunManifest command is required: {command_id}")
+    return matches[0]
+
+
+def _interpolate_v2_090k_command_argv(argv: tuple[str, ...], values: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(str(interpolate_v2_090k_value(item, values)) for item in argv)
 
 
 def _terminate_process(process: subprocess.Popen[str]) -> tuple[datetime, str, str]:
@@ -1450,18 +2283,26 @@ def _build_v2_090f_source_inventory_payload(
             continue
         if relative == "run-manifest.json" or relative == "package-contract.json":
             continue
-        source_surface = _source_surface_for_project_path(relative)
+        lineage = _lineage_for_project_path(relative, tickets)
         artifact_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        lineage_sha = str(lineage.get("sha256", "")).replace("sha256:", "")
+        if lineage_sha and lineage_sha != artifact_sha:
+            raise ValueError("source lineage sha256 does not match materialized source")
+        source_surface_refs = _lineage_string_list(lineage, "source_surface_refs")
+        acceptance_refs = _lineage_string_list(lineage, "acceptance_refs")
+        evidence_refs = _lineage_string_list(lineage, "evidence_refs")
+        if len(source_surface_refs) != 1:
+            raise ValueError("source lineage must declare exactly one source surface")
         entries.append(
             {
                 "path": relative,
                 "sha256": artifact_sha,
-                "source_surface_ref": source_surface,
-                "producer_ticket_ref": _ticket_for_project_path(relative, tickets, first_ticket),
-                "producer_attempt_ref": _attempt_for_project_path(relative, tickets, first_attempt),
+                "source_surface_ref": source_surface_refs[0],
+                "producer_ticket_ref": str(lineage.get("producer_ticket_ref") or first_ticket),
+                "producer_attempt_ref": str(lineage.get("producer_attempt_ref") or first_attempt),
                 "consumer_ticket_refs": [first_ticket],
-                "acceptance_refs": _acceptance_refs_for_project_path(relative),
-                "evidence_refs": ["verified-evidence.v2-090f.fullstack"],
+                "acceptance_refs": acceptance_refs,
+                "evidence_refs": evidence_refs,
             }
         )
     if not entries:
@@ -1477,57 +2318,30 @@ def _build_v2_090f_source_inventory_payload(
     return payload
 
 
-def _source_surface_for_project_path(relative: str) -> str:
-    if relative.startswith("app/"):
-        return "surface.v2-090f.backend"
-    if relative.startswith("static/"):
-        return "surface.v2-090f.frontend"
-    if relative.startswith("tests/"):
-        return "surface.v2-090f.tests"
-    return "surface.v2-090f.docs"
-
-
-def _acceptance_refs_for_project_path(relative: str) -> list[str]:
-    if relative.startswith("static/"):
-        return ["AC-V2-090F-FRONTEND-LIVE"]
-    if relative.startswith("tests/"):
-        return ["AC-V2-090F-TESTS"]
-    if relative.startswith("README"):
-        return ["AC-V2-090F-DOCS"]
-    return [
-        "AC-V2-090F-BACKEND-CRUD",
-        "AC-V2-090F-SQLITE-PERSISTENCE",
-    ]
-
-
-def _ticket_for_project_path(relative: str, tickets: list[Any], default: str) -> str:
-    marker = _ticket_marker_for_path(relative)
+def _lineage_for_project_path(relative: str, tickets: list[Any]) -> dict[str, Any]:
+    matches: list[dict[str, Any]] = []
     for ticket in tickets:
-        ticket_ref = str(ticket.get("ticket_ref", ""))
-        if marker in ticket_ref:
-            return ticket_ref
-    return default
+        if not isinstance(ticket, dict):
+            continue
+        lineage_inputs = ticket.get("source_lineage_inputs")
+        if not isinstance(lineage_inputs, list):
+            continue
+        for lineage in lineage_inputs:
+            if isinstance(lineage, dict) and lineage.get("path") == relative:
+                matches.append(lineage)
+    if len(matches) != 1:
+        raise ValueError(f"source lineage is required for materialized file: {relative}")
+    return matches[0]
 
 
-def _attempt_for_project_path(relative: str, tickets: list[Any], default: str) -> str:
-    marker = _ticket_marker_for_path(relative)
-    for ticket in tickets:
-        ticket_ref = str(ticket.get("ticket_ref", ""))
-        if marker in ticket_ref:
-            return str(ticket.get("provider_attempt_ref", default))
-    return default
-
-
-def _ticket_marker_for_path(relative: str) -> str:
-    if relative.startswith("app/db.py"):
-        return "sqlite"
-    if relative.startswith("app/"):
-        return "backend"
-    if relative.startswith("static/"):
-        return "frontend"
-    if relative.startswith("tests/"):
-        return "integration"
-    return "documentation"
+def _lineage_string_list(lineage: dict[str, Any], field_name: str) -> list[str]:
+    values = lineage.get(field_name)
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"source lineage {field_name} must not be empty")
+    normalized = [str(value).strip() for value in values]
+    if any(not value for value in normalized):
+        raise ValueError(f"source lineage {field_name} must not contain empty values")
+    return normalized
 
 
 def _build_v2_090f_final_evidence_table_payload(
@@ -1540,12 +2354,13 @@ def _build_v2_090f_final_evidence_table_payload(
     if verification_run["status"] != "passed" or not service_evidence or not live_blackbox_evidence.get("passed"):
         raise ValueError("final evidence table requires passed command/service/live evidence")
     evidence_ref = "verified-evidence.v2-090f.fullstack"
+    acceptance_refs = _acceptance_refs_from_source_inventory(source_inventory)
     rows = []
-    for acceptance_ref in _v2_090f_acceptance_refs():
+    for acceptance_ref in acceptance_refs:
         rows.append(
             {
                 "acceptance_ref": acceptance_ref,
-                "statement": _statement_for_acceptance_ref(acceptance_ref),
+                "statement": f"Agent-generated acceptance criterion {acceptance_ref} is satisfied by verified evidence.",
                 "status": "satisfied",
                 "verified_evidence_refs": [evidence_ref],
                 "missing_required_artifact_types": [],
@@ -1570,25 +2385,18 @@ def _build_v2_090f_final_evidence_table_payload(
     }
 
 
-def _v2_090f_acceptance_refs() -> list[str]:
-    return [
-        "AC-V2-090F-BACKEND-CRUD",
-        "AC-V2-090F-SQLITE-PERSISTENCE",
-        "AC-V2-090F-FRONTEND-LIVE",
-        "AC-V2-090F-TESTS",
-        "AC-V2-090F-DOCS",
-    ]
-
-
-def _statement_for_acceptance_ref(acceptance_ref: str) -> str:
-    statements = {
-        "AC-V2-090F-BACKEND-CRUD": "Backend HTTP API supports add, list, checkout, return, and delete.",
-        "AC-V2-090F-SQLITE-PERSISTENCE": "SQLite persistence is proven through backend HTTP behavior.",
-        "AC-V2-090F-FRONTEND-LIVE": "Static frontend is served and references the backend API during live verification.",
-        "AC-V2-090F-TESTS": "Generated tests pass in the materialized project package.",
-        "AC-V2-090F-DOCS": "Generated README documents run and test commands.",
-    }
-    return statements[acceptance_ref]
+def _acceptance_refs_from_source_inventory(source_inventory: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for entry in source_inventory.get("entries", ()):
+        if not isinstance(entry, dict):
+            continue
+        for acceptance_ref in entry.get("acceptance_refs", ()):
+            ref = str(acceptance_ref).strip()
+            if ref and ref not in refs:
+                refs.append(ref)
+    if not refs:
+        raise ValueError("final evidence table requires acceptance refs from source inventory")
+    return refs
 
 
 def _write_v2_090f_checker_verdict(
@@ -2078,7 +2886,11 @@ def _safe_provider_response_id(value: str) -> str:
 
 
 def _unwrap_planning_artifact(provider_output: dict[str, Any]) -> dict[str, Any]:
-    if "ticket_graph" in provider_output or "acceptance_contract" in provider_output:
+    if (
+        "ticket_graph" in provider_output
+        or "acceptance_contract" in provider_output
+        or "run_manifest_id" in provider_output
+    ):
         return provider_output
     input_payload = provider_output.get("input")
     if isinstance(input_payload, dict):
@@ -2158,7 +2970,13 @@ def _looks_like_long_running_service_command(
     argv: tuple[str, ...],
 ) -> bool:
     command_id_parts = tuple(part for part in command_id.replace("-", ".").split(".") if part)
-    if command_id_parts and command_id_parts[-1] in {"run", "serve", "start", "watch", "dev"}:
+    if command_id_parts and command_id_parts[-1] in {"serve", "start", "watch", "dev"}:
+        return True
+    if (
+        len(command_id_parts) >= 2
+        and command_id_parts[-1] == "run"
+        and command_id_parts[-2] in {"service", "server", "backend", "frontend"}
+    ):
         return True
     label_markers = (
         "start backend",
@@ -2209,61 +3027,9 @@ def _validate_v2_090f_hard_crud_acceptance(
         for operation in V2_090F_HARD_CRUD_OPERATIONS
         if operation not in haystack
     ]
-    if V2_090F_HARD_ACCEPTANCE_REF not in acceptance_refs or missing_operations:
+    if not acceptance_refs or missing_operations:
         raise ValueError(
             "hard acceptance must cover add, list, checkout, return, and delete"
-        )
-
-
-def _validate_v2_090f_hard_backend_entrypoint(
-    implementation_nodes: tuple[dict[str, Any], ...],
-) -> None:
-    backend_node: dict[str, Any] | None = None
-    for node in implementation_nodes:
-        values = (
-            _string_list(node, "allowed_write_set")
-            + _string_list(node, "required_outputs")
-            + _string_list(node, "source_surface_refs")
-        )
-        searchable = " ".join(str(value).lower() for value in values)
-        if "backend" not in searchable and V2_090F_HARD_ACCEPTANCE_REF.lower() not in searchable:
-            continue
-        allowed_write_set = _string_list(node, "allowed_write_set")
-        required_outputs = _string_list(node, "required_outputs")
-        has_app_package_write = any(
-            value == "app/" or value.startswith("app/") or value == "app/server.py"
-            for value in allowed_write_set
-        )
-        has_server_output = "app/server.py" in required_outputs
-        if has_app_package_write and has_server_output:
-            backend_node = node
-            break
-    if backend_node is None:
-        raise ValueError(
-            "hard backend entrypoint requires allowed_write_set to include app/ "
-            "and required_outputs to include app/server.py"
-        )
-    backend_contract_text = " ".join(
-        _string_list(backend_node, "evidence_obligations")
-        + _string_list(backend_node, "required_outputs")
-        + tuple(
-            " ".join(
-                str(part)
-                for part in command.get("command", ())
-                if isinstance(part, str)
-            )
-            for command in _node_commands(backend_node)
-        )
-    )
-    missing_env = [
-        name
-        for name in ("LIBRARY_API_HOST", "LIBRARY_API_PORT", "LIBRARY_DB_PATH")
-        if name not in backend_contract_text
-    ]
-    if missing_env:
-        raise ValueError(
-            "hard backend runtime environment must declare LIBRARY_API_HOST, "
-            "LIBRARY_API_PORT, and LIBRARY_DB_PATH"
         )
 
 
@@ -2335,13 +3101,21 @@ def _reject_glob_patterns(values: tuple[str, ...], field_name: str) -> None:
 
 def _direct_planning_prompt(prompt: str) -> str:
     objective = prompt
+    package_facts: dict[str, Any] = {}
     marker = "# ExecutionPackageFacts\n"
     if marker in prompt:
         try:
-            facts = json.loads(prompt.split(marker, 1)[1])
-            objective = str(facts.get("objective", prompt))
+            package_facts = json.loads(prompt.split(marker, 1)[1])
+            objective = str(package_facts.get("objective", prompt))
         except json.JSONDecodeError:
             objective = prompt
+            package_facts = {}
+    fact_lines: list[str] = []
+    if isinstance(package_facts, dict):
+        for field_name in ("context_refs", "allowed_read_refs", "constraints"):
+            value = package_facts.get(field_name)
+            if value:
+                fact_lines.append(f"{field_name}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
     return "\n".join(
         (
             "You are producing a Boardroom OS V2-090F planning artifact.",
@@ -2351,20 +3125,34 @@ def _direct_planning_prompt(prompt: str) -> str:
             "Use one top-level JSON object only. Do not append sibling fragments after the closing brace.",
             "All sections, including completion_gate or forbidden claims, must be properties inside that one top-level object.",
             "If the Objective mentions ticket-graph, the response must include ticket_graph.nodes.",
-            "For ticket-graph, include implementation tickets owned by seat.worker.implementation for backend API, SQLite persistence, static frontend, integration tests, and run documentation.",
-            "V2-090F hard acceptance is not optional: backend/API, frontend, tests, and evidence obligations must cover add, list, checkout, return, and delete. Use the canonical acceptance ref AC-V2-090F-BACKEND-CRUD on the worker implementation tickets that satisfy those operations.",
+            "If the Objective mentions run-manifest, return a RunManifest JSON object with run_manifest_id, workspace_manifest_ref, package_contract_ref, package_root, commands, service_contracts, frontend_topology, and behavioral_probes.",
+            "RunManifest commands must include at least one run command for the backend service and one finite test command. Service contracts must reference run command ids and declare env_bindings, readiness_probe, and role.",
+            "RunManifest behavioral_probes must contain acceptance_refs and HTTP steps with method, path, json_body, expect_status, capture, and assertions.",
+            "For ticket-graph, include implementation tickets only as needed to satisfy the PRD and active contracts; do not rely on runner-provided ticket categories.",
+            "V2-090F behavior acceptance is not optional: generated acceptance refs and evidence obligations must cover add, list, checkout, return, and delete when the PRD requires those operations.",
             "Do not replace add/delete with seeded catalog-only checkout and return. A generated project that omits create-book or delete-book behavior cannot pass closeout.",
-            "The hard closeout backend service command is python -m app.server. The backend API implementation ticket must allow writing app/ and required_outputs must include app/server.py. Do not use a root app.py file as the backend entrypoint because it blocks python -m app.server.",
-            "The app.server entrypoint must read LIBRARY_API_HOST, LIBRARY_API_PORT, and LIBRARY_DB_PATH exactly; do not invent alternate env names such as LIBRARY_HOST, LIBRARY_PORT, LIBRARY_APP_PORT, or LIBRARY_APP_DB_PATH. The backend ticket evidence_obligations must explicitly mention LIBRARY_API_HOST, LIBRARY_API_PORT, and LIBRARY_DB_PATH.",
+            "The agent team must produce AcceptanceContract, PackageContract, RunManifest, and verification-plan artifacts. The runner will validate and execute these artifacts without assuming filenames, module names, environment variable names, endpoints, seeded data, or source-surface path prefixes.",
             "Each implementation node must use node_type='implementation', owner_seat_ref='seat.worker.implementation', and include node_ref, title, depends_on, acceptance_refs, source_surface_refs, evidence_obligations, allowed_write_set, required_outputs, and commands.",
             "commands must be an array of objects: {command_id,label,command,cwd}; command must be an argv array, never a shell string.",
             "worker implementation commands must be bounded finite verification commands that exit, such as pytest, unittest, lint, or deterministic file checks.",
             "If a ticket declares a command that imports or discovers tests (for example tests.test_api, tests/, or unittest discover -s tests), that same ticket must include tests/ in allowed_write_set or required_outputs so the command can be satisfied before submit_result.",
             "For worker implementation tickets, do not include long-running service startup, run, serve, watch, or dev commands.",
-            "service startup, readiness, and live probes belong to the verification plan and later tester/checker evidence, not worker declared commands.",
+            "Service startup, readiness, live behavior probes, source-surface mappings, and acceptance evidence mapping must be declared by agent-generated contracts and verification artifacts.",
             "allowed_write_set and required_outputs must be concrete relative files or directory prefixes ending in '/', never glob patterns such as **/*.py.",
+            "Directory-only required_outputs are not enough for service entrypoints; any service script or python -m module expected by RunManifest must appear as a concrete implementation required_outputs file.",
+            "Implementation ticket required_outputs must use full workspace-relative paths for every concrete file; bare filenames are not enough when package source surfaces declare allowed directories.",
+            "If PackageContract source surfaces declare required_files under an allowed directory, include the joined path in the owning implementation ticket required_outputs.",
             "Do not return planning-only nodes as the only ticket_graph.nodes.",
             "Do not claim implementation, verification success, checker approval, closeout, or sample success.",
+            *(
+                (
+                    "",
+                    "Execution package facts that must be honored:",
+                    *fact_lines,
+                )
+                if fact_lines
+                else ()
+            ),
             "",
             "Objective:",
             objective,

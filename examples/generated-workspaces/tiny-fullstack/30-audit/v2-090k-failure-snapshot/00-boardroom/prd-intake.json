@@ -1,0 +1,6 @@
+{
+  "prd_path": "examples/directives/tiny-fullstack-prd.md",
+  "prd_sha256": "sha256:e37387a0f99d333bc9104ca45ea703646d0bf4e2b244ad03e98cbb46858971ca",
+  "prd_text": "# Tiny Library Checkout PRD\n\nBuild a tiny library checkout web app. Users can add books, list books,\ncheckout and return a book, delete a book, and see the UI update from a\nreal backend. Persist data in SQLite. Use a standard-library Python backend\nand a static frontend. Provide tests and run instructions.",
+  "status": "loaded"
+}
