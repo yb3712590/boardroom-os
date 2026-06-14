@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100C`（TODO，CEO rework planner boundary，CEO 返工规划边界；在 V2-100A/B 强类型返工对象、事件和 reducer 基础上，让 CEO 读取 BlockerReport / ReworkRequest 并生成受审查的 ReworkPlan 与 TicketGraphPatch）
+**当前未完成工作包**：`V2-100D`（TODO，Rework evidence/checker reintegration，返工证据与检查重接入；在 V2-100A/B/C 返工模型、事件归约器和 CEO planning boundary 基础上，让每次 ReworkAttempt 重新进入 EvidenceVerifier、FinalEvidenceTable、SourceInventory、CheckerVerdict 与必要 CloseoutGate）
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。当前真实失败现场已保留在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，其中包括 BehavioralProbePlan 期待 `$.title` 而 backend 实际返回 `{"book": {...}}`、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用 `run-v2-080f`。V2-100 现在成为当前实施重点：把 090K/090F 暴露的“发现问题后只能 fail closed”升级为 CEO-governed rework loop（项目经理治理返工循环），由 CEO 读取结构化 blocker（阻塞项）、规划返工、更新 TicketGraph（工单图）、组织实施/测试/检查/收尾重验并留痕。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，最终通过必须基于 `V2-090K + V2-100` 后复判，而不是期待 090K single-pass（单轮）直接收敛。
 
@@ -164,8 +164,8 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 2 / 5 | IN_PROGRESS；V2-100A/B 完成，当前重点 V2-100C |
-| **合计** | **V2-000 ~ V2-100** | **71 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100C 为当前未完成工作包** |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 3 / 5 | IN_PROGRESS；V2-100A/B/C 完成，当前重点 V2-100D |
+| **合计** | **V2-000 ~ V2-100** | **72 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100D 为当前未完成工作包** |
 
 ## 当前约束摘要
 
@@ -1223,14 +1223,15 @@ RoleProfile（角色模板）
 
 ### V2-100C: CEO rework planner boundary（CEO 返工规划边界）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：让 CEO（项目经理/治理角色）读取 BlockerReport（阻塞报告）/ ReworkRequest（返工请求），生成 ReworkPlan（返工计划）和 TicketGraphPatch（工单图补丁），并决定修原 ticket、拆新 ticket、重排依赖、要求合同修订或升级人工复核。
 - 输入文档：`doc/03-architecture/agent-team-model.md`、`doc/03-architecture/domain-model.md`、`doc/03-architecture/execution-and-runtime-boundary.md`、V2-090F/K 失败案例。
 - 依赖：V2-100A、V2-100B、V2-090A RolePromptHook（角色提示词钩子）。
-- 输出文件：预计 `src/boardroom_os/rework/planner.py`、`src/boardroom_os/rework/ticket_graph_patch.py`、CEO RolePromptHook（角色提示词钩子）必要更新、`tests/rework/test_ceo_rework_planner.py`、`tests/negative/test_ceo_rework_planner_fail_closed.py`。
+- 输出文件：`src/boardroom_os/rework/planner.py`、`src/boardroom_os/rework/ticket_graph_patch.py`、`src/boardroom_os/rework/reviewer.py`、`src/boardroom_os/rework/__init__.py`、`tests/rework/test_ceo_rework_planner.py`、`tests/rework/test_multi_role_graph_patch_reviews.py`、`tests/negative/test_ceo_rework_planner_fail_closed.py`、`tests/negative/test_multi_role_graph_patch_reviews_fail_closed.py`、`tests/execution/test_role_prompt_hooks_rework_governance.py`。
 - 必须先写的 negative tests：缺 CEO ProviderAttempt（项目经理模型调用尝试）不得生成 ReworkPlan；CEO 计划没有逐项映射 blocker_refs（阻塞引用）必须失败；计划 action（动作）不在 `fix_implementation` / `fix_contract_or_probe` / `split_ticket` / `reorder_dependencies` / `escalate_human_review` 枚举内必须失败；计划直接修改源码或写 passed verdict（通过结论）必须失败；计划绕过 active contract、复用旧 evidence row、把 Checker notes 当 blocker 豁免或要求 runtime 自动修复必须失败。
 - 必须证明的 happy path：以 090K 真实失败形态为输入，例如 RunManifest（运行清单）期待 `$.title` 但 backend 实际返回 `{"book": {...}}`，CEO 能在有限决策空间内生成明确返工路线：`fix_implementation` 或 `fix_contract_or_probe`，必要时 `split_ticket` / `reorder_dependencies` / `escalate_human_review`，创建目标 ReworkTicket，并保持 evidence obligations（证据义务）可追踪。
 - 验收口径：CEO 是返工路线和 TicketGraphPatch（工单图补丁）的权威规划者；runtime 不做项目经理决策。
+- 完成证据：2026-06-14 已实现 provider-backed CEO ReworkPlan（模型支撑项目经理返工计划）严格解析与 lineage validation（来源链校验）、TicketGraphPatch（工单图补丁）active contract scope validation（活跃合同范围校验）、required review domain inference（必需审查域推导）、multi-role GraphPatchReview（多角色图补丁审查）解析与 approval set builder（批准集合构建）。负例证明缺 CEO ProviderAttempt、fallback attempt、错误 role hook、未映射 blocker、planner input 合同引用与 ReworkRequest 不一致、`narrow_scope`、旧 `AC-TINY-*` acceptance refs、prose-only output、审查缺 provider attempt / wrong domain / 缺 checked invariants 均 fail closed。正例证明 090K 四类失败可形成 CEO 计划、必需审查域和 reducer-backed rework ticket commit。验证：`PYTHONPATH=src:. python -m pytest tests/negative/test_ceo_rework_planner_fail_closed.py tests/negative/test_multi_role_graph_patch_reviews_fail_closed.py tests/rework/test_ceo_rework_planner.py tests/rework/test_multi_role_graph_patch_reviews.py tests/execution/test_role_prompt_hooks_rework_governance.py -q` 通过（31 passed）；`PYTHONPATH=src:. python -m pytest tests/rework/test_rework_model.py tests/rework/test_v2_090k_failure_snapshot_projection.py tests/reducers/test_rework_reducer.py tests/negative/test_rework_model_fail_closed.py tests/negative/test_rework_reducer_fail_closed.py -q` 通过（32 passed）；`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/closeout tests/rework tests/negative -q` 通过（1521 passed）。
 
 ### V2-100D: Rework evidence/checker reintegration（返工证据与检查重接入）
 

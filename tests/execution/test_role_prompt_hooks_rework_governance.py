@@ -20,6 +20,19 @@ def test_ceo_prompt_requires_multi_role_graph_patch_review() -> None:
     assert "reducer may commit" in prompt
 
 
+def test_ceo_prompt_locks_v2_100c_decision_space_and_json_output() -> None:
+    prompt = _prompt("ceo")
+
+    assert "one json object only" in prompt
+    assert "fix_implementation" in prompt
+    assert "fix_contract_or_probe" in prompt
+    assert "split_ticket" in prompt
+    assert "reorder_dependencies" in prompt
+    assert "escalate_human_review" in prompt
+    assert "runtime" in prompt
+    assert "do not write implementation files" in prompt
+
+
 def test_architect_prompt_covers_structural_graph_patch_invariants() -> None:
     prompt = _prompt("architect")
 
