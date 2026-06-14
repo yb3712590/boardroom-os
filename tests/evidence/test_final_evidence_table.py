@@ -23,6 +23,7 @@ from boardroom_os.contracts.types import (
 )
 from boardroom_os.evidence.claim import EvidenceArtifactRef, EvidenceClaimRef, EvidenceClaimSourceKind
 from boardroom_os.evidence.table import (
+    EvidenceNamespaceRef,
     FinalEvidenceBlocker,
     FinalEvidenceBlockerCode,
     FinalEvidenceRow,
@@ -490,4 +491,27 @@ def test_final_evidence_table_uses_deterministic_contract_id() -> None:
 
     assert table.final_evidence_table_id.value == (
         "final-evidence-table.contract.acceptance.final-evidence"
+    )
+
+
+def test_final_evidence_table_can_be_namespaced_for_rework_round() -> None:
+    contract = _acceptance_contract()
+    evidence = _verified_evidence(acceptance_refs=(_acceptance_ref(),))
+    namespace = EvidenceNamespaceRef(
+        value="rework-evidence.run-v2-100d.rework-cycle.v2-100d.rework-attempt.v2-100d.1.g42"
+    )
+
+    table = FinalEvidenceTableBuilder().build(
+        FinalEvidenceTableInput(
+            active_acceptance_contract=contract,
+            verified_evidence=(evidence,),
+            failed_blockers=(),
+            generated_at=_GENERATED_AT,
+            evidence_namespace_ref=namespace,
+        )
+    )
+
+    assert table.evidence_namespace_ref == namespace
+    assert table.final_evidence_table_id.value == (
+        f"final-evidence-table.{contract.acceptance_contract_id.value}.{namespace.value}"
     )

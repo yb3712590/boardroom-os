@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100D`（TODO，Rework evidence/checker reintegration，返工证据与检查重接入；在 V2-100A/B/C 返工模型、事件归约器和 CEO planning boundary 基础上，让每次 ReworkAttempt 重新进入 EvidenceVerifier、FinalEvidenceTable、SourceInventory、CheckerVerdict 与必要 CloseoutGate）
+**当前未完成工作包**：`V2-100E`（TODO，Multi-round rework proving scenario，多轮返工证明场景；在 V2-100A/B/C/D 返工模型、事件归约器、CEO planning boundary 和 evidence/checker reintegration 基础上，证明多轮返工可审计收敛或明确升级）
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。当前真实失败现场已保留在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，其中包括 BehavioralProbePlan 期待 `$.title` 而 backend 实际返回 `{"book": {...}}`、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用 `run-v2-080f`。V2-100 现在成为当前实施重点：把 090K/090F 暴露的“发现问题后只能 fail closed”升级为 CEO-governed rework loop（项目经理治理返工循环），由 CEO 读取结构化 blocker（阻塞项）、规划返工、更新 TicketGraph（工单图）、组织实施/测试/检查/收尾重验并留痕。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，最终通过必须基于 `V2-090K + V2-100` 后复判，而不是期待 090K single-pass（单轮）直接收敛。
 
@@ -164,8 +164,8 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 3 / 5 | IN_PROGRESS；V2-100A/B/C 完成，当前重点 V2-100D |
-| **合计** | **V2-000 ~ V2-100** | **72 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100D 为当前未完成工作包** |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 4 / 5 | IN_PROGRESS；V2-100A/B/C/D 完成，当前重点 V2-100E |
+| **合计** | **V2-000 ~ V2-100** | **73 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C/D 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100E 为当前未完成工作包** |
 
 ## 当前约束摘要
 
@@ -1235,7 +1235,7 @@ RoleProfile（角色模板）
 
 ### V2-100D: Rework evidence/checker reintegration（返工证据与检查重接入）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：每次 ReworkAttempt（返工尝试）产物都必须重新进入 EvidenceVerifier（证据验证器）、FinalEvidenceTableBuilder（最终证据表构建器）、SourceInventory（源码清单）和 CheckerVerdict（检查结论），不得复用上一轮通过结论。
 - 输入文档：`doc/03-architecture/contract-and-evidence-model.md`、`doc/04-implementation/acceptance-criteria.md`、V2-050/V2-070/V2-090 evidence（证据）产物。
 - 依赖：V2-100A、V2-100B、V2-100C。
@@ -1243,6 +1243,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：ReworkAttempt 只产生 workspace mutation 但缺 command evidence/source lineage/provider attempt 必须失败；沿用首轮 FinalEvidenceTable satisfied row（已满足行）作为返工通过证据必须失败；Checker approved verdict（检查通过结论）早于返工 evidence verification（证据验证）必须失败；CloseoutGate 使用旧 RunManifest/SourceInventory（运行清单/源码清单）引用必须失败。
 - 必须证明的 happy path：返工提交后重新构造 FinalEvidenceTable（最终证据表）和 SourceInventory（源码清单），Checker 生成新的 ProviderAttempt 与 CheckerVerdict，CloseoutGate 只消费新轮次证据。
 - 验收口径：返工不是“补一条备注”；每轮都必须重验合同、源码、命令、行为探针和检查结论。
+- 完成证据：2026-06-14 已实现 `src/boardroom_os/rework/evidence.py` 作为 ReworkAttempt（返工尝试）证据重验薄协调层；扩展 `src/boardroom_os/evidence/table.py` 支持可选 EvidenceNamespaceRef（证据命名空间引用），未命名空间 ID/JSON 保持兼容，返工轮次使用 `run_id + cycle_id + rework_attempt_id + graph_version` 命名空间；新增 `tests/rework/fixtures/rework_evidence.py`、`tests/negative/test_rework_evidence_fail_closed.py`、`tests/negative/test_rework_closeout_fail_closed.py`、`tests/rework/test_rework_evidence_recheck.py` 和 `tests/rework/test_rework_closeout_fact_chain.py`。负例证明缺 provider attempt（模型调用尝试记录）、缺 source lineage（源码来源链）、旧 FinalEvidenceTable（最终证据表）、过早 CheckerVerdict（检查结论）、遗漏 behavioral probe（行为探针）失败、缺 service contract（服务合同）、未声明 env usage（环境变量使用）和旧 RunManifest/SourceInventory/CheckerVerdict（运行清单/源码清单/检查结论）均 fail closed。正例证明当前轮可重建 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和 CloseoutGateResult（收尾门禁结果），ReworkOutcome.accepted_blocker_refs（返工结果已接受阻塞项引用）只来自 target_blocker_refs。验证：V2-100D focused tests `12 passed`；V2-100 regression `68 passed`；evidence/checker/source/run-manifest/closeout regression `141 passed`。
 
 ### V2-100E: Multi-round rework proving scenario（多轮返工证明场景）
 

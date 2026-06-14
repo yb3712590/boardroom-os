@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from boardroom_os.agents.skills import _normalize_ref_fields
 from boardroom_os.contracts.acceptance import AcceptanceContract
@@ -18,6 +18,10 @@ class FinalEvidenceTableError(ValueError):
 
 
 class FinalEvidenceTableRef(NonEmptyTextValue):
+    pass
+
+
+class EvidenceNamespaceRef(NonEmptyTextValue):
     pass
 
 
@@ -147,6 +151,7 @@ class FinalEvidenceTable(BaseModel):
     version: Literal[1] = 1
     final_evidence_table_id: FinalEvidenceTableRef | None = None
     acceptance_contract_ref: ContractId
+    evidence_namespace_ref: EvidenceNamespaceRef | None = Field(default=None, exclude_if=lambda value: value is None)
     generated_at: datetime
     rows: tuple[FinalEvidenceRow, ...]
     complete: bool | None = None
@@ -167,14 +172,25 @@ class FinalEvidenceTable(BaseModel):
                 contract_ref_value = contract_ref.get("value")
             else:
                 contract_ref_value = str(contract_ref)
-            normalized["final_evidence_table_id"] = FinalEvidenceTableRef(
-                value=f"final-evidence-table.{contract_ref_value}"
+            namespace_ref = normalized.get("evidence_namespace_ref")
+            if isinstance(namespace_ref, EvidenceNamespaceRef):
+                namespace_ref_value = namespace_ref.value
+            elif isinstance(namespace_ref, dict):
+                namespace_ref_value = namespace_ref.get("value")
+            elif namespace_ref is None:
+                namespace_ref_value = None
+            else:
+                namespace_ref_value = str(namespace_ref)
+            normalized["final_evidence_table_id"] = _expected_table_ref(
+                ContractId(value=contract_ref_value),
+                EvidenceNamespaceRef(value=namespace_ref_value) if namespace_ref_value else None,
             )
         return _normalize_ref_fields(
             normalized,
             {
                 "final_evidence_table_id": FinalEvidenceTableRef,
                 "acceptance_contract_ref": ContractId,
+                "evidence_namespace_ref": EvidenceNamespaceRef,
             },
         )
 
@@ -200,12 +216,13 @@ class FinalEvidenceTable(BaseModel):
 
     @model_validator(mode="after")
     def _validate_derived_fields(self) -> Self:
-        expected_id = FinalEvidenceTableRef(
-            value=f"final-evidence-table.{self.acceptance_contract_ref.value}"
+        expected_id = _expected_table_ref(
+            self.acceptance_contract_ref,
+            self.evidence_namespace_ref,
         )
         if self.final_evidence_table_id != expected_id:
             raise ValueError(
-                "final_evidence_table_id must be final-evidence-table.<acceptance_contract_ref>"
+                "final_evidence_table_id must be final-evidence-table derived from acceptance_contract_ref and evidence_namespace_ref"
             )
 
         derived_complete = all(row.status is FinalEvidenceStatus.SATISFIED for row in self.rows)
@@ -223,6 +240,7 @@ class FinalEvidenceTableInput(BaseModel):
     verified_evidence: tuple[VerifiedEvidence, ...] = ()
     failed_blockers: tuple[FinalEvidenceBlocker, ...] = ()
     generated_at: datetime
+    evidence_namespace_ref: EvidenceNamespaceRef | None = None
 
     @field_validator("active_acceptance_contract", mode="wrap")
     @classmethod
@@ -336,12 +354,24 @@ class FinalEvidenceTableBuilder:
 
         return FinalEvidenceTable(
             acceptance_contract_ref=contract.acceptance_contract_id,
+            evidence_namespace_ref=table_input.evidence_namespace_ref,
             generated_at=table_input.generated_at,
             rows=tuple(rows),
         )
 
 
+def _expected_table_ref(
+    acceptance_contract_ref: ContractId,
+    evidence_namespace_ref: EvidenceNamespaceRef | None,
+) -> FinalEvidenceTableRef:
+    base = f"final-evidence-table.{acceptance_contract_ref.value}"
+    if evidence_namespace_ref is None:
+        return FinalEvidenceTableRef(value=base)
+    return FinalEvidenceTableRef(value=f"{base}.{evidence_namespace_ref.value}")
+
+
 __all__ = [
+    "EvidenceNamespaceRef",
     "FinalEvidenceBlocker",
     "FinalEvidenceBlockerCode",
     "FinalEvidenceRow",
