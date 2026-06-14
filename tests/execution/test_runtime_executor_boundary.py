@@ -50,6 +50,7 @@ from boardroom_os.execution.runtime_executor import (
     RuntimeEventSequencer,
     RuntimeExecutionInput,
     RuntimeExecutor,
+    RuntimeExecutorError,
     build_command_run_recorded_event,
     build_execution_started_event,
     build_provider_attempt_recorded_event,
@@ -435,3 +436,33 @@ def test_runtime_executor_records_failed_command_run_as_fact(tmp_path: Path) -> 
         EventType.COMMAND_RUN_RECORDED,
     )
     assert EventType.TICKET_COMPLETED not in tuple(event.event_type for event in result.events)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    (
+        EventType.REWORK_REQUESTED,
+        EventType.REWORK_PLANNED,
+        EventType.REWORK_GRAPH_PATCH_REVIEWED,
+        EventType.REWORK_GRAPH_PATCH_APPROVED,
+        EventType.REWORK_TICKET_CREATED,
+        EventType.REWORK_REVIEWED,
+        EventType.REWORK_ACCEPTED,
+        EventType.REWORK_ESCALATED,
+        EventType.REWORK_EXHAUSTED,
+    ),
+)
+def test_runtime_boundary_rejects_rework_governance_events(event_type: EventType) -> None:
+    with pytest.raises(RuntimeExecutorError, match="runtime cannot emit governance event"):
+        RuntimeEventBoundary.require_runtime_fact_event(event_type)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    (
+        EventType.REWORK_ATTEMPT_STARTED,
+        EventType.REWORK_ATTEMPT_SUBMITTED,
+    ),
+)
+def test_runtime_boundary_allows_only_rework_attempt_fact_events(event_type: EventType) -> None:
+    RuntimeEventBoundary.require_runtime_fact_event(event_type)

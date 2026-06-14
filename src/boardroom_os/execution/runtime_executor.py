@@ -46,10 +46,21 @@ class RuntimeEventBoundary:
         EventType.TOOL_ATTEMPT_RECORDED.value,
         EventType.WORK_PRODUCT_SUBMITTED.value,
         EventType.COMMAND_RUN_RECORDED.value,
+        EventType.REWORK_ATTEMPT_STARTED.value,
+        EventType.REWORK_ATTEMPT_SUBMITTED.value,
     }
     _REJECTED_GOVERNANCE_EVENT_VALUES = {
         EventType.TICKET_COMPLETED.value,
         EventType.CLOSEOUT_COMMITTED.value,
+        EventType.REWORK_REQUESTED.value,
+        EventType.REWORK_PLANNED.value,
+        EventType.REWORK_GRAPH_PATCH_REVIEWED.value,
+        EventType.REWORK_GRAPH_PATCH_APPROVED.value,
+        EventType.REWORK_TICKET_CREATED.value,
+        EventType.REWORK_REVIEWED.value,
+        EventType.REWORK_ACCEPTED.value,
+        EventType.REWORK_ESCALATED.value,
+        EventType.REWORK_EXHAUSTED.value,
         ReservedRuntimeGovernanceEvent.PROJECT_COMPLETED.value,
     }
     _EXECUTABLE_ROLE_CATEGORIES = {

@@ -264,6 +264,19 @@ def test_rework_chain_serializes_and_hashes_deterministically() -> None:
     assert all(len(value) == 64 for value in first)
 
 
+def test_rework_package_exports_v2_100b_reducer_api() -> None:
+    from boardroom_os.reducers import rework as rework_reducer
+
+    for name in (
+        "GraphPatchReviewGate",
+        "ReworkProjection",
+        "ReworkReducer",
+        "ReworkReducerError",
+        "ReworkTerminalStatus",
+    ):
+        assert hasattr(rework_reducer, name)
+
+
 def test_build_rework_request_from_final_evidence_missing_row() -> None:
     table = FinalEvidenceTable(
         final_evidence_table_id=FinalEvidenceTableRef(value="final-evidence-table.acceptance.v2-090f"),

@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100B`（TODO，Rework event taxonomy + reducer，返工事件分类与归约器；在 V2-100A 强类型返工对象基础上，用事件和 reducer 保护返工状态推进）
+**当前未完成工作包**：`V2-100C`（TODO，CEO rework planner boundary，CEO 返工规划边界；在 V2-100A/B 强类型返工对象、事件和 reducer 基础上，让 CEO 读取 BlockerReport / ReworkRequest 并生成受审查的 ReworkPlan 与 TicketGraphPatch）
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。当前真实失败现场已保留在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，其中包括 BehavioralProbePlan 期待 `$.title` 而 backend 实际返回 `{"book": {...}}`、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用 `run-v2-080f`。V2-100 现在成为当前实施重点：把 090K/090F 暴露的“发现问题后只能 fail closed”升级为 CEO-governed rework loop（项目经理治理返工循环），由 CEO 读取结构化 blocker（阻塞项）、规划返工、更新 TicketGraph（工单图）、组织实施/测试/检查/收尾重验并留痕。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，最终通过必须基于 `V2-090K + V2-100` 后复判，而不是期待 090K single-pass（单轮）直接收敛。
 
@@ -164,8 +164,8 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 1 / 5 | IN_PROGRESS；V2-100A 完成，当前重点 V2-100B |
-| **合计** | **V2-000 ~ V2-100** | **70 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100B 为当前未完成工作包** |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 2 / 5 | IN_PROGRESS；V2-100A/B 完成，当前重点 V2-100C |
+| **合计** | **V2-000 ~ V2-100** | **71 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100C 为当前未完成工作包** |
 
 ## 当前约束摘要
 
@@ -1211,7 +1211,7 @@ RoleProfile（角色模板）
 
 ### V2-100B: Rework event taxonomy + reducer（返工事件分类与归约器）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：新增返工 typed events（类型化事件）和 reducer（归约器）门禁，确保 ReworkCycle（返工循环）状态只能通过治理事实推进，runtime/atomic-agent（运行时/原子智能体）不能直接提交 accepted/completed（接受/完成）。
 - 输入文档：`doc/03-architecture/execution-and-runtime-boundary.md`、`doc/03-architecture/domain-model.md`、V2-020 event/reducer（事件/归约器）产物。
 - 依赖：V2-100A。
@@ -1219,6 +1219,7 @@ RoleProfile（角色模板）
 - 必须先写的 negative tests：runtime actor（运行时执行者）提交 `REWORK_ACCEPTED` / `REWORK_ESCALATED` / `REWORK_EXHAUSTED` 必须失败；无 `REWORK_REQUESTED` 直接 `REWORK_PLANNED` 必须失败；ReworkTicket（返工工单）扩大 allowed_write_set（允许写集合）或引用非 active AcceptanceContract（活跃验收合同）必须失败；同一 blocker 未被重新验证时不得关闭返工循环。
 - 必须证明的 happy path：`REWORK_REQUESTED -> REWORK_PLANNED -> REWORK_TICKET_CREATED -> REWORK_ATTEMPT_SUBMITTED -> REWORK_REVIEWED -> REWORK_ACCEPTED` 可由治理角色和 reducer 按 graph_version（图版本）推进，并产出可回放 projection（投影）。
 - 验收口径：TicketGraph（工单图）仍是流程状态源；返工状态不可由 executor/runtime（执行器/运行时）直接写终态。
+- 完成证据：2026-06-14 已实现 `REWORK_REQUESTED` / `REWORK_PLANNED` / `REWORK_GRAPH_PATCH_REVIEWED` / `REWORK_GRAPH_PATCH_APPROVED` / `REWORK_TICKET_CREATED` / `REWORK_ATTEMPT_STARTED` / `REWORK_ATTEMPT_SUBMITTED` / `REWORK_REVIEWED` / `REWORK_ACCEPTED` / `REWORK_ESCALATED` / `REWORK_EXHAUSTED` 返工事件分类与 ReworkReducer（返工归约器）；runtime/executor/atomic-agent（运行时/执行器/原子智能体）不能提交治理终态；GraphPatchReviewGate（图补丁审查门禁）要求必需审查域 ready_to_commit；返工工单创建受 TicketGraphPatch（工单图补丁）、active acceptance refs（活跃验收引用）、source surfaces（源码面）、evidence obligations（证据义务）和 allowed_write_set（允许写集合）约束。验证：`PYTHONPATH=src:. python -m pytest tests/contracts tests/reducers tests/execution tests/evidence tests/closeout tests/rework tests/negative -q` 通过（1496 passed）。
 
 ### V2-100C: CEO rework planner boundary（CEO 返工规划边界）
 

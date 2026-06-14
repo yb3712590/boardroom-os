@@ -65,6 +65,33 @@ def test_event_record_preserves_event_type_enum_for_reducer_branching() -> None:
     assert event.event_type is EventType.TICKET_CREATED
 
 
+def test_event_record_accepts_rework_event_types() -> None:
+    rework_event_types = (
+        EventType.REWORK_REQUESTED,
+        EventType.REWORK_PLANNED,
+        EventType.REWORK_GRAPH_PATCH_REVIEWED,
+        EventType.REWORK_GRAPH_PATCH_APPROVED,
+        EventType.REWORK_TICKET_CREATED,
+        EventType.REWORK_ATTEMPT_STARTED,
+        EventType.REWORK_ATTEMPT_SUBMITTED,
+        EventType.REWORK_REVIEWED,
+        EventType.REWORK_ACCEPTED,
+        EventType.REWORK_ESCALATED,
+        EventType.REWORK_EXHAUSTED,
+    )
+
+    for index, event_type in enumerate(rework_event_types, start=10):
+        event = _valid_event_record(
+            event_id=EventId(value=f"evt-rework-{event_type.value}"),
+            event_type=event_type,
+            payload_refs=(EventPayloadRef(value=f"payload:{event_type.value}"),),
+            graph_version=index,
+        )
+
+        assert event.event_type is event_type
+        assert event.stable_dump()["event_type"] == event_type.value
+
+
 def test_event_record_stably_serializes_and_preserves_causation_and_correlation_refs() -> None:
     event = _valid_event_record()
 
