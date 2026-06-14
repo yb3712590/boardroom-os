@@ -68,6 +68,7 @@
 | `v2-100-agent-team-rework-loop-spec.md` | V2-100 agent-team rework loop（智能体团队返工循环）工作包 spec：返工模型、事件/reducer、多角色 graph patch review（图补丁审查）、证据重验与 proving scenario |
 | `v2-100a-rework-domain-model-implementation-plan.md` | V2-100A Rework domain model（返工领域模型）实施计划：强类型返工对象、verified blocker（已验证阻塞项）投影、V2-090K failure snapshot（失败快照）映射与负例优先测试 |
 | `v2-100b-rework-event-taxonomy-reducer-implementation-plan.md` | V2-100B Rework event taxonomy + reducer（返工事件分类与归约器）实施计划：`REWORK_*` 事件、runtime boundary（运行时边界）、GraphPatchReviewGate（图补丁审查门禁）与可回放 ReworkProjection（返工投影） |
+| `v2-100c-ceo-rework-planner-boundary-implementation-plan.md` | V2-100C CEO rework planner boundary（CEO 返工规划边界）实施计划：provider-backed CEO ReworkPlan（模型支撑项目经理返工计划）、TicketGraphPatch（工单图补丁）、多角色审查和 reducer commit（归约器提交）边界 |
 
 ## AI 启动入口
 
