@@ -5,7 +5,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class V2_090FReworkEntryStatus(StrEnum):
@@ -34,6 +34,14 @@ class V2_090FTicketGraphSnapshot(BaseModel):
     edges: tuple[tuple[str, str], ...] = ()
     ticket_graph_patch_ref: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_patch_binding(self) -> "V2_090FTicketGraphSnapshot":
+        if "after-rework" in self.source_ref and not self.ticket_graph_patch_ref:
+            raise ValueError("after-rework graph requires ticket_graph_patch_ref")
+        if not self.nodes:
+            raise ValueError("ticket graph snapshot nodes must not be empty")
+        return self
+
 
 class V2_090FReworkEntryValidationInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -61,6 +69,24 @@ class V2_090FReworkEntryValidationResult(BaseModel):
     terminal_path: Path
     report_path: Path
     checked_refs: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _validate_rework_accepted_paths(self) -> "V2_090FReworkEntryValidationResult":
+        if self.status is not V2_090FReworkEntryStatus.REWORK_ACCEPTED_CANDIDATE:
+            return self
+        required_paths = {
+            "after_graph_json_path": self.after_graph_json_path,
+            "after_graph_mermaid_path": self.after_graph_mermaid_path,
+            "rework_request_path": self.rework_request_path,
+            "rework_plan_path": self.rework_plan_path,
+            "ticket_graph_patch_path": self.ticket_graph_patch_path,
+        }
+        missing = [name for name, value in required_paths.items() if value is None]
+        if missing:
+            raise ValueError(
+                "rework_accepted_candidate requires paths: " + ", ".join(missing)
+            )
+        return self
 
 
 def _node_ref(node: dict[str, Any]) -> str:
