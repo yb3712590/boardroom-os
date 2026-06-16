@@ -523,6 +523,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 > 2026-06-12 补充：V2-090F first run（首次运行）真实 provider worker implementation chain（工人实施链路）已通过一次，且用户人工验证基础功能可用；但专家评审确认 planning prompt（规划提示词）、ticket graph validator（任务图校验器）和 closeout helper（收尾辅助器）存在外部介入，不能判定 agent team autonomy（智能体团队自治）成立。V2-090K 必须先完成整改并重跑真实 provider full test（完整真实模型测试）；若重跑 fail closed 并暴露 agent-generated contract / implementation / probe（智能体生成合同 / 实现 / 探针）不一致，则该失败进入 V2-100 返工循环，不再倒推 090K 未完成。
 > 2026-06-12 修订：V2-090K 范围已扩展为同时消除 runtime（运行时）对业务域和证据权威源的硬编码认知。BehavioralProbePlan（行为探针计划）必须由 Tester/Release DevOps（测试/发布运维）声明，且执行器必须定义 capture（捕获）、`${}` interpolation（占位符替换）和 `json_equals` / `json_contains` / `field_equals` / `field_absent` 断言语义。Agent JSON artifact（智能体 JSON 产物）进入 closeout（收尾）前必须强类型解析为 AcceptanceContract（验收合同）、PackageContract（包合同）、RunManifest（运行清单）和 SourceLineageRecord（源码来源链记录），通过 validate_contract_gate（合同门禁校验），再由现有 FinalEvidenceTableBuilder（最终证据表构建器）和 build_source_inventory（源码清单构建器）生成证据；不得用 dict-only（仅字典）平行 helper（辅助器）替代。
 > 2026-06-13 修订：V2-090K 已完成“去外力介入 + 合同权威源 + fail-closed 现场”目标。真实 provider full run 产生的失败现场已归档到 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，包含行为探针响应 shape（形状）错配、环境变量绑定未收敛、最终证据表旧 AC 引用和 closeout/audit 旧 run 引用。该现场是 V2-100 输入；V2-090F golden sample 仍保持未勾选。
+> 2026-06-16 修订：V2-100E 已完成多轮返工 proving（证明）。V2-090F 下一步不先补大规模 orchestration glue（编排胶水），而是按 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md` 执行真实 rerun rework-entry validation（重跑返工入口验证）：无阻断时按原样 closeout candidate（收尾候选）复判；有阻断时必须形成 verified blocker（已验证阻塞项）、ReworkRequest（返工请求）、TicketGraphPatch（工单图补丁），并导出 TicketGraph before/after（工单图更新前后）证据。该复判完成前，V2-090F checkbox 继续保持未勾选。
 
 #### 本批产出
 
@@ -537,6 +538,8 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - Atomic action protocol repair（原子动作协议修复）spec/plan（规范/计划）、runner/proving 产物与真实 provider event stream（模型供应商事件流）证据
 - Agent team autonomy remediation（智能体团队自治整改）spec/plan（规范/计划），用于消除 V2-090F first run 的 runner/prompt/validator/helper 介入、业务域行为探针硬编码和验收/源码面第二权威源
 - V2-090K curated failure snapshot（精选失败快照）：`examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，用于后续 V2-100 返工循环 proving（证明）
+- V2-090F rerun rework-entry validation spec（重跑返工入口验证规格）：`doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md`
+- V2-090F rerun rework-entry validation implementation plan（重跑返工入口验证实施计划）：`doc/04-implementation/v2-090f-rerun-rework-entry-validation-implementation-plan.md`，当前等待评审后再实施
 - 待 V2-090F 实施生成的 `examples/generated-workspaces/tiny-fullstack/` PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）
 
 > 当前 `examples/generated-workspaces/tiny-fullstack/` 仍不得被当作 V2-090F passed golden sample（通过黄金样例）。已完成的 V2-090A~E、V2-090G~K 证明提示词钩子、命令覆盖、服务运行证据、合同整改、真实黑盒集成基础能力、atomic-agent 执行边界、中等复杂实施能力、action protocol repair（动作协议修复）和 agent team autonomy remediation（智能体团队自治整改）；尚未证明 tiny-fullstack golden sample 已经通过 CEO-governed rework loop（项目经理治理返工循环）收敛到完整 package/closeout/audit（包/收尾/审计）验收。
@@ -546,6 +549,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - [x] V2-090A~E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 已 DONE（专家评审已确认 agent team 基础能力和 090K 自治整改可进入 V2-100 返工循环证明；V2-090F golden sample 仍需 V2-100 后复判）
 - [x] 当前 V2-080 failure package（失败包）作为 regression negative（回归负例）被 CloseoutGate 阻断
 - [x] V2-090K 已移除固定运行接口、业务域探针、静态验收/源码面第二权威源、dict-only 契约/证据平行链路和 helper-written checker/closeout；真实 provider full run fail closed 现场已保留为 V2-100 输入
+- [ ] V2-090F rerun rework-entry validation（重跑返工入口验证）已真实执行，并产出无阻断 closeout candidate 或 verified blocker -> ReworkRequest -> TicketGraphPatch -> before/after graph（已验证阻塞项 -> 返工请求 -> 工单图补丁 -> 更新前后图）证据
 - [ ] V2-090F golden sample（黄金样例）中每个 declared run/test command 均有 final evidence
 - [x] backend/frontend 均有 startup/readiness evidence
 - [x] HTTP CRUD、delete book（删除图书）、SQLite persistence 和 frontend-to-backend live probe 均通过
@@ -555,7 +559,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 > V2-090F 实施完成前不得把 `scripts/build_tiny_closeout_sample.py --check`（构建脚本检查模式）、provider artifact lock（模型产物锁）、ProviderAttempt（模型调用尝试记录）、`AgentRunResult.status == completed`（智能体运行完成）或 V2-090J 单元测试替身单独作为 agent team framework（智能体团队框架）端到端成立证据。
 > V2-090F 也不得把 runner 预置的 backend/frontend/integration 固定 ticket graph（固定任务图）或所有角色共用 `seat.worker.implementation` 当作 agent team autonomy（智能体团队自治）证据。
 > V2-090F 必须使用独立 high-budget config baseline（高预算配置基线），并将 runtime/providers/roles YAML hash、resolved budgets（解析后预算）、provider timeout（模型供应商超时）和 retry policy（重试策略）写入 `00-boardroom/v2-090f-baseline.json`；预算或超时不得通过 `.env` 临时调参绕过。
-> Phase 9 可启动 V2-100，但不可宣称端到端 golden sample DONE。090F 的最终解阻条件是 `V2-090K + V2-100` 后重新证明 package + closeout + audit（包/收尾/审计）完整闭合。
+> V2-100 已完成后，V2-090F 的最终解阻条件是按 rerun rework-entry validation spec（重跑返工入口验证规格）重新证明 package + closeout + audit（包/收尾/审计）完整闭合；若出现阻断，必须证明阻断能进入 V2-100 返工循环并更新 TicketGraph（工单图），不能只停留在 raw exception（原始异常）或自由文本失败。
 
 ### Phase 10 验收 — V2-100 Agent-team Rework Loop Hardening
 

@@ -61,6 +61,8 @@
 | `v2-090h-atomic-agent-executor-switch-implementation-plan.md` | V2-090H atomic-agent（原子智能体）executor switch（执行器切换）实施计划 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）实施计划 |
+| `v2-090f-rerun-rework-entry-validation-spec.md` | V2-090F rerun rework-entry validation（重跑返工入口验证）spec：V2-100 完成后先真实重跑 090F，验证无阻断原样 closeout、有阻断则形成 ReworkRequest（返工请求）并展示 TicketGraph（工单图）更新前后差异 |
+| `v2-090f-rerun-rework-entry-validation-implementation-plan.md` | V2-090F rerun rework-entry validation（重跑返工入口验证）实施计划：按 observation run（观察重跑）优先、结构化 blocker projection（阻断投影）和 V2-100 continuation（返工继续）分段实施，当前等待评审 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）实施计划 |
 | `../../examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` | V2-090K curated failure snapshot（精选失败快照），作为 V2-100 rework loop（返工循环）真实失败输入 |
@@ -70,7 +72,8 @@
 | `v2-100b-rework-event-taxonomy-reducer-implementation-plan.md` | V2-100B Rework event taxonomy + reducer（返工事件分类与归约器）实施计划：`REWORK_*` 事件、runtime boundary（运行时边界）、GraphPatchReviewGate（图补丁审查门禁）与可回放 ReworkProjection（返工投影） |
 | `v2-100c-ceo-rework-planner-boundary-implementation-plan.md` | V2-100C CEO rework planner boundary（CEO 返工规划边界）实施计划：provider-backed CEO ReworkPlan（模型支撑项目经理返工计划）、TicketGraphPatch（工单图补丁）、多角色审查和 reducer commit（归约器提交）边界 |
 | `v2-100d-rework-evidence-checker-reintegration-implementation-plan.md` | V2-100D Rework evidence/checker reintegration（返工证据与检查重接入）实施计划：每次 ReworkAttempt（返工尝试）重建 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和必要 CloseoutGate（收尾门禁）链路 |
-| `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划：真实 provider-backed（模型供应商支撑）多轮返工、resettable fixture（可重置夹具）、fail-closed negative tests（失败关闭负例）和 audit export（审计导出） |
+| `v2-100e-multi-round-rework-proving-scenario-implementation-plan.md` | **DEPRECATED / REJECTED（已废弃 / 已否决，不作为实施入口）**：旧 V2-100E Multi-round rework proving scenario（多轮返工证明场景）实施计划，因包含硬编码事实源、过度定制 adapter（适配器）和可重复性风险，仅可作为 rejected design notes（被否设计记录）查阅 |
+| `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | **CURRENT REVIEW TARGET（当前评审入口）**：V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；以当前 V2-100A-D 真实接口为准，要求 happy path（正向路径）使用真实 provider（模型供应商）和真实 evidence gate（证据门禁） |
 
 ## AI 启动入口
 

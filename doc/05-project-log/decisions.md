@@ -532,3 +532,32 @@ V2-090K 的核心整改使 runner/helper（运行器/辅助器）不再硬编码
 - `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-001~005 和 Phase 10 验收段。
 - `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` 成为 V2-100 的真实失败输入；V2-100E 还必须构造 resettable failing fixture（可重置失败夹具），避免端到端证明只依赖不可重置的真实 provider 现场。
 - V2-100 不替代 V2-090K 的去硬编码整改；V2-090K 已可按 fail-closed 证据语义闭合。V2-100 的完成用于复判 V2-090F golden sample 是否可从 BLOCKED 转为 DONE。
+
+## DEC-0025: V2-090F 先做真实返工入口验证再补编排
+
+- 状态：Accepted
+- 日期：2026-06-16
+
+### 决策
+
+V2-100E 完成后，V2-090F 的下一步是执行真实 rerun rework-entry validation（重跑返工入口验证），而不是先实施大规模 orchestration glue（编排胶水）或默认认为框架还缺一套新编排能力。
+
+重跑必须仍以 single user PRD（单份用户需求文档）为业务输入，使用 V2-090F 专用 runtime/providers/roles config（运行时 / 供应商 / 角色配置），并经过现有 EvidenceVerifier / FinalEvidenceTableBuilder / Checker / CloseoutGate（证据验证器 / 最终证据表构建器 / 检查者 / 收尾门禁）。判定规则为：
+
+1. 若没有 verified blocker（已验证阻塞项），按原 closeout path（收尾路径）形成 V2-090F DONE candidate（完成候选），仍需专家评审。
+2. 若存在 verified blocker，必须形成 BlockerReport（阻塞报告）和 ReworkRequest（返工请求），再进入 V2-100 ReworkCycle（返工循环）。
+3. 进入返工后，必须导出 TicketGraph before/after（工单图更新前后）和 TicketGraphPatch（工单图补丁）证据，证明图确实被治理更新。
+4. 只有真实重跑证明现有 gate failure（门禁失败）无法投影成 BlockerReport / ReworkRequest 时，才允许补最小 rework-entry adapter（返工入口适配器）。该 adapter 只能结构化既有 gate failure，不得复制或替代 FinalEvidenceTableBuilder、SourceInventory、Checker 或 CloseoutGate（最终证据表构建器 / 源码清单 / 检查者 / 收尾门禁）。
+
+### 理由
+
+V2-100E 已证明返工模型、图补丁、多角色审查、证据重验和终态决策链路可工作。此时继续先写编排框架会在没有真实 090F 失败形态前制造第二套接口和第二事实源，违反 no duplicate implementations（禁止重复实现）和 no second source of truth（无第二权威源）。
+
+用户对 agent team autonomy（智能体团队自治）的理解是输入始终只有一份 PRD，框架应根据原有输入输出自适应；阻断才进入返工，不阻断则按原样 closeout。因此 090F 复判应先观察真实运行：如果阻断已经自然成为 verified blocker，就直接交给 V2-100；如果阻断停在 raw exception（原始异常）或自由文本错误，才证明原框架存在 rework-entry gap（返工入口缺口）。
+
+### 影响
+
+- 新增 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md` 作为 V2-090F 下一步复判入口。
+- `doc/04-implementation/backlog.md` 中 V2-090F 继续保持 `BLOCKED`，但阻塞说明从等待 V2-100E 评审更新为等待真实重跑返工入口验证。
+- `doc/04-implementation/acceptance-criteria.md` 增加未勾选的 rerun rework-entry validation（重跑返工入口验证）前置项；完成前不得勾选 V2-090F package / closeout / audit 验收。
+- 后续实施计划必须先做 observation run（观察重跑），再根据证据决定是否补最小 entry projection（入口投影），最后才执行 rework continuation（返工继续）。
