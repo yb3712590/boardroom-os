@@ -5,13 +5,13 @@
 - Stage: V2-100F
 - State: REVIEW_REQUIRED
 - Input: V2-090F real provider rerun result `blocked_by_missing_rework_entry`
-- Output: revised spec for expert review; no implementation plan yet
+- Output: revised spec plus separate implementation plan for review; no code implementation yet
 
 ## Reviewer Scenario Brief
 
 V2-090F 的真实 provider rerun（模型供应商重跑）已经生成了可运行的 tiny-fullstack sample（微型全栈样例）：backend CRUD（后端增删改查）、checkout / return / delete（借出 / 归还 / 删除）和本地测试都能工作。但流程没有进入 V2-100 ReworkCycle（返工循环），而是在 RunManifest（运行清单）摄取阶段因 `json_array_contains_field` 这类 LLM（大模型）自然生成的 assertion type（断言类型）未被硬编码枚举支持而 raw crash（原始崩溃），最终状态为 `blocked_by_missing_rework_entry`。这说明当前问题不是“返工循环不会工作”，而是“真实失败还没被转换成可返工上下文”。
 
-建议专家按以下顺序阅读：先读本文件，评审 V2-100F 是否应该把 RunManifest assertion（运行清单断言）改为 tolerant semantic ingestion（宽容语义摄取），并把黑盒验证升级为 Tester / Release DevOps（测试 / 发布运维）自主计划；再读 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md` 和 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-implementation-plan.md`，理解当前 rework-entry（返工入口）验证目标；随后读 `examples/generated-workspaces/tiny-fullstack/30-audit/rework-entry-validation.md`、`examples/generated-workspaces/tiny-fullstack/30-audit/raw-run-error.txt` 和 `examples/generated-workspaces/tiny-fullstack/00-boardroom/generated-run-manifest.json`，确认真实失败现场；最后读 `doc/04-implementation/v2-100-agent-team-rework-loop-spec.md`，检查 V2-100F 是否与既有 ReworkRequest（返工请求）、TicketGraph（工单图）和 evidence/closeout（证据/收尾）边界一致。
+建议专家按以下顺序阅读：先读本文件，评审 V2-100F 是否应该把 RunManifest assertion（运行清单断言）改为 tolerant semantic ingestion（宽容语义摄取），并把黑盒验证升级为 CEO 通过 TicketGraph / SeatDemand（工单图 / 席位需求）派给 verify-blackbox ticket（黑盒验证工单）的 AgentSeat（智能体席位）自主计划；再读 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md` 和 `doc/04-implementation/v2-090f-rerun-rework-entry-validation-implementation-plan.md`，理解当前 rework-entry（返工入口）验证目标；随后读 `examples/generated-workspaces/tiny-fullstack/30-audit/rework-entry-validation.md`、`examples/generated-workspaces/tiny-fullstack/30-audit/raw-run-error.txt` 和 `examples/generated-workspaces/tiny-fullstack/00-boardroom/generated-run-manifest.json`，确认真实失败现场；最后读 `doc/04-implementation/v2-100-agent-team-rework-loop-spec.md`，检查 V2-100F 是否与既有 ReworkRequest（返工请求）、TicketGraph（工单图）和 evidence/closeout（证据/收尾）边界一致。
 
 ## Problem
 
@@ -37,7 +37,7 @@ The governing rule is:
 
 ```text
 Framework constrains what the system may claim.
-Tester / Release DevOps decide what to verify.
+The AgentSeat assigned by CEO through TicketGraph / SeatDemand to the verify-blackbox ticket decides what to verify.
 Runner executes approved agent plans and records facts.
 Checker / Closeout decide whether evidence proves the claim.
 ```
@@ -48,7 +48,7 @@ Therefore:
 - Unknown or variant assertion language must not be silently skipped.
 - Unknown or variant assertion language must not count as passed evidence.
 - RunManifest（运行清单） is context and a run commitment（运行承诺）, not the complete blackbox test script（黑盒测试脚本）.
-- Tester / Release DevOps must receive RunManifest, PackageContract（包合同）, AcceptanceContract（验收合同）, project docs, source refs（源码引用） and observed failures, then produce a provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）.
+- The AgentSeat assigned by CEO through TicketGraph / SeatDemand to the verify-blackbox ticket must receive RunManifest, PackageContract（包合同）, AcceptanceContract（验收合同）, project docs, source refs（源码引用） and observed failures, then produce a provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）.
 - The runner executes that plan as tool / command / HTTP / browser facts（工具 / 命令 / HTTP / 浏览器事实）. It must not invent business probes, default endpoints, commands or assertions.
 - ReworkRequest（返工请求） should receive raw RunManifest fragments（原始运行清单片段）、agent verification plan（智能体验证计划）、observed execution facts（观察执行事实） and advisory context（参考上下文） so CEO / Architect / Tester / Release DevOps（项目经理 / 架构师 / 测试 / 发布运维） can decide whether to fix implementation（实现）、RunManifest（运行清单）、contract（合同） or ticket graph（工单图）.
 
@@ -64,7 +64,7 @@ V2-100F must not:
 - Restore runner/helper（运行器/辅助器） business-domain probes as a success path.
 - Treat RunManifest behavioral steps as the only allowed blackbox verification path.
 - Add a standalone ManifestInterpreter（运行清单解释器） role or provider call owned by the framework.
-- Let Tester / Release DevOps mark evidence passed without real execution facts.
+- Let the AgentSeat assigned to the verify-blackbox ticket mark evidence passed without real execution facts.
 - Let runtime（运行时） create ReworkPlan（返工计划） or mutate TicketGraph（工单图）.
 
 ## Required Architecture
@@ -86,7 +86,7 @@ Ingestion output must be context, not evidence. It may include deterministic str
 
 ### 2. Agent-owned BlackboxVerificationPlan
 
-V2-100F must introduce or extend a provider-backed BlackboxVerificationPlan（黑盒验证计划） owned by Tester / Release DevOps（测试 / 发布运维）.
+V2-100F must introduce or extend a provider-backed BlackboxVerificationPlan（黑盒验证计划） owned by the AgentSeat assigned by CEO through TicketGraph / SeatDemand to the verify-blackbox ticket（由 CEO 通过工单图 / 席位需求派给黑盒验证工单的智能体席位）.
 
 The plan input must include:
 
@@ -108,7 +108,7 @@ The plan output must include:
 - expected observations（预期观察） in open structured form, not closed assertion enums.
 - evidence obligations to produce（应产生的证据义务）.
 
-RunManifest is one input to this plan. Tester / Release DevOps may follow RunManifest steps, challenge them, add checks from API docs, compare manifest against RUNBOOK, or probe multiple documented endpoints when doing so is justified by the package context. The framework must not precompute those decisions.
+RunManifest is one input to this plan. The assigned AgentSeat may follow RunManifest steps, challenge them, add checks from API docs, compare manifest against RUNBOOK, or probe multiple documented endpoints when doing so is justified by the package context. The framework must not precompute those decisions.
 
 ### 3. Runner Executes Agent Plans And Records Facts
 
@@ -153,7 +153,7 @@ Reducers, closeout and rework gates must not depend on advisory labels matching 
 
 V2-100F must not add a standalone model-mediated manifest interpretation stage.
 
-Semantic interpretation of ambiguous RunManifest assertions belongs inside Tester / Release DevOps verification planning. Their ProviderAttempt lineage attaches to BlackboxVerificationPlan, not to a framework-owned ManifestInterpreter（运行清单解释器）.
+Semantic interpretation of ambiguous RunManifest assertions belongs inside the assigned AgentSeat's verification planning. Its ProviderAttempt lineage attaches to BlackboxVerificationPlan, not to a framework-owned ManifestInterpreter（运行清单解释器）.
 
 The framework may compute deterministic structural summaries and preserve raw payloads, but it must not ask a separate model to convert unknown assertions into canonical assertions that the framework then executes as if they were authoritative.
 
@@ -178,11 +178,11 @@ V2-100F implementation plan must include negative tests proving:
 - Unknown assertion type does not raw-crash ingestion.
 - Unknown assertion type is not ignored.
 - Unknown assertion type cannot become closeout success without agent-owned verification evidence.
-- Raw RunManifest payload is preserved for Tester / Release DevOps planning.
+- Raw RunManifest payload is preserved for the assigned AgentSeat's planning.
 - Runner cannot invent verification actions when BlackboxVerificationPlan is absent.
 - Runner cannot execute actions outside the approved agent plan.
-- Tester / Release DevOps BlackboxVerificationPlan without ProviderAttempt lineage fails.
-- Tester / Release DevOps cannot mark behavior evidence passed without real execution facts.
+- Assigned AgentSeat BlackboxVerificationPlan without ProviderAttempt lineage fails.
+- Assigned AgentSeat cannot mark behavior evidence passed without real execution facts.
 - ReworkRequest cannot be created from raw exception alone; it requires trustworthy context such as raw manifest refs, agent plan refs, execution facts, active contract refs or an explicit blocked/escalated reason.
 - Runtime cannot convert advisory labels, interpretation summaries, or agent prose into `passed`.
 - Missing RunManifest raw artifact, missing graph linkage, unsafe execution request, or missing required provider/config routes to `blocked_or_escalated`, not silent fallback.
@@ -193,8 +193,8 @@ V2-100F implementation plan must include negative tests proving:
 V2-100F implementation plan must include happy path tests proving:
 
 - A provider-produced RunManifest with novel assertion vocabulary is ingested without raw crash.
-- Raw assertion payloads and manifest skeleton summaries are included in Tester / Release DevOps ExecutionPackage（执行包）.
-- Tester / Release DevOps produces a provider-backed BlackboxVerificationPlan that may use RunManifest, project docs, API docs, source refs and previous failure context.
+- Raw assertion payloads and manifest skeleton summaries are included in the assigned AgentSeat's ExecutionPackage（执行包）.
+- The assigned AgentSeat produces a provider-backed BlackboxVerificationPlan that may use RunManifest, project docs, API docs, source refs and previous failure context.
 - Runner executes the approved plan and records command / HTTP / browser / tool facts with plan lineage.
 - Checker / Closeout consumes those facts and either forms a closeout candidate or returns `rework_required`.
 - Manifest / implementation / API / response-shape drift is projected into ReworkIssue（返工问题） using coarse `RUN_MANIFEST_ERROR` plus raw/advisory context.
@@ -206,7 +206,7 @@ Expert review should answer:
 
 1. Is the ingestion boundary permissive enough to avoid endless alias patching?
 2. Does the routing distinguish `passed`, `rework_required`, and `blocked_or_escalated` without using raw crash as control flow?
-3. Does blackbox verification belong to Tester / Release DevOps rather than framework-generated manifest step execution?
+3. Does blackbox verification belong to the CEO-assigned AgentSeat rather than framework-generated manifest step execution?
 4. Does the design avoid a standalone model-mediated manifest interpreter?
 5. Are there any hidden second sources of truth for acceptance, source surfaces, run commands or closeout?
 
@@ -220,4 +220,4 @@ This spec is complete when:
 - `doc/05-project-log/decisions.md` records the architectural decision.
 - `doc/05-project-log/2026-06.md` records that this is a spec-only expert review batch.
 
-Implementation must wait for expert review and a separate implementation plan.
+Code implementation must wait for implementation plan review.

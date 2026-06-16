@@ -73,7 +73,7 @@ ReworkTicket（返工工单）必须绑定 active AcceptanceContract（活跃验
 
 ### AC-V2-REWORK-006: manifest ingestion converts ambiguity to rework context
 
-RunManifest（运行清单）摄取不得把 LLM（大模型）输出的 behavior assertion type（行为断言类型）词汇当作封闭成功协议。未知、变体或不可解释断言不得 raw crash（原始崩溃）、不得静默跳过、不得算作通过证据；必须保留 raw payload（原始载荷）并交给 Tester / Release DevOps（测试 / 发布运维）自主生成 BlackboxVerificationPlan（黑盒验证计划）。Runner（运行器）只能执行该计划并记录 observed facts（观察事实）；Checker / Closeout（检查 / 收尾）再把失败投影为 verified blocker（已验证阻塞项）或显式升级上下文。
+RunManifest（运行清单）摄取不得把 LLM（大模型）输出的 behavior assertion type（行为断言类型）词汇当作封闭成功协议。未知、变体或不可解释断言不得 raw crash（原始崩溃）、不得静默跳过、不得算作通过证据；必须保留 raw payload（原始载荷）并交给 CEO（项目经理）通过 TicketGraph / SeatDemand（工单图 / 席位需求）派给 verify-blackbox ticket（黑盒验证工单）的 AgentSeat（智能体席位）生成 BlackboxVerificationPlan（黑盒验证计划）。Runner（运行器）只能执行该计划并记录 observed facts（观察事实）；Checker / Closeout（检查 / 收尾）再把失败投影为 verified blocker（已验证阻塞项）或显式升级上下文。
 
 ## AC-V2-AGENT
 
@@ -574,7 +574,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 - [x] AC-V2-REWORK-003 / AC-V2-AGENT-001（CEO 返工规划受合同和模型调用审计约束）— 由 V2-100C 证明：CEO（项目经理/治理角色）基于严格 schema（结构）的 BlockerReport（阻塞报告）/ ReworkRequest 生成 ReworkPlan 和 TicketGraphPatch（工单图补丁）；缺 CEO ProviderAttempt（模型调用尝试记录）、缺 blocker_refs（阻塞引用）映射、决策不在 `fix_implementation` / `fix_contract_or_probe` / `split_ticket` / `reorder_dependencies` / `escalate_human_review` 枚举内、绕过 active contract（活跃合同）或要求 runtime 自动修复均 fail closed。
 - [x] AC-V2-REWORK-004 / AC-V2-EVIDENCE-002 / AC-V2-CHECKER-001（返工每轮重新进入证据和检查门禁）— 由 V2-100D 证明：ReworkAttempt 产物必须重新构造 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和必要 CloseoutGateResult（收尾门禁结果）；旧 FinalEvidenceTable（最终证据表）、旧 RunManifest（运行清单）、旧 SourceInventory（源码清单）、旧 CheckerVerdict（检查结论）或旧 CloseoutPackage passed（收尾通过包）不得跨轮次复用。
 - [x] AC-V2-REWORK-005 / AC-V2-CLOSEOUT-001~003 / AC-V2-CLOSEOUT-011（多轮返工可审计收敛或升级）— 由 V2-100E 证明：090K 真实失败快照和一个可重置 failing fixture（失败夹具）都能被转化为结构化 blocker，CEO 自治规划返工，worker/tester/release-devops（实施/测试/发布运维）执行返工，checker/closeout（检查/收尾）重验；成功时 closeout passed（收尾通过），失败耗尽时生成 escalation/termination decision（升级/终止决策）。
-- [ ] AC-V2-REWORK-006 / AC-V2-EVIDENCE-004 / AC-V2-CLOSEOUT-011（运行清单摄取把不确定性转成自治测试与返工上下文）— 待 V2-100F 证明：未知或变体 RunManifest assertion type（运行清单断言类型）不再 raw crash、不被忽略、不允许 closeout passed；Tester / Release DevOps 读取 RunManifest、PackageContract、AcceptanceContract、项目文档和源码引用后生成 provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）；runner 只执行该计划并记录真实 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）；Checker / Closeout 把失败投影为结构化 ReworkIssue（返工问题）或升级。
+- [ ] AC-V2-REWORK-006 / AC-V2-EVIDENCE-004 / AC-V2-CLOSEOUT-011（运行清单摄取把不确定性转成自治测试与返工上下文）— 待 V2-100F 证明：未知或变体 RunManifest assertion type（运行清单断言类型）不再 raw crash、不被忽略、不允许 closeout passed；CEO 通过 TicketGraph / SeatDemand（工单图 / 席位需求）派给 verify-blackbox ticket（黑盒验证工单）的 AgentSeat（智能体席位）读取 RunManifest、PackageContract、AcceptanceContract、项目文档和源码引用后生成 provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）；runner 只执行该计划并记录真实 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）；Checker / Closeout 把失败投影为结构化 ReworkIssue（返工问题）或升级。
 
 > Phase 10 的核心负例是“命令通过但证明命题错误”：`AgentRunResult.status == completed`（智能体运行完成）、ProviderAttempt（模型调用尝试记录）、`--check`、一次 live probe（真实探针）或 CRUD 可用，都不能单独推出 CloseoutPackage.passed（收尾包通过）。系统必须拒绝 runner/helper（运行器/辅助器）代替 agent team（智能体团队）自治规划、检查和收尾的交付。
 > PRD（产品需求文档）明确要求的业务行为不算硬编码；问题在于 runner 不得内置业务探针。BehavioralProbePlan（行为探针计划）和 RunManifest（运行清单）可以声明 `/api/books` 等路径，但声明必须来自 agent-generated contract（智能体生成合同）并通过强类型 gate（门禁）。

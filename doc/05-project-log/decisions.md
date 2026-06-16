@@ -569,13 +569,13 @@ V2-100E 已证明返工模型、图补丁、多角色审查、证据重验和终
 
 ### 决策
 
-新增 V2-100F RunManifest tolerant ingestion and rework entry（运行清单宽容摄取与返工入口）批次，等待专家评审。
+新增 V2-100F RunManifest tolerant ingestion and rework entry（运行清单宽容摄取与返工入口）批次，等待计划评审与后续实施。
 
 V2-100F 的核心决策是：RunManifest（运行清单）摄取层不得把 LLM（大模型）输出的 behavior assertion type（行为断言类型）字符串视作封闭协议枚举。模型输出可能自然产生 `json_array_contains_field`、`json_array_item_field_equals`、`json_array_lacks_field` 或其他未来变体；继续逐个补 alias（别名）会让框架陷入无穷适配循环。
 
-框架应只约束系统可以宣称什么，而不应在摄取阶段限制 agent 只能使用哪些自然语义词汇。因此 RunManifest assertion（运行清单断言）应先作为 raw semantic payload（原始语义载荷）保留，连同 PackageContract（包合同）、AcceptanceContract（验收合同）、项目文档、源码引用和既有失败上下文交给 Tester / Release DevOps（测试 / 发布运维）生成 provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）。未知断言不得 raw crash（原始崩溃）、不得静默跳过、不得算作通过证据。
+框架应只约束系统可以宣称什么，而不应在摄取阶段限制 agent 只能使用哪些自然语义词汇。因此 RunManifest assertion（运行清单断言）应先作为 raw semantic payload（原始语义载荷）保留，连同 PackageContract（包合同）、AcceptanceContract（验收合同）、项目文档、源码引用和既有失败上下文进入 CEO-governed verify-blackbox hook（项目经理治理黑盒验证钩子）。BlackboxVerificationPlan（黑盒验证计划）的产出者不是固定 Tester（测试者）或 Release DevOps（发布运维），而是 CEO（项目经理）通过 TicketGraph / SeatDemand（工单图 / 席位需求）派给 `verify-blackbox` ticket（黑盒验证工单）的 AgentSeat（智能体席位）。未知断言不得 raw crash（原始崩溃）、不得静默跳过、不得算作通过证据。
 
-黑盒验证动作由 Tester / Release DevOps 决定；runner（运行器）只执行该计划并记录真实 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）。框架不得根据 RunManifest 自行生成业务探针、默认端点或隐藏断言。无法通过证据证明的行为应投影为结构化 ReworkIssue（返工问题）/ ReworkRequest（返工请求）上下文，让 CEO / Architect / Tester / Release DevOps（项目经理 / 架构师 / 测试 / 发布运维）判断修 implementation（实现）、RunManifest（运行清单）、contract（合同）还是 TicketGraph（工单图）。
+黑盒验证动作由被派工 AgentSeat（智能体席位）在 provider-backed output（模型支撑输出）中决定；runner（运行器）只执行该计划并记录真实 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）。框架不得根据 RunManifest 自行生成业务探针、默认端点或隐藏断言。无法通过证据证明的行为应投影为结构化 ReworkIssue（返工问题）/ ReworkRequest（返工请求）上下文，让 CEO / Architect / Tester / Release DevOps（项目经理 / 架构师 / 测试 / 发布运维）判断修 implementation（实现）、RunManifest（运行清单）、contract（合同）还是 TicketGraph（工单图）。若新增 `ReworkSuspectedDomain.MANIFEST`（运行清单疑似域），该域只能由 typed verifier/checker/gate（类型化验证/检查/门禁）或 provider-backed governance output（模型支撑治理输出）声明；framework（框架）不得根据 raw text（原始文本）、异常消息或 manifest fragment（清单片段）自动判定域归属。
 
 ### 理由
 
@@ -591,7 +591,7 @@ ValueError: unsupported RunManifest behavior assertion type: json_array_contains
 
 ### 影响
 
-- 新增 `doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`，作为专家评审入口。
+- 新增 `doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`，作为专家评审入口；新增 `doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md`，作为后续代码实施入口。
 - `doc/04-implementation/backlog.md` 将 V2-100 从 5 个工作包扩展为 V2-100A~F，当前 Phase 10 状态为 5 / 6，V2-100F REVIEW_REQUIRED。
-- `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-006，并保持未勾选，直到实现证明未知 assertion 不 raw crash、不被忽略、不通过 closeout，且能进入 Tester / Release DevOps 自主黑盒验证和返工上下文。
+- `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-006，并保持未勾选，直到实现证明未知 assertion 不 raw crash、不被忽略、不通过 closeout，且能进入 CEO-governed assigned AgentSeat（项目经理治理派工的智能体席位）自主黑盒验证和返工上下文。
 - V2-090F golden sample（黄金样例）继续 BLOCKED；不得通过直接 patch 当前样例工程或补固定 alias 列表来伪造完成。

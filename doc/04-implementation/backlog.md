@@ -17,9 +17,9 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100F`（REVIEW_REQUIRED，RunManifest tolerant ingestion and rework entry，运行清单宽容摄取与返工入口；真实 V2-090F rerun 已证明 raw assertion enum（原始断言枚举）会阻断 ReworkRequest（返工请求）形成，当前等待专家评审）
+**当前未完成工作包**：`V2-100F`（REVIEW_REQUIRED，RunManifest tolerant ingestion and rework entry，运行清单宽容摄取与返工入口；真实 V2-090F rerun 已证明 raw assertion enum（原始断言枚举）会阻断 ReworkRequest（返工请求）形成，spec 和 implementation plan（实施计划）已写入，当前等待评审）
 
-**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。V2-100A~E 已证明 CEO-governed rework loop（项目经理治理返工循环）可以在结构化 verified blocker（已验证阻塞项）存在时规划、返工、重验和收敛。2026-06-16 真实 V2-090F rerun rework-entry validation（重跑返工入口验证）进一步暴露新缺口：RunManifest assertion vocabulary（运行清单断言词汇）被当作封闭枚举处理，`json_array_contains_field` 这类模型自然输出会在 ingestion/normalization（摄取/归一化）阶段 raw crash（原始崩溃），导致无法形成 ReworkRequest。当前提升为 V2-100F，目标是设计 tolerant semantic ingestion（宽容语义摄取）和 agent-owned blackbox verification（智能体拥有的黑盒验证），使 unknown assertion（未知断言）不能通过、不能被忽略，也不能阻断 Tester / Release DevOps（测试 / 发布运维）自主生成验证计划和进入返工入口。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，等待 V2-100F 专家评审及后续实施计划。
+**当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。V2-100A~E 已证明 CEO-governed rework loop（项目经理治理返工循环）可以在结构化 verified blocker（已验证阻塞项）存在时规划、返工、重验和收敛。2026-06-16 真实 V2-090F rerun rework-entry validation（重跑返工入口验证）进一步暴露新缺口：RunManifest assertion vocabulary（运行清单断言词汇）被当作封闭枚举处理，`json_array_contains_field` 这类模型自然输出会在 ingestion/normalization（摄取/归一化）阶段 raw crash（原始崩溃），导致无法形成 ReworkRequest。当前提升为 V2-100F，目标是实现 tolerant semantic ingestion（宽容语义摄取）和 agent-owned blackbox verification（智能体拥有的黑盒验证）：unknown assertion（未知断言）不能通过、不能被忽略，也不能阻断 CEO-governed verify-blackbox hook（项目经理治理黑盒验证钩子）。`BlackboxVerificationPlan`（黑盒验证计划）替代 `RunManifest.behavioral_probes`（运行清单行为探针）的直接执行路径；具体实施者由 CEO 通过 TicketGraph/SeatDemand（工单图/席位需求）决定，不硬编码 Tester（测试者）。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，等待 V2-100F 计划评审及实施。
 
 **Phase 3 验收边界**：进度总览中的 `完成` 表示 V2-030A ~ V2-030F 工作包 6/6 已完成；V2-050B 已通过 EvidenceVerifier（证据验证器）实际消费 FallbackPolicyRegistry（降级策略注册表）与 FallbackDecisionRecord（降级判定记录）闭合 AC-V2-EXECUTION-003（fallback 不能满足 implementation evidence，降级不能满足实现证据）。
 
@@ -164,7 +164,7 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 5 / 6 | V2-100A~E 完成；V2-100F REVIEW_REQUIRED，等待专家评审 |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 5 / 6 | V2-100A~E 完成；V2-100F REVIEW_REQUIRED，等待计划评审与代码实施 |
 | **合计** | **V2-000 ~ V2-100** | **74 / 76** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C/D/E 完成；V2-100F REVIEW_REQUIRED；V2-090F REVIEW_REQUIRED / BLOCKED** |
 
 ## 当前约束摘要
@@ -1260,14 +1260,14 @@ RoleProfile（角色模板）
 ### V2-100F: RunManifest tolerant ingestion and rework entry（运行清单宽容摄取与返工入口）
 
 - 状态：REVIEW_REQUIRED
-- 目标：把 RunManifest behavior assertion（运行清单行为断言）从封闭枚举摄取改为宽容语义摄取，并把黑盒验证从框架执行 manifest steps（运行清单步骤）升级为 Tester / Release DevOps（测试 / 发布运维）自主生成 BlackboxVerificationPlan（黑盒验证计划）；LLM（大模型）产生的新断言词汇不得 raw crash（原始崩溃），也不得被框架解释为通过证据。
-- 输入文档：`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`、`doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md`、`doc/04-implementation/v2-090f-rerun-rework-entry-validation-implementation-plan.md`、V2-090F 真实 rerun artifacts（重跑产物）、V2-100A~E 返工能力产物。
-- 依赖：V2-090F rerun rework-entry validation（重跑返工入口验证）真实结果为 `blocked_by_missing_rework_entry`；V2-100A~E DONE；专家评审通过本 spec 后才写 implementation plan（实施计划）。
-- 输出文件：当前仅新增 spec：`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`。后续 implementation plan（实施计划）需另行评审后创建。
-- 必须先写的 negative tests：未知 assertion type（断言类型）不得 raw crash；未知 assertion 不得被忽略；未知 assertion 不得 closeout passed（收尾通过）；缺 Tester / Release DevOps ProviderAttempt（测试 / 发布运维模型调用尝试）不得生成有效 BlackboxVerificationPlan；runner（运行器）不得在缺 agent plan（智能体计划）时自造测试动作；runner 不得执行计划外动作；agent prose（智能体散文）、advisory labels（参考标签）或 interpretation summary（解释摘要）不得被改写为 `passed`（通过）；新代码和新产物不得继续使用 `RUN_MANIFEST_MISMATCH` 作为 active routing code（活跃路由代码）。
-- 必须证明的 happy path：provider（模型供应商）产生 novel assertion vocabulary（新断言词汇）时，RunManifest 可摄取并保留 raw assertion（原始断言）；raw manifest、PackageContract、AcceptanceContract、项目文档、源码引用和既有失败上下文进入 Tester / Release DevOps ExecutionPackage（执行包）；Tester / Release DevOps 生成 provider-backed BlackboxVerificationPlan；runner 执行该计划并记录 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）；Checker / Closeout（检查 / 收尾）基于真实事实给出 closeout candidate（收尾候选）或 `rework_required`（需要返工）。
-- 验收口径：V2-100F 的目标不是放宽通过门槛，而是把 raw exception（原始异常）转换为 agent-owned verification（智能体拥有的验证）和可返工事实。RunManifest 是上下文和运行承诺，不是唯一测试脚本；框架不能替 Tester / Release DevOps 决定黑盒测试语义。
-- 当前证据：2026-06-16 真实 V2-090F rerun 在 RunManifest assertion normalization（运行清单断言归一化）阶段因 `json_array_contains_field` raw crash，导出 `blocked_by_missing_rework_entry`；样例工程后端 CRUD 和本地测试可运行，但 RunManifest 与实现存在 readiness path（就绪路径）和 response shape（响应结构）等真实 drift（漂移）。本工作包已写入 spec，等待专家评审；未实施代码，未改变 V2-090F BLOCKED 状态。
+- 目标：把 RunManifest behavior assertion（运行清单行为断言）从封闭枚举摄取改为宽容语义摄取，并把黑盒验证从框架执行 manifest steps（运行清单步骤）升级为 CEO-governed assigned AgentSeat（项目经理治理派工的智能体席位）自主生成 BlackboxVerificationPlan（黑盒验证计划）；LLM（大模型）产生的新断言词汇不得 raw crash（原始崩溃），也不得被框架解释为通过证据。
+- 输入文档：`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`、`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md`、`doc/04-implementation/v2-090f-rerun-rework-entry-validation-spec.md`、`doc/04-implementation/v2-090f-rerun-rework-entry-validation-implementation-plan.md`、V2-090F 真实 rerun artifacts（重跑产物）、V2-100A~E 返工能力产物。
+- 依赖：V2-090F rerun rework-entry validation（重跑返工入口验证）真实结果为 `blocked_by_missing_rework_entry`；V2-100A~E DONE；V2-100F spec 和 implementation plan（实施计划）已写入，代码实施需等待计划评审。
+- 输出文件：当前新增 spec 与计划：`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`、`doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md`。后续代码实施需在计划评审后执行。
+- 必须先写的 negative tests：未知 assertion type（断言类型）不得 raw crash；未知 assertion 不得被忽略；未知 assertion 不得 closeout passed（收尾通过）；缺被派工 AgentSeat（智能体席位）的 ProviderAttempt（模型调用尝试记录）不得生成有效 BlackboxVerificationPlan；runner（运行器）不得在缺 agent plan（智能体计划）时自造测试动作；runner 不得执行计划外动作；agent prose（智能体散文）、advisory labels（参考标签）或 interpretation summary（解释摘要）不得被改写为 `passed`（通过）；新代码和新产物不得继续使用 `RUN_MANIFEST_MISMATCH` 作为 active routing code（活跃路由代码）。
+- 必须证明的 happy path：provider（模型供应商）产生 novel assertion vocabulary（新断言词汇）时，RunManifest 可摄取并保留 raw assertion（原始断言）；raw manifest、PackageContract、AcceptanceContract、项目文档、源码引用和既有失败上下文进入 CEO 派工后的 ExecutionPackage（执行包）；被派工 AgentSeat（智能体席位）生成 provider-backed BlackboxVerificationPlan；runner 执行该计划并记录 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）；Checker / Closeout（检查 / 收尾）基于真实事实给出 closeout candidate（收尾候选）或 `rework_required`（需要返工）。
+- 验收口径：V2-100F 的目标不是放宽通过门槛，而是把 raw exception（原始异常）转换为 agent-owned verification（智能体拥有的验证）和可返工事实。RunManifest 是上下文和运行承诺，不是唯一测试脚本；框架不能替 CEO/被派工 AgentSeat（项目经理/智能体席位）决定黑盒测试语义，也不能从 raw text（原始文本）自动判定 `MANIFEST` suspected domain（运行清单疑似域）。
+- 当前证据：2026-06-16 真实 V2-090F rerun 在 RunManifest assertion normalization（运行清单断言归一化）阶段因 `json_array_contains_field` raw crash，导出 `blocked_by_missing_rework_entry`；样例工程后端 CRUD 和本地测试可运行，但 RunManifest 与实现存在 readiness path（就绪路径）和 response shape（响应结构）等真实 drift（漂移）。本工作包已写入 spec 和 implementation plan，等待计划评审与代码实施；未实施代码，未改变 V2-090F BLOCKED 状态。
 
 ---
 

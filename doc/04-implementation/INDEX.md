@@ -75,6 +75,7 @@
 | `v2-100e-multi-round-rework-proving-scenario-implementation-plan.md` | **DEPRECATED / REJECTED（已废弃 / 已否决，不作为实施入口）**：旧 V2-100E Multi-round rework proving scenario（多轮返工证明场景）实施计划，因包含硬编码事实源、过度定制 adapter（适配器）和可重复性风险，仅可作为 rejected design notes（被否设计记录）查阅 |
 | `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；已实施并完成，保留为 V2-100E 完成证据 |
 | `v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md` | **CURRENT REVIEW TARGET（当前评审入口）**：V2-100F RunManifest tolerant ingestion and agent-owned blackbox verification（运行清单宽容摄取与智能体拥有的黑盒验证）spec；解决 LLM assertion vocabulary（断言词汇）变化导致 raw crash（原始崩溃）、无法形成 ReworkRequest（返工请求）的问题 |
+| `v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md` | V2-100F RunManifest tolerant ingestion and rework entry（运行清单宽容摄取与返工入口）实施计划：按 raw assertion preservation（原始断言保留）、CEO-governed verify-blackbox hook（项目经理治理黑盒验证钩子）、BlackboxVerificationPlan（黑盒验证计划）、runner plan gate（运行器计划门禁）和 rework routing（返工路由）分段实施，当前等待评审 |
 
 ## AI 启动入口
 
