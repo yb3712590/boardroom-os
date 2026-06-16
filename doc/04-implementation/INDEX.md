@@ -73,7 +73,8 @@
 | `v2-100c-ceo-rework-planner-boundary-implementation-plan.md` | V2-100C CEO rework planner boundary（CEO 返工规划边界）实施计划：provider-backed CEO ReworkPlan（模型支撑项目经理返工计划）、TicketGraphPatch（工单图补丁）、多角色审查和 reducer commit（归约器提交）边界 |
 | `v2-100d-rework-evidence-checker-reintegration-implementation-plan.md` | V2-100D Rework evidence/checker reintegration（返工证据与检查重接入）实施计划：每次 ReworkAttempt（返工尝试）重建 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和必要 CloseoutGate（收尾门禁）链路 |
 | `v2-100e-multi-round-rework-proving-scenario-implementation-plan.md` | **DEPRECATED / REJECTED（已废弃 / 已否决，不作为实施入口）**：旧 V2-100E Multi-round rework proving scenario（多轮返工证明场景）实施计划，因包含硬编码事实源、过度定制 adapter（适配器）和可重复性风险，仅可作为 rejected design notes（被否设计记录）查阅 |
-| `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | **CURRENT REVIEW TARGET（当前评审入口）**：V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；以当前 V2-100A-D 真实接口为准，要求 happy path（正向路径）使用真实 provider（模型供应商）和真实 evidence gate（证据门禁） |
+| `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；已实施并完成，保留为 V2-100E 完成证据 |
+| `v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md` | **CURRENT REVIEW TARGET（当前评审入口）**：V2-100F RunManifest tolerant ingestion and agent-owned blackbox verification（运行清单宽容摄取与智能体拥有的黑盒验证）spec；解决 LLM assertion vocabulary（断言词汇）变化导致 raw crash（原始崩溃）、无法形成 ReworkRequest（返工请求）的问题 |
 
 ## AI 启动入口
 

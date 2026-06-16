@@ -561,3 +561,37 @@ V2-100E 已证明返工模型、图补丁、多角色审查、证据重验和终
 - `doc/04-implementation/backlog.md` 中 V2-090F 继续保持 `BLOCKED`，但阻塞说明从等待 V2-100E 评审更新为等待真实重跑返工入口验证。
 - `doc/04-implementation/acceptance-criteria.md` 增加未勾选的 rerun rework-entry validation（重跑返工入口验证）前置项；完成前不得勾选 V2-090F package / closeout / audit 验收。
 - 后续实施计划必须先做 observation run（观察重跑），再根据证据决定是否补最小 entry projection（入口投影），最后才执行 rework continuation（返工继续）。
+
+## DEC-0026: RunManifest 摄取采用宽容语义边界
+
+- 状态：Proposed
+- 日期：2026-06-16
+
+### 决策
+
+新增 V2-100F RunManifest tolerant ingestion and rework entry（运行清单宽容摄取与返工入口）批次，等待专家评审。
+
+V2-100F 的核心决策是：RunManifest（运行清单）摄取层不得把 LLM（大模型）输出的 behavior assertion type（行为断言类型）字符串视作封闭协议枚举。模型输出可能自然产生 `json_array_contains_field`、`json_array_item_field_equals`、`json_array_lacks_field` 或其他未来变体；继续逐个补 alias（别名）会让框架陷入无穷适配循环。
+
+框架应只约束系统可以宣称什么，而不应在摄取阶段限制 agent 只能使用哪些自然语义词汇。因此 RunManifest assertion（运行清单断言）应先作为 raw semantic payload（原始语义载荷）保留，连同 PackageContract（包合同）、AcceptanceContract（验收合同）、项目文档、源码引用和既有失败上下文交给 Tester / Release DevOps（测试 / 发布运维）生成 provider-backed BlackboxVerificationPlan（模型支撑黑盒验证计划）。未知断言不得 raw crash（原始崩溃）、不得静默跳过、不得算作通过证据。
+
+黑盒验证动作由 Tester / Release DevOps 决定；runner（运行器）只执行该计划并记录真实 command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）。框架不得根据 RunManifest 自行生成业务探针、默认端点或隐藏断言。无法通过证据证明的行为应投影为结构化 ReworkIssue（返工问题）/ ReworkRequest（返工请求）上下文，让 CEO / Architect / Tester / Release DevOps（项目经理 / 架构师 / 测试 / 发布运维）判断修 implementation（实现）、RunManifest（运行清单）、contract（合同）还是 TicketGraph（工单图）。
+
+### 理由
+
+2026-06-16 V2-090F 真实 rerun 已证明当前 rework-entry（返工入口）卡死在 manifest assertion normalization（运行清单断言归一化）阶段，raw error 为：
+
+```text
+ValueError: unsupported RunManifest behavior assertion type: json_array_contains_field
+```
+
+该异常发生在形成 CloseoutGateResult（收尾门禁结果）、verified blocker（已验证阻塞项）或 ReworkRequest（返工请求）之前，导致 terminal status（终态）为 `blocked_by_missing_rework_entry`。这不是 V2-100A~E 返工循环能力本身失败，而是上游事实摄取和解释边界过紧，未能把模型输出不确定性转换为可返工事实。
+
+同时，本地黑盒探索显示生成工程并非空壳：backend CRUD / checkout / return / delete（后端增删改查 / 借出 / 归还 / 删除）和单元测试可运行；但 RunManifest 与实现之间存在 readiness path（就绪路径）和 response shape（响应结构）等真实 drift（漂移）。这些 drift 应成为返工上下文，而不是被 assertion enum（断言枚举）错误提前截断。
+
+### 影响
+
+- 新增 `doc/04-implementation/v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md`，作为专家评审入口。
+- `doc/04-implementation/backlog.md` 将 V2-100 从 5 个工作包扩展为 V2-100A~F，当前 Phase 10 状态为 5 / 6，V2-100F REVIEW_REQUIRED。
+- `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-006，并保持未勾选，直到实现证明未知 assertion 不 raw crash、不被忽略、不通过 closeout，且能进入 Tester / Release DevOps 自主黑盒验证和返工上下文。
+- V2-090F golden sample（黄金样例）继续 BLOCKED；不得通过直接 patch 当前样例工程或补固定 alias 列表来伪造完成。
