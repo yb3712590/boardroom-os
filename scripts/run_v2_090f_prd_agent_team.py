@@ -15,6 +15,11 @@ from boardroom_os.proving.v2_090f_prd_agent_team import (
     run_v2_090f_worker_execution_stage,
     validate_agent_team_autonomy_inputs,
 )
+from boardroom_os.proving.v2_090f_rework_entry import (
+    V2_090FReworkEntryStatus,
+    V2_090FReworkEntryValidationInput,
+    run_v2_090f_rework_entry_validation,
+)
 from boardroom_os.config.boardroom import load_boardroom_settings
 
 
@@ -34,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--stage",
-        choices=("planning", "worker", "full"),
+        choices=("planning", "worker", "full", "rework-entry"),
         default="planning",
     )
     args = parser.parse_args(argv)
@@ -50,37 +55,71 @@ def main(argv: list[str] | None = None) -> int:
     if args.reset:
         reset_v2_090f_workspace(Path(args.workspace_root))
     env_values = dict(os.environ)
-    result = run_v2_090f_planning_preflight(
-        prd=prd,
-        output_root=Path(args.output_root),
-        env_values=env_values,
-    )
-    settings = load_boardroom_settings(
-        paths=resolve_v2_090f_config_paths_from_env(env_values),
-        env_values=env_values,
-    )
-    result = run_v2_090f_provider_planning_stage(
-        prd=prd,
-        output_root=Path(args.output_root),
-        settings=settings,
-        provider_adapter_factory=lambda seat_ref, output_name: build_v2_090f_planning_provider_adapter(
-            settings=settings,
-            seat_ref=seat_ref,
+    try:
+        result = run_v2_090f_planning_preflight(
+            prd=prd,
             output_root=Path(args.output_root),
-        ),
-    )
-    if args.stage in {"worker", "full"}:
-        result = run_v2_090f_worker_execution_stage(
-            output_root=Path(args.output_root),
-            workspace_root=Path(args.workspace_root),
-            settings=settings,
+            env_values=env_values,
         )
+        settings = load_boardroom_settings(
+            paths=resolve_v2_090f_config_paths_from_env(env_values),
+            env_values=env_values,
+        )
+        result = run_v2_090f_provider_planning_stage(
+            prd=prd,
+            output_root=Path(args.output_root),
+            settings=settings,
+            provider_adapter_factory=lambda seat_ref, output_name: build_v2_090f_planning_provider_adapter(
+                settings=settings,
+                seat_ref=seat_ref,
+                output_root=Path(args.output_root),
+            ),
+        )
+        if args.stage in {"worker", "full", "rework-entry"}:
+            result = run_v2_090f_worker_execution_stage(
+                output_root=Path(args.output_root),
+                workspace_root=Path(args.workspace_root),
+                settings=settings,
+            )
+        if args.stage in {"full", "rework-entry"}:
+            result = run_v2_090f_closeout_stage(
+                output_root=Path(args.output_root),
+                workspace_root=Path(args.workspace_root),
+                settings=settings,
+            )
+    except Exception as error:
+        if args.stage != "rework-entry":
+            raise
+        raw_error_name = (
+            "raw-closeout-error.txt"
+            if "service readiness probe" in str(error)
+            else "raw-run-error.txt"
+        )
+        raw_error_path = Path(args.output_root) / "30-audit" / raw_error_name
+        raw_error_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_error_path.write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
+    if args.stage == "rework-entry":
+        validation_result = run_v2_090f_rework_entry_validation(
+            V2_090FReworkEntryValidationInput(
+                output_root=Path(args.output_root),
+                workspace_root=Path(args.workspace_root),
+                run_id="run.v2-090f.rework-entry",
+                cycle_id="rework-cycle.v2-090f.rework-entry",
+                max_rounds=2,
+                require_real_provider=True,
+            )
+        )
+        status_value = validation_result.status.value
+        print(status_value)
+        if status_value in {
+            V2_090FReworkEntryStatus.PASSED_WITHOUT_REWORK_CANDIDATE.value,
+            V2_090FReworkEntryStatus.REWORK_ACCEPTED_CANDIDATE.value,
+        }:
+            return 0
+        if status_value == V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED.value:
+            return 4
+        return 5
     if args.stage == "full":
-        result = run_v2_090f_closeout_stage(
-            output_root=Path(args.output_root),
-            workspace_root=Path(args.workspace_root),
-            settings=settings,
-        )
         print(result["status"])
         return 0
     print(result["blocker"])

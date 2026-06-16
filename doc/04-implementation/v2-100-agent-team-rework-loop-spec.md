@@ -123,6 +123,12 @@ Rework budget exhaustion, repeated same blocker, impossible contract conflict, o
 
 No infinite loop and no silent downgrade.
 
+### Invariant 7: manifest ambiguity becomes rework context
+
+RunManifest / BehavioralProbePlan（运行清单 / 行为探针计划） ingestion must not treat provider-produced assertion vocabulary as a closed success protocol. Unknown, variant, or ambiguous assertion types must not raw-crash the run, must not be silently ignored, and must not count as passed evidence.
+
+The framework should preserve raw assertion payloads and manifest skeleton context, then pass them to Tester / Release DevOps（测试 / 发布运维） as inputs for provider-backed BlackboxVerificationPlan（黑盒验证计划） generation. The runner executes that agent-owned plan and records real command / HTTP / browser / tool facts（命令 / HTTP / 浏览器 / 工具事实）. It must not synthesize business probes, default endpoints, or hidden assertions. Closeout may pass only after active behavior claims are proven by real evidence; otherwise failure should become ReworkRequest（返工请求） context or explicit escalation.
+
 ## Work package overview
 
 ```text
@@ -140,6 +146,9 @@ V2-100D Rework evidence/checker/closeout reintegration
 
 V2-100E Multi-round proving scenario
   -> consume 090K failure snapshot and resettable failing fixture; prove accepted or escalated path
+
+V2-100F RunManifest tolerant ingestion and rework entry
+  -> preserve raw assertions, route RunManifest ambiguity into Tester / Release DevOps blackbox planning, execute agent-owned plans, and project failures into rework context
 ```
 
 ## Shared typed model vocabulary
