@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from boardroom_os.closeout.gate import CloseoutGateResult, CloseoutGateVerdict
+from boardroom_os.contracts.types import AcceptanceRef, ContractId, EvidenceObligationRef, SourceSurfaceRef
+from boardroom_os.rework.blocker_projection import (
+    BlockerProjectionContext,
+    project_closeout_gate_blockers,
+)
+from boardroom_os.rework.model import ReworkActorKind, ReworkCycleId, RunId
 
 
 class V2_090FReworkEntryStatus(StrEnum):
@@ -261,6 +270,61 @@ def run_v2_090f_rework_entry_validation(
             checked_refs=checked_refs,
         )
 
+    structured_request = _project_structured_closeout_blockers(
+        output_root=output_root,
+        validation_input=validation_input,
+        closeout_result=closeout_result,
+        active_graph_version=before_snapshot.graph_version,
+    )
+    if structured_request is not None:
+        rework_request_path = rework_entry_root / "rework-request.json"
+        _write_json(rework_request_path, structured_request.model_dump(mode="json"))
+        _write_json(
+            blocker_report_path,
+            {
+                "status": "verified_blocker_projected",
+                "source_ref": "20-evidence/closeout/closeout-gate-result.json",
+                "blockers": [
+                    ref["value"]
+                    for issue in structured_request.model_dump(mode="json")["issues"]
+                    for ref in issue["blocker_refs"]
+                ],
+            },
+        )
+        _write_json(
+            terminal_path,
+            {
+                "terminal_status": V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY.value,
+                "run_id": validation_input.run_id,
+                "cycle_id": validation_input.cycle_id,
+                "checked_refs": list(checked_refs),
+                "rework_request_path": rework_request_path.as_posix(),
+            },
+        )
+        report_path.write_text(
+            "\n".join(
+                (
+                    "# V2-090F Rework Entry Validation",
+                    "",
+                    f"run_id: {validation_input.run_id}",
+                    "terminal_status: structured_blocker_projected",
+                    f"rework_request: {rework_request_path.as_posix()}",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return V2_090FReworkEntryValidationResult(
+            status=V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY,
+            before_graph_json_path=before_graph_json_path,
+            before_graph_mermaid_path=before_graph_mermaid_path,
+            blocker_report_path=blocker_report_path,
+            rework_request_path=rework_request_path,
+            terminal_path=terminal_path,
+            report_path=report_path,
+            checked_refs=checked_refs,
+        )
+
     _write_json(
         blocker_report_path,
         {
@@ -342,3 +406,113 @@ def _checked_refs(payload: dict[str, Any] | None) -> tuple[str, ...]:
             raise ValueError("closeout gate checked_refs entries must be text")
         refs.append(item.strip())
     return tuple(refs)
+
+
+def _project_structured_closeout_blockers(
+    *,
+    output_root: Path,
+    validation_input: V2_090FReworkEntryValidationInput,
+    closeout_result: dict[str, Any] | None,
+    active_graph_version: int,
+) -> Any | None:
+    if closeout_result is None:
+        return None
+    result = CloseoutGateResult.model_validate(closeout_result)
+    if result.verdict is CloseoutGateVerdict.PASSED:
+        return None
+    if not result.blockers:
+        return None
+    try:
+        active_acceptance_refs = tuple(
+            AcceptanceRef(value=value)
+            for value in _load_active_acceptance_refs(output_root)
+        )
+        active_source_surface_refs = tuple(
+            SourceSurfaceRef(value=value)
+            for value in _load_active_source_surface_refs(output_root)
+        )
+        active_evidence_obligation_refs = tuple(
+            EvidenceObligationRef(value=value)
+            for value in _load_active_evidence_obligation_refs(output_root)
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    context = BlockerProjectionContext(
+        cycle_id=ReworkCycleId(value=validation_input.cycle_id),
+        run_id=RunId(value=validation_input.run_id),
+        package_contract_ref=ContractId(value=_load_package_contract_ref(output_root)),
+        run_manifest_ref=_load_run_manifest_ref(output_root),
+        active_acceptance_refs=active_acceptance_refs,
+        active_source_surface_refs=active_source_surface_refs,
+        active_evidence_obligation_refs=active_evidence_obligation_refs,
+        active_graph_version=active_graph_version,
+        requested_by_actor=ReworkActorKind.CLOSEOUT_GATE,
+        requested_at=datetime.now(UTC),
+    )
+    return project_closeout_gate_blockers(result, context)
+
+
+def _load_generated_contracts(output_root: Path) -> dict[str, Any]:
+    return _load_json(output_root / "00-boardroom" / "generated-contracts.json")
+
+
+def _load_active_acceptance_refs(output_root: Path) -> tuple[str, ...]:
+    contracts = _load_generated_contracts(output_root)
+    criteria = contracts["acceptance_contract"]["criteria"]
+    if not isinstance(criteria, list):
+        raise ValueError("acceptance_contract.criteria must be a list")
+    refs = tuple(_required_text(item, "acceptance_ref") for item in criteria)
+    if not refs:
+        raise ValueError("active acceptance refs must not be empty")
+    return refs
+
+
+def _load_active_source_surface_refs(output_root: Path) -> tuple[str, ...]:
+    contracts = _load_generated_contracts(output_root)
+    surfaces = contracts["package_contract"]["source_surfaces"]
+    if not isinstance(surfaces, list):
+        raise ValueError("package_contract.source_surfaces must be a list")
+    refs = tuple(_required_text(item, "source_surface_ref") for item in surfaces)
+    if not refs:
+        raise ValueError("active source surface refs must not be empty")
+    return refs
+
+
+def _load_active_evidence_obligation_refs(output_root: Path) -> tuple[str, ...]:
+    contracts = _load_generated_contracts(output_root)
+    obligations = contracts["evidence_obligations"]
+    if not isinstance(obligations, list):
+        raise ValueError("evidence_obligations must be a list")
+    refs = tuple(_required_text(item, "evidence_obligation_id") for item in obligations)
+    if not refs:
+        raise ValueError("active evidence obligation refs must not be empty")
+    return refs
+
+
+def _load_package_contract_ref(output_root: Path) -> str:
+    contracts = _load_generated_contracts(output_root)
+    return _required_text(contracts["package_contract"], "package_contract_id")
+
+
+def _load_run_manifest_ref(output_root: Path) -> str:
+    run_manifest_path = output_root / "00-boardroom" / "generated-run-manifest.json"
+    if not run_manifest_path.is_file():
+        return "run-manifest.v2-090f.generated"
+    run_manifest = _load_json(run_manifest_path)
+    value = run_manifest.get("run_manifest_id") or run_manifest.get("run_manifest_ref")
+    if value is None:
+        return "run-manifest.v2-090f.generated"
+    if isinstance(value, dict):
+        value = value.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("run manifest ref must be text")
+    return value.strip()
+
+
+def _required_text(payload: dict[str, Any], field_name: str) -> str:
+    value = payload[field_name]
+    if isinstance(value, dict):
+        value = value.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be text")
+    return value.strip()
