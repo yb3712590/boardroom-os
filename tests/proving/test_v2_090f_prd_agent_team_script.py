@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import pytest
+from types import SimpleNamespace
 
 
 def _hard_crud_acceptance_refs() -> list[str]:
@@ -111,6 +112,81 @@ def test_v2_090f_provider_baseline_requires_json_object_response_format() -> Non
     assert primary["provider_profile_id"] == "provider.openai-compatible.v2-090f-primary"
     assert primary["response_format"] == {"type": "json_object"}
     assert primary["max_output_tokens"] <= 20000
+
+
+def _passed_rework_entry_result(tmp_path):
+    report_path = tmp_path / "rework-entry-validation.md"
+    report_path.write_text("passed_without_rework_candidate", encoding="utf-8")
+    return SimpleNamespace(
+        status=SimpleNamespace(value="passed_without_rework_candidate"),
+        report_path=report_path,
+    )
+
+
+def test_v2_090f_runner_rework_entry_stage_runs_full_then_validation(
+    tmp_path,
+    monkeypatch,
+):
+    from scripts import run_v2_090f_prd_agent_team as runner
+
+    calls = []
+    prd = tmp_path / "prd.md"
+    prd.write_text("Build the tiny fullstack app.", encoding="utf-8")
+
+    monkeypatch.setenv("BOARDROOM_RUN_REAL_PROVIDER_PROVING", "1")
+    monkeypatch.setattr(
+        runner,
+        "load_boardroom_settings",
+        lambda paths, env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "resolve_v2_090f_config_paths_from_env",
+        lambda env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_planning_preflight",
+        lambda **kwargs: calls.append("preflight") or {"status": "preflight"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_provider_planning_stage",
+        lambda **kwargs: calls.append("planning") or {"status": "planning"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_worker_execution_stage",
+        lambda **kwargs: calls.append("worker") or {"status": "worker"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_closeout_stage",
+        lambda **kwargs: calls.append("closeout") or {"status": "closeout_gate_passed"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_rework_entry_validation",
+        lambda validation_input: calls.append("rework-entry")
+        or _passed_rework_entry_result(tmp_path),
+    )
+
+    exit_code = runner.main(
+        [
+            "--prd",
+            str(prd),
+            "--reset",
+            "--workspace-root",
+            str(tmp_path / "workspace"),
+            "--output-root",
+            str(tmp_path / "tiny-fullstack"),
+            "--stage",
+            "rework-entry",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["preflight", "planning", "worker", "closeout", "rework-entry"]
 
 
 def test_v2_090f_worker_packages_warn_against_dot_list_files(
