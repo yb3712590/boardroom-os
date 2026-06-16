@@ -121,6 +121,35 @@ def test_multi_round_loop_rechecks_after_initial_failure(tmp_path: Path) -> None
     assert EventType.REWORK_ACCEPTED in {event.event_type for event in result.rounds[-1].events}
 
 
+def test_v2_100_loop_can_start_from_verified_rework_request(tmp_path: Path) -> None:
+    from boardroom_os.proving.v2_100_resettable_fixture import (
+        build_two_round_provider,
+        build_v2_100_scenario_input,
+    )
+    from boardroom_os.proving.v2_100_rework_loop import (
+        project_snapshot_request,
+        run_v2_100_rework_loop_for_request,
+    )
+
+    scenario_input = build_v2_100_scenario_input(
+        package_root=tmp_path / "package",
+        export_root=tmp_path / "audit-artifacts",
+        require_real_provider=False,
+        max_rounds=2,
+    )
+    request = project_snapshot_request(scenario_input)
+
+    result = run_v2_100_rework_loop_for_request(
+        scenario_input,
+        request=request,
+        round_provider=build_two_round_provider(tmp_path),
+    )
+
+    assert result.request == request
+    assert result.rounds[-1].remaining_blocker_refs == ()
+    assert result.final_projection.graph_version > scenario_input.initial_graph_version
+
+
 def test_accepted_loop_includes_passed_closeout_gate_result(tmp_path: Path) -> None:
     from boardroom_os.proving.v2_100_resettable_fixture import (
         build_two_round_provider,

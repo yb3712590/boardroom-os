@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from boardroom_os.proving.v2_090f_rework_entry import (
     V2_090FReworkEntryStatus,
@@ -206,7 +207,7 @@ def _write_closeout_gate_result(output_root, *, verdict: str, blockers: list[dic
     )
 
 
-def test_closeout_gate_blocker_projects_to_rework_request(tmp_path):
+def test_closeout_gate_blocker_projects_to_rework_request(tmp_path, monkeypatch):
     output_root = _write_generated_graph(tmp_path, graph_version=4, status="blocked")
     workspace_root = tmp_path / "workspace"
     _write_closeout_gate_result(
@@ -219,6 +220,13 @@ def test_closeout_gate_blocker_projects_to_rework_request(tmp_path):
                 "related_ref": "cmd.agent-service",
             }
         ],
+    )
+    monkeypatch.setattr(
+        "boardroom_os.proving.v2_090f_rework_entry.run_v2_100_rework_loop_for_request",
+        lambda scenario_input, *, request, round_provider=None: _accepted_v2_100_result_with_patch(
+            after_graph_version=5,
+            patch_ref="ticket-graph-patch.v2-090f.request",
+        ),
     )
 
     result = run_v2_090f_rework_entry_validation(
@@ -236,3 +244,98 @@ def test_closeout_gate_blocker_projects_to_rework_request(tmp_path):
     assert result.rework_request_path.is_file()
     assert request["rework_request_id"]["value"].startswith("rework-request.closeout.")
     assert request["issues"][0]["blocker_refs"]
+
+
+def _closeout_blocker():
+    return {
+        "code": "command_evidence_not_final",
+        "message": "service/live evidence missing",
+        "related_ref": "cmd.agent-service",
+    }
+
+
+def _accepted_v2_100_result_with_patch(*, after_graph_version: int, patch_ref: str):
+    patch = SimpleNamespace(
+        ticket_graph_patch_id=SimpleNamespace(value=patch_ref),
+        affected_ticket_refs=(SimpleNamespace(value="ticket.rework.response-shape"),),
+        operations=(
+            SimpleNamespace(
+                operation_id=SimpleNamespace(value="patch-op.v2-090f.response-shape"),
+                target_ticket_refs=(SimpleNamespace(value="ticket.rework.response-shape"),),
+            ),
+        ),
+    )
+    round_result = SimpleNamespace(
+        patch=patch,
+        plan_output=SimpleNamespace(
+            plan=SimpleNamespace(
+                model_dump=lambda mode="json": {
+                    "rework_plan_id": "rework-plan.v2-090f.test"
+                }
+            )
+        ),
+        remaining_blocker_refs=(),
+        accepted_blocker_refs=(
+            SimpleNamespace(
+                value="closeout-gate-blocker.command_evidence_not_final.cmd.agent-service"
+            ),
+        ),
+    )
+    return SimpleNamespace(
+        terminal_status=SimpleNamespace(value="accepted"),
+        rounds=(round_result,),
+        final_projection=SimpleNamespace(graph_version=after_graph_version),
+    )
+
+
+def test_rework_continuation_exports_before_and_after_graph(tmp_path, monkeypatch):
+    output_root = _write_generated_graph(tmp_path, graph_version=4, status="blocked")
+    _write_closeout_gate_result(
+        output_root,
+        verdict="blocked",
+        blockers=[
+            {
+                "code": "command_evidence_not_final",
+                "message": "service/live evidence missing",
+                "related_ref": "cmd.agent-service",
+            }
+        ],
+    )
+    captured = {}
+
+    def fake_run_v2_100_rework_loop_for_request(
+        scenario_input, *, request, round_provider=None
+    ):
+        captured["scenario_input"] = scenario_input
+        captured["request"] = request
+        return _accepted_v2_100_result_with_patch(
+            after_graph_version=12,
+            patch_ref="ticket-graph-patch.v2-090f.response-shape",
+        )
+
+    monkeypatch.setattr(
+        "boardroom_os.proving.v2_090f_rework_entry.run_v2_100_rework_loop_for_request",
+        fake_run_v2_100_rework_loop_for_request,
+    )
+
+    result = run_v2_090f_rework_entry_validation(
+        V2_090FReworkEntryValidationInput(
+            output_root=output_root,
+            workspace_root=tmp_path / "workspace",
+            run_id="run.v2-090f.rework",
+            cycle_id="rework-cycle.v2-090f.rework",
+            max_rounds=2,
+            require_real_provider=False,
+        )
+    )
+
+    before_graph = json.loads(result.before_graph_json_path.read_text(encoding="utf-8"))
+    after_graph = json.loads(result.after_graph_json_path.read_text(encoding="utf-8"))
+
+    assert result.status is V2_090FReworkEntryStatus.REWORK_ACCEPTED_CANDIDATE
+    assert after_graph["graph_version"] > before_graph["graph_version"]
+    assert (
+        after_graph["ticket_graph_patch_ref"]
+        == "ticket-graph-patch.v2-090f.response-shape"
+    )
+    assert "ticket.rework." in result.after_graph_mermaid_path.read_text(encoding="utf-8")

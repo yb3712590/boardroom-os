@@ -15,6 +15,12 @@ from boardroom_os.rework.blocker_projection import (
     project_closeout_gate_blockers,
 )
 from boardroom_os.rework.model import ReworkActorKind, ReworkCycleId, RunId
+from boardroom_os.proving.v2_100_rework_loop import (
+    V2_100ScenarioInput,
+    V2_100ScenarioTerminalStatus,
+    export_v2_100_rework_audit,
+    run_v2_100_rework_loop_for_request,
+)
 
 
 class V2_090FReworkEntryStatus(StrEnum):
@@ -279,6 +285,45 @@ def run_v2_090f_rework_entry_validation(
     if structured_request is not None:
         rework_request_path = rework_entry_root / "rework-request.json"
         _write_json(rework_request_path, structured_request.model_dump(mode="json"))
+        continuation_result = run_v2_100_rework_loop_for_request(
+            _build_v2_100_scenario_input(
+                output_root=output_root,
+                validation_input=validation_input,
+                active_graph_version=before_snapshot.graph_version,
+            ),
+            request=structured_request,
+        )
+        continuation_status = _status_value(continuation_result.terminal_status)
+        if continuation_status == V2_100ScenarioTerminalStatus.ACCEPTED.value:
+            status = V2_090FReworkEntryStatus.REWORK_ACCEPTED_CANDIDATE
+        else:
+            status = V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED
+        final_round = continuation_result.rounds[-1]
+        patch_ref = _ref_value(final_round.patch.ticket_graph_patch_id)
+        after_snapshot = _after_graph_snapshot(
+            before_snapshot=before_snapshot,
+            continuation_result=continuation_result,
+            patch_ref=patch_ref,
+        )
+        rework_plan_path = rework_entry_root / "rework-plan.json"
+        ticket_graph_patch_path = rework_entry_root / "ticket-graph-patch.json"
+        _write_json(rework_plan_path, _model_dump(final_round.plan_output.plan))
+        _write_json(ticket_graph_patch_path, _model_dump(final_round.patch))
+
+        after_graph_json_path = boardroom_root / "ticket-graph.after-rework.json"
+        after_graph_mermaid_path = boardroom_root / "ticket-graph.after-rework.md"
+        _write_json(after_graph_json_path, after_snapshot.model_dump(mode="json"))
+        after_graph_mermaid_path.write_text(
+            render_v2_090f_ticket_graph_mermaid(after_snapshot),
+            encoding="utf-8",
+        )
+        audit_export_path: str | None = None
+        if hasattr(continuation_result, "model_dump"):
+            audit_export = export_v2_100_rework_audit(
+                continuation_result,
+                rework_entry_root / "v2-100-audit",
+            )
+            audit_export_path = audit_export.export_root.as_posix()
         _write_json(
             blocker_report_path,
             {
@@ -294,11 +339,15 @@ def run_v2_090f_rework_entry_validation(
         _write_json(
             terminal_path,
             {
-                "terminal_status": V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY.value,
+                "terminal_status": status.value,
                 "run_id": validation_input.run_id,
                 "cycle_id": validation_input.cycle_id,
                 "checked_refs": list(checked_refs),
                 "rework_request_path": rework_request_path.as_posix(),
+                "rework_plan_path": rework_plan_path.as_posix(),
+                "ticket_graph_patch_path": ticket_graph_patch_path.as_posix(),
+                "v2_100_terminal_status": continuation_status,
+                "v2_100_audit_path": audit_export_path,
             },
         )
         report_path.write_text(
@@ -307,19 +356,27 @@ def run_v2_090f_rework_entry_validation(
                     "# V2-090F Rework Entry Validation",
                     "",
                     f"run_id: {validation_input.run_id}",
-                    "terminal_status: structured_blocker_projected",
+                    f"terminal_status: {status.value}",
                     f"rework_request: {rework_request_path.as_posix()}",
+                    f"rework_plan: {rework_plan_path.as_posix()}",
+                    f"ticket_graph_patch: {ticket_graph_patch_path.as_posix()}",
+                    f"before_graph_json: {before_graph_json_path.as_posix()}",
+                    f"after_graph_json: {after_graph_json_path.as_posix()}",
                 )
             )
             + "\n",
             encoding="utf-8",
         )
         return V2_090FReworkEntryValidationResult(
-            status=V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY,
+            status=status,
             before_graph_json_path=before_graph_json_path,
             before_graph_mermaid_path=before_graph_mermaid_path,
+            after_graph_json_path=after_graph_json_path,
+            after_graph_mermaid_path=after_graph_mermaid_path,
             blocker_report_path=blocker_report_path,
             rework_request_path=rework_request_path,
+            rework_plan_path=rework_plan_path,
+            ticket_graph_patch_path=ticket_graph_patch_path,
             terminal_path=terminal_path,
             report_path=report_path,
             checked_refs=checked_refs,
@@ -516,3 +573,125 @@ def _required_text(payload: dict[str, Any], field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be text")
     return value.strip()
+
+
+def _build_v2_100_scenario_input(
+    *,
+    output_root: Path,
+    validation_input: V2_090FReworkEntryValidationInput,
+    active_graph_version: int,
+) -> V2_100ScenarioInput:
+    request_start_path = (
+        output_root / "20-evidence" / "rework-entry" / "rework-request.json"
+    )
+    return V2_100ScenarioInput(
+        project_ref="project.v2-090f",
+        snapshot_summary_path=request_start_path,
+        run_id=validation_input.run_id,
+        cycle_id=validation_input.cycle_id,
+        package_contract_ref=_load_package_contract_ref(output_root),
+        run_manifest_ref=_load_run_manifest_ref(output_root),
+        active_acceptance_refs=_load_active_acceptance_refs(output_root),
+        active_source_surface_refs=_load_active_source_surface_refs(output_root),
+        active_evidence_obligation_refs=_load_active_evidence_obligation_refs(output_root),
+        active_contract_refs=(_load_package_contract_ref(output_root),),
+        initial_graph_version=active_graph_version,
+        max_rounds=validation_input.max_rounds,
+        export_root=output_root / "20-evidence" / "rework-entry" / "v2-100-audit",
+        require_real_provider=validation_input.require_real_provider,
+    )
+
+
+def _after_graph_snapshot(
+    *,
+    before_snapshot: V2_090FTicketGraphSnapshot,
+    continuation_result: Any,
+    patch_ref: str,
+) -> V2_090FTicketGraphSnapshot:
+    after_graph_version = continuation_result.final_projection.graph_version
+    if after_graph_version <= before_snapshot.graph_version:
+        raise ValueError("after graph_version must be greater than before graph_version")
+    rework_ticket_refs = _rework_ticket_refs(continuation_result.rounds[-1].patch)
+    existing = {node.ticket_id for node in before_snapshot.nodes}
+    rework_nodes = tuple(
+        V2_090FTicketGraphNodeSnapshot(
+            ticket_id=ticket_ref,
+            owner_seat_ref="seat.worker.implementation",
+            status="ready",
+            acceptance_ref_count=1,
+            evidence_obligation_count=1,
+        )
+        for ticket_ref in rework_ticket_refs
+        if ticket_ref not in existing
+    )
+    return V2_090FTicketGraphSnapshot(
+        graph_version=after_graph_version,
+        source_ref="00-boardroom/ticket-graph.after-rework.json",
+        nodes=before_snapshot.nodes + rework_nodes,
+        edges=before_snapshot.edges,
+        ticket_graph_patch_ref=patch_ref,
+    )
+
+
+def _rework_ticket_refs(patch: Any) -> tuple[str, ...]:
+    refs: list[str] = []
+    for ref in getattr(patch, "affected_ticket_refs", ()):
+        refs.append(_ref_value(ref))
+    for operation in getattr(patch, "operations", ()):
+        for ref in getattr(operation, "target_ticket_refs", ()):
+            refs.append(_ref_value(ref))
+    return tuple(dict.fromkeys(ref for ref in refs if ref.startswith("ticket.rework.")))
+
+
+def _model_dump(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump(mode="json")
+        if not isinstance(dumped, dict):
+            raise ValueError("model_dump must return a dict")
+        return dumped
+    if isinstance(value, dict):
+        return value
+    attrs = {
+        key: _jsonable(attr)
+        for key in dir(value)
+        if not key.startswith("_")
+        for attr in (getattr(value, key),)
+        if not callable(attr)
+    }
+    if not attrs:
+        raise ValueError("value cannot be serialized as JSON object")
+    return attrs
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    if hasattr(value, "value"):
+        return {"value": value.value}
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if hasattr(value, "__dict__"):
+        return {
+            key: _jsonable(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return value
+
+
+def _ref_value(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else value
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("ref value must be text")
+    return raw.strip()
+
+
+def _status_value(value: Any) -> str:
+    raw = value.value if hasattr(value, "value") else value
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("status value must be text")
+    return raw.strip()

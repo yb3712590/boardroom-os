@@ -10,7 +10,12 @@ from boardroom_os.proving.v2_090f_rework_entry import (
     V2_090FTicketGraphSnapshot,
     run_v2_090f_rework_entry_validation,
 )
-from tests.proving.test_v2_090f_rework_entry_validation import _write_generated_graph
+from tests.proving.test_v2_090f_rework_entry_validation import (
+    _accepted_v2_100_result_with_patch,
+    _closeout_blocker,
+    _write_closeout_gate_result,
+    _write_generated_graph,
+)
 
 
 def test_rework_entry_rejects_after_graph_without_patch_ref():
@@ -56,3 +61,28 @@ def test_raw_exception_does_not_create_rework_request(tmp_path):
     assert "blocked_by_missing_rework_entry" in result.terminal_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_rework_entry_rejects_after_graph_without_version_increase(tmp_path, monkeypatch):
+    output_root = _write_generated_graph(tmp_path, graph_version=4, status="blocked")
+    _write_closeout_gate_result(output_root, verdict="blocked", blockers=[_closeout_blocker()])
+
+    monkeypatch.setattr(
+        "boardroom_os.proving.v2_090f_rework_entry.run_v2_100_rework_loop_for_request",
+        lambda scenario_input, *, request, round_provider=None: _accepted_v2_100_result_with_patch(
+            after_graph_version=4,
+            patch_ref="ticket-graph-patch.v2-090f.bad",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="after graph_version must be greater"):
+        run_v2_090f_rework_entry_validation(
+            V2_090FReworkEntryValidationInput(
+                output_root=output_root,
+                workspace_root=tmp_path / "workspace",
+                run_id="run.v2-090f.bad-graph",
+                cycle_id="rework-cycle.v2-090f.bad-graph",
+                max_rounds=2,
+                require_real_provider=False,
+            )
+        )

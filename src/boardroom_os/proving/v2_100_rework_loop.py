@@ -290,6 +290,10 @@ class V2_100ScenarioInput(BaseModel):
     @field_validator("snapshot_summary_path")
     @classmethod
     def _validate_snapshot_path(cls, value: Path) -> Path:
+        if value.name == "rework-request.json":
+            if not value.exists() or not value.is_file():
+                raise ValueError("rework-request.json request-start file is required")
+            return value
         if value.name != "failure-summary.json":
             raise ValueError("snapshot_summary_path must point to failure-summary.json")
         if not value.exists() or not value.is_file():
@@ -2451,6 +2455,39 @@ def run_v2_100_rework_loop_scenario(
 ) -> V2_100ScenarioResult:
     scenario_input = V2_100ScenarioInput.model_validate(scenario_input)
     request = project_snapshot_request(scenario_input)
+    return _run_v2_100_rework_loop_with_request(
+        scenario_input,
+        request=request,
+        round_provider=round_provider,
+    )
+
+
+def run_v2_100_rework_loop_for_request(
+    scenario_input: V2_100ScenarioInput,
+    *,
+    request: ReworkRequest,
+    round_provider: ScenarioRoundProvider | None = None,
+) -> V2_100ScenarioResult:
+    scenario_input = V2_100ScenarioInput.model_validate(scenario_input)
+    if round_provider is None:
+        if not scenario_input.require_real_provider:
+            raise V2_100ReworkLoopError(
+                "round_provider is required when require_real_provider=False"
+            )
+    request = validate_scenario_request(request, scenario_input)
+    return _run_v2_100_rework_loop_with_request(
+        scenario_input,
+        request=request,
+        round_provider=round_provider,
+    )
+
+
+def _run_v2_100_rework_loop_with_request(
+    scenario_input: V2_100ScenarioInput,
+    *,
+    request: ReworkRequest,
+    round_provider: ScenarioRoundProvider | None,
+) -> V2_100ScenarioResult:
     if round_provider is None:
         if not scenario_input.require_real_provider:
             raise V2_100ReworkLoopError(
@@ -2603,6 +2640,7 @@ __all__ = [
     "provider_attempt_manifest_entry",
     "project_snapshot_request",
     "run_v2_100_rework_round",
+    "run_v2_100_rework_loop_for_request",
     "run_v2_100_rework_loop_scenario",
     "validate_agent_authored_plan",
     "validate_agent_authored_review",
