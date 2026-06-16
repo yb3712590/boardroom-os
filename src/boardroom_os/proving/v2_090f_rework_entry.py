@@ -178,3 +178,167 @@ def render_v2_090f_ticket_graph_mermaid(snapshot: V2_090FTicketGraphSnapshot) ->
         target_label = labels.get(target, target)
         lines.append(f'  "{source_label}" --> "{target_label}"')
     return "\n".join(lines) + "\n"
+
+
+def run_v2_090f_rework_entry_validation(
+    validation_input: V2_090FReworkEntryValidationInput,
+) -> V2_090FReworkEntryValidationResult:
+    """Validate V2-090F closeout or return a fail-closed rework-entry terminal."""
+
+    validation_input = V2_090FReworkEntryValidationInput.model_validate(validation_input)
+    output_root = validation_input.output_root
+    boardroom_root = output_root / "00-boardroom"
+    rework_entry_root = output_root / "20-evidence" / "rework-entry"
+    audit_root = output_root / "30-audit"
+    rework_entry_root.mkdir(parents=True, exist_ok=True)
+    audit_root.mkdir(parents=True, exist_ok=True)
+
+    before_snapshot = load_v2_090f_ticket_graph_snapshot(output_root)
+    before_graph_json_path = boardroom_root / "ticket-graph.before-rework.json"
+    before_graph_mermaid_path = boardroom_root / "ticket-graph.before-rework.md"
+    _write_json(before_graph_json_path, before_snapshot.model_dump(mode="json"))
+    before_graph_mermaid_path.write_text(
+        render_v2_090f_ticket_graph_mermaid(before_snapshot),
+        encoding="utf-8",
+    )
+
+    closeout_result = _load_optional_json(
+        output_root / "20-evidence" / "closeout" / "closeout-gate-result.json"
+    )
+    checked_refs = _checked_refs(closeout_result)
+    blocker_report_path = rework_entry_root / "blocker-report.json"
+    terminal_path = rework_entry_root / "rework-terminal.json"
+    report_path = audit_root / "rework-entry-validation.md"
+
+    if _closeout_gate_passed(closeout_result):
+        closeout_package_path = output_root / "closeout-package.json"
+        if not closeout_package_path.is_file():
+            raise ValueError("passed closeout candidate requires closeout-package.json")
+        closeout_package = _load_json(closeout_package_path)
+        if closeout_package.get("verdict") != "passed":
+            raise ValueError("passed closeout candidate requires passed closeout package")
+
+        _write_json(
+            blocker_report_path,
+            {
+                "blockers": [],
+                "status": "no_verified_blocker",
+                "source_ref": "20-evidence/closeout/closeout-gate-result.json",
+            },
+        )
+        _write_json(
+            terminal_path,
+            {
+                "terminal_status": V2_090FReworkEntryStatus.PASSED_WITHOUT_REWORK_CANDIDATE.value,
+                "run_id": validation_input.run_id,
+                "cycle_id": validation_input.cycle_id,
+                "checked_refs": list(checked_refs),
+            },
+        )
+        report_path.write_text(
+            "\n".join(
+                (
+                    "# V2-090F Rework Entry Validation",
+                    "",
+                    f"run_id: {validation_input.run_id}",
+                    f"terminal_status: {V2_090FReworkEntryStatus.PASSED_WITHOUT_REWORK_CANDIDATE.value}",
+                    "",
+                    "CloseoutGate passed, so no ReworkRequest was created.",
+                    f"before_graph_json: {before_graph_json_path.as_posix()}",
+                    f"before_graph_mermaid: {before_graph_mermaid_path.as_posix()}",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return V2_090FReworkEntryValidationResult(
+            status=V2_090FReworkEntryStatus.PASSED_WITHOUT_REWORK_CANDIDATE,
+            before_graph_json_path=before_graph_json_path,
+            before_graph_mermaid_path=before_graph_mermaid_path,
+            blocker_report_path=blocker_report_path,
+            terminal_path=terminal_path,
+            report_path=report_path,
+            checked_refs=checked_refs,
+        )
+
+    _write_json(
+        blocker_report_path,
+        {
+            "blockers": [],
+            "status": "missing_verified_blocker",
+            "source_ref": None,
+        },
+    )
+    _write_json(
+        terminal_path,
+        {
+            "terminal_status": V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY.value,
+            "run_id": validation_input.run_id,
+            "cycle_id": validation_input.cycle_id,
+            "checked_refs": list(checked_refs),
+        },
+    )
+    report_path.write_text(
+        "\n".join(
+            (
+                "# V2-090F Rework Entry Validation",
+                "",
+                f"run_id: {validation_input.run_id}",
+                f"terminal_status: {V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY.value}",
+                "",
+                "No typed verified blocker was available for ReworkRequest projection.",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return V2_090FReworkEntryValidationResult(
+        status=V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY,
+        before_graph_json_path=before_graph_json_path,
+        before_graph_mermaid_path=before_graph_mermaid_path,
+        blocker_report_path=blocker_report_path,
+        terminal_path=terminal_path,
+        report_path=report_path,
+        checked_refs=checked_refs,
+    )
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.as_posix()} must contain a JSON object")
+    return data
+
+
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    return _load_json(path)
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _closeout_gate_passed(payload: dict[str, Any] | None) -> bool:
+    if payload is None:
+        return False
+    return payload.get("verdict") == "passed" and payload.get("blockers") == []
+
+
+def _checked_refs(payload: dict[str, Any] | None) -> tuple[str, ...]:
+    if payload is None:
+        return ()
+    value = payload.get("checked_refs", [])
+    if not isinstance(value, list):
+        raise ValueError("closeout gate checked_refs must be a list")
+    refs: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("closeout gate checked_refs entries must be text")
+        refs.append(item.strip())
+    return tuple(refs)
