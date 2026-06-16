@@ -215,6 +215,47 @@ def test_v2_090f_prd_agent_team_real_provider_planning_gate(tmp_path: Path) -> N
     assert validate_v2_090f_generated_ticket_graph_for_worker_execution(ticket_artifact)
 
 
+@pytest.mark.skipif(
+    os.environ.get("BOARDROOM_RUN_REAL_PROVIDER_PROVING") != "1"
+    or not os.environ.get("OPENAI_API_KEY"),
+    reason="V2-090F rework-entry validation requires explicit opt-in and provider secret",
+)
+def test_v2_090f_prd_agent_team_rework_entry_validation_real_provider(
+    tmp_path: Path,
+) -> None:
+    from scripts.run_v2_090f_prd_agent_team import main
+
+    prd = tmp_path / "prd.md"
+    prd.write_text(
+        "Build a tiny library checkout web app with a standard-library Python backend, "
+        "static frontend, SQLite persistence, tests, and run instructions. "
+        "Users can add books, list books, checkout and return a book, delete a book, "
+        "and see the UI update from a real backend.",
+        encoding="utf-8",
+    )
+    output = tmp_path / "tiny-fullstack"
+
+    exit_code = main(
+        [
+            "--prd",
+            str(prd),
+            "--reset",
+            "--workspace-root",
+            str(tmp_path / "workspace"),
+            "--output-root",
+            str(output),
+            "--stage",
+            "rework-entry",
+        ]
+    )
+
+    assert exit_code in {0, 4, 5}
+    assert (output / "00-boardroom/ticket-graph.before-rework.json").is_file()
+    assert (output / "00-boardroom/ticket-graph.before-rework.md").is_file()
+    assert (output / "20-evidence/rework-entry/rework-terminal.json").is_file()
+    assert (output / "30-audit/rework-entry-validation.md").is_file()
+
+
 def test_v2_090f_real_opt_in_records_preflight_before_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

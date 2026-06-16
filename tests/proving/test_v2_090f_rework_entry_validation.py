@@ -54,6 +54,38 @@ def test_ticket_graph_snapshot_exports_required_labels(tmp_path):
     )
 
 
+def test_ticket_graph_snapshot_accepts_real_planning_artifact_without_version(tmp_path):
+    output_root = tmp_path / "tiny-fullstack"
+    boardroom_root = output_root / "00-boardroom"
+    boardroom_root.mkdir(parents=True)
+    (boardroom_root / "generated-ticket-graph.json").write_text(
+        json.dumps(
+            {
+                "provider_output": {
+                    "artifact_type": "BoardroomOS.V2-090F.PlanningArtifact",
+                    "ticket_graph": {
+                        "graph_id": "ticket-graph.tiny-library-checkout.v2-090f",
+                        "nodes": [
+                            {
+                                "node_ref": "ticket.implementation.backend-api-sqlite",
+                                "owner_seat_ref": "seat.worker.implementation",
+                                "acceptance_refs": ["acceptance.book.add"],
+                                "evidence_obligations": ["Implement backend."],
+                            }
+                        ],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = load_v2_090f_ticket_graph_snapshot(output_root)
+
+    assert snapshot.graph_version == 1
+    assert snapshot.nodes[0].status == "unknown"
+
+
 def test_passed_closeout_writes_no_blocker_candidate_report(tmp_path):
     output_root = tmp_path / "tiny-fullstack"
     workspace_root = tmp_path / "workspace"

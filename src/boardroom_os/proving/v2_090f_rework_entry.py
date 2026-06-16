@@ -118,6 +118,15 @@ def _node_status(node: dict[str, Any]) -> str:
     return value.strip()
 
 
+def _graph_version(ticket_graph: dict[str, Any]) -> int:
+    value = ticket_graph.get("graph_version", 1)
+    if not isinstance(value, int):
+        raise ValueError("ticket graph graph_version must be an integer")
+    if value <= 0:
+        raise ValueError("ticket graph graph_version must be greater than 0")
+    return value
+
+
 def _count_list_field(node: dict[str, Any], field_name: str) -> int:
     value = node.get(field_name)
     if value is None:
@@ -168,7 +177,7 @@ def load_v2_090f_ticket_graph_snapshot(output_root: Path) -> V2_090FTicketGraphS
             edge_set.add((dependency.strip(), ticket_id))
 
     return V2_090FTicketGraphSnapshot(
-        graph_version=ticket_graph["graph_version"],
+        graph_version=_graph_version(ticket_graph),
         source_ref="00-boardroom/generated-ticket-graph.json",
         nodes=tuple(nodes),
         edges=tuple(sorted(edge_set)),

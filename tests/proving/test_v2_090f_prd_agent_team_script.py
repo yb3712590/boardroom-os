@@ -189,6 +189,144 @@ def test_v2_090f_runner_rework_entry_stage_runs_full_then_validation(
     assert calls == ["preflight", "planning", "worker", "closeout", "rework-entry"]
 
 
+def test_v2_090f_runner_rework_entry_stage_records_raw_closeout_error(
+    tmp_path,
+    monkeypatch,
+):
+    from scripts import run_v2_090f_prd_agent_team as runner
+
+    calls = []
+    prd = tmp_path / "prd.md"
+    output = tmp_path / "tiny-fullstack"
+    prd.write_text("Build the tiny fullstack app.", encoding="utf-8")
+
+    monkeypatch.setenv("BOARDROOM_RUN_REAL_PROVIDER_PROVING", "1")
+    monkeypatch.setattr(
+        runner,
+        "load_boardroom_settings",
+        lambda paths, env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "resolve_v2_090f_config_paths_from_env",
+        lambda env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_planning_preflight",
+        lambda **kwargs: calls.append("preflight") or {"status": "preflight"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_provider_planning_stage",
+        lambda **kwargs: calls.append("planning") or {"status": "planning"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_worker_execution_stage",
+        lambda **kwargs: calls.append("worker") or {"status": "worker"},
+    )
+
+    def raise_closeout(**kwargs):
+        calls.append("closeout")
+        raise ValueError("service readiness probe failed: HTTP 404")
+
+    monkeypatch.setattr(runner, "run_v2_090f_closeout_stage", raise_closeout)
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_rework_entry_validation",
+        lambda validation_input: calls.append("rework-entry")
+        or SimpleNamespace(
+            status=SimpleNamespace(value="blocked_by_missing_rework_entry"),
+            report_path=output / "30-audit/rework-entry-validation.md",
+        ),
+    )
+
+    exit_code = runner.main(
+        [
+            "--prd",
+            str(prd),
+            "--reset",
+            "--workspace-root",
+            str(tmp_path / "workspace"),
+            "--output-root",
+            str(output),
+            "--stage",
+            "rework-entry",
+        ]
+    )
+
+    assert exit_code == 5
+    assert calls == ["preflight", "planning", "worker", "closeout", "rework-entry"]
+    assert "HTTP 404" in (output / "30-audit/raw-closeout-error.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_v2_090f_runner_rework_entry_stage_records_raw_planning_error(
+    tmp_path,
+    monkeypatch,
+):
+    from scripts import run_v2_090f_prd_agent_team as runner
+
+    calls = []
+    prd = tmp_path / "prd.md"
+    output = tmp_path / "tiny-fullstack"
+    prd.write_text("Build the tiny fullstack app.", encoding="utf-8")
+
+    monkeypatch.setenv("BOARDROOM_RUN_REAL_PROVIDER_PROVING", "1")
+    monkeypatch.setattr(
+        runner,
+        "load_boardroom_settings",
+        lambda paths, env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "resolve_v2_090f_config_paths_from_env",
+        lambda env_values: object(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_planning_preflight",
+        lambda **kwargs: calls.append("preflight") or {"status": "preflight"},
+    )
+
+    def raise_planning(**kwargs):
+        calls.append("planning")
+        raise ValueError("RunManifest service entrypoint is not declared")
+
+    monkeypatch.setattr(runner, "run_v2_090f_provider_planning_stage", raise_planning)
+    monkeypatch.setattr(
+        runner,
+        "run_v2_090f_rework_entry_validation",
+        lambda validation_input: calls.append("rework-entry")
+        or SimpleNamespace(
+            status=SimpleNamespace(value="blocked_by_missing_rework_entry"),
+            report_path=output / "30-audit/rework-entry-validation.md",
+        ),
+    )
+
+    exit_code = runner.main(
+        [
+            "--prd",
+            str(prd),
+            "--reset",
+            "--workspace-root",
+            str(tmp_path / "workspace"),
+            "--output-root",
+            str(output),
+            "--stage",
+            "rework-entry",
+        ]
+    )
+
+    assert exit_code == 5
+    assert calls == ["preflight", "planning", "rework-entry"]
+    assert "RunManifest service entrypoint" in (
+        output / "30-audit/raw-run-error.txt"
+    ).read_text(encoding="utf-8")
+
+
 def test_v2_090f_worker_packages_warn_against_dot_list_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
