@@ -17,7 +17,7 @@
 
 **当前验收文件**：`doc/04-implementation/acceptance-criteria.md`
 
-**当前未完成工作包**：`V2-100E`（TODO，Multi-round rework proving scenario，多轮返工证明场景；在 V2-100A/B/C/D 返工模型、事件归约器、CEO planning boundary 和 evidence/checker reintegration 基础上，证明多轮返工可审计收敛或明确升级）
+**当前未完成工作包**：`V2-090F`（REVIEW_REQUIRED / BLOCKED，Golden sample rebuild，黄金样例重建；等待 V2-100E 专家评审后复判是否恢复实施或继续阻塞）
 
 **当前重点**：2026-05-31 tiny-fullstack 失败复审撤回 Phase 8 “V2 最小端到端能力成立”结论。V2-080A~F 保留 `DONE` 作为历史工作包执行记录，但 V2-080 不再作为端到端验收依据。Phase 9 的因果链已明确：`V2-090K` 完成 agent team autonomy remediation（智能体团队自治整改），目标是移除 runner/helper（运行器/辅助器）对业务域、启动接口、静态验收引用和源码面映射的外部介入，让 agent-generated AcceptanceContract / PackageContract / RunManifest / BehavioralProbePlan（智能体生成验收合同 / 包合同 / 运行清单 / 行为探针计划）成为权威源；090K 后真实 provider full run（完整模型供应商运行）可以 fail closed（失败关闭）地暴露合同、实现、探针和收尾投影不一致，这不等同于 090K 未完成。当前真实失败现场已保留在 `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`，其中包括 BehavioralProbePlan 期待 `$.title` 而 backend 实际返回 `{"book": {...}}`、env binding（环境绑定）未收敛、FinalEvidenceTable（最终证据表）仍使用旧 `AC-TINY-*` 引用、closeout/audit（收尾/审计）仍引用 `run-v2-080f`。V2-100 现在成为当前实施重点：把 090K/090F 暴露的“发现问题后只能 fail closed”升级为 CEO-governed rework loop（项目经理治理返工循环），由 CEO 读取结构化 blocker（阻塞项）、规划返工、更新 TicketGraph（工单图）、组织实施/测试/检查/收尾重验并留痕。V2-090F golden sample（黄金样例）保持 REVIEW_REQUIRED / BLOCKED，最终通过必须基于 `V2-090K + V2-100` 后复判，而不是期待 090K single-pass（单轮）直接收敛。
 
@@ -164,8 +164,8 @@ RoleProfile（角色模板）
 | Phase 7.5：Closeout fact-chain 重构 | V2-071 | 6 / 6 | 完成 |
 | Phase 8：Tiny proving scenario | V2-080 | 6 / 6 | 失败复审后结束；不作为端到端成立证据 |
 | Phase 9：Tiny blackbox recovery | V2-090 | 10 / 11 | 部分闭合；V2-090K 完成自治整改并保留 fail-closed 现场，V2-090F golden sample 仍 REVIEW_REQUIRED / BLOCKED |
-| Phase 10：Agent-team rework loop hardening | V2-100 | 4 / 5 | IN_PROGRESS；V2-100A/B/C/D 完成，当前重点 V2-100E |
-| **合计** | **V2-000 ~ V2-100** | **73 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C/D 完成，V2-090F REVIEW_REQUIRED / BLOCKED，V2-100E 为当前未完成工作包** |
+| Phase 10：Agent-team rework loop hardening | V2-100 | 5 / 5 | 完成；等待 V2-100E 专家评审 |
+| **合计** | **V2-000 ~ V2-100** | **74 / 75** | **V2-090A ~ V2-090E、V2-090G、V2-090H、V2-090I、V2-090J、V2-090K 与 V2-100A/B/C/D/E 完成，V2-090F REVIEW_REQUIRED / BLOCKED，等待 V2-100E 专家评审后复判** |
 
 ## 当前约束摘要
 
@@ -1191,7 +1191,7 @@ RoleProfile（角色模板）
 
 ## V2-100: Agent-team Rework Loop Hardening（智能体团队返工循环强化）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：把 agent team（智能体团队）从 single-pass fail-closed（单轮失败关闭）升级为 CEO-governed rework loop（项目经理治理返工循环）。当 Checker（检查者）或 CloseoutGate（收尾门禁）发现合同、证据、接口协议或实现不一致时，系统应生成结构化 blocker（阻塞项）、由 CEO/Architect（项目经理/架构师）规划返工并更新 TicketGraph（工单图），再由 Worker/Tester/Checker/Closeout（实施/测试/检查/收尾）按新图返工、重验、留痕。
 - 输入文档：`domain-model.md`、`contract-and-evidence-model.md`、`execution-and-runtime-boundary.md`、`acceptance-criteria.md`、`examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`、V2-090F/K 真实 full run 失败证据、`doc/05-project-log/v2-090f-implementation-intervention-log.md`。
 - 输出目录：`src/boardroom_os/`、`tests/`、`scripts/`、必要时 `examples/generated-workspaces/tiny-fullstack/20-evidence/` 审计产物。
@@ -1247,14 +1247,15 @@ RoleProfile（角色模板）
 
 ### V2-100E: Multi-round rework proving scenario（多轮返工证明场景）
 
-- 状态：TODO
+- 状态：DONE
 - 目标：用 090K 真实失败快照和一个可重置 failing fixture（失败夹具）构造首轮失败、CEO 自治返工、重验通过或明确升级的端到端证明，验证 agent team 流程能像人类团队一样沟通、返工和留痕。
 - 输入文档：V2-100A~D、`docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md`、`docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md`、`examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`、V2-090F/K 真实 run artifacts（运行产物）。
 - 依赖：V2-100A、V2-100B、V2-100C、V2-100D；V2-090K 已完成并保留真实失败证据。
-- 输出文件：预计 `scripts/run_v2_100_rework_loop_scenario.py`、`tests/proving/test_v2_100_rework_loop.py`、`tests/negative/test_v2_100_rework_loop_fail_closed.py`、必要审计导出。
+- 输出文件：`src/boardroom_os/proving/v2_100_rework_loop.py`、`src/boardroom_os/proving/v2_100_resettable_fixture.py`、`scripts/run_v2_100_rework_loop_scenario.py`、`tests/proving/fixtures/v2_100_resettable_rework.py`、`tests/proving/test_v2_100_rework_loop.py`、`tests/proving/test_v2_100_rework_loop_provider_integration.py`、`tests/negative/test_v2_100_rework_loop_fail_closed.py`、`doc/04-implementation/v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md`，以及 ignored local audit export（本地忽略的审计导出）`examples/generated-workspaces/tiny-fullstack/20-evidence/v2-100e-rework-loop/`。
 - 必须先写的 negative tests：命令通过但证明命题错误不得 closeout passed；无 blocker 创建返工必须失败；runner/helper 直接写 ReworkPlan 或 checker/closeout verdict 必须失败；只靠 `AgentRunResult.status == completed`、ProviderAttempt（模型调用尝试记录）、`--check` 或一次 live probe（真实探针）不得推出返工 accepted；无限返工或预算耗尽无 escalation（升级）必须失败。
 - 必须证明的 happy path：先用 090K curated failure snapshot（精选失败快照）证明真实失败可被转为结构化 blocker，再用可重置 failing fixture（失败夹具）运行多轮返工：Checker/Closeout 生成结构化 blocker，CEO 产生 ReworkPlan 和 TicketGraphPatch，Worker/Tester/Release DevOps 执行返工，EvidenceVerifier/Checker/Closeout 重新验证，最终 accepted 或明确 escalated；ProcessAudit/ReplayBundle（流程审计/重放包）能展示完整多轮时间线和责任归属。
 - 验收口径：V2-100 的通过标准不是“首次运行成功”，而是“局部产物不达标时，agent team 能自治识别、规划、返工、重验并可审计地收敛或升级”。
+- 完成证据：2026-06-15 已实现 `src/boardroom_os/proving/v2_100_rework_loop.py`、`src/boardroom_os/proving/v2_100_resettable_fixture.py`、`scripts/run_v2_100_rework_loop_scenario.py`、`tests/proving/test_v2_100_rework_loop.py`、`tests/proving/test_v2_100_rework_loop_provider_integration.py`、`tests/negative/test_v2_100_rework_loop_fail_closed.py` 和 `tests/proving/fixtures/v2_100_resettable_rework.py`。负例覆盖无 verified blocker（已验证阻塞项）、fake provider success（模拟供应商成功）、helper-written verdict（辅助器写结论）、旧证据复用、重绑定预制 accepted evidence（通过证据）为真实 worker evidence（实施者证据）、命令成功但命题错误、runtime 直接 accepted（运行时直接接受）和预算耗尽无决策。正例证明 090K failure snapshot（失败快照）可投影为 ReworkRequest（返工请求），resettable fixture（可重置夹具）可经真实 provider-backed CEO/reviewer/worker（真实模型支撑项目经理/审查者/实施者）返工 accepted（接受）或预算耗尽显式终止，并导出 event/evidence/audit（事件/证据/审计）链。真实 CLI proof（命令行证明）在 `examples/generated-workspaces/tiny-fullstack/20-evidence/v2-100e-rework-loop` 导出审计，terminal_status=`accepted`、CloseoutGate（收尾门禁）`passed`，`real-provider-package` 的 PackageContract / RunManifest（包合同 / 运行清单）非空，SourceInventory hash（源码清单哈希）与实际文件 sha256 一致。验证：V2-100 focused regression `111 passed, 1 skipped, 1 warning`；evidence/checker/closeout regression `180 passed`；V2-100E local suite `42 passed, 1 skipped, 1 warning`；真实 provider opt-in suite `4 passed, 1 warning in 104.32s`；真实 CLI proof 通过；`git diff --check` 通过。
 
 ---
 

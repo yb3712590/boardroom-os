@@ -70,6 +70,7 @@
 | `v2-100b-rework-event-taxonomy-reducer-implementation-plan.md` | V2-100B Rework event taxonomy + reducer（返工事件分类与归约器）实施计划：`REWORK_*` 事件、runtime boundary（运行时边界）、GraphPatchReviewGate（图补丁审查门禁）与可回放 ReworkProjection（返工投影） |
 | `v2-100c-ceo-rework-planner-boundary-implementation-plan.md` | V2-100C CEO rework planner boundary（CEO 返工规划边界）实施计划：provider-backed CEO ReworkPlan（模型支撑项目经理返工计划）、TicketGraphPatch（工单图补丁）、多角色审查和 reducer commit（归约器提交）边界 |
 | `v2-100d-rework-evidence-checker-reintegration-implementation-plan.md` | V2-100D Rework evidence/checker reintegration（返工证据与检查重接入）实施计划：每次 ReworkAttempt（返工尝试）重建 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和必要 CloseoutGate（收尾门禁）链路 |
+| `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划：真实 provider-backed（模型供应商支撑）多轮返工、resettable fixture（可重置夹具）、fail-closed negative tests（失败关闭负例）和 audit export（审计导出） |
 
 ## AI 启动入口
 
