@@ -595,3 +595,4 @@ ValueError: unsupported RunManifest behavior assertion type: json_array_contains
 - `doc/04-implementation/backlog.md` 将 V2-100 从 5 个工作包扩展为 V2-100A~F，当前 Phase 10 状态为 5 / 6，V2-100F REVIEW_REQUIRED。
 - `doc/04-implementation/acceptance-criteria.md` 新增 AC-V2-REWORK-006，并保持未勾选，直到实现证明未知 assertion 不 raw crash、不被忽略、不通过 closeout，且能进入 CEO-governed assigned AgentSeat（项目经理治理派工的智能体席位）自主黑盒验证和返工上下文。
 - V2-090F golden sample（黄金样例）继续 BLOCKED；不得通过直接 patch 当前样例工程或补固定 alias 列表来伪造完成。
+- 2026-06-18 追加计划边界：V2-100F implementation plan（实施计划）必须强制新写 governed orchestration（治理编排）链路；可复用 V2-100 domain models / reducers / validators（领域模型 / 归约器 / 校验器），但不得复用 V2-100E proving scenario orchestration（证明场景编排）、resettable fixture（可重置夹具）、minimal package stub（最小占位包）或 accepted audit shortcut（接受审计捷径）作为 V2-100F 成功路径。`v2-090k-failure-snapshot`（V2-090K 历史失败快照）仅可供 V2-100A~E historical regression（历史回归）读取，V2-100F active path（活跃路径）不得读取、复制、改写或通过该 snapshot 路由。

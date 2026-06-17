@@ -38,6 +38,23 @@ V2-100F 不负责：
 - 不让 runtime/runner（运行时/运行器）创建 ReworkPlan（返工计划）、修改 TicketGraph（工单图）或决定返工已接受。
 - 不提前实现完整 roadmap orchestrator（路线图编排器）；只实现当前 RunManifest 后的 hook，并让接口可被未来 milestone gate 复用。
 
+## P0 Architectural Boundary
+
+V2-100F must implement a new governed orchestration（治理编排） path. It may reuse V2-100 domain models, reducers, validators, evidence primitives and typed contracts（领域模型、归约器、校验器、证据基础类型和强类型合同）, but it must not reuse V2-100E proving scenario orchestration（证明场景编排） as a shortcut to accepted-looking state（看似接受状态）.
+
+Hard constraints:
+
+- V2-100F rework-entry（返工入口） code must not import or call `run_v2_100_rework_loop_for_request()`（V2-100E 返工循环入口）.
+- V2-100F must not depend on `v2_100_resettable_fixture.py`（V2-100E 可重置夹具）、`build_current_run_provider_recheck_input()`（当前运行夹具重验输入构造器）、`build_v2_100_resettable_fixture()`（V2-100E 夹具构造器） or `_write_minimal_package()`（最小占位包写入器）.
+- `examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/`（V2-090K 历史失败快照） may remain in the repository only for V2-100A~E historical regression tests（历史回归测试）. V2-100F active path（活跃路径）, V2-100F fixtures（夹具） and V2-100F real-provider opt-in（真实模型显式启用） must not read, copy, adapt or route through that snapshot.
+- V2-100F must not use `REWORK_ACCEPTED_CANDIDATE`（返工接受候选） as a success state. A V2-100F terminal result can only be `passed`（通过）、`rework_required`（需要返工） or `blocked_or_escalated`（阻断/升级）, and `passed` requires fresh plan/fact/evidence/checker/closeout lineage.
+- `create_rework_ticket`（创建返工工单） must be consumed by the real TicketGraph reducer/projection（工单图归约器/投影） and must result in a new graph node visible in the ready queue（就绪队列）. If the governance decision repairs an existing blocked ticket, use an explicit update/repair operation kind instead of `create_rework_ticket`.
+- Accepted blocker refs（已接受阻塞引用） must exactly match the current `ReworkRequest.issues[*].blocker_refs`（当前返工请求问题阻塞引用）. Old V2-090K/V2-100E blocker refs cannot satisfy a V2-100F request.
+- Provider-backed worker evidence（模型支撑 worker 证据） must not be satisfied by deterministic stub（确定性占位）、fixture package（夹具包）、`assert True` tests、`changed_files: []` provider outputs（空变更模型输出） or ack-only provider outputs（仅确认模型输出）.
+- V2-100F audit exports（审计导出） must be derived from actual graph projection, provider attempts, runner facts, EvidenceVerifier, Checker and CloseoutGate objects. They must not be copied or adapted from V2-100E accepted audit exports.
+
+Failure to satisfy any hard constraint must fail closed before marking V2-100F `DONE`.
+
 ## File Structure
 
 Create:
@@ -89,6 +106,8 @@ Tests:
 - Create `tests/negative/test_manifest_tolerant_ingestion_fail_closed.py`
 - Create `tests/negative/test_blackbox_plan_fail_closed.py`
 - Create `tests/negative/test_manifest_rework_routing_fail_closed.py`
+- Create `tests/negative/test_v2_100f_forbidden_dependency_fail_closed.py`
+- Create `tests/proving/test_v2_100f_governed_orchestration.py`
 - Modify `tests/proving/test_v2_090k_dynamic_closeout_contract.py`
 - Modify `tests/proving/test_v2_090f_rework_entry_validation.py`
 - Modify `tests/negative/test_v2_090f_rework_entry_fail_closed.py`
@@ -890,7 +909,7 @@ PYTHONPATH=src:. python -m pytest \
 
 Expected: plan production context is present only through graph-assigned ExecutionPackage.
 
-## Task 8: V2-090F Rework-Entry Integration
+## Task 8: V2-100F Governed Orchestration And V2-090F Rework-Entry Integration
 
 **Files:**
 
@@ -899,8 +918,47 @@ Expected: plan production context is present only through graph-assigned Executi
 - Modify: `tests/proving/test_v2_090f_rework_entry_validation.py`
 - Modify: `tests/negative/test_v2_090f_rework_entry_fail_closed.py`
 - Modify: `tests/proving/test_v2_090f_prd_agent_team_script.py`
+- Create: `tests/negative/test_v2_100f_forbidden_dependency_fail_closed.py`
+- Create: `tests/proving/test_v2_100f_governed_orchestration.py`
 
-- [ ] **Step 1: Add regression for current novel assertion**
+- [ ] **Step 1: Add forbidden dependency tests**
+
+Add to `tests/negative/test_v2_100f_forbidden_dependency_fail_closed.py`:
+
+```python
+import inspect
+
+import boardroom_os.proving.v2_090f_rework_entry as rework_entry
+
+
+def test_v2_100f_rework_entry_does_not_call_v2_100e_rework_loop():
+    source = inspect.getsource(rework_entry)
+
+    assert "run_v2_100_rework_loop_for_request" not in source
+
+
+def test_v2_100f_rework_entry_does_not_depend_on_v2_100e_fixtures():
+    source = inspect.getsource(rework_entry)
+
+    forbidden = (
+        "v2_100_resettable_fixture",
+        "build_current_run_provider_recheck_input",
+        "build_v2_100_resettable_fixture",
+        "_write_minimal_package",
+        "v2-090k-failure-snapshot",
+    )
+    assert not any(marker in source for marker in forbidden)
+
+
+def test_v2_100f_rework_entry_does_not_emit_rework_accepted_candidate():
+    source = inspect.getsource(rework_entry)
+
+    assert "REWORK_ACCEPTED_CANDIDATE" not in source
+```
+
+Expected before implementation: these tests fail against the current shortcut path. They must pass before any V2-100F completion claim.
+
+- [ ] **Step 2: Add regression for current novel assertion**
 
 Add:
 
@@ -927,7 +985,32 @@ def test_v2_090f_rework_entry_preserves_json_array_contains_field(tmp_path):
 
 If no provider-backed plan exists in the fixture, expected status should be typed `blocked_or_escalated` with missing plan/provider context, not raw exception.
 
-- [ ] **Step 2: Route missing provider/config to blocked_or_escalated**
+- [ ] **Step 3: Add governed orchestration happy-path test**
+
+Add to `tests/proving/test_v2_100f_governed_orchestration.py`:
+
+```python
+def test_v2_100f_verify_blackbox_ticket_is_graph_projected_before_plan_execution(tmp_path):
+    result = run_v2_100f_governed_orchestration_fixture(
+        tmp_path,
+        assertion={"type": "json_array_contains_field", "path": "$", "field": "title"},
+        provider_plan=True,
+        runner_facts=True,
+    )
+
+    assert result.ingestion_context.raw_assertions[0].raw_type == "json_array_contains_field"
+    assert result.verify_blackbox_ticket_ref.value.startswith("ticket.verify-blackbox.")
+    assert result.ticket_graph_after.has_node(result.verify_blackbox_ticket_ref)
+    assert result.ticket_graph_after.ready_queue_contains(result.verify_blackbox_ticket_ref)
+    assert result.blackbox_plan.producer_attempt_ref.value.startswith("provider-attempt.")
+    assert result.action_facts
+    assert {fact.plan_ref for fact in result.action_facts} == {result.blackbox_plan.plan_id}
+    assert result.terminal_status in {"passed", "rework_required", "blocked_or_escalated"}
+```
+
+The fixture may use a deterministic local fake provider only for unit tests, but the fake must produce a real `ProviderAttempt` object and must not generate implementation source, stub tests or accepted audit evidence.
+
+- [ ] **Step 4: Route missing provider/config to blocked_or_escalated**
 
 Add a new V2-100F status enum in the rework-entry layer if needed:
 
@@ -940,18 +1023,66 @@ class V2_100FBlackboxRoutingStatus(StrEnum):
 
 Do not overload `V2_090FReworkEntryStatus.BLOCKED_BY_MISSING_REWORK_ENTRY` for cases where trustworthy raw manifest context exists but required provider/config/plan is missing.
 
-- [ ] **Step 3: Integrate hook request export**
+- [ ] **Step 5: Replace direct V2-100E continuation with V2-100F orchestration**
+
+Remove the V2-090F rework-entry shortcut that converts any structured `ReworkRequest` directly into `run_v2_100_rework_loop_for_request(...)`.
+
+Implement the V2-100F orchestration in this order:
+
+1. `ingest_run_manifest_artifact()` returns `RunManifestIngestionContext` only.
+2. A governance adapter creates `VerificationHookRequest` only when active AcceptanceContract / PackageContract / RunManifest context is trustworthy.
+3. CEO provider output creates a `TicketGraphPatch` containing a `verify-blackbox` ticket operation.
+4. TicketGraph reducer/projection consumes the patch and produces an after graph with a visible `verify-blackbox` node in ready queue.
+5. Seat assignment chooses an AgentSeat from the graph demand; the framework must not hardcode Tester.
+6. ExecutionPackage compiler creates a provider-backed package requiring `BlackboxVerificationPlan`.
+7. The assigned AgentSeat produces `BlackboxVerificationPlan`.
+8. Runner executes only approved plan actions and records `BlackboxActionExecutionFact`.
+9. EvidenceVerifier / Checker / CloseoutGate consume facts and produce exactly one terminal status: `passed`, `rework_required` or `blocked_or_escalated`.
+
+Do not call V2-100E scenario runners, resettable fixtures or audit exporters from this path.
+
+- [ ] **Step 6: Integrate hook request and fact exports**
 
 When RunManifest ingestion succeeds and live blackbox evidence is required, export:
 
 - `20-evidence/blackbox/run-manifest-ingestion-context.json`
 - `20-evidence/blackbox/verification-hook-request.json`
+- `20-evidence/blackbox/ticket-graph.before-blackbox.json`
+- `20-evidence/blackbox/ticket-graph.after-blackbox.json`
 - `20-evidence/blackbox/blackbox-verification-plan.json` when produced
 - `20-evidence/blackbox/blackbox-action-facts.json` when executed
+- `20-evidence/blackbox/blackbox-run-result.json`
 
 Each export must include content hash or stable JSON hash in the audit report.
 
-- [ ] **Step 4: Ensure no direct behavioral probe execution path remains active**
+- [ ] **Step 7: Add blocker alignment and graph mutation tests**
+
+Add negative tests:
+
+```python
+def test_v2_100f_rejects_accepted_blockers_outside_current_request(tmp_path):
+    result = run_v2_100f_governed_orchestration_fixture(
+        tmp_path,
+        accepted_blockers=("v2-090k-failure.probe-response-shape-mismatch",),
+        request_blockers=("run-manifest.validator.service-entrypoint-not-required-output",),
+    )
+
+    assert result.terminal_status == "blocked_or_escalated"
+    assert "accepted_blockers" in result.reason
+
+
+def test_create_rework_ticket_must_add_graph_node(tmp_path):
+    result = run_v2_100f_graph_patch_fixture(
+        tmp_path,
+        operation_kind="create_rework_ticket",
+        after_graph_adds_node=False,
+    )
+
+    assert result.terminal_status == "blocked_or_escalated"
+    assert "create_rework_ticket" in result.reason
+```
+
+- [ ] **Step 8: Ensure no direct behavioral probe execution path remains active**
 
 Add negative test:
 
@@ -968,19 +1099,38 @@ def test_runner_does_not_execute_run_manifest_behavioral_probes_without_plan(tmp
     assert "BlackboxVerificationPlan" in terminal["reason"]
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [ ] **Step 9: Ensure worker evidence cannot be stubbed**
+
+Add negative test:
+
+```python
+def test_v2_100f_worker_stub_or_empty_provider_changes_cannot_satisfy_evidence(tmp_path):
+    result = run_v2_100f_worker_evidence_fixture(
+        tmp_path,
+        changed_files=[],
+        source_text="def create_book():\n    return {'book': {'id': 1}}\n",
+        test_text="def test_create_book():\n    assert True\n",
+    )
+
+    assert result.terminal_status == "blocked_or_escalated"
+    assert "stub" in result.reason or "changed_files" in result.reason
+```
+
+- [ ] **Step 10: Run focused tests**
 
 Run:
 
 ```bash
 PYTHONPATH=src:. python -m pytest \
+  tests/negative/test_v2_100f_forbidden_dependency_fail_closed.py \
+  tests/proving/test_v2_100f_governed_orchestration.py \
   tests/proving/test_v2_090f_rework_entry_validation.py \
   tests/negative/test_v2_090f_rework_entry_fail_closed.py \
   tests/proving/test_v2_090f_prd_agent_team_script.py \
   -q
 ```
 
-Expected: current novel assertion no longer creates raw crash; missing plan/provider produces typed blocked/escalated context; direct behavioral probe execution without plan is rejected.
+Expected: current novel assertion no longer creates raw crash; missing plan/provider produces typed blocked/escalated context; direct behavioral probe execution without plan is rejected; V2-100F does not call V2-100E shortcut code; verify-blackbox ticket is graph-projected before plan execution.
 
 ## Task 9: End-To-End Regression And Real Provider Opt-In
 
@@ -1000,6 +1150,8 @@ PYTHONPATH=src:. python -m pytest \
   tests/evidence/test_blackbox_verification_plan.py \
   tests/execution/test_blackbox_plan_runner.py \
   tests/rework/test_verification_hook_ticket.py \
+  tests/negative/test_v2_100f_forbidden_dependency_fail_closed.py \
+  tests/proving/test_v2_100f_governed_orchestration.py \
   tests/proving/test_v2_090f_rework_entry_validation.py \
   tests/negative/test_manifest_tolerant_ingestion_fail_closed.py \
   tests/negative/test_blackbox_plan_fail_closed.py \
@@ -1048,7 +1200,12 @@ Expected:
 
 - no `unsupported RunManifest behavior assertion type` raw exception;
 - `20-evidence/blackbox/run-manifest-ingestion-context.json` exists;
-- if provider-backed `BlackboxVerificationPlan` exists, runner executes only approved plan actions and records facts;
+- `20-evidence/blackbox/verification-hook-request.json` exists when live blackbox verification is required;
+- `20-evidence/blackbox/ticket-graph.after-blackbox.json` shows a graph-projected `verify-blackbox` ticket when a plan is required;
+- provider-backed `BlackboxVerificationPlan` exists before runner action execution;
+- runner executes only approved plan actions and records `BlackboxActionExecutionFact` entries;
+- no V2-100E fixture package, `_write_minimal_package` output, `assert True` stub, `changed_files: []` worker evidence, or accepted-looking V2-100E audit export is used as success evidence;
+- accepted blocker refs, when present, exactly match the current ReworkRequest blocker refs;
 - terminal status is `rework_required`, `passed`, or `blocked_or_escalated` with typed reason, not `blocked_by_missing_rework_entry`.
 
 - [ ] **Step 4: Run whitespace check**
@@ -1081,9 +1238,14 @@ Check AC-V2-REWORK-006 and Phase 10 V2-100F checkbox only after evidence shows:
 - unknown assertion does not raw crash;
 - raw assertion is preserved;
 - direct RunManifest behavioral probe execution is disabled;
+- V2-100F rework-entry does not import/call `run_v2_100_rework_loop_for_request`;
+- V2-100F does not depend on `v2_100_resettable_fixture.py`, `build_current_run_provider_recheck_input()` or `_write_minimal_package()`;
+- verify-blackbox ticket creation is consumed by real TicketGraph reducer/projection and visible in ready queue;
 - BlackboxVerificationPlan requires provider attempt and ExecutionPackage lineage;
 - runner executes only approved plan actions;
 - missing plan/provider/config routes to typed blocked/escalated context;
+- accepted blocker refs equal the current ReworkRequest blocker refs;
+- stub/empty-change worker output cannot satisfy evidence;
 - rework issue uses `RUN_MANIFEST_ERROR`, not active `RUN_MANIFEST_MISMATCH`.
 
 - [ ] **Step 3: Append project log entry**
