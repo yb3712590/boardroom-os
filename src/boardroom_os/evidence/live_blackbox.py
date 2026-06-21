@@ -477,6 +477,109 @@ def build_live_blackbox_evidence_from_manifest_context(
     raise ValueError("raw manifest context is not verified evidence")
 
 
+def build_live_blackbox_evidence_from_blackbox_facts(
+    *,
+    evidence_id: str | LiveBlackboxIntegrationEvidenceRef,
+    package_contract_ref: ContractId,
+    backend_command_id: ContractId,
+    frontend_command_id: ContractId,
+    backend_service_run_ref: str | ServiceRunEvidenceRef,
+    frontend_service_run_ref: str | ServiceRunEvidenceRef,
+    facts: tuple[Any, ...],
+    generated_at: datetime,
+) -> LiveBlackboxIntegrationEvidence:
+    if not facts:
+        raise ValueError("blackbox action execution facts are required")
+
+    backend_service_ref = _service_run_ref(backend_service_run_ref)
+    frontend_service_ref = _service_run_ref(frontend_service_run_ref)
+    command_ids = (backend_command_id, frontend_command_id)
+    service_run_refs = (backend_service_ref, frontend_service_ref)
+    probes = tuple(
+        LiveBlackboxProbeResult(
+            probe_ref=NonEmptyTextValue(value=_ref_value(getattr(fact, "action_id", None), "missing-action-id")),
+            acceptance_refs=tuple(getattr(fact, "acceptance_refs", ())),
+            service_run_refs=service_run_refs,
+            command_ids=command_ids,
+            probe_url=_probe_url_for_fact(fact),
+            status_code=getattr(fact, "http_status", None),
+            passed=_fact_observed_passed(fact),
+            observed_facts=_observed_facts_from_blackbox_fact(fact),
+            body_sha256=None,
+            probed_at=getattr(fact, "finished_at"),
+        )
+        for fact in facts
+    )
+    return LiveBlackboxIntegrationEvidence(
+        live_blackbox_evidence_id=evidence_id,
+        package_contract_ref=package_contract_ref,
+        backend_command_id=backend_command_id,
+        frontend_command_id=frontend_command_id,
+        backend_service_run_ref=backend_service_ref,
+        frontend_service_run_ref=frontend_service_ref,
+        probes=probes,
+        generated_at=generated_at,
+    )
+
+
+def _service_run_ref(value: str | ServiceRunEvidenceRef) -> ServiceRunEvidenceRef:
+    if isinstance(value, ServiceRunEvidenceRef):
+        return value
+    return ServiceRunEvidenceRef(value=value)
+
+
+def _probe_url_for_fact(fact: Any) -> ServiceReadinessUrl | None:
+    url = getattr(fact, "url", None) or getattr(fact, "browser_target", None)
+    if url is None:
+        return None
+    return ServiceReadinessUrl(value=url)
+
+
+def _fact_observed_passed(fact: Any) -> bool:
+    http_status = getattr(fact, "http_status", None)
+    if http_status is not None:
+        return 200 <= http_status < 300
+    exit_code = getattr(fact, "exit_code", None)
+    if exit_code is not None:
+        return exit_code == 0
+    return False
+
+
+def _observed_facts_from_blackbox_fact(fact: Any) -> dict[str, Any]:
+    # 黑盒 fact 已由 plan runner 产生；这里只保留来源链和观测值，不用参考标签或叙述文本推断通过。
+    observed: dict[str, Any] = {
+        "fact_id": _ref_value(getattr(fact, "fact_id", None), None),
+        "plan_ref": _ref_value(getattr(fact, "plan_ref", None), None),
+        "action_id": getattr(fact, "action_id", None),
+        "action_kind": _ref_value(getattr(fact, "action_kind", None), None),
+        "input_refs": tuple(
+            _ref_value(getattr(input_ref_hash, "input_ref", None), "")
+            for input_ref_hash in getattr(fact, "input_ref_hashes", ())
+        ),
+        "input_hashes": tuple(
+            _ref_value(getattr(input_ref_hash, "sha256", None), "")
+            for input_ref_hash in getattr(fact, "input_ref_hashes", ())
+        ),
+        "exit_code": getattr(fact, "exit_code", None),
+        "http_status": getattr(fact, "http_status", None),
+        "status_text": getattr(fact, "status_text", None),
+        "stdout_ref": _ref_value(getattr(fact, "stdout_ref", None), None),
+        "stderr_ref": _ref_value(getattr(fact, "stderr_ref", None), None),
+        "body_ref": getattr(fact, "body_ref", None),
+        "screenshot_ref": getattr(fact, "screenshot_ref", None),
+        "artifact_refs": tuple(getattr(fact, "artifact_refs", ())),
+        "verification_run_ref": _ref_value(getattr(fact, "verification_run_ref", None), None),
+        "package_contract_ref": _ref_value(getattr(fact, "package_contract_ref", None), None),
+    }
+    return {key: value for key, value in observed.items() if value not in (None, (), "")}
+
+
+def _ref_value(value: Any, default: str | None) -> str | None:
+    if value is None:
+        return default
+    return getattr(value, "value", str(value))
+
+
 __all__ = [
     "LiveBlackboxBlocker",
     "LiveBlackboxBlockerCode",
@@ -487,5 +590,6 @@ __all__ = [
     "LiveBlackboxVerificationResult",
     "LiveBlackboxVerifierInput",
     "artifact_refs_for_live_blackbox",
+    "build_live_blackbox_evidence_from_blackbox_facts",
     "build_live_blackbox_evidence_from_manifest_context",
 ]

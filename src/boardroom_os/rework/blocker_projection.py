@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -128,6 +129,133 @@ class BlockerProjectionContext(BaseModel):
         if self.requested_by_actor not in _REQUESTER_ACTORS:
             raise ValueError("requested_by_actor is not allowed to create rework requests")
         return self
+
+
+class ManifestReworkRoutingStatus(StrEnum):
+    REWORK_REQUIRED = "rework_required"
+    BLOCKED_OR_ESCALATED = "blocked_or_escalated"
+    PASSED = "passed"
+
+
+class ManifestReworkRoutingResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: ManifestReworkRoutingStatus
+    rework_request: ReworkRequest | None = None
+    blocked_reason_code: str | None = None
+    blocked_message: str | None = None
+
+    @field_validator("blocked_reason_code", "blocked_message")
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("blocked fields must not be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_status_shape(self) -> "ManifestReworkRoutingResult":
+        if self.status is ManifestReworkRoutingStatus.REWORK_REQUIRED:
+            if self.rework_request is None:
+                raise ValueError("rework_required routing requires rework_request")
+            if self.blocked_reason_code is not None or self.blocked_message is not None:
+                raise ValueError("rework_required routing must not include blocked reason")
+        if self.status is ManifestReworkRoutingStatus.BLOCKED_OR_ESCALATED:
+            if self.rework_request is not None:
+                raise ValueError("blocked_or_escalated routing must not include rework_request")
+            if self.blocked_reason_code is None or self.blocked_message is None:
+                raise ValueError("blocked_or_escalated routing requires blocked reason")
+        if self.status is ManifestReworkRoutingStatus.PASSED:
+            if self.rework_request is not None:
+                raise ValueError("passed routing must not include rework_request")
+            if self.blocked_reason_code is not None or self.blocked_message is not None:
+                raise ValueError("passed routing must not include blocked reason")
+        return self
+
+
+def route_manifest_blackbox_facts(
+    *,
+    facts: tuple[Any, ...],
+    context: BlockerProjectionContext,
+    advisory_context: Mapping[str, Any] | None = None,
+    raw_exception: Exception | None = None,
+) -> ManifestReworkRoutingResult:
+    context_blocker = _manifest_context_blocker(context)
+    if context_blocker is not None:
+        return context_blocker
+    if not facts:
+        if raw_exception is not None:
+            return _blocked_manifest_routing(
+                "raw_exception_without_facts",
+                "raw exception alone cannot produce a rework request",
+            )
+        return _blocked_manifest_routing(
+            "missing_blackbox_facts",
+            "manifest routing requires blackbox action execution facts",
+        )
+
+    for fact in facts:
+        fact_blocker = _manifest_fact_blocker(fact)
+        if fact_blocker is not None:
+            return fact_blocker
+
+    failed_facts = tuple(fact for fact in facts if _blackbox_fact_failed(fact))
+    if not failed_facts:
+        return ManifestReworkRoutingResult(status=ManifestReworkRoutingStatus.PASSED)
+
+    first_fact = failed_facts[0]
+    first_fact_ref = _required_ref_value(getattr(first_fact, "fact_id", None))
+    ref_fragment = _safe_ref_fragment(first_fact_ref)
+    blocker_ref = BlockerRef(value=f"run-manifest-error.{ref_fragment}")
+    observed_context = _manifest_observed_context(first_fact)
+    merged_advisory_context = dict(advisory_context or {})
+    merged_advisory_context["observed"] = observed_context
+    issue = _issue(
+        issue_id=f"rework-issue.run-manifest-error.{ref_fragment}",
+        blocker_refs=(blocker_ref,),
+        issue_code=ReworkIssueCode.RUN_MANIFEST_ERROR,
+        acceptance_refs=context.active_acceptance_refs,
+        context=context,
+        source_surface_refs=context.active_source_surface_refs,
+        evidence_obligation_refs=context.active_evidence_obligation_refs,
+        required_artifact_types=(RequiredArtifactType(value="live_blackbox_integration"),),
+        suspected_domains=(
+            ReworkSuspectedDomain.RUN_ENV,
+            ReworkSuspectedDomain.PROBE,
+            ReworkSuspectedDomain.IMPLEMENTATION,
+        ),
+        description="Blackbox action execution facts show run manifest, API, readiness or response-shape drift.",
+        observed_fact_refs=tuple(
+            ObservedFactRef(value=_required_ref_value(getattr(fact, "fact_id", None)))
+            for fact in failed_facts
+        ),
+        expected_fact_refs=tuple(
+            ExpectedFactRef(value=f"fact.blackbox.expected.{_required_text(getattr(fact, 'action_id', None))}")
+            for fact in failed_facts
+        ),
+        advisory_context=merged_advisory_context,
+    )
+    source_ref = f"blackbox-facts.{_required_ref_value(getattr(first_fact, 'plan_ref', None))}"
+    blocker_report = _blocker_report(
+        blocker_report_id=f"blocker-report.run-manifest-error.{ref_fragment}",
+        source_kind=BlockerSourceKind.RUN_MANIFEST,
+        source_ref=source_ref,
+        issues=(issue,),
+        context=context,
+    )
+    request = _request(
+        request_id=f"rework-request.run-manifest-error.{ref_fragment}",
+        source_refs=(blocker_report.blocker_report_id.value,),
+        issues=(issue,),
+        context=context,
+    )
+    validate_request_verified_sources(request, (blocker_report,))
+    return ManifestReworkRoutingResult(
+        status=ManifestReworkRoutingStatus.REWORK_REQUIRED,
+        rework_request=request,
+    )
 
 
 def project_final_evidence_table_blockers(
@@ -266,6 +394,125 @@ def project_v2_090k_failure_summary(
     return request
 
 
+def _manifest_context_blocker(context: BlockerProjectionContext) -> ManifestReworkRoutingResult | None:
+    if not getattr(context, "active_acceptance_refs", ()):
+        return _blocked_manifest_routing(
+            "missing_active_acceptance_refs",
+            "manifest routing requires active acceptance refs",
+        )
+    if not getattr(context, "active_source_surface_refs", ()):
+        return _blocked_manifest_routing(
+            "missing_active_source_surface_refs",
+            "manifest routing requires active source surface refs",
+        )
+    if not getattr(context, "active_evidence_obligation_refs", ()):
+        return _blocked_manifest_routing(
+            "missing_active_evidence_obligation_refs",
+            "manifest routing requires active evidence obligation refs",
+        )
+    if _optional_ref_value(getattr(context, "package_contract_ref", None)) is None:
+        return _blocked_manifest_routing(
+            "missing_package_contract_ref",
+            "manifest routing requires an active package contract ref",
+        )
+    graph_version = getattr(context, "active_graph_version", None)
+    if not isinstance(graph_version, int) or graph_version <= 0:
+        return _blocked_manifest_routing(
+            "missing_graph_linkage",
+            "manifest routing requires active graph linkage",
+        )
+    return None
+
+
+def _manifest_fact_blocker(fact: Any) -> ManifestReworkRoutingResult | None:
+    if _optional_ref_value(getattr(fact, "plan_ref", None)) is None:
+        return _blocked_manifest_routing(
+            "missing_plan_ref",
+            "blackbox action execution fact is missing plan_ref",
+        )
+    if _optional_ref_value(getattr(fact, "fact_id", None)) is None:
+        return _blocked_manifest_routing(
+            "missing_fact_ref",
+            "blackbox action execution fact is missing fact_id",
+        )
+    if not _required_text(getattr(fact, "action_id", None)):
+        return _blocked_manifest_routing(
+            "missing_action_id",
+            "blackbox action execution fact is missing action_id",
+        )
+    if not getattr(fact, "acceptance_refs", ()):
+        return _blocked_manifest_routing(
+            "missing_fact_acceptance_refs",
+            "blackbox action execution fact is missing acceptance refs",
+        )
+    return None
+
+
+def _blocked_manifest_routing(reason_code: str, message: str) -> ManifestReworkRoutingResult:
+    return ManifestReworkRoutingResult(
+        status=ManifestReworkRoutingStatus.BLOCKED_OR_ESCALATED,
+        blocked_reason_code=reason_code,
+        blocked_message=message,
+    )
+
+
+def _blackbox_fact_failed(fact: Any) -> bool:
+    http_status = getattr(fact, "http_status", None)
+    if http_status is not None:
+        return not (200 <= http_status < 300)
+    exit_code = getattr(fact, "exit_code", None)
+    if exit_code is not None:
+        return exit_code != 0
+    return True
+
+
+def _manifest_observed_context(fact: Any) -> dict[str, Any]:
+    observed: dict[str, Any] = {
+        "fact_id": _optional_ref_value(getattr(fact, "fact_id", None)),
+        "plan_ref": _optional_ref_value(getattr(fact, "plan_ref", None)),
+        "action_id": getattr(fact, "action_id", None),
+        "action_kind": _optional_ref_value(getattr(fact, "action_kind", None)),
+        "input_refs": tuple(
+            _optional_ref_value(getattr(input_ref_hash, "input_ref", None))
+            for input_ref_hash in getattr(fact, "input_ref_hashes", ())
+        ),
+        "exit_code": getattr(fact, "exit_code", None),
+        "http_status": getattr(fact, "http_status", None),
+        "status_text": getattr(fact, "status_text", None),
+        "body_ref": getattr(fact, "body_ref", None),
+        "artifact_refs": tuple(getattr(fact, "artifact_refs", ())),
+        "verification_run_ref": _optional_ref_value(getattr(fact, "verification_run_ref", None)),
+        "package_contract_ref": _optional_ref_value(getattr(fact, "package_contract_ref", None)),
+    }
+    return {key: value for key, value in observed.items() if value not in (None, (), "")}
+
+
+def _optional_ref_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    ref_value = getattr(value, "value", value)
+    text = str(ref_value).strip()
+    return text or None
+
+
+def _required_ref_value(value: Any) -> str:
+    ref_value = _optional_ref_value(value)
+    if ref_value is None:
+        raise ValueError("required ref value is missing")
+    return ref_value
+
+
+def _required_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _safe_ref_fragment(value: str) -> str:
+    return value.replace(":", ".").replace("/", ".").replace("\\", ".").replace(" ", "-")
+
+
 def _issue_from_final_blocker(
     blocker: FinalEvidenceBlocker,
     context: BlockerProjectionContext,
@@ -331,16 +578,19 @@ def _issue_from_closeout_blocker(
     context: BlockerProjectionContext,
 ) -> ReworkIssue:
     related_ref = blocker.related_ref or result.closeout_gate_result_id.value
-    domains = (
-        (ReworkSuspectedDomain.CLOSEOUT_AUDIT,)
-        if _is_closeout_audit_blocker(blocker)
-        else (ReworkSuspectedDomain.EVIDENCE_PROJECTION,)
+    issue_code = _issue_code_from_text(
+        blocker.message,
+        related_ref,
+        ReworkIssueCode.CLOSEOUT_GATE_FAILURE,
     )
+    domains = _domains_for_issue_code(issue_code)
+    if issue_code is ReworkIssueCode.CLOSEOUT_GATE_FAILURE and _is_closeout_audit_blocker(blocker):
+        domains = (ReworkSuspectedDomain.CLOSEOUT_AUDIT,)
     blocker_ref = blocker.blocker_id.value if blocker.blocker_id else related_ref
     return _issue(
         issue_id=f"rework-issue.closeout.{blocker_ref}",
         blocker_refs=(BlockerRef(value=blocker_ref),),
-        issue_code=ReworkIssueCode.CLOSEOUT_GATE_FAILURE,
+        issue_code=issue_code,
         acceptance_refs=context.active_acceptance_refs,
         context=context,
         source_surface_refs=context.active_source_surface_refs,
@@ -404,6 +654,7 @@ def _issue(
     description: str,
     observed_fact_refs: tuple[ObservedFactRef, ...] = (),
     expected_fact_refs: tuple[ExpectedFactRef, ...] = (),
+    advisory_context: Mapping[str, Any] | None = None,
 ) -> ReworkIssue:
     issue = ReworkIssue(
         issue_id=ReworkIssueId(value=issue_id),
@@ -419,6 +670,7 @@ def _issue(
         suspected_domains=suspected_domains,
         required_artifact_types=required_artifact_types,
         description=description,
+        advisory_context=dict(advisory_context or {}),
     )
     validate_issue_contract_scope(
         issue,
@@ -483,6 +735,8 @@ def _issue_code_from_text(
     default: ReworkIssueCode,
 ) -> ReworkIssueCode:
     text = f"{message} {source}".lower()
+    if _describes_run_manifest_drift(text):
+        return ReworkIssueCode.RUN_MANIFEST_ERROR
     if "shape" in text or "book.title" in text or "$.title" in text:
         return ReworkIssueCode.PROBE_RESPONSE_SHAPE_MISMATCH
     if "env" in text or "environment" in text:
@@ -494,7 +748,34 @@ def _issue_code_from_text(
     return default
 
 
+def _describes_run_manifest_drift(text: str) -> bool:
+    drift_tokens = (
+        "run manifest",
+        "run_manifest",
+        "manifest",
+        "readiness",
+        "unsupported runmanifest",
+    )
+    api_or_shape_tokens = (
+        "api",
+        "response-shape",
+        "response shape",
+        "status code",
+        "http",
+        "json",
+    )
+    if any(token in text for token in drift_tokens):
+        return True
+    return "drift" in text and any(token in text for token in api_or_shape_tokens)
+
+
 def _domains_for_issue_code(issue_code: ReworkIssueCode) -> tuple[ReworkSuspectedDomain, ...]:
+    if issue_code is ReworkIssueCode.RUN_MANIFEST_ERROR:
+        return (
+            ReworkSuspectedDomain.RUN_ENV,
+            ReworkSuspectedDomain.PROBE,
+            ReworkSuspectedDomain.IMPLEMENTATION,
+        )
     if issue_code is ReworkIssueCode.PROBE_RESPONSE_SHAPE_MISMATCH:
         return (ReworkSuspectedDomain.IMPLEMENTATION, ReworkSuspectedDomain.PROBE)
     if issue_code is ReworkIssueCode.ENV_BINDING_NOT_CONVERGED:
@@ -634,8 +915,11 @@ _V2_090K_FAILURE_MAPPINGS = {
 
 __all__ = [
     "BlockerProjectionContext",
+    "ManifestReworkRoutingResult",
+    "ManifestReworkRoutingStatus",
     "project_checker_verdict_blockers",
     "project_closeout_gate_blockers",
     "project_final_evidence_table_blockers",
     "project_v2_090k_failure_summary",
+    "route_manifest_blackbox_facts",
 ]

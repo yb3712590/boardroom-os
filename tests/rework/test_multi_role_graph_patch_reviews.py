@@ -10,6 +10,7 @@ from boardroom_os.rework.model import (
     ReworkActorKind,
     ReworkIssue,
     ReworkIssueCode,
+    ReworkSuspectedDomain,
 )
 from boardroom_os.rework.reviewer import (
     GraphPatchReviewerOutput,
@@ -51,6 +52,24 @@ def test_env_binding_patch_requires_release_devops_review() -> None:
     )
 
     assert GraphPatchReviewDomain.RUN_ENV_READINESS in domains
+
+
+def test_run_manifest_error_patch_requires_run_env_and_probe_review() -> None:
+    issue = _issue_with_code(ReworkIssueCode.RUN_MANIFEST_ERROR).model_copy(
+        update={
+            "suspected_domains": (
+                ReworkSuspectedDomain.RUN_ENV,
+                ReworkSuspectedDomain.PROBE,
+            )
+        }
+    )
+
+    domains = infer_required_review_domains(
+        RequiredReviewDomainInput(issues=(issue,), operations=(_patch().operations[0],))
+    )
+
+    assert GraphPatchReviewDomain.RUN_ENV_READINESS in domains
+    assert GraphPatchReviewDomain.BEHAVIORAL_PROBE in domains
 
 
 def test_closeout_old_run_patch_requires_fact_chain_review() -> None:

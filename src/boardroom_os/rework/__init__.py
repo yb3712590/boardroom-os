@@ -1,9 +1,12 @@
 from boardroom_os.rework.blocker_projection import (
     BlockerProjectionContext,
+    ManifestReworkRoutingResult,
+    ManifestReworkRoutingStatus,
     project_checker_verdict_blockers,
     project_closeout_gate_blockers,
     project_final_evidence_table_blockers,
     project_v2_090k_failure_summary,
+    route_manifest_blackbox_facts,
 )
 from boardroom_os.rework.evidence import (
     ReworkCloseoutRecheckContext,
@@ -126,6 +129,8 @@ __all__ = [
     "GraphPatchReviewerError",
     "GraphPatchReviewerInput",
     "GraphPatchReviewerOutput",
+    "ManifestReworkRoutingResult",
+    "ManifestReworkRoutingStatus",
     "ObservedFactRef",
     "RequiredReviewDomainInput",
     "ReworkActorKind",
@@ -181,6 +186,7 @@ __all__ = [
     "project_closeout_gate_blockers",
     "project_final_evidence_table_blockers",
     "project_v2_090k_failure_summary",
+    "route_manifest_blackbox_facts",
     "recheck_rework_attempt",
     "release_devops_graph_patch_review_input",
     "rework_evidence_namespace_ref",

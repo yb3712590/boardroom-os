@@ -135,6 +135,7 @@ class ReworkIssueCode(StrEnum):
     WORK_PRODUCT_MISMATCH = "work_product_mismatch"
     INVALID_CHECKER_INPUT = "invalid_checker_input"
     CLOSEOUT_GATE_FAILURE = "closeout_gate_failure"
+    RUN_MANIFEST_ERROR = "run_manifest_error"
     RUN_MANIFEST_MISMATCH = "run_manifest_mismatch"
     PROBE_RESPONSE_SHAPE_MISMATCH = "probe_response_shape_mismatch"
     ENV_BINDING_NOT_CONVERGED = "env_binding_not_converged"
@@ -349,6 +350,7 @@ class ReworkIssue(BaseModel):
     suspected_domains: tuple[ReworkSuspectedDomain, ...]
     required_artifact_types: tuple[RequiredArtifactType, ...]
     description: str
+    advisory_context: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator(
         "blocker_refs",
@@ -383,6 +385,14 @@ class ReworkIssue(BaseModel):
         if not normalized:
             raise ValueError("description must not be empty")
         return normalized
+
+    @field_validator("advisory_context")
+    @classmethod
+    def _reject_empty_advisory_context_keys(cls, value: dict[str, Any]) -> dict[str, Any]:
+        for key in value:
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("advisory_context keys must be non-empty strings")
+        return dict(value)
 
 
 def validate_issue_contract_scope(
