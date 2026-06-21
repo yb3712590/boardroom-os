@@ -4,6 +4,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from boardroom_os.agents.categories import RoleCategory
 from boardroom_os.agents.profiles import ModelExecutionProfile, ModelExecutionProfileRegistry, RoleProfile
 from boardroom_os.agents.role_prompt_hooks import RolePromptHookRegistry
 from boardroom_os.agents.seat import AgentSeat, seat_demand_blockers
@@ -24,7 +25,13 @@ from boardroom_os.execution.package import (
     RequiredOutput,
 )
 from boardroom_os.graph.seat_assignment import SeatAssignmentGraph
-from boardroom_os.graph.ticket import TicketId, TicketNode, TicketStatus
+from boardroom_os.graph.ticket import (
+    VERIFY_BLACKBOX_CAPABILITY,
+    VERIFY_BLACKBOX_PURPOSE,
+    TicketId,
+    TicketNode,
+    TicketStatus,
+)
 
 _DRIVE_LETTER_PATTERN = re.compile(r"^[A-Za-z]:")
 _FIXED_AUDIT_REQUIREMENTS = (
@@ -58,6 +65,28 @@ class ExecutionWorkspaceContext(BaseModel):
         return _normalize_relative_path(value, field_name="package_root")
 
 
+class VerificationExecutionContext(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    raw_manifest_context_ref: ContextRef | None
+    skeleton_summary_ref: ContextRef
+    package_contract_ref: ContextRef
+    acceptance_contract_ref: ContextRef
+    project_doc_refs: tuple[ContextRef, ...] = ()
+    source_surface_refs: tuple[ContextRef, ...]
+    observed_failure_refs: tuple[ContextRef, ...] = ()
+
+    @field_validator("source_surface_refs")
+    @classmethod
+    def _reject_empty_source_surface_refs(
+        cls,
+        values: tuple[ContextRef, ...],
+    ) -> tuple[ContextRef, ...]:
+        if not values:
+            raise ValueError("source_surface_refs must not be empty")
+        return values
+
+
 class ExecutionPackageCompilerInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -70,11 +99,13 @@ class ExecutionPackageCompilerInput(BaseModel):
     model_execution_profiles: ModelExecutionProfileRegistry
     role_prompt_hook_registry: RolePromptHookRegistry
     workspace_context: ExecutionWorkspaceContext
+    verification_context: VerificationExecutionContext | None = None
 
 
 class ExecutionPackageCompiler:
     def compile(self, input: ExecutionPackageCompilerInput) -> ExecutionPackage:
         ticket = self._resolve_ticket(input)
+        _validate_verify_blackbox_ticket(ticket)
         self._validate_graph_version(input)
         assigned_seat = self._resolve_assigned_seat(input, ticket)
         role_profile = self._resolve_role_profile(input, assigned_seat)
@@ -115,6 +146,8 @@ class ExecutionPackageCompiler:
             package_contract=input.package_contract,
             source_surfaces=selected_surfaces,
         )
+        context_refs = self._build_context_refs(input, ticket)
+        self._validate_read_only_context_refs(ticket=ticket, context_refs=context_refs)
 
         return ExecutionPackage(
             execution_package_id=ExecutionPackageId(
@@ -126,7 +159,7 @@ class ExecutionPackageCompiler:
             model_execution_profile=model_execution_profile,
             role_prompt_hook=role_prompt_hook,
             objective=ticket.purpose,
-            context_refs=self._build_context_refs(input, ticket),
+            context_refs=context_refs,
             constraints=self._build_constraints(role_profile),
             acceptance_refs=acceptance_refs,
             source_surface_refs=source_surface_refs,
@@ -340,6 +373,17 @@ class ExecutionPackageCompiler:
         ticket: TicketNode,
         source_surfaces: tuple[SourceSurface, ...],
     ) -> tuple[AllowedWritePath, ...]:
+        if _is_verify_blackbox_ticket(ticket):
+            _validate_verify_blackbox_ticket(ticket)
+            if ticket.allowed_write_set:
+                raise ExecutionPackageCompilerError(
+                    "verify-blackbox ticket allowed_write_set must be empty"
+                )
+            return ()
+        if not ticket.allowed_write_set:
+            raise ExecutionPackageCompilerError(
+                "allowed_write_set is required for writable tickets"
+            )
         declared_surface_paths = tuple(
             _normalize_relative_path(surface_path, field_name="source surface path")
             for source_surface in source_surfaces
@@ -488,12 +532,87 @@ class ExecutionPackageCompiler:
             ),
         ]
         seen_values = {context_ref.value for context_ref in base_refs}
-        for context_ref in input.workspace_context.context_refs:
+        for context_ref in (
+            *input.workspace_context.context_refs,
+            *self._verification_context_refs(input, ticket),
+        ):
             if context_ref.value in seen_values:
                 continue
             base_refs.append(context_ref)
             seen_values.add(context_ref.value)
         return tuple(base_refs)
+
+    def _validate_read_only_context_refs(
+        self,
+        *,
+        ticket: TicketNode,
+        context_refs: tuple[ContextRef, ...],
+    ) -> None:
+        if not _is_verify_blackbox_ticket(ticket):
+            return
+        unauthorized_refs = _context_refs_outside_allowed_reads(
+            context_refs,
+            ticket,
+            allow_internal_refs=True,
+        )
+        if unauthorized_refs:
+            raise ExecutionPackageCompilerError(
+                "context_refs outside ticket allowed_read_refs: "
+                + ", ".join(unauthorized_refs)
+            )
+
+    def _verification_context_refs(
+        self,
+        input: ExecutionPackageCompilerInput,
+        ticket: TicketNode,
+    ) -> tuple[ContextRef, ...]:
+        if not _is_verify_blackbox_ticket(ticket):
+            return ()
+        context = input.verification_context
+        if context is None:
+            raise ExecutionPackageCompilerError(
+                "verification context is required for verify-blackbox ticket"
+            )
+        if context.raw_manifest_context_ref is None:
+            raise ExecutionPackageCompilerError(
+                "raw manifest context ref is required for verify-blackbox ticket"
+            )
+        if context.package_contract_ref.value != input.package_contract.package_contract_id.value:
+            raise ExecutionPackageCompilerError(
+                "verification context package contract ref mismatch"
+            )
+        if (
+            context.acceptance_contract_ref.value
+            != input.acceptance_contract.acceptance_contract_id.value
+        ):
+            raise ExecutionPackageCompilerError(
+                "verification context acceptance contract ref mismatch"
+            )
+        ticket_surface_refs = set(ticket.source_surface_refs)
+        missing_surface_refs = tuple(
+            ref.value for ref in context.source_surface_refs if ref.value not in ticket_surface_refs
+        )
+        if missing_surface_refs:
+            raise ExecutionPackageCompilerError(
+                "verification context source surface ref outside ticket scope: "
+                + ", ".join(missing_surface_refs)
+            )
+        context_refs = (
+            context.raw_manifest_context_ref,
+            context.skeleton_summary_ref,
+            context.package_contract_ref,
+            context.acceptance_contract_ref,
+            *context.project_doc_refs,
+            *context.source_surface_refs,
+            *context.observed_failure_refs,
+        )
+        unauthorized_refs = _context_refs_outside_allowed_reads(context_refs, ticket)
+        if unauthorized_refs:
+            raise ExecutionPackageCompilerError(
+                "verification context refs outside ticket allowed_read_refs: "
+                + ", ".join(unauthorized_refs)
+            )
+        return context_refs
 
     def _build_constraints(self, role_profile: RoleProfile) -> tuple[str, ...]:
         return (*_FIXED_CONSTRAINTS, *role_profile.forbidden_actions)
@@ -548,9 +667,51 @@ def _path_within_surface(path: str, surface_path: str) -> bool:
     )
 
 
+def _is_verify_blackbox_ticket(ticket: TicketNode) -> bool:
+    return ticket.purpose == VERIFY_BLACKBOX_PURPOSE
+
+
+def _validate_verify_blackbox_ticket(ticket: TicketNode) -> None:
+    if not _is_verify_blackbox_ticket(ticket):
+        return
+    if ticket.seat_demand.required_role_category is not RoleCategory.VERIFICATION:
+        raise ExecutionPackageCompilerError(
+            "verify-blackbox ticket requires verification seat demand"
+        )
+    if VERIFY_BLACKBOX_CAPABILITY not in ticket.seat_demand.required_capability_tags:
+        raise ExecutionPackageCompilerError(
+            "verify-blackbox ticket requires task.verify-blackbox capability"
+        )
+
+
+def _context_refs_outside_allowed_reads(
+    context_refs: tuple[ContextRef, ...],
+    ticket: TicketNode,
+    *,
+    allow_internal_refs: bool = False,
+) -> tuple[str, ...]:
+    allowed_read_refs = set(ticket.allowed_read_refs)
+    return tuple(
+        context_ref.value
+        for context_ref in context_refs
+        if context_ref.value not in allowed_read_refs
+        and not (
+            allow_internal_refs
+            and _is_execution_package_internal_context_ref(context_ref.value, ticket)
+        )
+    )
+
+
+def _is_execution_package_internal_context_ref(value: str, ticket: TicketNode) -> bool:
+    if value == ticket.ticket_id.value:
+        return True
+    return value.startswith("context.agent-team-projection.graph-version-")
+
+
 __all__ = [
     "ExecutionPackageCompiler",
     "ExecutionPackageCompilerError",
     "ExecutionPackageCompilerInput",
     "ExecutionWorkspaceContext",
+    "VerificationExecutionContext",
 ]

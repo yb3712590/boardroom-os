@@ -592,7 +592,7 @@ CloseoutGate（收尾门禁）不得只验证 refs（引用）、hashes（哈希
 
 #### 进入下一阶段前置
 
-- [ ] V2-100A ~ V2-100F 状态全部 DONE（当前 V2-100F REVIEW_REQUIRED，等待专家评审）
+- [ ] V2-100A ~ V2-100F 状态全部 DONE（当前 V2-100F IN_PROGRESS；V2-100F-A/B 已完成，V2-100F-C~F 待实施）
 - [ ] `backlog.md` 进度总览 Phase 10 显示 6 / 6（当前 5 / 6）
 - [x] 返工循环负例覆盖无 blocker 返工、runtime 直接关闭、旧 evidence 复用、越权写入、无限循环和 helper-written verdict（辅助器写结论）
 - [x] 多轮返工 proving scenario（证明场景）同时消费 090K curated failure snapshot（精选失败快照）和 resettable failing fixture（可重置失败夹具），并在真实 provider opt-in（真实模型供应商显式启用）下产出完整 event/evidence/audit（事件/证据/审计）链

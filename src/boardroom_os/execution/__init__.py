@@ -5,6 +5,7 @@ from boardroom_os.execution.compiler import (
     ExecutionPackageCompilerError,
     ExecutionPackageCompilerInput,
     ExecutionWorkspaceContext,
+    VerificationExecutionContext,
 )
 from boardroom_os.execution.context_index import (
     AgentContextIndex,
@@ -127,6 +128,7 @@ __all__ = [
     "ExecutionPackageId",
     "ExecutionPackageRef",
     "ExecutionWorkspaceContext",
+    "VerificationExecutionContext",
     "FallbackEvidenceDecision",
     "FallbackEvidenceRequest",
     "FallbackKind",

@@ -1,8 +1,16 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Self
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from boardroom_os.agents.categories import RoleCategory
 from boardroom_os.agents.seat import SeatDemand
+from boardroom_os.agents.skills import CapabilityTag
+
+
+VERIFY_BLACKBOX_PURPOSE = "verify-blackbox"
+VERIFY_BLACKBOX_CAPABILITY = CapabilityTag(value="task.verify-blackbox")
 
 
 class NonEmptyGraphValue(BaseModel):
@@ -55,7 +63,6 @@ class _TicketFields(BaseModel):
         "acceptance_refs",
         "source_surface_refs",
         "evidence_obligations",
-        "allowed_write_set",
     )
     @classmethod
     def _reject_empty_required_tuple(cls, values: tuple[str, ...]) -> tuple[str, ...]:
@@ -65,6 +72,32 @@ class _TicketFields(BaseModel):
         if any(not value for value in normalized_values):
             raise ValueError("required tuple values must not be empty")
         return normalized_values
+
+    @field_validator("allowed_write_set")
+    @classmethod
+    def _normalize_allowed_write_set(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized_values = tuple(value.strip() for value in values)
+        if any(not value for value in normalized_values):
+            raise ValueError("required tuple values must not be empty")
+        return normalized_values
+
+    @model_validator(mode="after")
+    def _require_write_set_unless_verify_blackbox(self) -> Self:
+        if self.purpose == VERIFY_BLACKBOX_PURPOSE:
+            if self.seat_demand.required_role_category is not RoleCategory.VERIFICATION:
+                raise ValueError(
+                    "verify-blackbox ticket requires verification seat demand"
+                )
+            if VERIFY_BLACKBOX_CAPABILITY not in self.seat_demand.required_capability_tags:
+                raise ValueError(
+                    "verify-blackbox ticket requires task.verify-blackbox capability"
+                )
+            if self.allowed_write_set:
+                raise ValueError("verify-blackbox ticket allowed_write_set must be empty")
+            return self
+        if not self.allowed_write_set:
+            raise ValueError("allowed_write_set is required for writable tickets")
+        return self
 
     @field_validator("allowed_read_refs")
     @classmethod

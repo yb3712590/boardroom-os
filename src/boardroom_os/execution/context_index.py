@@ -26,6 +26,7 @@ from boardroom_os.execution.package import (
     ExecutionPackageRef,
     FallbackPolicyRef,
     RequiredOutput,
+    validate_execution_package_write_boundary,
 )
 from boardroom_os.graph.ticket import TicketId
 
@@ -157,7 +158,6 @@ class AgentContextSnapshot(BaseModel):
         "context_refs",
         "acceptance_refs",
         "source_surface_refs",
-        "allowed_write_set",
         "required_outputs",
         "commands",
         "evidence_obligations",
@@ -183,6 +183,15 @@ class AgentContextSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def _validate_derived_fields(self) -> Self:
+        validate_execution_package_write_boundary(
+            role_prompt_hook=self.role_prompt_hook,
+            context_refs=self.context_refs,
+            allowed_read_refs=self.allowed_read_refs,
+            allowed_write_set=self.allowed_write_set,
+            ticket_ref=self.ticket_ref,
+            graph_version=self.graph_version,
+        )
+
         expected_fingerprint = _snapshot_fingerprint_from_snapshot(self)
         if self.snapshot_fingerprint != expected_fingerprint:
             raise ValueError("snapshot_fingerprint does not match input facts")

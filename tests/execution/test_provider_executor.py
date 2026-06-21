@@ -43,6 +43,9 @@ from boardroom_os.providers.attempt import (
 from tests.fixtures.execution.role_prompt_hooks import (
     baseline_role_prompt_hook,
 )
+from tests.orchestration.test_verify_blackbox_native_ticket import (
+    _compile_verify_blackbox_execution_package,
+)
 
 
 def _model_execution_profile() -> ModelExecutionProfile:
@@ -226,3 +229,18 @@ def test_provider_executor_returns_failed_attempt_without_raising() -> None:
     assert attempt.failure_kind == "transport_error"
     assert attempt.input_package_ref.value == package.execution_package_id.value
     assert result.context_snapshot.execution_package_ref.value == package.execution_package_id.value
+
+
+def test_provider_executor_invokes_provider_for_read_only_verify_blackbox_package() -> None:
+    package = _compile_verify_blackbox_execution_package()
+
+    result = ProviderExecutor().execute(
+        ProviderExecutorInput(
+            execution_package=package,
+            provider_adapter=_provider_adapter(),
+        )
+    )
+
+    assert result.context_snapshot.allowed_write_set == ()
+    assert result.provider_attempt.input_package_ref.value == package.execution_package_id.value
+    assert '"allowed_write_set":[]' in result.prompt

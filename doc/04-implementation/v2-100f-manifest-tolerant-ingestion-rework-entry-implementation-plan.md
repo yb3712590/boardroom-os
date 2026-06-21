@@ -208,7 +208,7 @@ Expected: all tests pass; tests prove raw context cannot satisfy evidence.
 - Test: `tests/orchestration/test_verify_blackbox_native_ticket.py`
 - Test: `tests/negative/test_verify_blackbox_orchestration_fail_closed.py`
 
-- [ ] **Step B1: Write native graph tests**
+- [x] **Step B1: Write native graph tests**
 
 Add tests proving:
 
@@ -238,7 +238,7 @@ def test_verify_blackbox_requires_real_seat_assignment():
     ][0]
 ```
 
-- [ ] **Step B2: Implement verification orchestration payloads**
+- [x] **Step B2: Implement verification orchestration payloads**
 
 `VerifyBlackboxTicketIntent` must require:
 
@@ -252,7 +252,7 @@ def test_verify_blackbox_requires_real_seat_assignment():
 
 The intent builder must return a `TicketCreatedPayload`, not a custom ready queue item.
 
-- [ ] **Step B3: Compile ExecutionPackage from graph assignment**
+- [x] **Step B3: Compile ExecutionPackage from graph assignment**
 
 Extend `ExecutionPackageCompiler` so a ready `verify-blackbox` ticket receives:
 
@@ -264,8 +264,9 @@ Extend `ExecutionPackageCompiler` so a ready `verify-blackbox` ticket receives:
 - observed failure refs, including raw run errors.
 
 The compiler must reject `verify-blackbox` if the ticket was not present in `SeatAssignmentGraph.ready_queue`.
+It must also reject any verification context ref that is not already declared by the ticket `allowed_read_refs`, and must enforce `RoleCategory.VERIFICATION` plus `task.verify-blackbox` capability rather than trusting the purpose string alone.
 
-- [ ] **Step B4: Run graph and compiler tests**
+- [x] **Step B4: Run graph and compiler tests**
 
 Run:
 
@@ -280,7 +281,7 @@ PYTHONPATH=src:. python -m pytest \
 
 Expected: `verify-blackbox` is a normal graph node; missing graph, seat, contract, context or queue membership fails.
 
-**Completion gate:** The only path from raw manifest context to `verify-blackbox` execution is `TICKET_CREATED -> SEAT_ASSIGNED -> SeatAssignmentGraph.ready_queue -> ExecutionPackageCompiler`.
+**Completion gate:** The only path from raw manifest context to `verify-blackbox` execution is `TICKET_CREATED -> SEAT_ASSIGNED -> SeatAssignmentGraph.ready_queue -> ExecutionPackageCompiler -> AgentContextSnapshot -> ProviderExecutor`, with no verification context expansion outside ticket `allowed_read_refs`, no non-verification SeatDemand accepted for `verify-blackbox`, and no empty `allowed_write_set` package accepted unless the package is a read-only verification package whose `context_refs` are covered by `allowed_read_refs`.
 
 ---
 

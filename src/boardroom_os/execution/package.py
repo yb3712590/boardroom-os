@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from boardroom_os.agents.categories import RoleCategory
 from boardroom_os.agents.profiles import ModelExecutionProfile
 from boardroom_os.agents.role_prompt_hooks import RolePromptHook
 from boardroom_os.agents.seat import AgentSeatRef
@@ -48,6 +49,58 @@ class AuditRequirement(NonEmptyTextValue):
 
 class FallbackPolicyRef(NonEmptyTextValue):
     pass
+
+
+def validate_execution_package_write_boundary(
+    *,
+    role_prompt_hook: RolePromptHook,
+    context_refs: tuple[ContextRef, ...],
+    allowed_read_refs: tuple[AllowedReadRef, ...],
+    allowed_write_set: tuple[AllowedWritePath, ...],
+    ticket_ref: TicketId,
+    graph_version: int,
+) -> None:
+    if allowed_write_set:
+        return
+    if role_prompt_hook.role_category is not RoleCategory.VERIFICATION:
+        raise ValueError(
+            "read-only execution packages require verification role prompt hook"
+        )
+    if not allowed_read_refs:
+        raise ValueError("read-only execution packages require allowed_read_refs")
+
+    allowed_read_values = {allowed_read_ref.value for allowed_read_ref in allowed_read_refs}
+    unauthorized_context_refs = tuple(
+        context_ref.value
+        for context_ref in context_refs
+        if not _is_authorized_read_only_context_ref(
+            context_ref.value,
+            allowed_read_values=allowed_read_values,
+            ticket_ref=ticket_ref,
+            graph_version=graph_version,
+        )
+    )
+    if unauthorized_context_refs:
+        raise ValueError(
+            "context_refs must be covered by allowed_read_refs for read-only execution packages: "
+            + ", ".join(unauthorized_context_refs)
+        )
+
+
+def _is_authorized_read_only_context_ref(
+    value: str,
+    *,
+    allowed_read_values: set[str],
+    ticket_ref: TicketId,
+    graph_version: int,
+) -> bool:
+    if value in allowed_read_values:
+        return True
+    if value == ticket_ref.value:
+        return True
+    if value == f"context.agent-team-projection.graph-version-{graph_version}":
+        return True
+    return False
 
 
 class ExecutionPackage(BaseModel):
@@ -120,7 +173,6 @@ class ExecutionPackage(BaseModel):
         "context_refs",
         "acceptance_refs",
         "source_surface_refs",
-        "allowed_write_set",
         "required_outputs",
         "commands",
         "evidence_obligations",
@@ -131,3 +183,29 @@ class ExecutionPackage(BaseModel):
         if not values:
             raise ValueError("required tuple must not be empty")
         return values
+
+    @model_validator(mode="after")
+    def _require_write_scope_for_writable_packages(self) -> Self:
+        validate_execution_package_write_boundary(
+            role_prompt_hook=self.role_prompt_hook,
+            context_refs=self.context_refs,
+            allowed_read_refs=self.allowed_read_refs,
+            allowed_write_set=self.allowed_write_set,
+            ticket_ref=self.ticket_ref,
+            graph_version=self.graph_version,
+        )
+        return self
+
+
+__all__ = [
+    "AllowedReadRef",
+    "AllowedWritePath",
+    "AuditRequirement",
+    "ContextRef",
+    "ExecutionPackage",
+    "ExecutionPackageId",
+    "ExecutionPackageRef",
+    "FallbackPolicyRef",
+    "RequiredOutput",
+    "validate_execution_package_write_boundary",
+]

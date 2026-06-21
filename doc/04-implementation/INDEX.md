@@ -74,8 +74,8 @@
 | `v2-100d-rework-evidence-checker-reintegration-implementation-plan.md` | V2-100D Rework evidence/checker reintegration（返工证据与检查重接入）实施计划：每次 ReworkAttempt（返工尝试）重建 SourceInventory（源码清单）、FinalEvidenceTable（最终证据表）、CheckerVerdict（检查结论）和必要 CloseoutGate（收尾门禁）链路 |
 | `v2-100e-multi-round-rework-proving-scenario-implementation-plan.md` | **DEPRECATED / REJECTED（已废弃 / 已否决，不作为实施入口）**：旧 V2-100E Multi-round rework proving scenario（多轮返工证明场景）实施计划，因包含硬编码事实源、过度定制 adapter（适配器）和可重复性风险，仅可作为 rejected design notes（被否设计记录）查阅 |
 | `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；已实施并完成，保留为 V2-100E 完成证据 |
-| `v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md` | **CURRENT REVIEW TARGET（当前评审入口）**：V2-100F RunManifest tolerant ingestion and agent-owned blackbox verification（运行清单宽容摄取与智能体拥有的黑盒验证）spec；解决 LLM assertion vocabulary（断言词汇）变化导致 raw crash（原始崩溃）、无法形成 ReworkRequest（返工请求）的问题 |
-| `v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md` | V2-100F native rework orchestration（原生返工编排）重写实施计划：取代旧 plan，按 V2-100F-A~F 分阶段先接入 TicketGraph / SeatAssignmentGraph / ExecutionPackage / ProviderAttempt（工单图 / 席位派工图 / 执行包 / 模型调用尝试记录）原生链路，再验证真实 provider（模型供应商）端到端证明，当前等待评审 |
+| `v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md` | V2-100F RunManifest tolerant ingestion and agent-owned blackbox verification（运行清单宽容摄取与智能体拥有的黑盒验证）spec；解决 LLM assertion vocabulary（断言词汇）变化导致 raw crash（原始崩溃）、无法形成 ReworkRequest（返工请求）的问题 |
+| `v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md` | **CURRENT IMPLEMENTATION ENTRY（当前实施入口）**：V2-100F native rework orchestration（原生返工编排）重写实施计划；V2-100F-A/B 已完成，V2-100F-C~F 待实施，整体仍未满足真实 provider（模型供应商）端到端证明 |
 
 ## AI 启动入口
 
