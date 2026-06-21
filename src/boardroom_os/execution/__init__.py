@@ -85,6 +85,17 @@ _RUNTIME_EXECUTOR_EXPORTS = {
     "build_provider_attempt_recorded_event",
 }
 
+_BLACKBOX_PLAN_RUNNER_EXPORTS = {
+    "BlackboxActionExecutionFact",
+    "BlackboxActionExecutionFactRef",
+    "BlackboxActionExecutorResult",
+    "BlackboxActionInputRefHash",
+    "BlackboxPlanRunner",
+    "BlackboxPlanRunnerInput",
+    "BlackboxPlanRunnerResult",
+    "BlackboxPlanRunnerStatus",
+}
+
 
 def __getattr__(name: str) -> object:
     if name in _PROVIDER_EXECUTOR_EXPORTS:
@@ -95,6 +106,10 @@ def __getattr__(name: str) -> object:
         from boardroom_os.execution import runtime_executor
 
         return getattr(runtime_executor, name)
+    if name in _BLACKBOX_PLAN_RUNNER_EXPORTS:
+        from boardroom_os.execution import blackbox_plan_runner
+
+        return getattr(blackbox_plan_runner, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -119,6 +134,14 @@ __all__ = [
     "AtomicExecutionRequest",
     "AtomicExecutionResult",
     "AuditRequirement",
+    "BlackboxActionExecutionFact",
+    "BlackboxActionExecutionFactRef",
+    "BlackboxActionExecutorResult",
+    "BlackboxActionInputRefHash",
+    "BlackboxPlanRunner",
+    "BlackboxPlanRunnerInput",
+    "BlackboxPlanRunnerResult",
+    "BlackboxPlanRunnerStatus",
     "ContextRef",
     "EvidencePurpose",
     "ExecutionPackage",

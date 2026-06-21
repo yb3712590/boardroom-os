@@ -396,7 +396,7 @@ Expected: provider-backed assigned AgentSeat plan is valid; missing attempt, wro
 - Test: `tests/execution/test_blackbox_plan_runner.py`
 - Test: `tests/negative/test_blackbox_plan_runner_fail_closed.py`
 
-- [ ] **Step D1: Write runner fail-closed tests**
+- [x] **Step D1: Write runner fail-closed tests**
 
 Add tests proving:
 
@@ -424,7 +424,7 @@ def test_http_action_without_executor_routes_blocked_or_escalated():
     assert result.blocked_reason_code == "executor_missing"
 ```
 
-- [ ] **Step D2: Implement action facts**
+- [x] **Step D2: Implement action facts**
 
 `BlackboxActionExecutionFact` must record:
 
@@ -439,15 +439,15 @@ def test_http_action_without_executor_routes_blocked_or_escalated():
 - started/finished timezone-aware timestamps;
 - acceptance refs and package contract ref claimed by the plan.
 
-- [ ] **Step D3: Route command actions through existing runner**
+- [x] **Step D3: Route command actions through existing runner**
 
 Command actions must use existing CommandRunner / VerificationRun（命令运行器 / 验证运行） path. A command action fact may wrap a VerificationRun ref, but must not duplicate command success semantics.
 
-- [ ] **Step D4: Route non-command actions explicitly**
+- [x] **Step D4: Route non-command actions explicitly**
 
 HTTP, browser and tool actions require explicit executors. When an executor is not configured, return `blocked_or_escalated` with a typed reason. Do not call that `rework_required`, because the framework lacks trustworthy execution facts.
 
-- [ ] **Step D5: Run runner tests**
+- [x] **Step D5: Run runner tests**
 
 Run:
 

@@ -109,8 +109,20 @@ class FileProviderOutputStore:
         return artifact.path.read_text(encoding="utf-8")
 
     def _path_for_ref(self, artifact_ref: ProviderArtifactRef) -> Path:
-        safe_name = artifact_ref.value.replace("/", "_").replace("\\", "_").replace(":", "_")
+        artifact_kind = _artifact_kind_for_path(artifact_ref)
+        ref_suffix = artifact_ref.value.rsplit(".", 1)[-1]
+        safe_suffix = ref_suffix.replace("/", "_").replace("\\", "_").replace(":", "_")
+        safe_name = f"provider-artifact.openai.{artifact_kind}.{safe_suffix}"
         return self._root / f"{safe_name}.txt"
+
+
+def _artifact_kind_for_path(artifact_ref: ProviderArtifactRef) -> str:
+    prefix = "provider-artifact.openai."
+    if not artifact_ref.value.startswith(prefix):
+        return "unknown"
+    artifact_kind = artifact_ref.value[len(prefix):].split(".", 1)[0]
+    normalized = artifact_kind.replace("/", "_").replace("\\", "_").replace(":", "_").strip()
+    return normalized or "unknown"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
