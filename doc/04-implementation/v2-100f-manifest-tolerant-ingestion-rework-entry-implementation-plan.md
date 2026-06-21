@@ -298,7 +298,7 @@ Expected: `verify-blackbox` is a normal graph node; missing graph, seat, contrac
 - Test: `tests/evidence/test_blackbox_verification_plan.py`
 - Test: `tests/negative/test_blackbox_plan_fail_closed.py`
 
-- [ ] **Step C1: Write lineage negative tests**
+- [x] **Step C1: Write lineage negative tests**
 
 Add tests proving:
 
@@ -329,7 +329,7 @@ def test_blackbox_plan_wrong_seat_fails():
         validate_blackbox_plan_lineage(plan, execution_package=package, provider_attempts=(attempt,))
 ```
 
-- [ ] **Step C2: Implement plan schema**
+- [x] **Step C2: Implement plan schema**
 
 `BlackboxVerificationPlan` must include:
 
@@ -349,7 +349,7 @@ def test_blackbox_plan_wrong_seat_fails():
 
 `BlackboxPlanAction` must support `command`, `http`, `browser`, `tool`, and `file_read` kinds, but execution is allowed only when a matching executor exists.
 
-- [ ] **Step C3: Implement lineage validator**
+- [x] **Step C3: Implement lineage validator**
 
 Validation must check:
 
@@ -361,7 +361,7 @@ Validation must check:
 - every action has acceptance refs, expected observations and required permissions;
 - plan cannot contain `passed`, `approved`, `closeout_ready` or equivalent success claims.
 
-- [ ] **Step C4: Run plan tests**
+- [x] **Step C4: Run plan tests**
 
 Run:
 
@@ -377,6 +377,8 @@ PYTHONPATH=src:. python -m pytest \
 Expected: provider-backed assigned AgentSeat plan is valid; missing attempt, wrong seat, fallback attempt, stale package, stale hook or prose-only output fails.
 
 **Completion gate:** A BlackboxVerificationPlan can only enter execution when it is a provider-backed work product of the graph-assigned AgentSeat for the `verify-blackbox` ExecutionPackage.
+
+**Implementation note:** Existing `ProviderAttempt` and `ExecutionPackage` already carried the needed package, seat and role hook snapshots. V2-100F-C therefore adds the BlackboxVerificationPlan schema, BlackboxPlanApproval action gate and lineage validators in `src/boardroom_os/evidence/blackbox_plan.py` plus evidence-layer exports and tests, without changing provider execution or verifier routing before V2-100F-D/E.
 
 ---
 

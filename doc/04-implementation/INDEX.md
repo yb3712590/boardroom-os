@@ -75,7 +75,7 @@
 | `v2-100e-multi-round-rework-proving-scenario-implementation-plan.md` | **DEPRECATED / REJECTED（已废弃 / 已否决，不作为实施入口）**：旧 V2-100E Multi-round rework proving scenario（多轮返工证明场景）实施计划，因包含硬编码事实源、过度定制 adapter（适配器）和可重复性风险，仅可作为 rejected design notes（被否设计记录）查阅 |
 | `v2-100e-multi-round-rework-proving-scenario-expert-review-plan.md` | V2-100E Multi-round rework proving scenario（多轮返工证明场景）专家评审版实施计划；已实施并完成，保留为 V2-100E 完成证据 |
 | `v2-100f-manifest-tolerant-ingestion-rework-entry-spec.md` | V2-100F RunManifest tolerant ingestion and agent-owned blackbox verification（运行清单宽容摄取与智能体拥有的黑盒验证）spec；解决 LLM assertion vocabulary（断言词汇）变化导致 raw crash（原始崩溃）、无法形成 ReworkRequest（返工请求）的问题 |
-| `v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md` | **CURRENT IMPLEMENTATION ENTRY（当前实施入口）**：V2-100F native rework orchestration（原生返工编排）重写实施计划；V2-100F-A/B 已完成，V2-100F-C~F 待实施，整体仍未满足真实 provider（模型供应商）端到端证明 |
+| `v2-100f-manifest-tolerant-ingestion-rework-entry-implementation-plan.md` | **CURRENT IMPLEMENTATION ENTRY（当前实施入口）**：V2-100F native rework orchestration（原生返工编排）重写实施计划；V2-100F-A/B/C 已完成，V2-100F-D~F 待实施，整体仍未满足真实 provider（模型供应商）端到端证明 |
 
 ## AI 启动入口
 

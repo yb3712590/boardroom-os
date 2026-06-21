@@ -12,6 +12,16 @@ from boardroom_os.evidence.claim import (
     build_evidence_claim_from_verification_run,
     build_evidence_claim_from_work_product,
 )
+from boardroom_os.evidence.blackbox_plan import (
+    BlackboxPlanAction,
+    BlackboxPlanActionKind,
+    BlackboxPlanApproval,
+    BlackboxPlanApprovalRef,
+    BlackboxVerificationPlan,
+    BlackboxVerificationPlanRef,
+    validate_blackbox_plan_approval,
+    validate_blackbox_plan_lineage,
+)
 from boardroom_os.evidence.fallback_registry import (
     FallbackDecisionRecord,
     FallbackDecisionRecordRef,
@@ -70,6 +80,12 @@ __all__ = [
     "ArtifactManifest",
     "ArtifactManifestEntry",
     "ArtifactSha256",
+    "BlackboxPlanAction",
+    "BlackboxPlanActionKind",
+    "BlackboxPlanApproval",
+    "BlackboxPlanApprovalRef",
+    "BlackboxVerificationPlan",
+    "BlackboxVerificationPlanRef",
     "EvidenceArtifactRef",
     "EvidenceClaim",
     "EvidenceClaimBuildError",
@@ -120,4 +136,6 @@ __all__ = [
     "build_evidence_claim_from_verification_run",
     "build_evidence_claim_from_work_product",
     "evaluate_fallback_claim",
+    "validate_blackbox_plan_approval",
+    "validate_blackbox_plan_lineage",
 ]
