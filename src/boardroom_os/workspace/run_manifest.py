@@ -9,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, m
 from boardroom_os.contracts.package import PackageCommand, PackageContract, PackageProjectType
 from boardroom_os.contracts.types import AcceptanceRef, ContractId, NonEmptyTextValue
 from boardroom_os.workspace.manifest import WorkspaceManifest, WorkspaceManifestRef, WorkspacePath
+from boardroom_os.workspace.run_manifest_ingestion import (
+    RunManifestIngestionContext,
+    RunManifestRawAssertion,
+    RunManifestSkeletonSummary,
+    ingest_run_manifest_artifact,
+)
 
 
 class RunManifestError(ValueError):
@@ -567,9 +573,13 @@ __all__ = [
     "RunManifestError",
     "RunManifestFrontendMode",
     "RunManifestFrontendTopology",
+    "RunManifestIngestionContext",
     "RunManifestReadinessProbe",
     "RunManifestRef",
+    "RunManifestRawAssertion",
     "RunManifestServiceContract",
+    "RunManifestSkeletonSummary",
     "build_run_manifest",
+    "ingest_run_manifest_artifact",
     "validate_run_manifest_binding",
 ]

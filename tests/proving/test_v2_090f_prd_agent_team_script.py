@@ -853,7 +853,13 @@ def test_v2_090f_provider_planning_stage_records_planning_artifacts_and_context(
                                 "json_body": None,
                                 "expect_status": 200,
                                 "capture": {},
-                                "assertions": [],
+                                "assertions": [
+                                    {
+                                        "type": "json_array_contains_field",
+                                        "path": "$",
+                                        "field": "title",
+                                    }
+                                ],
                             }
                         ],
                     }
@@ -928,6 +934,22 @@ def test_v2_090f_provider_planning_stage_records_planning_artifacts_and_context(
     assert (boardroom_root / "generated-ticket-graph.json").is_file()
     assert (boardroom_root / "generated-verification-plan.json").is_file()
     assert (boardroom_root / "generated-run-manifest.json").is_file()
+    ingestion_context = json.loads(
+        (boardroom_root / "run-manifest-ingestion-context.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert ingestion_context["ingestion_status"] == "context_only"
+    assert ingestion_context["raw_assertions"][0]["raw_type"] == (
+        "json_array_contains_field"
+    )
+    assert "passed" not in ingestion_context
+    run_manifest_payload = json.loads(
+        (output_root / "20-evidence/tests/run-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert run_manifest_payload["behavioral_probes"][0]["steps"][0]["assertions"] == []
 
     role_context = json.loads(
         (boardroom_root / "agent-team-role-context.json").read_text(encoding="utf-8")

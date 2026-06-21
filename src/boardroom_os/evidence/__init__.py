@@ -29,6 +29,7 @@ from boardroom_os.evidence.live_blackbox import (
     LiveBlackboxVerificationResult,
     LiveBlackboxVerifierInput,
     artifact_refs_for_live_blackbox,
+    build_live_blackbox_evidence_from_manifest_context,
 )
 from boardroom_os.evidence.verifier import (
     ArtifactManifest,
@@ -113,6 +114,7 @@ __all__ = [
     "ServiceRunEvidence",
     "ServiceRunEvidenceRef",
     "artifact_refs_for_live_blackbox",
+    "build_live_blackbox_evidence_from_manifest_context",
     "build_evidence_claim_from_live_blackbox",
     "build_evidence_claim_from_service_run",
     "build_evidence_claim_from_verification_run",

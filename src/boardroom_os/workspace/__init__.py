@@ -51,8 +51,12 @@ from boardroom_os.workspace.run_manifest import (
     RunManifestCommand,
     RunManifestCommandKind,
     RunManifestError,
+    RunManifestIngestionContext,
     RunManifestRef,
+    RunManifestRawAssertion,
+    RunManifestSkeletonSummary,
     build_run_manifest,
+    ingest_run_manifest_artifact,
     validate_run_manifest_binding,
 )
 from boardroom_os.workspace.source_inventory import (
@@ -97,7 +101,10 @@ __all__ = [
     "RunManifestCommand",
     "RunManifestCommandKind",
     "RunManifestError",
+    "RunManifestIngestionContext",
     "RunManifestRef",
+    "RunManifestRawAssertion",
+    "RunManifestSkeletonSummary",
     "SourceFilePath",
     "SourceFileRecord",
     "SourceInventory",
@@ -122,6 +129,7 @@ __all__ = [
     "build_workspace_manifest",
     "dump_agent_asset_import_manifest",
     "materialize_agent_assets",
+    "ingest_run_manifest_artifact",
     "validate_agent_asset_registry_bindings",
     "validate_run_manifest_binding",
 ]

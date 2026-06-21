@@ -69,6 +69,10 @@ from boardroom_os.workspace.run_manifest import (
     RunManifestEnvironmentBinding,
     RunManifestEnvironmentValueSource,
 )
+from boardroom_os.workspace.run_manifest_ingestion import (
+    RunManifestIngestionContext,
+    ingest_run_manifest_artifact,
+)
 
 
 V2_090F_MARKER = ".boardroom-v2-090f-workspace.json"
@@ -988,7 +992,10 @@ def run_v2_090f_provider_planning_stage(
         artifacts["run-manifest"].get("provider_output"),
         expected_artifact_name="run-manifest",
     )
-    run_manifest = _load_v2_090k_run_manifest_artifact(run_manifest_artifact)
+    run_manifest, run_manifest_context = _load_v2_090k_run_manifest_artifact(
+        run_manifest_artifact,
+        include_ingestion_context=True,
+    )
     ticket_graph_artifact = extract_v2_090f_planning_artifact(
         artifacts["ticket-graph"].get("provider_output"),
         expected_artifact_name="ticket-graph",
@@ -1001,6 +1008,16 @@ def run_v2_090f_provider_planning_stage(
     run_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     run_manifest_path.write_text(
         json.dumps(run_manifest.model_dump(mode="json"), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (boardroom_root / "run-manifest-ingestion-context.json").write_text(
+        json.dumps(
+            run_manifest_context.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -1270,12 +1287,24 @@ def _load_v2_090k_agent_run_manifest(output_root: Path) -> RunManifest:
     return run_manifest
 
 
-def _load_v2_090k_run_manifest_artifact(artifact: Mapping[str, Any]) -> RunManifest:
+def _load_v2_090k_run_manifest_artifact(
+    artifact: Mapping[str, Any],
+    *,
+    include_ingestion_context: bool = False,
+) -> RunManifest | tuple[RunManifest, RunManifestIngestionContext]:
+    context = ingest_run_manifest_artifact(
+        artifact=artifact,
+        source_ref="00-boardroom/generated-run-manifest.json",
+        raw_manifest_ref="artifact.run_manifest.generated",
+    )
     try:
-        return RunManifest.model_validate(artifact)
+        run_manifest = RunManifest.model_validate(artifact)
     except Exception:
         normalized = _normalize_v2_090k_run_manifest_artifact(artifact)
-        return RunManifest.model_validate(normalized)
+        run_manifest = RunManifest.model_validate(normalized)
+    if include_ingestion_context:
+        return run_manifest, context
+    return run_manifest
 
 
 def _ref_payload(value: Any) -> dict[str, str]:
@@ -1671,7 +1700,9 @@ def _normalize_v2_090k_behavior_assertion(
                 f"status_equals assertion {normalized_actual} does not match step expect_status {normalized_expected}"
             )
         return None
-    raise ValueError(f"unsupported RunManifest behavior assertion type: {kind}")
+    # 未知断言词汇保留在 RunManifestIngestionContext（运行清单摄取上下文）中；这里不能 raw crash，
+    # 也不能把它转换成可执行/可通过的 RunManifestBehaviorAssertion。
+    return None
 
 
 def _v2_090k_assertion_match_value(assertion: Mapping[str, Any], expected: Any) -> Any:

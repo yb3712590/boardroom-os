@@ -466,6 +466,17 @@ def artifact_refs_for_live_blackbox(
     )
 
 
+def build_live_blackbox_evidence_from_manifest_context(
+    context: Any,
+) -> LiveBlackboxIntegrationEvidence:
+    from boardroom_os.workspace.run_manifest_ingestion import RunManifestIngestionContext
+
+    # RunManifest（运行清单）摄取结果只是给 Tester/AgentSeat 的上下文，不能被包装成已验证行为证据。
+    if not isinstance(context, RunManifestIngestionContext):
+        raise ValueError("raw manifest context is not verified evidence")
+    raise ValueError("raw manifest context is not verified evidence")
+
+
 __all__ = [
     "LiveBlackboxBlocker",
     "LiveBlackboxBlockerCode",
@@ -476,4 +487,5 @@ __all__ = [
     "LiveBlackboxVerificationResult",
     "LiveBlackboxVerifierInput",
     "artifact_refs_for_live_blackbox",
+    "build_live_blackbox_evidence_from_manifest_context",
 ]
