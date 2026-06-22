@@ -597,3 +597,29 @@ ValueError: unsupported RunManifest behavior assertion type: json_array_contains
 - V2-090F golden sample（黄金样例）继续 BLOCKED；不得通过直接 patch 当前样例工程或补固定 alias 列表来伪造完成。
 - 2026-06-18 追加计划边界：V2-100F implementation plan（实施计划）必须强制新写 governed orchestration（治理编排）链路；可复用 V2-100 domain models / reducers / validators（领域模型 / 归约器 / 校验器），但不得复用 V2-100E proving scenario orchestration（证明场景编排）、resettable fixture（可重置夹具）、minimal package stub（最小占位包）或 accepted audit shortcut（接受审计捷径）作为 V2-100F 成功路径。`v2-090k-failure-snapshot`（V2-090K 历史失败快照）仅可供 V2-100A~E historical regression（历史回归）读取，V2-100F active path（活跃路径）不得读取、复制、改写或通过该 snapshot 路由。
 - 2026-06-21 追加计划重写决策：旧 V2-100F plan（实施计划）废弃，因为其主线仍容易落到 verification hook/helper（验证钩子/辅助器）外接路径，无法证明返工循环已被编排原生吸收。重写后的 plan 拆为 V2-100F-A~F：先实现 RunManifest tolerant context（运行清单宽容上下文），再把 `verify-blackbox` 作为 first-class TicketGraph node（一等工单图节点）接入 TicketGraphProjector / SeatAssignmentProjector / ExecutionPackageCompiler（工单图投影器 / 席位派工投影器 / 执行包编译器），随后要求 graph-assigned AgentSeat（图派工席位）通过真实 ProviderAttempt（模型调用尝试记录）产出 BlackboxVerificationPlan（黑盒验证计划），runner 记录权威 facts（事实），EvidenceVerifier / Checker / CloseoutGate / ReworkReducer（证据验证器 / 检查者 / 收尾门禁 / 返工归约器）完成 `passed` / `rework_required` / `blocked_or_escalated` 路由。真实 provider proof（模型供应商证明）必须使用 `config/boardroom-runtime.v2-090f.yaml`、`config/boardroom-providers.v2-090f.yaml`、`config/boardroom-roles.v2-090f.yaml`，secret（密钥）只来自 `.env` 或 gitignored `.tmp/v2-100f-real-provider.env`。
+
+## DEC-0027: V2-090F 完成证明改为 native PRD delivery 入口
+
+- 状态：Accepted
+- 日期：2026-06-23
+
+### 决策
+
+V2-090F golden sample（黄金样例）的完成证明入口不再是 `scripts/run_v2_090f_prd_agent_team.py --stage rework-entry` 或 `src/boardroom_os/proving/v2_090f_rework_entry.py`。二者已删除，旧 rerun rework-entry validation spec/plan（重跑返工入口验证规格/计划）仅保留为 historical / superseded（历史 / 已被取代）记录。
+
+当前 active path（活跃路径）改为：
+
+1. `run_prd_delivery()`：通用 PRD delivery（需求交付）入口，语义是输入 PRD 并运行完整 native framework chain（原生框架链）。
+2. `run_v2_090f_native_golden_sample()`：V2-090F wrapper（包装入口），只固定 tiny-fullstack PRD、V2-090F runtime/providers/roles config（运行时 / 模型供应商 / 角色配置）、workspace/output roots（工作区 / 输出根）和证明断言。
+
+### 理由
+
+旧 `--stage rework-entry` 是显式外接复判入口，会让测试证明“指定返工阶段后调用 harness（驱动器）”，而不是证明“完整 PRD-to-delivery run（从需求到交付运行）在框架内部自然进入或不进入返工”。这与 Contract first / Reducer first / Evidence first / Fail closed（合同优先 / 归约器优先 / 证据优先 / 失败关闭）不一致。
+
+生产级入口应当只要求输入 PRD 和配置，返工链应由 EvidenceVerifier / Checker / CloseoutGate（证据验证器 / 检查者 / 收尾门禁）发现阻断后作为状态流转出现，而不是由 CLI stage switch（命令行阶段开关）人工指定。
+
+### 影响
+
+- 新增 `src/boardroom_os/orchestration/prd_delivery.py`、`src/boardroom_os/proving/v2_090f_native_golden_sample.py`、`scripts/run_boardroom_prd_delivery.py` 和 `scripts/run_v2_090f_native_golden_sample.py`。
+- `scripts/build_tiny_closeout_sample.py` 默认 build 委托新 V2-090F native wrapper（原生包装入口）；`--check` 仍只检查已发布样例，不写文件、不调用 provider。
+- 删除旧外接入口与旧测试引用；active tests（活跃测试）允许区分 `passed_without_rework` / `passed_after_rework` / `escalated_or_exhausted` / `blocked_fail_closed`，但不得把 local deterministic fixture（本地确定性夹具）、V2-100E shortcut（捷径）、V2-100F CLI（命令行入口）或 `v2-090k-failure-snapshot`（历史失败快照）标记为 V2-090F DONE。

@@ -43,12 +43,10 @@ def check_v2_090f_agent_team_sample(output_root: Path) -> int:
 
 
 def run_v2_090f_agent_team_build(output_root: Path) -> int:
-    from scripts.run_v2_090f_prd_agent_team import main as run_prd_agent_team
+    from scripts.run_v2_090f_native_golden_sample import main as run_native_sample
 
-    return run_prd_agent_team(
+    return run_native_sample(
         [
-            "--prd",
-            "examples/directives/tiny-fullstack-prd.md",
             "--reset",
             "--output-root",
             str(output_root),

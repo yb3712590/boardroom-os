@@ -61,8 +61,10 @@
 | `v2-090h-atomic-agent-executor-switch-implementation-plan.md` | V2-090H atomic-agent（原子智能体）executor switch（执行器切换）实施计划 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090f-atomic-golden-sample-rebuild-design.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090f-atomic-golden-sample-rebuild.md` | V2-090F PRD-to-delivery agent team golden sample（从 PRD 到交付的智能体团队黄金样例）实施计划 |
-| `v2-090f-rerun-rework-entry-validation-spec.md` | V2-090F rerun rework-entry validation（重跑返工入口验证）spec：V2-100 完成后先真实重跑 090F，验证无阻断原样 closeout、有阻断则形成 ReworkRequest（返工请求）并展示 TicketGraph（工单图）更新前后差异 |
-| `v2-090f-rerun-rework-entry-validation-implementation-plan.md` | V2-090F rerun rework-entry validation（重跑返工入口验证）实施计划：按 observation run（观察重跑）优先、结构化 blocker projection（阻断投影）和 V2-100 continuation（返工继续）分段实施，当前等待评审 |
+| `v2-090f-rerun-rework-entry-validation-spec.md` | **HISTORICAL / SUPERSEDED（历史 / 已被取代）**：旧 V2-090F rerun rework-entry validation（重跑返工入口验证）spec，保留为失败形态与边界复盘；不再作为 V2-090F DONE 完成证明入口 |
+| `v2-090f-rerun-rework-entry-validation-implementation-plan.md` | **HISTORICAL / SUPERSEDED（历史 / 已被取代）**：旧 V2-090F rerun rework-entry validation（重跑返工入口验证）实施计划；`scripts/run_v2_090f_prd_agent_team.py --stage rework-entry` 与 `v2_090f_rework_entry.py` 已删除 |
+| `src/boardroom_os/orchestration/prd_delivery.py` | 当前 V2 PRD delivery（需求交付）原生入口：输入 PRD，运行 PRD intake（需求摄取）→ contracts/ticket graph（合同/工单图）→ execution/evidence/closeout（执行/证据/收尾）→ native rework（原生返工）状态流 |
+| `src/boardroom_os/proving/v2_090f_native_golden_sample.py` | 当前 V2-090F native golden sample（原生黄金样例）包装入口：固定 tiny-fullstack PRD 与 V2-090F 配置，委托通用 PRD delivery（需求交付）入口 |
 | `../../docs/superpowers/specs/2026-06-12-v2-090k-agent-team-autonomy-remediation-design.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）设计规格 |
 | `../../docs/superpowers/plans/2026-06-12-v2-090k-agent-team-autonomy-remediation.md` | V2-090K agent team autonomy remediation（智能体团队自治整改）实施计划 |
 | `../../examples/generated-workspaces/tiny-fullstack/30-audit/v2-090k-failure-snapshot/` | V2-090K curated failure snapshot（精选失败快照），作为 V2-100 rework loop（返工循环）真实失败输入 |

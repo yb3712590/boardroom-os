@@ -280,7 +280,8 @@ def test_v2_100f_active_path_has_no_forbidden_shortcuts() -> None:
     root = Path(__file__).resolve().parents[2]
     active_paths = (
         root / "src/boardroom_os/proving/v2_100f_native_manifest_rework.py",
-        root / "src/boardroom_os/proving/v2_090f_rework_entry.py",
+        root / "src/boardroom_os/orchestration/prd_delivery.py",
+        root / "src/boardroom_os/proving/v2_090f_native_golden_sample.py",
         root / "scripts/run_v2_100f_native_manifest_rework.py",
     )
     forbidden = (
