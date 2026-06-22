@@ -18,8 +18,16 @@ from boardroom_os.proving.v2_090f_rework_entry import (
     render_v2_090f_ticket_graph_mermaid,
     run_v2_090f_rework_entry_validation,
 )
+from boardroom_os.proving.v2_100f_native_manifest_rework import (
+    V2_100FNativeManifestReworkInput,
+    V2_100FNativeManifestReworkResult,
+    V2_100FTerminalStatus,
+    run_v2_100f_native_manifest_rework,
+)
 
 __all__ = [
+    "V2_100FNativeManifestReworkInput",
+    "V2_100FNativeManifestReworkResult",
     "V2_100ReworkLoopError",
     "V2_090FReworkEntryStatus",
     "V2_090FReworkEntryValidationInput",
@@ -28,10 +36,12 @@ __all__ = [
     "V2_090FTicketGraphSnapshot",
     "V2_100ScenarioInput",
     "V2_100ScenarioResult",
+    "V2_100FTerminalStatus",
     "export_v2_100_rework_audit",
     "load_v2_090f_ticket_graph_snapshot",
     "project_snapshot_request",
     "render_v2_090f_ticket_graph_mermaid",
     "run_v2_090f_rework_entry_validation",
     "run_v2_100_rework_loop_scenario",
+    "run_v2_100f_native_manifest_rework",
 ]

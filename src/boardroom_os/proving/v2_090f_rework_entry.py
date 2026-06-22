@@ -15,12 +15,6 @@ from boardroom_os.rework.blocker_projection import (
     project_closeout_gate_blockers,
 )
 from boardroom_os.rework.model import ReworkActorKind, ReworkCycleId, RunId
-from boardroom_os.proving.v2_100_rework_loop import (
-    V2_100ScenarioInput,
-    V2_100ScenarioTerminalStatus,
-    export_v2_100_rework_audit,
-    run_v2_100_rework_loop_for_request,
-)
 
 
 class V2_090FReworkEntryStatus(StrEnum):
@@ -294,45 +288,6 @@ def run_v2_090f_rework_entry_validation(
     if structured_request is not None:
         rework_request_path = rework_entry_root / "rework-request.json"
         _write_json(rework_request_path, structured_request.model_dump(mode="json"))
-        continuation_result = run_v2_100_rework_loop_for_request(
-            _build_v2_100_scenario_input(
-                output_root=output_root,
-                validation_input=validation_input,
-                active_graph_version=before_snapshot.graph_version,
-            ),
-            request=structured_request,
-        )
-        continuation_status = _status_value(continuation_result.terminal_status)
-        if continuation_status == V2_100ScenarioTerminalStatus.ACCEPTED.value:
-            status = V2_090FReworkEntryStatus.REWORK_ACCEPTED_CANDIDATE
-        else:
-            status = V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED
-        final_round = continuation_result.rounds[-1]
-        patch_ref = _ref_value(final_round.patch.ticket_graph_patch_id)
-        after_snapshot = _after_graph_snapshot(
-            before_snapshot=before_snapshot,
-            continuation_result=continuation_result,
-            patch_ref=patch_ref,
-        )
-        rework_plan_path = rework_entry_root / "rework-plan.json"
-        ticket_graph_patch_path = rework_entry_root / "ticket-graph-patch.json"
-        _write_json(rework_plan_path, _model_dump(final_round.plan_output.plan))
-        _write_json(ticket_graph_patch_path, _model_dump(final_round.patch))
-
-        after_graph_json_path = boardroom_root / "ticket-graph.after-rework.json"
-        after_graph_mermaid_path = boardroom_root / "ticket-graph.after-rework.md"
-        _write_json(after_graph_json_path, after_snapshot.model_dump(mode="json"))
-        after_graph_mermaid_path.write_text(
-            render_v2_090f_ticket_graph_mermaid(after_snapshot),
-            encoding="utf-8",
-        )
-        audit_export_path: str | None = None
-        if hasattr(continuation_result, "model_dump"):
-            audit_export = export_v2_100_rework_audit(
-                continuation_result,
-                rework_entry_root / "v2-100-audit",
-            )
-            audit_export_path = audit_export.export_root.as_posix()
         _write_json(
             blocker_report_path,
             {
@@ -348,15 +303,12 @@ def run_v2_090f_rework_entry_validation(
         _write_json(
             terminal_path,
             {
-                "terminal_status": status.value,
+                "terminal_status": V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED.value,
                 "run_id": validation_input.run_id,
                 "cycle_id": validation_input.cycle_id,
                 "checked_refs": list(checked_refs),
                 "rework_request_path": rework_request_path.as_posix(),
-                "rework_plan_path": rework_plan_path.as_posix(),
-                "ticket_graph_patch_path": ticket_graph_patch_path.as_posix(),
-                "v2_100_terminal_status": continuation_status,
-                "v2_100_audit_path": audit_export_path,
+                "v2_100f_native_status": "rework_required",
             },
         )
         report_path.write_text(
@@ -365,27 +317,22 @@ def run_v2_090f_rework_entry_validation(
                     "# V2-090F Rework Entry Validation",
                     "",
                     f"run_id: {validation_input.run_id}",
-                    f"terminal_status: {status.value}",
+                    f"terminal_status: {V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED.value}",
                     f"rework_request: {rework_request_path.as_posix()}",
-                    f"rework_plan: {rework_plan_path.as_posix()}",
-                    f"ticket_graph_patch: {ticket_graph_patch_path.as_posix()}",
                     f"before_graph_json: {before_graph_json_path.as_posix()}",
-                    f"after_graph_json: {after_graph_json_path.as_posix()}",
+                    "",
+                    "A typed ReworkRequest was produced. Continuation must use native V2-100F or later governance, not V2-100E proving shortcuts.",
                 )
             )
             + "\n",
             encoding="utf-8",
         )
         return V2_090FReworkEntryValidationResult(
-            status=status,
+            status=V2_090FReworkEntryStatus.REWORK_ESCALATED_OR_EXHAUSTED,
             before_graph_json_path=before_graph_json_path,
             before_graph_mermaid_path=before_graph_mermaid_path,
-            after_graph_json_path=after_graph_json_path,
-            after_graph_mermaid_path=after_graph_mermaid_path,
             blocker_report_path=blocker_report_path,
             rework_request_path=rework_request_path,
-            rework_plan_path=rework_plan_path,
-            ticket_graph_patch_path=ticket_graph_patch_path,
             terminal_path=terminal_path,
             report_path=report_path,
             checked_refs=checked_refs,
@@ -582,33 +529,6 @@ def _required_text(payload: dict[str, Any], field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be text")
     return value.strip()
-
-
-def _build_v2_100_scenario_input(
-    *,
-    output_root: Path,
-    validation_input: V2_090FReworkEntryValidationInput,
-    active_graph_version: int,
-) -> V2_100ScenarioInput:
-    request_start_path = (
-        output_root / "20-evidence" / "rework-entry" / "rework-request.json"
-    )
-    return V2_100ScenarioInput(
-        project_ref="project.v2-090f",
-        snapshot_summary_path=request_start_path,
-        run_id=validation_input.run_id,
-        cycle_id=validation_input.cycle_id,
-        package_contract_ref=_load_package_contract_ref(output_root),
-        run_manifest_ref=_load_run_manifest_ref(output_root),
-        active_acceptance_refs=_load_active_acceptance_refs(output_root),
-        active_source_surface_refs=_load_active_source_surface_refs(output_root),
-        active_evidence_obligation_refs=_load_active_evidence_obligation_refs(output_root),
-        active_contract_refs=(_load_package_contract_ref(output_root),),
-        initial_graph_version=active_graph_version,
-        max_rounds=validation_input.max_rounds,
-        export_root=output_root / "20-evidence" / "rework-entry" / "v2-100-audit",
-        require_real_provider=validation_input.require_real_provider,
-    )
 
 
 def _after_graph_snapshot(

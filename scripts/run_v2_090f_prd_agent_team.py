@@ -20,6 +20,11 @@ from boardroom_os.proving.v2_090f_rework_entry import (
     V2_090FReworkEntryValidationInput,
     run_v2_090f_rework_entry_validation,
 )
+from boardroom_os.proving.v2_100f_native_manifest_rework import (
+    V2_100FNativeManifestReworkInput,
+    V2_100FTerminalStatus,
+    run_v2_100f_native_manifest_rework,
+)
 from boardroom_os.config.boardroom import load_boardroom_settings
 
 
@@ -99,6 +104,26 @@ def main(argv: list[str] | None = None) -> int:
         raw_error_path.parent.mkdir(parents=True, exist_ok=True)
         raw_error_path.write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
     if args.stage == "rework-entry":
+        run_manifest_path = Path(args.output_root) / "00-boardroom" / "generated-run-manifest.json"
+        if run_manifest_path.is_file():
+            native_result = run_v2_100f_native_manifest_rework(
+                V2_100FNativeManifestReworkInput(
+                    output_root=Path(args.output_root),
+                    workspace_root=Path(args.workspace_root),
+                    run_manifest_path=run_manifest_path,
+                    require_real_provider=True,
+                    deterministic_provider_fixture=False,
+                    runtime_config_path=env_values.get("BOARDROOM_RUNTIME_CONFIG"),
+                    providers_config_path=env_values.get("BOARDROOM_PROVIDERS_CONFIG"),
+                    roles_config_path=env_values.get("BOARDROOM_ROLES_CONFIG"),
+                )
+            )
+            print(native_result.terminal_status.value)
+            if native_result.terminal_status is V2_100FTerminalStatus.PASSED:
+                return 0
+            if native_result.terminal_status is V2_100FTerminalStatus.REWORK_REQUIRED:
+                return 4
+            return 5
         validation_result = run_v2_090f_rework_entry_validation(
             V2_090FReworkEntryValidationInput(
                 output_root=Path(args.output_root),

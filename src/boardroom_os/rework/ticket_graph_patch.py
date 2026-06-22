@@ -61,7 +61,6 @@ def infer_required_review_domains(input: RequiredReviewDomainInput) -> tuple[Gra
     if issue_codes & {
         ReworkIssueCode.ENV_BINDING_NOT_CONVERGED,
         ReworkIssueCode.RUN_MANIFEST_ERROR,
-        ReworkIssueCode.RUN_MANIFEST_MISMATCH,
     } or ReworkSuspectedDomain.RUN_ENV in suspected_domains:
         domains.append(GraphPatchReviewDomain.RUN_ENV_READINESS)
     if issue_codes & {

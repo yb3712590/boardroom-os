@@ -338,7 +338,7 @@ def test_build_rework_request_from_checker_verdict_blocker() -> None:
     assert request.requested_by_actor is ReworkActorKind.CHECKER
 
 
-def test_build_rework_request_from_closeout_gate_failure() -> None:
+def test_build_rework_request_from_closeout_old_run_audit_failure() -> None:
     result = CloseoutGateResult(
         closeout_gate_result_id=CloseoutGateResultRef(value="closeout-gate-result.rework"),
         verdict=CloseoutGateVerdict.BLOCKED,
@@ -359,8 +359,32 @@ def test_build_rework_request_from_closeout_gate_failure() -> None:
 
     assert len(request.issues) == 1
     assert request.request_source_refs == ("blocker-report.closeout.closeout-gate-result.rework",)
-    assert request.issues[0].issue_code is ReworkIssueCode.CLOSEOUT_GATE_FAILURE
+    assert request.issues[0].issue_code is ReworkIssueCode.CLOSEOUT_AUDIT_OLD_RUN_REFS
     assert ReworkSuspectedDomain.CLOSEOUT_AUDIT in request.issues[0].suspected_domains
+
+
+def test_build_rework_request_from_generic_closeout_gate_failure() -> None:
+    result = CloseoutGateResult(
+        closeout_gate_result_id=CloseoutGateResultRef(value="closeout-gate-result.generic"),
+        verdict=CloseoutGateVerdict.BLOCKED,
+        blockers=(
+            CloseoutGateBlocker(
+                code=CloseoutGateBlockerCode.REF_MISMATCH,
+                message="Final evidence table ref differs from closeout gate input.",
+                related_ref="final-evidence-table.acceptance.v2-090f",
+            ),
+        ),
+        checked_refs=("final-evidence-table.acceptance.v2-090f",),
+    )
+
+    request = project_closeout_gate_blockers(
+        result,
+        _projection_context(ReworkActorKind.CLOSEOUT_GATE),
+    )
+
+    assert len(request.issues) == 1
+    assert request.request_source_refs == ("blocker-report.closeout.closeout-gate-result.generic",)
+    assert request.issues[0].issue_code is ReworkIssueCode.CLOSEOUT_GATE_FAILURE
 
 
 def test_rework_package_exports_v2_100a_public_api() -> None:

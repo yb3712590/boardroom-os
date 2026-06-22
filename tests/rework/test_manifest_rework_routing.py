@@ -72,7 +72,6 @@ def test_manifest_drift_projects_to_run_manifest_error_rework_issue() -> None:
     assert result.rework_request is not None
     issue = result.rework_request.issues[0]
     assert issue.issue_code is ReworkIssueCode.RUN_MANIFEST_ERROR
-    assert issue.issue_code is not ReworkIssueCode.RUN_MANIFEST_MISMATCH
     assert issue.observed_fact_refs[0].value == "blackbox-action-fact.blackbox-plan.verify.generated.action.http.books"
     assert issue.advisory_context["observed"]["http_status"] == 404
     assert issue.advisory_context["labels"] == ("readiness path differs from run manifest",)
